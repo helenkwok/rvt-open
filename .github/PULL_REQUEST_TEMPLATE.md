@@ -1,0 +1,68 @@
+<!--
+  rvt-open pull request template. Every section below is expected to be
+  filled in. A PR that self-certifies against this checklist lets
+  reviewers focus on substance instead of mechanics. Delete sections
+  that genuinely do not apply, and say so ("N/A: docs-only PR").
+-->
+
+## Summary
+
+<!-- 1-3 sentences describing the change. -->
+
+## Motivation
+
+<!-- Why this change? Link to the issue if applicable. -->
+
+## Changes
+
+<!-- Bulleted list of the files / subsystems touched. -->
+
+-
+-
+
+## Testing
+
+Unit tests are banned in this repository: do not add them. Show the change working end to end on real files instead.
+
+- [ ] `tools/check-local.sh` passes (fmt, clippy, rustdoc, build, real-file / CLI / contract checks)
+- [ ] Verified end to end on real Revit files: the command, the files (and their licence), and the measured result against Revit's own export are in the PR body, with the script or test that reproduces it
+- [ ] If this touches the IFC exporter: the witness verdicts replay (see CONTRIBUTING.md) or the changed observations are refreshed in this PR
+- [ ] If this is a performance change: reran `tools/bench.sh` and attached the before / after
+
+## Audit-honesty checklist
+
+<!--
+  rvt-open is built on the principle that we state what works AND what
+  does not. Every PR is expected to meet this bar.
+-->
+
+- [ ] README / docs reflect the current state after this PR — no claims of features that are not actually shipped in this PR
+- [ ] A user-visible change has its entry as a fragment under `changelog.d/<section>/` (see `changelog.d/README.md`), not in `CHANGELOG.md`
+- [ ] If a limitation was resolved, the "Known limitations" / "What works today" section in the relevant docs is updated
+- [ ] If a new limitation was introduced, it is documented in the PR body and in-code
+- [ ] Commit messages describe WHAT changed and WHY, not "fix things" or "updates"
+- [ ] No emojis in code, docs, or commit messages
+- [ ] No private paths, personal email addresses, or internal jargon in committed files
+- [ ] If this is a reverse-engineering finding: an end-to-end test that reproduces it from bytes, and the evidence (files, sha256, counts against Revit's own export) in the PR body
+
+## Legal and contribution hygiene
+
+- [ ] I agree this work is licensable under Apache-2.0 (see `CONTRIBUTING.md`)
+- [ ] This PR contains no Autodesk proprietary source, decompiled internals, or NDA'd SDK content (see `CLEANROOM.md`)
+- [ ] Any new test fixtures use synthetic values (`testuser`, `111111`, `FY-20XX`, etc.) and contain no real-world PII
+
+## Breaking changes
+
+<!-- "None" or list them with the migration path. -->
+
+## Screenshots or output samples
+
+<!-- Required if UI or IFC output changed. Paste or attach. -->
+
+## Related issues
+
+<!-- "Closes #N" / "Refs #M" / "None". -->
+
+---
+
+See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for deeper guidance on coding conventions, reverse-engineering findings, and the clean-room posture.

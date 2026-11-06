@@ -1,0 +1,319 @@
+# Box check baseline: per sample file and Revit category, elements drawn as a
+# 12-triangle box (boxed), still on the bounding-box fallback (fallback), with a body (total).
+# The gate fails when boxed or fallback rises above these. Target for fallback: zero.
+# lower it as shape work lands: regenerate with box_check <this> --write.
+# Rows cover the public samples only.
+file	category	boxed	fallback	total
+2016/rac_basic_sample_project.rvt	(IFCGEOGRAPHICELEMENT)	0	0	4
+2016/rac_basic_sample_project.rvt	(IFCSPACE)	0	0	14
+2016/rac_basic_sample_project.rvt	Casework	0	0	2
+2016/rac_basic_sample_project.rvt	Ceilings	0	0	2
+2016/rac_basic_sample_project.rvt	Curtain Panels	0	0	44
+2016/rac_basic_sample_project.rvt	Curtain Wall Mullions	0	0	144
+2016/rac_basic_sample_project.rvt	Doors	0	0	16
+2016/rac_basic_sample_project.rvt	Electrical Equipment	0	0	12
+2016/rac_basic_sample_project.rvt	Entourage	0	0	5
+2016/rac_basic_sample_project.rvt	Floors	0	0	8
+2016/rac_basic_sample_project.rvt	Furniture	0	2	30
+2016/rac_basic_sample_project.rvt	Generic Models	0	8	25
+2016/rac_basic_sample_project.rvt	Lighting Fixtures	0	0	10
+2016/rac_basic_sample_project.rvt	Planting	0	0	16
+2016/rac_basic_sample_project.rvt	Plumbing Fixtures	0	2	9
+2016/rac_basic_sample_project.rvt	Railings	0	0	10
+2016/rac_basic_sample_project.rvt	Roofs	0	0	2
+2016/rac_basic_sample_project.rvt	Site: Pads	0	0	2
+2016/rac_basic_sample_project.rvt	Specialty Equipment	0	5	7
+2016/rac_basic_sample_project.rvt	Stairs	0	0	3
+2016/rac_basic_sample_project.rvt	Stairs: Landings	0	0	1
+2016/rac_basic_sample_project.rvt	Stairs: Runs	0	0	3
+2016/rac_basic_sample_project.rvt	Structural Columns	0	0	3
+2016/rac_basic_sample_project.rvt	Structural Foundations	0	0	23
+2016/rac_basic_sample_project.rvt	Walls	0	0	47
+2016/rac_basic_sample_project.rvt	Windows	0	0	17
+2019/rac_advanced_sample_project.rvt	(IFCGEOGRAPHICELEMENT)	0	0	2
+2019/rac_advanced_sample_project.rvt	(IFCSPACE)	0	0	91
+2019/rac_advanced_sample_project.rvt	Ceilings	0	0	65
+2019/rac_advanced_sample_project.rvt	Curtain Panels	0	0	1349
+2019/rac_advanced_sample_project.rvt	Curtain Wall Mullions	0	0	3276
+2019/rac_advanced_sample_project.rvt	Doors	0	0	100
+2019/rac_advanced_sample_project.rvt	Entourage	0	0	3
+2019/rac_advanced_sample_project.rvt	Floors	0	0	16
+2019/rac_advanced_sample_project.rvt	Floors: Slab Edges	0	0	2
+2019/rac_advanced_sample_project.rvt	Furniture	0	0	104
+2019/rac_advanced_sample_project.rvt	Generic Models	0	0	42
+2019/rac_advanced_sample_project.rvt	Lighting Fixtures	0	0	41
+2019/rac_advanced_sample_project.rvt	Parking	0	0	27
+2019/rac_advanced_sample_project.rvt	Planting	0	0	30
+2019/rac_advanced_sample_project.rvt	Railings	0	0	22
+2019/rac_advanced_sample_project.rvt	Roofs	0	0	6
+2019/rac_advanced_sample_project.rvt	Site: Pads	0	0	1
+2019/rac_advanced_sample_project.rvt	Stairs	0	0	5
+2019/rac_advanced_sample_project.rvt	Structural Columns	0	0	176
+2019/rac_advanced_sample_project.rvt	Structural Framing	0	21	38
+2019/rac_advanced_sample_project.rvt	Walls	0	0	146
+2019/rac_advanced_sample_project.rvt	Walls: Wall Sweeps	0	0	8
+2019/rac_advanced_sample_project.rvt	Windows	0	0	24
+2027/rac_advanced_sample_project.rvt	(IFCGEOGRAPHICELEMENT)	0	0	2
+2027/rac_advanced_sample_project.rvt	(IFCSPACE)	0	0	91
+2027/rac_advanced_sample_project.rvt	Ceilings	0	0	104
+2027/rac_advanced_sample_project.rvt	Curtain Panels	0	42	1349
+2027/rac_advanced_sample_project.rvt	Curtain Wall Mullions	0	106	3276
+2027/rac_advanced_sample_project.rvt	Doors	0	0	100
+2027/rac_advanced_sample_project.rvt	Entourage	0	0	3
+2027/rac_advanced_sample_project.rvt	Floors	0	0	16
+2027/rac_advanced_sample_project.rvt	Floors: Slab Edges	0	0	2
+2027/rac_advanced_sample_project.rvt	Furniture	0	0	104
+2027/rac_advanced_sample_project.rvt	Generic Models	0	0	42
+2027/rac_advanced_sample_project.rvt	Lighting Fixtures	0	0	41
+2027/rac_advanced_sample_project.rvt	Parking	0	0	27
+2027/rac_advanced_sample_project.rvt	Planting	0	0	30
+2027/rac_advanced_sample_project.rvt	Railings	0	0	22
+2027/rac_advanced_sample_project.rvt	Roofs	0	0	6
+2027/rac_advanced_sample_project.rvt	Site: Pads	0	0	1
+2027/rac_advanced_sample_project.rvt	Stairs: Landings	0	0	5
+2027/rac_advanced_sample_project.rvt	Stairs: Runs	0	0	10
+2027/rac_advanced_sample_project.rvt	Stairs: Supports	0	0	36
+2027/rac_advanced_sample_project.rvt	Structural Columns	0	0	176
+2027/rac_advanced_sample_project.rvt	Structural Framing	0	23	38
+2027/rac_advanced_sample_project.rvt	Walls	0	0	154
+2027/rac_advanced_sample_project.rvt	Walls: Wall Sweeps	0	0	8
+2027/rac_advanced_sample_project.rvt	Windows	0	0	24
+2027/rac_basic_sample_project.rvt	(IFCGEOGRAPHICELEMENT)	0	0	4
+2027/rac_basic_sample_project.rvt	(IFCSPACE)	0	0	14
+2027/rac_basic_sample_project.rvt	Casework	0	0	2
+2027/rac_basic_sample_project.rvt	Ceilings	0	0	4
+2027/rac_basic_sample_project.rvt	Curtain Panels	0	0	44
+2027/rac_basic_sample_project.rvt	Curtain Wall Mullions	0	0	144
+2027/rac_basic_sample_project.rvt	Doors	0	0	16
+2027/rac_basic_sample_project.rvt	Electrical Equipment	0	0	12
+2027/rac_basic_sample_project.rvt	Entourage	0	0	5
+2027/rac_basic_sample_project.rvt	Floors	0	0	8
+2027/rac_basic_sample_project.rvt	Furniture	0	2	30
+2027/rac_basic_sample_project.rvt	Generic Models	0	8	25
+2027/rac_basic_sample_project.rvt	Lighting Fixtures	0	0	10
+2027/rac_basic_sample_project.rvt	Planting	0	0	16
+2027/rac_basic_sample_project.rvt	Plumbing Fixtures	0	2	9
+2027/rac_basic_sample_project.rvt	Railings	0	0	10
+2027/rac_basic_sample_project.rvt	Roofs	0	0	2
+2027/rac_basic_sample_project.rvt	Site: Pads	0	0	2
+2027/rac_basic_sample_project.rvt	Specialty Equipment	0	4	7
+2027/rac_basic_sample_project.rvt	Stairs: Landings	0	0	1
+2027/rac_basic_sample_project.rvt	Stairs: Runs	0	0	3
+2027/rac_basic_sample_project.rvt	Structural Columns	0	0	3
+2027/rac_basic_sample_project.rvt	Structural Foundations	0	0	23
+2027/rac_basic_sample_project.rvt	Walls	0	0	47
+2027/rac_basic_sample_project.rvt	Windows	0	0	17
+2027/rme_basic_sample_project.rvt	(IFCSPACE)	0	1	163
+2027/rme_basic_sample_project.rvt	Air Terminals	0	0	309
+2027/rme_basic_sample_project.rvt	Ceilings	0	0	85
+2027/rme_basic_sample_project.rvt	Columns	0	0	4
+2027/rme_basic_sample_project.rvt	Conduit Fittings	0	0	14
+2027/rme_basic_sample_project.rvt	Conduits	0	0	20
+2027/rme_basic_sample_project.rvt	Curtain Panels	0	2	629
+2027/rme_basic_sample_project.rvt	Curtain Wall Mullions	0	0	1450
+2027/rme_basic_sample_project.rvt	Doors	0	0	124
+2027/rme_basic_sample_project.rvt	Duct Fittings	0	105	935
+2027/rme_basic_sample_project.rvt	Ducts	0	0	724
+2027/rme_basic_sample_project.rvt	Electrical Equipment	0	0	29
+2027/rme_basic_sample_project.rvt	Electrical Fixtures	0	0	424
+2027/rme_basic_sample_project.rvt	Flex Ducts	0	0	113
+2027/rme_basic_sample_project.rvt	Floors	0	3	74
+2027/rme_basic_sample_project.rvt	Generic Models	0	0	82
+2027/rme_basic_sample_project.rvt	Lighting Devices	0	0	63
+2027/rme_basic_sample_project.rvt	Lighting Fixtures	0	0	410
+2027/rme_basic_sample_project.rvt	Mechanical Equipment	0	0	47
+2027/rme_basic_sample_project.rvt	Pipe Fittings	0	0	535
+2027/rme_basic_sample_project.rvt	Pipes	0	0	491
+2027/rme_basic_sample_project.rvt	Plumbing Fixtures	0	2	11
+2027/rme_basic_sample_project.rvt	Railings	0	0	14
+2027/rme_basic_sample_project.rvt	Specialty Equipment	0	0	3
+2027/rme_basic_sample_project.rvt	Sprinklers	0	0	6
+2027/rme_basic_sample_project.rvt	Stairs	0	0	8
+2027/rme_basic_sample_project.rvt	Structural Columns	0	0	131
+2027/rme_basic_sample_project.rvt	Walls	0	0	135
+2027/rst_basic_sample_project.rvt	Floors	0	0	5
+2027/rst_basic_sample_project.rvt	Stairs: Runs	0	0	1
+2027/rst_basic_sample_project.rvt	Stairs: Supports	0	0	2
+2027/rst_basic_sample_project.rvt	Structural Columns	0	0	30
+2027/rst_basic_sample_project.rvt	Structural Foundations	0	0	36
+2027/rst_basic_sample_project.rvt	Structural Framing	0	0	370
+2027/rst_basic_sample_project.rvt	Walls	0	0	9
+Snowdon Towers Sample Architectural.rvt	(IFCGEOGRAPHICELEMENT)	0	0	26
+Snowdon Towers Sample Architectural.rvt	(IFCRAMP)	0	0	2
+Snowdon Towers Sample Architectural.rvt	(IFCSPACE)	0	0	54
+Snowdon Towers Sample Architectural.rvt	Casework	0	0	177
+Snowdon Towers Sample Architectural.rvt	Ceilings	0	0	142
+Snowdon Towers Sample Architectural.rvt	Columns	0	0	118
+Snowdon Towers Sample Architectural.rvt	Curtain Panels	0	234	503
+Snowdon Towers Sample Architectural.rvt	Curtain Wall Mullions	0	786	1425
+Snowdon Towers Sample Architectural.rvt	Doors	0	0	132
+Snowdon Towers Sample Architectural.rvt	Entourage	0	0	10
+Snowdon Towers Sample Architectural.rvt	Floors	0	0	201
+Snowdon Towers Sample Architectural.rvt	Floors: Slab Edges	0	0	59
+Snowdon Towers Sample Architectural.rvt	Food Service Equipment	0	0	26
+Snowdon Towers Sample Architectural.rvt	Furniture	0	0	168
+Snowdon Towers Sample Architectural.rvt	Generic Models	0	16	277
+Snowdon Towers Sample Architectural.rvt	Hardscape	0	0	10
+Snowdon Towers Sample Architectural.rvt	Lighting Fixtures	0	95	447
+Snowdon Towers Sample Architectural.rvt	Parking	0	0	20
+Snowdon Towers Sample Architectural.rvt	Planting	0	0	117
+Snowdon Towers Sample Architectural.rvt	Plumbing Fixtures	0	3	134
+Snowdon Towers Sample Architectural.rvt	Railings	0	75	131
+Snowdon Towers Sample Architectural.rvt	Roofs	0	0	20
+Snowdon Towers Sample Architectural.rvt	Specialty Equipment	0	0	243
+Snowdon Towers Sample Architectural.rvt	Stairs	0	0	1
+Snowdon Towers Sample Architectural.rvt	Stairs: Landings	0	0	17
+Snowdon Towers Sample Architectural.rvt	Stairs: Runs	0	0	43
+Snowdon Towers Sample Architectural.rvt	Stairs: Supports	0	0	170
+Snowdon Towers Sample Architectural.rvt	Vertical Circulation	0	0	2
+Snowdon Towers Sample Architectural.rvt	Walls	0	0	1134
+Snowdon Towers Sample Architectural.rvt	Walls: Wall Sweeps	0	0	258
+Snowdon Towers Sample Architectural.rvt	Windows	0	0	68
+Snowdon Towers Sample Electrical.rvt	(IFCSPACE)	0	0	80
+Snowdon Towers Sample Electrical.rvt	Conduit Fittings	0	0	322
+Snowdon Towers Sample Electrical.rvt	Conduits	0	28	530
+Snowdon Towers Sample Electrical.rvt	Data Devices	0	0	52
+Snowdon Towers Sample Electrical.rvt	Electrical Equipment	0	0	200
+Snowdon Towers Sample Electrical.rvt	Electrical Fixtures	0	0	538
+Snowdon Towers Sample Electrical.rvt	Floors	0	0	1
+Snowdon Towers Sample Electrical.rvt	Lighting Devices	0	0	196
+Snowdon Towers Sample Electrical.rvt	Lighting Fixtures	0	136	588
+Snowdon Towers Sample Electrical.rvt	Walls	0	0	1
+Snowdon Towers Sample HVAC.rvt	(IFCSPACE)	0	0	67
+Snowdon Towers Sample HVAC.rvt	Air Terminals	0	0	509
+Snowdon Towers Sample HVAC.rvt	Duct Fittings	0	32	997
+Snowdon Towers Sample HVAC.rvt	Ducts	0	3	1053
+Snowdon Towers Sample HVAC.rvt	Flex Ducts	0	0	31
+Snowdon Towers Sample HVAC.rvt	Mechanical Equipment	0	0	37
+Snowdon Towers Sample Plumbing.rvt	(IFCSPACE)	0	0	39
+Snowdon Towers Sample Plumbing.rvt	Air Terminals	0	0	31
+Snowdon Towers Sample Plumbing.rvt	Duct Fittings	0	0	150
+Snowdon Towers Sample Plumbing.rvt	Ducts	0	0	181
+Snowdon Towers Sample Plumbing.rvt	Pipe Accessories	0	0	126
+Snowdon Towers Sample Plumbing.rvt	Pipe Fittings	0	0	2656
+Snowdon Towers Sample Plumbing.rvt	Pipes	0	0	3056
+Snowdon Towers Sample Plumbing.rvt	Plumbing Fixtures	0	108	179
+Snowdon Towers Sample Structural.rvt	Floors	0	0	27
+Snowdon Towers Sample Structural.rvt	Generic Models	0	91	91
+Snowdon Towers Sample Structural.rvt	Structural Columns	0	20	74
+Snowdon Towers Sample Structural.rvt	Structural Foundations	0	64	90
+Snowdon Towers Sample Structural.rvt	Structural Framing	0	0	942
+Snowdon Towers Sample Structural.rvt	Walls	0	0	58
+racadvancedsampleproject.rvt	(IFCGEOGRAPHICELEMENT)	0	0	2
+racadvancedsampleproject.rvt	(IFCSPACE)	0	0	91
+racadvancedsampleproject.rvt	Ceilings	0	0	129
+racadvancedsampleproject.rvt	Curtain Panels	0	42	1349
+racadvancedsampleproject.rvt	Curtain Wall Mullions	0	106	3276
+racadvancedsampleproject.rvt	Doors	0	0	100
+racadvancedsampleproject.rvt	Entourage	0	0	3
+racadvancedsampleproject.rvt	Floors	0	0	16
+racadvancedsampleproject.rvt	Floors: Slab Edges	0	0	2
+racadvancedsampleproject.rvt	Furniture	0	0	104
+racadvancedsampleproject.rvt	Generic Models	0	0	42
+racadvancedsampleproject.rvt	Lighting Fixtures	0	0	41
+racadvancedsampleproject.rvt	Parking	0	0	27
+racadvancedsampleproject.rvt	Planting	0	0	30
+racadvancedsampleproject.rvt	Railings	0	0	22
+racadvancedsampleproject.rvt	Roofs	0	0	6
+racadvancedsampleproject.rvt	Site: Pads	0	0	1
+racadvancedsampleproject.rvt	Stairs: Landings	0	0	5
+racadvancedsampleproject.rvt	Stairs: Runs	0	0	10
+racadvancedsampleproject.rvt	Stairs: Supports	0	0	36
+racadvancedsampleproject.rvt	Structural Columns	0	0	176
+racadvancedsampleproject.rvt	Structural Framing	0	0	38
+racadvancedsampleproject.rvt	Walls	0	0	154
+racadvancedsampleproject.rvt	Walls: Wall Sweeps	0	0	8
+racadvancedsampleproject.rvt	Windows	0	0	24
+racbasicsampleproject.rvt	(IFCGEOGRAPHICELEMENT)	0	0	4
+racbasicsampleproject.rvt	(IFCSPACE)	0	0	14
+racbasicsampleproject.rvt	Casework	0	0	2
+racbasicsampleproject.rvt	Ceilings	0	0	4
+racbasicsampleproject.rvt	Curtain Panels	0	0	44
+racbasicsampleproject.rvt	Curtain Wall Mullions	0	0	144
+racbasicsampleproject.rvt	Doors	0	0	16
+racbasicsampleproject.rvt	Electrical Equipment	0	0	12
+racbasicsampleproject.rvt	Entourage	0	0	5
+racbasicsampleproject.rvt	Floors	0	0	8
+racbasicsampleproject.rvt	Furniture	0	2	30
+racbasicsampleproject.rvt	Generic Models	0	8	25
+racbasicsampleproject.rvt	Lighting Fixtures	0	0	10
+racbasicsampleproject.rvt	Planting	0	0	16
+racbasicsampleproject.rvt	Plumbing Fixtures	0	2	9
+racbasicsampleproject.rvt	Railings	0	0	10
+racbasicsampleproject.rvt	Roofs	0	0	2
+racbasicsampleproject.rvt	Site: Pads	0	0	2
+racbasicsampleproject.rvt	Specialty Equipment	0	4	7
+racbasicsampleproject.rvt	Stairs: Landings	0	0	1
+racbasicsampleproject.rvt	Stairs: Runs	0	0	3
+racbasicsampleproject.rvt	Structural Columns	0	0	3
+racbasicsampleproject.rvt	Structural Foundations	0	0	23
+racbasicsampleproject.rvt	Walls	0	0	47
+racbasicsampleproject.rvt	Windows	0	0	17
+rmeadvancedsampleproject.rvt	(IFCSPACE)	0	1	163
+rmeadvancedsampleproject.rvt	Air Terminals	0	0	309
+rmeadvancedsampleproject.rvt	Cable Tray Fittings	0	0	14
+rmeadvancedsampleproject.rvt	Cable Trays	0	0	17
+rmeadvancedsampleproject.rvt	Ceilings	0	0	85
+rmeadvancedsampleproject.rvt	Columns	0	0	4
+rmeadvancedsampleproject.rvt	Conduit Fittings	0	0	14
+rmeadvancedsampleproject.rvt	Conduits	0	1	19
+rmeadvancedsampleproject.rvt	Curtain Panels	0	2	629
+rmeadvancedsampleproject.rvt	Curtain Wall Mullions	0	0	1450
+rmeadvancedsampleproject.rvt	Doors	0	0	124
+rmeadvancedsampleproject.rvt	Duct Fittings	0	105	936
+rmeadvancedsampleproject.rvt	Ducts	0	0	728
+rmeadvancedsampleproject.rvt	Electrical Equipment	0	0	29
+rmeadvancedsampleproject.rvt	Electrical Fixtures	0	0	424
+rmeadvancedsampleproject.rvt	Flex Ducts	0	0	113
+rmeadvancedsampleproject.rvt	Floors	0	3	74
+rmeadvancedsampleproject.rvt	Generic Models	0	0	82
+rmeadvancedsampleproject.rvt	Lighting Devices	0	0	63
+rmeadvancedsampleproject.rvt	Lighting Fixtures	0	0	410
+rmeadvancedsampleproject.rvt	Mechanical Equipment	0	0	47
+rmeadvancedsampleproject.rvt	Pipe Fittings	0	0	489
+rmeadvancedsampleproject.rvt	Pipes	0	0	488
+rmeadvancedsampleproject.rvt	Plumbing Fixtures	0	2	11
+rmeadvancedsampleproject.rvt	Railings	0	0	14
+rmeadvancedsampleproject.rvt	Specialty Equipment	0	0	3
+rmeadvancedsampleproject.rvt	Sprinklers	0	0	6
+rmeadvancedsampleproject.rvt	Stairs	0	0	8
+rmeadvancedsampleproject.rvt	Structural Columns	0	0	131
+rmeadvancedsampleproject.rvt	Walls	0	0	135
+rmebasicsampleproject.rvt	(IFCSPACE)	0	1	163
+rmebasicsampleproject.rvt	Air Terminals	0	0	309
+rmebasicsampleproject.rvt	Ceilings	0	0	85
+rmebasicsampleproject.rvt	Columns	0	0	4
+rmebasicsampleproject.rvt	Conduit Fittings	0	0	14
+rmebasicsampleproject.rvt	Conduits	0	0	20
+rmebasicsampleproject.rvt	Curtain Panels	0	2	629
+rmebasicsampleproject.rvt	Curtain Wall Mullions	0	0	1450
+rmebasicsampleproject.rvt	Doors	0	0	124
+rmebasicsampleproject.rvt	Duct Fittings	0	105	935
+rmebasicsampleproject.rvt	Ducts	0	0	724
+rmebasicsampleproject.rvt	Electrical Equipment	0	0	29
+rmebasicsampleproject.rvt	Electrical Fixtures	0	0	424
+rmebasicsampleproject.rvt	Flex Ducts	0	0	113
+rmebasicsampleproject.rvt	Floors	0	3	74
+rmebasicsampleproject.rvt	Generic Models	0	0	82
+rmebasicsampleproject.rvt	Lighting Devices	0	0	63
+rmebasicsampleproject.rvt	Lighting Fixtures	0	0	410
+rmebasicsampleproject.rvt	Mechanical Equipment	0	0	47
+rmebasicsampleproject.rvt	Pipe Fittings	0	0	535
+rmebasicsampleproject.rvt	Pipes	0	0	491
+rmebasicsampleproject.rvt	Plumbing Fixtures	0	2	11
+rmebasicsampleproject.rvt	Railings	0	0	14
+rmebasicsampleproject.rvt	Specialty Equipment	0	0	3
+rmebasicsampleproject.rvt	Sprinklers	0	0	6
+rmebasicsampleproject.rvt	Stairs	0	0	8
+rmebasicsampleproject.rvt	Structural Columns	0	0	131
+rmebasicsampleproject.rvt	Walls	0	0	135
+rstbasicsampleproject.rvt	Floors	0	0	5
+rstbasicsampleproject.rvt	Stairs: Runs	0	0	1
+rstbasicsampleproject.rvt	Stairs: Supports	0	0	2
+rstbasicsampleproject.rvt	Structural Columns	0	0	30
+rstbasicsampleproject.rvt	Structural Foundations	0	0	36
+rstbasicsampleproject.rvt	Structural Framing	0	0	370
+rstbasicsampleproject.rvt	Walls	0	0	9
+Revit_IFC5_Einhoven.rvt	Curtain Panels	0	0	24
+Revit_IFC5_Einhoven.rvt	Walls	0	0	1
+Revit_IFC5_Einhoven.rvt	Windows	0	0	2

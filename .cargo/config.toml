@@ -1,0 +1,6 @@
+# The 64-bit browser build (wasm64-unknown-unknown, memory64) is built on
+# nightly (tools/ci/wasm64-build.sh). zlib-rs (flate2's backend, which the XLSX
+# writer's zip crate turns on) uses core::arch::wasm64 there, still behind the
+# unstable `simd_wasm64` feature.
+[target.wasm64-unknown-unknown]
+rustflags = ["-Zcrate-attr=feature(simd_wasm64)"]

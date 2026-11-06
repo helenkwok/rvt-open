@@ -1,0 +1,4 @@
+# export	sample	kind	layout	tolerance
+# One row per exported file. Paths: export relative to the exports folder, sample relative to the samples folder.
+A-floor-plan-level-1.dwg	2024/racbasicsampleproject.rvt	plan	-	5
+A101.dwg	2024/racbasicsampleproject.rvt	sheet	A101 - First Floor Plan	0.5

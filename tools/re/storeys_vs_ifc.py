@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Compare the storey each element of an rvt-open IFC is in with the storey
+Revit's own IFC export of the same file puts it in.
+
+
+An element's storey is the `IfcBuildingStorey` an
+`IfcRelContainedInSpatialStructure` puts it in. A part aggregated under a
+whole (a curtain wall's panels and mullions, a stair's flights) takes its
+whole's storey. Elements are matched by `Tag`, the Revit ElementId.
+Containment in anything other than a storey (the building, a space) counts
+as no storey for rvt-open and as that container for Revit.
+
+With only the rvt-open file, it counts the elements left off a storey.
+
+Usage:
+
+    python3 tools/re/storeys_vs_ifc.py [-v] [--any-copy] <rvt-open.ifc> [<revit-export.ifc>]
+
+`-v` prints the elements whose storeys differ. Revit writes a multistory
+stair and its railings once per storey under one `Tag`; `--any-copy`
+counts a storey equal when it is the storey of any element sharing its
+`Tag`, where the default compares with one of them. Needs IfcOpenShell
+(the version tools/ci/requirements-ifc.txt pins).
+"""
+
+import collections
+import sys
+
+import ifcopenshell
+
+
+def tag(entity):
+    try:
+        return entity.Tag
+    except AttributeError:
+        return None
+
+
+def storeys(model, every=False):
+    """Each element's storey name by Tag, or `<type>` for another container.
+
+    With `every`, the set of storeys of all the elements sharing each Tag."""
+    by_id = {}
+    for rel in model.by_type("IfcRelContainedInSpatialStructure"):
+        where = rel.RelatingStructure
+        name = where.Name if where.is_a("IfcBuildingStorey") else f"<{where.is_a()}>"
+        for element in rel.RelatedElements:
+            by_id[element.id()] = name
+    for _ in range(3):
+        for rel in model.by_type("IfcRelAggregates"):
+            whole = rel.RelatingObject
+            if whole.id() in by_id:
+                for part in rel.RelatedObjects:
+                    by_id.setdefault(part.id(), by_id[whole.id()])
+    out = {}
+    for entity_id, name in by_id.items():
+        key = tag(model.by_id(entity_id))
+        if key:
+            if every:
+                out.setdefault(key, set()).add(name)
+            else:
+                out[key] = name
+    return out
+
+
+def on_storey(name):
+    return name is not None and not name.startswith("<")
+
+
+def main():
+    args = [a for a in sys.argv[1:] if a not in ("-v", "--any-copy")]
+    verbose = "-v" in sys.argv[1:]
+    any_copy = "--any-copy" in sys.argv[1:]
+    if not 1 <= len(args) <= 2:
+        raise SystemExit(__doc__)
+    ours = ifcopenshell.open(args[0])
+    our_storeys = storeys(ours)
+    elements = [e for e in ours.by_type("IfcElement") if not e.is_a("IfcOpeningElement")]
+    missing = collections.Counter(e.is_a() for e in elements if not on_storey(our_storeys.get(tag(e))))
+    print(f"{len(elements)} elements, {sum(missing.values())} not on a storey")
+    for kind, count in missing.most_common():
+        print(f"  {count:>5}  {kind}")
+    if len(args) == 1:
+        return
+    theirs = storeys(ifcopenshell.open(args[1]), every=any_copy)
+    verdicts = collections.Counter()
+    differ = collections.Counter()
+    for element in elements:
+        key = tag(element)
+        if key not in theirs:
+            continue
+        mine, revit = our_storeys.get(key), theirs[key]
+        if any_copy:
+            revit = mine if mine in revit else sorted(revit, key=str)[0]
+        if mine == revit:
+            verdicts["same storey as Revit's"] += 1
+        elif not on_storey(mine):
+            verdicts["on no storey; Revit's is " + ("a storey" if on_storey(revit) else "another container")] += 1
+        elif not on_storey(revit):
+            verdicts[f"on a storey; Revit contains it in {revit}"] += 1
+        else:
+            verdicts["a different storey from Revit's"] += 1
+            differ[element.is_a()] += 1
+            if verbose:
+                print(f"    {key} {element.is_a()}: {mine} vs Revit's {revit}")
+    print("against Revit's export:")
+    for what, count in verdicts.most_common():
+        print(f"  {count:>5}  {what}")
+    if differ:
+        print("  different, by type: " + ", ".join(f"{k} {v}" for k, v in differ.most_common()))
+
+
+if __name__ == "__main__":
+    main()

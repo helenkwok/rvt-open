@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://helenkwok.github.io/rvt-open/schemas/decoded-elements.schema.json",
+  "title": "rvt production decoded elements JSON",
+  "description": "Array of production-walker decoded elements emitted by rvt-elements (default) and mirrored by Python RevitFile.decoded_elements(). The optional typed object is the Lane Five MVP projection (Level/Wall/Floor/Door/Window/Room/Material).",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/decodedElement"
+  },
+  "$defs": {
+    "byteRange": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "pointer",
+            "element_id",
+            "ref_container",
+            "integer",
+            "float",
+            "bool",
+            "guid",
+            "string",
+            "vector",
+            "bytes"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "decodedElement": {
+      "type": "object",
+      "required": ["id", "class_name", "byte_range", "fields", "parameters", "provenance"],
+      "properties": {
+        "id": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "class_name": { "type": "string", "minLength": 1 },
+        "byte_range": { "$ref": "#/$defs/byteRange" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/field" }
+        },
+        "parameters": {
+          "description": "AProperty* value carriers for this row, then, on Revit 2015 to 2027 files (2015 to 2022 experimentally), the saved parameters of the element's native record and its type's.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "anyOf": [
+              { "$ref": "#/$defs/savedParameter" },
+              { "type": "object", "required": ["name", "source_class"], "additionalProperties": true }
+            ]
+          }
+        },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "typed": {
+          "description": "Lane Five MVP typed projection, or null/omitted for non-MVP classes.",
+          "type": ["object", "null"],
+          "additionalProperties": true
+        }
+      }
+    },
+    "savedParameter": {
+      "description": "research::native_element_parameters::ElementParameter: one saved value, in Revit's internal units, named by its definition's caption or, for a built-in id, by Revit's name from the built-in catalog (null for an undefined id or a built-in one not in the catalog).",
+      "type": "object",
+      "required": [
+        "name",
+        "parameter_id",
+        "kind",
+        "storage_type",
+        "spec_type_id",
+        "group_type_id",
+        "value",
+        "si_value",
+        "si_unit",
+        "target_name",
+        "target_family",
+        "group",
+        "display_value",
+        "level",
+        "scope",
+        "source_element_id",
+        "source_class"
+      ],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "parameter_id": { "type": "integer" },
+        "builtin": { "type": "string", "description": "BuiltInParameter enum name" },
+        "kind": { "type": "string", "enum": ["built_in", "family", "shared", "global", "project", "undefined"] },
+        "storage_type": { "type": "string", "enum": ["String", "Integer", "Double", "ElementId"] },
+        "spec_type_id": { "type": ["string", "null"] },
+        "group_type_id": { "type": ["string", "null"] },
+        "group": { "type": ["string", "null"], "description": "parameter group label, as Revit names its property set" },
+        "value": { "type": ["string", "integer", "number", "boolean"] },
+        "si_value": { "type": ["number", "null"] },
+        "si_unit": { "type": ["string", "null"], "enum": ["m", "m2", "m3", "rad", null] },
+        "target_name": { "type": ["string", "null"] },
+        "target_family": { "type": ["string", "null"] },
+        "display_value": { "type": ["string", "null"], "description": "value as text with its unit" },
+        "level": { "type": "string", "enum": ["instance", "type"] },
+        "scope": { "type": "string", "enum": ["instance", "type"], "description": "same as level, as APS names it" },
+        "source_element_id": { "type": "integer" },
+        "source_class": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "source_stream",
+        "source_offset",
+        "record_kind",
+        "decoder",
+        "confidence",
+        "missing_required_fields",
+        "warnings"
+      ],
+      "properties": {
+        "source_stream": { "type": ["string", "null"] },
+        "source_offset": { "type": ["integer", "null"], "minimum": 0 },
+        "record_kind": { "type": ["string", "null"] },
+        "decoder": { "type": ["string", "null"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "missing_required_fields": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

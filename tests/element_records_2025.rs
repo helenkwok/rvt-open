@@ -1,0 +1,275 @@
+//! Revit 2025 partition element records against Revit's own export.
+//!
+//! The oracle is `Drshelden/IFC-ECS` `data/RE1/` (MIT): Revit 2025
+//! projects next to IFC exports Revit wrote from them. Fetch it with
+//! `tools/fetch-corpus.sh` and point `RVT_PROJECT_CORPUS_DIR` at
+//! `IFC-ECS/data/RE1`; without it the test skips. Walls and slabs must
+//! reproduce the export's ElementId (`Tag`) sets exactly and rooms its
+//! count. The doors and the curtain wall use the second prologue;
+//! their ElementIds come from their enclosing partition records.
+
+use rvt::RevitFile;
+use rvt::ifc::{RvtDocExporter, write_step};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
+fn re1(model: &str) -> Option<(PathBuf, PathBuf)> {
+    let dir = PathBuf::from(std::env::var_os("RVT_PROJECT_CORPUS_DIR")?);
+    let rvt = dir.join(format!("RE1-{model}.rvt"));
+    let ifc = dir.join(format!("RE1-{model}.ifc"));
+    (rvt.exists() && ifc.exists()).then_some((rvt, ifc))
+}
+
+fn re1_architecture() -> Option<(PathBuf, PathBuf)> {
+    re1("Architecture")
+}
+
+/// Export `rvt` and return its STEP text next to the reference's.
+fn export_and_reference(rvt: &PathBuf, ifc: &PathBuf) -> (String, String) {
+    let reference = std::fs::read_to_string(ifc).expect("reference IFC");
+    let mut rf = RevitFile::open(rvt).expect("open");
+    let result = RvtDocExporter
+        .export_with_diagnostics(&mut rf)
+        .expect("export");
+    (write_step(&result.model), reference)
+}
+
+/// `Tag` (the Revit ElementId) of every `ifc_types` entity in a STEP file.
+fn tags(step: &str, ifc_types: &[&str]) -> BTreeSet<u64> {
+    let mut out = BTreeSet::new();
+    for line in step.lines() {
+        let Some((_, body)) = line.split_once('=') else {
+            continue;
+        };
+        let Some((entity, args)) = body.split_once('(') else {
+            continue;
+        };
+        if !ifc_types.contains(&entity.trim()) {
+            continue;
+        }
+        let args = args.trim_end().trim_end_matches(';');
+        let args = args.strip_suffix(')').unwrap_or(args);
+        // Tag is the 8th attribute; the preceding seven never contain a
+        // quoted comma on these files, so a quote-aware split suffices.
+        let mut fields = Vec::new();
+        let mut current = String::new();
+        let mut quoted = false;
+        for c in args.chars() {
+            match c {
+                '\'' => {
+                    quoted = !quoted;
+                    current.push(c);
+                }
+                ',' if !quoted => fields.push(std::mem::take(&mut current)),
+                _ => current.push(c),
+            }
+        }
+        fields.push(current);
+        if let Some(tag) = fields.get(7) {
+            if let Ok(id) = tag.trim_matches('\'').parse() {
+                out.insert(id);
+            }
+        }
+    }
+    out
+}
+
+fn count(step: &str, ifc_type: &str) -> usize {
+    step.matches(&format!("={ifc_type}(")).count()
+}
+
+#[test]
+fn revit_2025_walls_slabs_and_rooms_match_revits_export() {
+    let Some((rvt, ifc)) = re1_architecture() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR has no RE1-Architecture.rvt/.ifc");
+        return;
+    };
+    let reference = std::fs::read_to_string(&ifc).expect("reference IFC");
+    let mut rf = RevitFile::open(&rvt).expect("open");
+    let result = RvtDocExporter
+        .export_with_diagnostics(&mut rf)
+        .expect("export");
+    let step = write_step(&result.model);
+
+    // Seven walls, and a curtain wall that is `IfcCurtainWall` in both
+    // exports.
+    let walls = tags(&reference, &["IFCWALL", "IFCWALLSTANDARDCASE"]);
+    assert_eq!(walls.len(), 7);
+    assert_eq!(tags(&step, &["IFCWALL"]), walls, "wall ElementIds");
+    let curtain_walls = tags(&reference, &["IFCCURTAINWALL"]);
+    assert_eq!(curtain_walls.len(), 1);
+    assert_eq!(
+        tags(&step, &["IFCCURTAINWALL"]),
+        curtain_walls,
+        "curtain wall ElementIds"
+    );
+
+    let slabs = tags(&reference, &["IFCSLAB"]);
+    assert_eq!(slabs.len(), 2);
+    assert_eq!(tags(&step, &["IFCSLAB"]), slabs, "slab ElementIds");
+
+    assert_eq!(count(&reference, "IFCSPACE"), 11);
+    assert_eq!(count(&step, "IFCSPACE"), 11, "rooms");
+
+    // Exactly the doors Revit exported. 417199 is a CasedOpening, whose
+    // type draws no geometry: Revit writes it as its opening alone, and so
+    // does rvt-open.
+    let doors = tags(&reference, &["IFCDOOR"]);
+    assert_eq!(doors.len(), 5);
+    assert_eq!(tags(&step, &["IFCDOOR"]), doors, "door ElementIds");
+
+    // Nothing is left unattributed, so the readiness score is complete.
+    assert!(
+        !result
+            .diagnostics
+            .skipped
+            .iter()
+            .any(|item| item.reason == "element_record_without_element_id"),
+        "no unattributed element records"
+    );
+    assert_eq!(result.diagnostics.confidence.unexported_element_records, 0);
+}
+
+/// The other product categories whose element records decode on
+/// RE1 Architecture. Each exported set must equal the reference export's
+/// set for the entity Revit chose (an IFC2x3 export, so furniture and
+/// casework are `IfcFurnishingElement` there and plumbing fixtures
+/// `IfcFlowTerminal`; rvt-open writes the IFC4 types).
+#[test]
+fn revit_2025_product_categories_match_revits_export() {
+    let Some((rvt, ifc)) = re1_architecture() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR has no RE1-Architecture.rvt/.ifc");
+        return;
+    };
+    let (step, reference) = export_and_reference(&rvt, &ifc);
+    for (ours, theirs, expected) in [
+        ("IFCFURNITURE", "IFCFURNISHINGELEMENT", 23),
+        ("IFCSANITARYTERMINAL", "IFCFLOWTERMINAL", 7),
+        ("IFCBUILDINGELEMENTPROXY", "IFCBUILDINGELEMENTPROXY", 9),
+        ("IFCCOVERING", "IFCCOVERING", 6),
+        ("IFCMEMBER", "IFCMEMBER", 10),
+        ("IFCPLATE", "IFCPLATE", 2),
+        ("IFCRAILING", "IFCRAILING", 1),
+    ] {
+        let reference_tags = tags(&reference, &[theirs]);
+        assert_eq!(reference_tags.len(), expected, "reference {theirs}");
+        assert_eq!(tags(&step, &[ours]), reference_tags, "{ours} ElementIds");
+    }
+}
+
+/// On the RE1 MEP models: the ducts and pipes rvt-open
+/// exports are exactly Revit's `IfcFlowSegment`s, and the duct and pipe
+/// fittings exactly its `IfcFlowFitting`s (IFC2x3 references; rvt-open writes
+/// the IFC4 entities). Most of them sit in second-prologue frames whose
+/// ElementId is their enclosing record's. Plumbing fixtures are every
+/// `IfcFlowTerminal` Revit wrote on the Plumbing model plus one, 442378, a
+/// floor-level fixture Revit's export leaves out.
+#[test]
+fn revit_2025_ducts_and_pipes_are_revits_own() {
+    let mut checked = 0;
+    for (model, ducts, duct_fittings, pipes, pipe_fittings) in
+        [("Mechanical", 25, 32, 6, 3), ("Plumbing", 0, 0, 63, 54)]
+    {
+        let Some((rvt, ifc)) = re1(model) else {
+            eprintln!("skipping: RVT_PROJECT_CORPUS_DIR has no RE1-{model}.rvt/.ifc");
+            continue;
+        };
+        let (step, reference) = export_and_reference(&rvt, &ifc);
+        for (ours, count) in [
+            ("IFCDUCTSEGMENT", ducts),
+            ("IFCPIPESEGMENT", pipes),
+            ("IFCDUCTFITTING", duct_fittings),
+            ("IFCPIPEFITTING", pipe_fittings),
+        ] {
+            assert_eq!(tags(&step, &[ours]).len(), count, "{model} {ours} count");
+        }
+        assert_eq!(
+            tags(&step, &["IFCDUCTSEGMENT", "IFCPIPESEGMENT"]),
+            tags(&reference, &["IFCFLOWSEGMENT"]),
+            "{model} segment ElementIds"
+        );
+        assert_eq!(
+            tags(&step, &["IFCDUCTFITTING", "IFCPIPEFITTING"]),
+            tags(&reference, &["IFCFLOWFITTING"]),
+            "{model} fitting ElementIds"
+        );
+        // Air terminals are Revit's `IfcFlowTerminal`s on the
+        // Mechanical model, all 7 (IFC4 `IfcAirTerminal` here).
+        if model == "Mechanical" {
+            assert_eq!(
+                tags(&step, &["IFCAIRTERMINAL"]),
+                tags(&reference, &["IFCFLOWTERMINAL"]),
+                "air terminal ElementIds"
+            );
+        }
+        if model == "Plumbing" {
+            let terminals = tags(&reference, &["IFCFLOWTERMINAL"]);
+            let fixtures = tags(&step, &["IFCSANITARYTERMINAL"]);
+            assert!(fixtures.is_superset(&terminals), "plumbing fixtures");
+            assert_eq!(
+                fixtures.difference(&terminals).copied().collect::<Vec<_>>(),
+                vec![442378]
+            );
+        }
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!("skipping: no RE1 MEP model under RVT_PROJECT_CORPUS_DIR");
+    }
+}
+
+/// On RE1 Electrical: every element Revit's export holds, and
+/// nothing else. Its 12 lighting fixtures and 2 thermostats (data devices,
+/// IFC4 `IfcElectricAppliance`) are Revit's 14 `IfcFlowTerminal`s, its 5
+/// fire alarm devices (IFC4 `IfcAlarm`) are Revit's
+/// `IfcDistributionControlElement`s, and its switches, sensors, receptacles,
+/// junction boxes and panels are Revit's 30 proxies. The symbols nested in
+/// the switches and receptacles are left out, as Revit leaves them out.
+#[test]
+fn revit_2025_electrical_devices_are_revits_own() {
+    let Some((rvt, ifc)) = re1("Electrical") else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR has no RE1-Electrical.rvt/.ifc");
+        return;
+    };
+    let (step, reference) = export_and_reference(&rvt, &ifc);
+    let fixtures = tags(&step, &["IFCLIGHTFIXTURE"]);
+    assert_eq!(fixtures.len(), 12);
+    let terminals = tags(&reference, &["IFCFLOWTERMINAL"]);
+    assert_eq!(terminals.len(), 14);
+    assert_eq!(
+        tags(&step, &["IFCLIGHTFIXTURE", "IFCELECTRICAPPLIANCE"]),
+        terminals,
+        "lighting fixtures and data devices"
+    );
+    assert_eq!(
+        tags(&step, &["IFCALARM"]),
+        tags(&reference, &["IFCDISTRIBUTIONCONTROLELEMENT"]),
+        "fire alarm devices"
+    );
+    let proxies = tags(&reference, &["IFCBUILDINGELEMENTPROXY"]);
+    assert_eq!(proxies.len(), 30);
+    assert_eq!(
+        tags(&step, &["IFCBUILDINGELEMENTPROXY"]),
+        proxies,
+        "devices and equipment"
+    );
+    // Every entity carrying a numeric `Tag` is one of those
+    // (IfcOwnerHistory's 8th attribute is its creation time, not a Tag, and
+    // a type object's is its type's ElementId).
+    let entities: Vec<&str> = step
+        .lines()
+        .filter_map(|line| {
+            line.split_once('=')?
+                .1
+                .split_once('(')
+                .map(|(e, _)| e.trim())
+        })
+        .filter(|entity| *entity != "IFCOWNERHISTORY" && !entity.ends_with("TYPE"))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut all = terminals;
+    all.extend(tags(&reference, &["IFCDISTRIBUTIONCONTROLELEMENT"]));
+    all.extend(proxies);
+    assert_eq!(tags(&step, &entities), all, "nothing else is exported");
+}

@@ -1,0 +1,730 @@
+//! Lightweight IFC4 STEP comparison for export QA.
+//!
+//! Parses ISO-10303-21 text without a full EXPRESS engine and summarizes
+//! the dimensions that matter when comparing an `rvt-open` export against a
+//! reference IFC (for example a Revit IFC export of the same model):
+//!
+//! - entity-type histograms
+//! - building storey names + elevations
+//! - axis-aligned bbox from `IFCCARTESIANPOINT` coordinates
+//! - product object names/types (`IfcWall`, `IfcDoor`, …)
+//! - material names
+//! - property single-value keys
+//!
+//! This is deliberately approximate: STEP string escaping, multi-line
+//! entities, and nested lists are handled well enough for rvt-open and
+//! common Revit exports, not as a general STEP validator.
+
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Snapshot of structural facts extracted from one IFC STEP file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct IfcFileSummary {
+    /// Uppercase entity type → occurrence count (DATA section only).
+    pub entity_counts: BTreeMap<String, usize>,
+    /// Storeys in file order: `(name, elevation)`, the elevation in metres
+    /// when the file declares its length unit, else as written.
+    pub storeys: Vec<StoreySummary>,
+    /// Axis-aligned bbox over all Cartesian points with ≥2 coords, in
+    /// metres when the file declares its length unit, else as written.
+    pub bounding_box: Option<BoundingBox>,
+    /// Product-like entities: type + Name attribute when present.
+    pub objects: Vec<ObjectSummary>,
+    /// Distinct `IfcMaterial` names (empty string if unnamed).
+    pub materials: BTreeSet<String>,
+    /// Distinct `IfcPropertySingleValue` Name keys.
+    pub property_keys: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct StoreySummary {
+    pub name: String,
+    pub elevation: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct BoundingBox {
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub struct ObjectSummary {
+    pub ifc_type: String,
+    pub name: String,
+}
+
+/// Side-by-side comparison of two [`IfcFileSummary`] values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct IfcCompareReport {
+    pub left_label: String,
+    pub right_label: String,
+    pub left: IfcFileSummary,
+    pub right: IfcFileSummary,
+    pub entity_count_deltas: BTreeMap<String, CountDelta>,
+    pub storeys_only_left: Vec<StoreySummary>,
+    pub storeys_only_right: Vec<StoreySummary>,
+    pub objects_only_left: Vec<ObjectSummary>,
+    pub objects_only_right: Vec<ObjectSummary>,
+    pub materials_only_left: Vec<String>,
+    pub materials_only_right: Vec<String>,
+    pub property_keys_only_left: Vec<String>,
+    pub property_keys_only_right: Vec<String>,
+    pub bounding_box_delta: Option<BoundingBoxDelta>,
+    /// Human-oriented notes (known catalogued divergences, empty sides, …).
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct CountDelta {
+    pub left: usize,
+    pub right: usize,
+    pub delta: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct BoundingBoxDelta {
+    pub left: Option<BoundingBox>,
+    pub right: Option<BoundingBox>,
+    /// Absolute max-corner / min-corner differences when both present.
+    pub max_extent_delta: Option<[f64; 3]>,
+}
+
+/// Parse an IFC STEP document into a comparable summary.
+///
+/// Lengths (storey elevations, the bounding box) are converted to metres
+/// by the file's own `LENGTHUNIT` ([`length_unit_scale_to_metres`]), so an
+/// export in metres compares with Revit's in feet or millimetres.
+pub fn summarize_ifc_step(text: &str) -> IfcFileSummary {
+    let mut summary = IfcFileSummary::default();
+    let scale = length_unit_scale_to_metres(text).unwrap_or(1.0);
+    let mut bbox_min = [f64::INFINITY; 3];
+    let mut bbox_max = [f64::NEG_INFINITY; 3];
+    let mut saw_point = false;
+
+    for entity in iter_data_entities(text) {
+        let (type_name, args) = match split_entity(&entity) {
+            Some(parts) => parts,
+            None => continue,
+        };
+        *summary.entity_counts.entry(type_name.clone()).or_insert(0) += 1;
+
+        match type_name.as_str() {
+            "IFCBUILDINGSTOREY" => {
+                let name = nth_string_arg(&args, 2).unwrap_or_else(|| "(unnamed)".into());
+                let elevation = trailing_numeric_arg(&args).map(|e| e * scale);
+                summary.storeys.push(StoreySummary { name, elevation });
+            }
+            "IFCCARTESIANPOINT" => {
+                if let Some(coords) = parse_coord_list(&args) {
+                    let dims = coords.len().min(3);
+                    for i in 0..dims {
+                        saw_point = true;
+                        bbox_min[i] = bbox_min[i].min(coords[i] * scale);
+                        bbox_max[i] = bbox_max[i].max(coords[i] * scale);
+                    }
+                    // 2D points: treat Z as 0 for bbox completeness.
+                    if dims == 2 {
+                        saw_point = true;
+                        bbox_min[2] = bbox_min[2].min(0.0);
+                        bbox_max[2] = bbox_max[2].max(0.0);
+                    }
+                }
+            }
+            "IFCMATERIAL" => {
+                let name = nth_string_arg(&args, 0).unwrap_or_default();
+                summary.materials.insert(name);
+            }
+            "IFCPROPERTYSINGLEVALUE" => {
+                if let Some(key) = nth_string_arg(&args, 0) {
+                    summary.property_keys.insert(key);
+                }
+            }
+            other if is_product_type(other) => {
+                let name = nth_string_arg(&args, 2).unwrap_or_default();
+                summary.objects.push(ObjectSummary {
+                    ifc_type: type_name,
+                    name,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    if saw_point {
+        summary.bounding_box = Some(BoundingBox {
+            min: bbox_min,
+            max: bbox_max,
+        });
+    }
+
+    summary.objects.sort();
+    summary
+}
+
+/// Compare two summaries. `left` is typically the rvt-open export;
+/// `right` is the reference (for example Revit IFC).
+pub fn compare_summaries(
+    left_label: impl Into<String>,
+    left: IfcFileSummary,
+    right_label: impl Into<String>,
+    right: IfcFileSummary,
+) -> IfcCompareReport {
+    let left_label = left_label.into();
+    let right_label = right_label.into();
+
+    let mut types: BTreeSet<&str> = BTreeSet::new();
+    types.extend(left.entity_counts.keys().map(String::as_str));
+    types.extend(right.entity_counts.keys().map(String::as_str));
+
+    let mut entity_count_deltas = BTreeMap::new();
+    for ty in types {
+        let l = *left.entity_counts.get(ty).unwrap_or(&0);
+        let r = *right.entity_counts.get(ty).unwrap_or(&0);
+        if l != r {
+            entity_count_deltas.insert(
+                ty.to_string(),
+                CountDelta {
+                    left: l,
+                    right: r,
+                    delta: l as i64 - r as i64,
+                },
+            );
+        }
+    }
+
+    let left_storey_keys: BTreeSet<(String, Option<String>)> = left
+        .storeys
+        .iter()
+        .map(|s| (s.name.clone(), s.elevation.map(|e| format!("{e:.6}"))))
+        .collect();
+    let right_storey_keys: BTreeSet<(String, Option<String>)> = right
+        .storeys
+        .iter()
+        .map(|s| (s.name.clone(), s.elevation.map(|e| format!("{e:.6}"))))
+        .collect();
+
+    let storeys_only_left: Vec<StoreySummary> = left
+        .storeys
+        .iter()
+        .filter(|s| {
+            !right_storey_keys.contains(&(s.name.clone(), s.elevation.map(|e| format!("{e:.6}"))))
+        })
+        .cloned()
+        .collect();
+    let storeys_only_right: Vec<StoreySummary> = right
+        .storeys
+        .iter()
+        .filter(|s| {
+            !left_storey_keys.contains(&(s.name.clone(), s.elevation.map(|e| format!("{e:.6}"))))
+        })
+        .cloned()
+        .collect();
+
+    let left_objects: BTreeSet<_> = left.objects.iter().cloned().collect();
+    let right_objects: BTreeSet<_> = right.objects.iter().cloned().collect();
+    let objects_only_left: Vec<_> = left_objects.difference(&right_objects).cloned().collect();
+    let objects_only_right: Vec<_> = right_objects.difference(&left_objects).cloned().collect();
+
+    let materials_only_left: Vec<_> = left
+        .materials
+        .difference(&right.materials)
+        .cloned()
+        .collect();
+    let materials_only_right: Vec<_> = right
+        .materials
+        .difference(&left.materials)
+        .cloned()
+        .collect();
+
+    let property_keys_only_left: Vec<_> = left
+        .property_keys
+        .difference(&right.property_keys)
+        .cloned()
+        .collect();
+    let property_keys_only_right: Vec<_> = right
+        .property_keys
+        .difference(&left.property_keys)
+        .cloned()
+        .collect();
+
+    let bounding_box_delta = match (&left.bounding_box, &right.bounding_box) {
+        (None, None) => None,
+        (l, r) => {
+            let max_extent_delta = match (l, r) {
+                (Some(a), Some(b)) => Some([
+                    (a.max[0] - a.min[0]) - (b.max[0] - b.min[0]),
+                    (a.max[1] - a.min[1]) - (b.max[1] - b.min[1]),
+                    (a.max[2] - a.min[2]) - (b.max[2] - b.min[2]),
+                ]),
+                _ => None,
+            };
+            Some(BoundingBoxDelta {
+                left: l.clone(),
+                right: r.clone(),
+                max_extent_delta,
+            })
+        }
+    };
+
+    let mut notes = Vec::new();
+    notes.extend(catalogued_divergence_notes(&entity_count_deltas));
+    if left.objects.is_empty() && !right.objects.is_empty() {
+        notes.push(
+            "Left IFC has no product entities; rvt-open may still be scaffold-only for this input."
+                .into(),
+        );
+    }
+
+    IfcCompareReport {
+        left_label,
+        right_label,
+        left,
+        right,
+        entity_count_deltas,
+        storeys_only_left,
+        storeys_only_right,
+        objects_only_left,
+        objects_only_right,
+        materials_only_left,
+        materials_only_right,
+        property_keys_only_left,
+        property_keys_only_right,
+        bounding_box_delta,
+        notes,
+    }
+}
+
+/// Render a concise human-readable summary for stdout.
+pub fn format_human_report(report: &IfcCompareReport) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "=== IFC compare: {}  vs  {} ===\n",
+        report.left_label, report.right_label
+    ));
+
+    let left_total: usize = report.left.entity_counts.values().sum();
+    let right_total: usize = report.right.entity_counts.values().sum();
+    out.push_str(&format!(
+        "entities: left={left_total} right={right_total} differing_types={}\n",
+        report.entity_count_deltas.len()
+    ));
+
+    if !report.entity_count_deltas.is_empty() {
+        out.push_str("entity count deltas (left - right):\n");
+        for (ty, d) in report.entity_count_deltas.iter().take(40) {
+            out.push_str(&format!(
+                "  {ty:<28} left={:<5} right={:<5} delta={:+}\n",
+                d.left, d.right, d.delta
+            ));
+        }
+        if report.entity_count_deltas.len() > 40 {
+            out.push_str(&format!(
+                "  … {} more types\n",
+                report.entity_count_deltas.len() - 40
+            ));
+        }
+    }
+
+    out.push_str(&format!(
+        "storeys: left={} right={} only_left={} only_right={}\n",
+        report.left.storeys.len(),
+        report.right.storeys.len(),
+        report.storeys_only_left.len(),
+        report.storeys_only_right.len()
+    ));
+    out.push_str(&format!(
+        "objects: left={} right={} only_left={} only_right={}\n",
+        report.left.objects.len(),
+        report.right.objects.len(),
+        report.objects_only_left.len(),
+        report.objects_only_right.len()
+    ));
+    out.push_str(&format!(
+        "materials: left={} right={} only_left={} only_right={}\n",
+        report.left.materials.len(),
+        report.right.materials.len(),
+        report.materials_only_left.len(),
+        report.materials_only_right.len()
+    ));
+    out.push_str(&format!(
+        "property keys: left={} right={} only_left={} only_right={}\n",
+        report.left.property_keys.len(),
+        report.right.property_keys.len(),
+        report.property_keys_only_left.len(),
+        report.property_keys_only_right.len()
+    ));
+
+    match &report.bounding_box_delta {
+        Some(bb) => match (&bb.left, &bb.right, bb.max_extent_delta) {
+            (Some(l), Some(r), Some(d)) => {
+                out.push_str(&format!(
+                    "bbox extent delta (left-right): [{:.4}, {:.4}, {:.4}]\n",
+                    d[0], d[1], d[2]
+                ));
+                out.push_str(&format!(
+                    "  left  min {:?} max {:?}\n  right min {:?} max {:?}\n",
+                    l.min, l.max, r.min, r.max
+                ));
+            }
+            (Some(_), None, _) => out.push_str("bbox: present on left only\n"),
+            (None, Some(_), _) => out.push_str("bbox: present on right only\n"),
+            _ => out.push_str("bbox: unavailable on both sides\n"),
+        },
+        None => out.push_str("bbox: unavailable on both sides\n"),
+    }
+
+    if !report.notes.is_empty() {
+        out.push_str("notes:\n");
+        for note in &report.notes {
+            out.push_str(&format!("  - {note}\n"));
+        }
+    }
+
+    out
+}
+
+fn catalogued_divergence_notes(deltas: &BTreeMap<String, CountDelta>) -> Vec<String> {
+    let mut notes = Vec::new();
+    // Keep these tied to the OPEN issue that tracks each type's remaining
+    // gap so QA reports stay honest. Revit 2024 partition element records
+    // closed the recall issues for walls, doors,
+    // windows and slabs; what is left is geometry residuals, storey
+    // containment, compound layers and spaces.
+    const CATALOGUE: &[(&str, &str)] = &[
+        (
+            "IFCWALL",
+            "Revit 2024 wall set is exact; bodies match Revit on 351 of 360 after the join reference list, and the 9 remaining over-trimmed ends at true L corners are tracked. Earlier releases: 2023 ArcWall only, 2024 ArcWall records tracked.",
+        ),
+        (
+            "IFCDOOR",
+            "Revit 2024 door set and host binding are exact; the opening cut from the wall location curve is tracked.",
+        ),
+        (
+            "IFCSLAB",
+            "Revit 2024 slabs carry sketch-line profiles; plate storey containment is tracked.",
+        ),
+        (
+            "IFCSPACE",
+            "Revit 2024 room set, names, numbers and storeys are exact; the outline is the room's stored solid's, and a room whose solid does not close keeps its bounding box.",
+        ),
+        (
+            "IFCWINDOW",
+            "Revit 2024 window set and host binding are exact; window storey containment is tracked.",
+        ),
+        (
+            "IFCMATERIALLAYERSETUSAGE",
+            "rvt-open writes a layer set for each wall, floor, roof and ceiling whose body is as thick as its type's layers; a Reference View export such as Revit's IFC4 writes none, and elements drawn whole get none.",
+        ),
+        (
+            "IFCOPENINGELEMENT",
+            "Opening, void and fill chain is emitted per host binding; the true opening cut is tracked.",
+        ),
+    ];
+    for (ty, note) in CATALOGUE {
+        if deltas.contains_key(*ty) {
+            notes.push((*note).to_string());
+        }
+    }
+    notes
+}
+
+fn is_product_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "IFCWALL"
+            | "IFCWALLSTANDARDCASE"
+            | "IFCSLAB"
+            | "IFCROOF"
+            | "IFCCEILING"
+            | "IFCCOVERING"
+            | "IFCDOOR"
+            | "IFCWINDOW"
+            | "IFCCOLUMN"
+            | "IFCBEAM"
+            | "IFCMEMBER"
+            | "IFCSTAIR"
+            | "IFCRAILING"
+            | "IFCSPACE"
+            | "IFCBUILDINGELEMENTPROXY"
+            | "IFCFURNISHINGELEMENT"
+            | "IFCFLOWTERMINAL"
+            | "IFCFLOWSEGMENT"
+            | "IFCOPENINGELEMENT"
+    )
+}
+
+/// Metres per unit of the file's `LENGTHUNIT`: the `IfcSIUnit` (with its
+/// prefix) or `IfcConversionBasedUnit` (its `IfcMeasureWithUnit` ratio times
+/// its SI unit) that the `IfcProject`'s `UnitsInContext` assigns. `None`
+/// when the file declares none.
+pub fn length_unit_scale_to_metres(text: &str) -> Option<f64> {
+    let entities: BTreeMap<u32, (String, Vec<String>)> = iter_numbered_entities(text)
+        .filter_map(|(id, entity)| {
+            let (type_name, args) = split_entity(&entity)?;
+            Some((id, (type_name, split_top_level_args(&args))))
+        })
+        .collect();
+    let reference = |arg: &str| arg.trim().strip_prefix('#')?.parse::<u32>().ok();
+    let enumeration = |arg: &str| arg.trim().trim_matches('.').to_ascii_uppercase();
+    let si_scale = |args: &[String]| -> f64 {
+        match args.get(2).map(|prefix| enumeration(prefix)).as_deref() {
+            Some("EXA") => 1e18,
+            Some("PETA") => 1e15,
+            Some("TERA") => 1e12,
+            Some("GIGA") => 1e9,
+            Some("MEGA") => 1e6,
+            Some("KILO") => 1e3,
+            Some("HECTO") => 1e2,
+            Some("DECA") => 1e1,
+            Some("DECI") => 1e-1,
+            Some("CENTI") => 1e-2,
+            Some("MILLI") => 1e-3,
+            Some("MICRO") => 1e-6,
+            Some("NANO") => 1e-9,
+            Some("PICO") => 1e-12,
+            Some("FEMTO") => 1e-15,
+            Some("ATTO") => 1e-18,
+            _ => 1.0,
+        }
+    };
+    let (_, project) = entities.values().find(|(ty, _)| ty == "IFCPROJECT")?;
+    let (_, assignment) = entities.get(&reference(project.get(8)?)?)?;
+    let units = assignment.first()?.trim();
+    let units = units.strip_prefix('(')?.strip_suffix(')')?;
+    for unit in split_top_level_args(units) {
+        let Some((ty, args)) = reference(&unit).and_then(|id| entities.get(&id)) else {
+            continue;
+        };
+        if args.get(1).map(|kind| enumeration(kind)).as_deref() != Some("LENGTHUNIT") {
+            continue;
+        }
+        if ty == "IFCSIUNIT" {
+            return Some(si_scale(args));
+        }
+        if ty == "IFCCONVERSIONBASEDUNIT" {
+            let (_, measure) = entities.get(&reference(args.get(3)?)?)?;
+            let value = measure.first()?.trim();
+            let ratio = value
+                .split_once('(')
+                .and_then(|(_, rest)| rest.strip_suffix(')'))
+                .unwrap_or(value)
+                .trim()
+                .parse::<f64>()
+                .ok()?;
+            let (base_type, base) = entities.get(&reference(measure.get(1)?)?)?;
+            return (base_type == "IFCSIUNIT").then(|| ratio * si_scale(base));
+        }
+    }
+    None
+}
+
+/// Every `#id=ENTITY(...)` of the DATA section with its id.
+fn iter_numbered_entities(text: &str) -> impl Iterator<Item = (u32, String)> + '_ {
+    let data = extract_data_section(text);
+    let mut out = Vec::new();
+    let mut rest = data;
+    while let Some(hash) = rest.find('#') {
+        rest = &rest[hash..];
+        let Some(eq) = rest.find('=') else { break };
+        let id = rest[1..eq].trim().parse::<u32>().ok();
+        let after_eq = &rest[eq + 1..];
+        let Some(end) = find_entity_end(after_eq) else {
+            break;
+        };
+        let entity = after_eq[..end].trim();
+        if let Some(id) = id.filter(|_| !entity.is_empty()) {
+            out.push((id, entity.to_string()));
+        }
+        rest = &after_eq[end + 1..];
+    }
+    out.into_iter()
+}
+
+fn iter_data_entities(text: &str) -> impl Iterator<Item = String> + '_ {
+    let data = extract_data_section(text);
+    let mut out = Vec::new();
+    let mut rest = data;
+    while let Some(hash) = rest.find('#') {
+        rest = &rest[hash..];
+        let Some(eq) = rest.find('=') else { break };
+        let after_eq = &rest[eq + 1..];
+        let Some(end) = find_entity_end(after_eq) else {
+            break;
+        };
+        let entity = after_eq[..end].trim();
+        if !entity.is_empty() {
+            out.push(entity.to_string());
+        }
+        rest = &after_eq[end + 1..];
+    }
+    out.into_iter()
+}
+
+fn extract_data_section(text: &str) -> &str {
+    let upper = text; // STEP keywords are conventionally uppercase
+    if let Some(start) = find_ci(upper, "DATA;") {
+        let body = &upper[start + 5..];
+        if let Some(end) = find_ci(body, "ENDSEC;") {
+            return &body[..end];
+        }
+        return body;
+    }
+    text
+}
+
+fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+fn find_entity_end(s: &str) -> Option<usize> {
+    let mut in_string = false;
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if in_string {
+            if c == '\'' {
+                // STEP doubled quote ''
+                if matches!(chars.peek(), Some((_, '\''))) {
+                    chars.next();
+                    continue;
+                }
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '\'' => in_string = true,
+            ';' => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn split_entity(entity: &str) -> Option<(String, String)> {
+    let entity = entity.trim().trim_end_matches(';').trim();
+    let paren = entity.find('(')?;
+    let type_name = entity[..paren].trim().to_ascii_uppercase();
+    if type_name.is_empty() {
+        return None;
+    }
+    // TYPE(args) — strip the matching outer call parentheses only.
+    let inner = entity[paren + 1..].trim_end();
+    let args = inner.strip_suffix(')').unwrap_or(inner).to_string();
+    Some((type_name, args))
+}
+
+fn nth_string_arg(args: &str, n: usize) -> Option<String> {
+    let parts = split_top_level_args(args);
+    let raw = parts.get(n)?;
+    parse_step_string(raw.trim())
+}
+
+fn trailing_numeric_arg(args: &str) -> Option<f64> {
+    let parts = split_top_level_args(args);
+    let last = parts.last()?.trim();
+    if last == "$" || last.is_empty() {
+        return None;
+    }
+    last.parse::<f64>().ok()
+}
+
+fn parse_coord_list(args: &str) -> Option<Vec<f64>> {
+    let trimmed = args.trim();
+    let list_src = if trimmed.starts_with('(') {
+        trimmed.to_string()
+    } else {
+        split_top_level_args(trimmed).into_iter().next()?
+    };
+    let t = list_src.trim();
+    let inner = t
+        .strip_prefix('(')?
+        .strip_suffix(')')
+        .unwrap_or(t.strip_prefix('(')?);
+    let mut coords = Vec::new();
+    for part in inner.split(',') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        coords.push(p.parse::<f64>().ok()?);
+    }
+    if coords.len() >= 2 {
+        Some(coords)
+    } else {
+        None
+    }
+}
+
+fn split_top_level_args(args: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut chars = args.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_string {
+            cur.push(c);
+            if c == '\'' {
+                if matches!(chars.peek(), Some('\'')) {
+                    cur.push(chars.next().unwrap());
+                    continue;
+                }
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '\'' => {
+                in_string = true;
+                cur.push(c);
+            }
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => {
+                out.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn parse_step_string(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw == "$" {
+        return Some(String::new());
+    }
+    let inner = raw.strip_prefix('\'')?.strip_suffix('\'')?;
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' && matches!(chars.peek(), Some('\'')) {
+            chars.next();
+            out.push('\'');
+        } else {
+            out.push(c);
+        }
+    }
+    Some(out)
+}

@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Privacy posture: this page performs ZERO network fetches
+      beyond loading its own JS/WASM bundles from the origin. No
+      analytics, no CDNs for fonts or scripts, no telemetry. Every
+      dropped RVT is parsed in this tab and discarded when the tab
+      closes. See docs/viewer-privacy-posture.md.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' blob:;" />
+    <title>rvt-open viewer: open Revit files in your browser</title>
+    <meta name="color-scheme" content="light dark" />
+    <!-- The two faces load with the page, never after a file is opened. -->
+    <link rel="preload" href="/src/fonts/space-grotesk-latin-wght.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/src/fonts/jetbrains-mono-latin-wght.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/src/tokens.css" />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#viewport">Skip to viewport</a>
+    <!--
+      Layout: the 3-D view fills the window, and everything else floats over
+      it: the icon rail, the top bar with the one Export menu, the scene tree
+      on the left and the details panel on the right. On a phone the rail
+      becomes a bottom tab bar and the panels a bottom sheet (src/layout.ts).
+    -->
+    <div id="app" data-left="open" data-right="open">
+      <nav class="rail panel" id="rail" aria-label="Panels">
+        <a class="rail-logo" href="../" aria-label="rvt-open home page"><span aria-hidden="true"></span></a>
+        <button class="rail-btn" type="button" id="toggle-left" aria-controls="sidebar-left" aria-pressed="true" title="Scene tree and categories">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7" /></svg>
+          <span class="rail-label">Model</span>
+        </button>
+        <button class="rail-btn" type="button" id="toggle-right" aria-controls="sidebar-right" aria-pressed="true" title="File status, element details and schedule">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 11v5M12 8h.01" /></svg>
+          <span class="rail-label">Details</span>
+        </button>
+        <span class="rail-space"></span>
+        <button class="rail-btn" type="button" id="open-file" title="Open a Revit file">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 20h16" /></svg>
+          <span class="rail-label">Open</span>
+        </button>
+      </nav>
+
+      <header role="banner" class="topbar panel">
+        <h1>rvt-open <span>viewer</span></h1>
+        <span class="meta" id="file-meta">Drop a .rvt, .rfa, .rte, .rft, .dwg or .dxf file anywhere</span>
+        <span class="grow"></span>
+        <span class="quality-pill" id="export-quality" aria-live="polite">Quality pending</span>
+        <span class="export-hint" id="export-hint">Open a file to export</span>
+        <div class="export-wrap">
+          <button class="export-toggle" id="export-toggle" type="button" aria-expanded="false" aria-controls="export-menu">
+            Export <span aria-hidden="true" class="chev"></span>
+          </button>
+          <div class="export-menu panel" id="export-menu" role="group" aria-label="Exports" hidden>
+            <div class="export-mode-row">
+              <label for="export-mode" title="How strict the IFC export is. Stronger bars refuse a file that only decodes as a scaffold.">IFC bar</label>
+              <select class="mode-select" id="export-mode" aria-label="IFC export quality mode">
+                <option value="scaffold" selected>scaffold</option>
+                <option value="typed-no-geometry">typed-no-geometry</option>
+                <option value="geometry">geometry</option>
+                <option value="strict">strict</option>
+              </select>
+            </div>
+            <button class="export-btn primary" id="export-ifc" disabled type="button" title="Download as IFC4 STEP · quality label reflects decoded coverage" aria-label="Export IFC">
+              <span class="t">IFC4</span><span class="d">Coordination and model checking · .ifc</span>
+            </button>
+            <button class="export-btn" id="export-glb" disabled type="button" title="Download 3D model as glTF 2.0 binary" aria-label="Export glTF">
+              <span class="t">glTF 2.0</span><span class="d">Web viewers and game engines · .glb</span>
+            </button>
+            <button class="export-btn" id="export-pdf3d" disabled type="button" title="Download a 3D PDF: the model as U3D in a PDF 3D annotation, built in this tab" aria-label="Export 3D PDF">
+              <span class="t">3D PDF</span><span class="d">Opens in a PDF reader · .pdf</span>
+            </button>
+            <button class="export-btn" id="export-svg" disabled type="button" title="Download 2D plan view as SVG" aria-label="Export plan SVG">
+              <span class="t">Plan SVG</span><span class="d">A floor plan drawing · .svg</span>
+            </button>
+            <div class="drawing-only" id="export-drawing" role="group" aria-label="Drawing exports">
+              <button class="export-btn" id="export-dwg-entities" type="button" data-table="entities" aria-label="Export entities table CSV">
+                <span class="t">Entities</span><span class="d">Every entity, one row each · .csv</span>
+              </button>
+              <button class="export-btn" id="export-dwg-entities-jsonl" type="button" data-table="entities.jsonl" aria-label="Export entities JSON Lines">
+                <span class="t">Entities JSONL</span><span class="d">The same rows as JSON Lines · .jsonl</span>
+              </button>
+              <button class="export-btn" id="export-dwg-summary" type="button" data-table="summary" aria-label="Export summary table CSV">
+                <span class="t">Summary</span><span class="d">Counts by type and layer · .csv</span>
+              </button>
+              <button class="export-btn" id="export-dwg-layers" type="button" data-table="layers" aria-label="Export layers table CSV">
+                <span class="t">Layers</span><span class="d">Layer table · .csv</span>
+              </button>
+              <button class="export-btn" id="export-dwg-blocks" type="button" data-table="blocks" aria-label="Export blocks table CSV">
+                <span class="t">Blocks</span><span class="d">Block definitions · .csv</span>
+              </button>
+              <button class="export-btn" id="export-dwg-svg" type="button" aria-label="Export current layout as SVG">
+                <span class="t">Layout SVG</span><span class="d">The layout shown in the pane · .svg</span>
+              </button>
+              <button class="export-btn" id="export-dwg-dxf" type="button" data-format="dxf" aria-label="Export DXF 2018">
+                <span class="t">DXF 2018</span><span class="d">Saved in this tab · .dxf</span>
+              </button>
+              <button class="export-btn" id="export-dwg-dwg" type="button" data-format="dwg" aria-label="Export DWG 2018">
+                <span class="t">DWG 2018</span><span class="d">Saved in this tab · .dwg</span>
+              </button>
+            </div>
+            <p class="export-foot">Element and room schedules (CSV) are in the Details panel, under Schedule.</p>
+          </div>
+        </div>
+      </header>
+
+      <aside id="sidebar-left" class="panel side" aria-label="Scene tree and categories">
+        <section class="drawing-only" id="drawing-layers-section" aria-labelledby="drawing-layers-heading">
+          <h2 id="drawing-layers-heading">Layers</h2>
+          <div class="drawing-layer-actions">
+            <button class="side-btn" id="drawing-layers-on" type="button">All on</button>
+            <button class="side-btn" id="drawing-layers-off" type="button">All off</button>
+          </div>
+          <div id="drawing-layers" role="group" aria-labelledby="drawing-layers-heading"></div>
+        </section>
+        <h2 id="scene-tree-heading" class="rvt-only">Scene tree</h2>
+        <div class="tree-filter rvt-only">
+          <input
+            id="tree-filter"
+            type="search"
+            placeholder="Filter by name, type or ElementId"
+            aria-label="Filter the scene tree"
+            aria-controls="tree"
+            aria-describedby="tree-filter-status"
+            autocomplete="off"
+            spellcheck="false"
+            disabled
+          />
+          <div id="tree-filter-status" class="tree-filter-status" aria-live="polite"></div>
+        </div>
+        <div id="tree" class="rvt-only" role="tree" aria-labelledby="scene-tree-heading"></div>
+        <h2 id="categories-heading" class="rvt-only">Categories</h2>
+        <div id="categories" class="rvt-only" role="group" aria-labelledby="categories-heading"></div>
+      </aside>
+
+      <main id="viewport" tabindex="-1" aria-label="3D viewport">
+        <div id="dropzone" role="region" aria-label="Open a Revit file">
+          <div class="dz-inner">
+            <div class="open-row">
+              <div class="drop-target panel">
+                <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 16V5m0 0-4 4m4-4 4 4M5 19h14" /></svg>
+                <div class="big">Drop a Revit file here</div>
+                <div class="hint">
+                  .rvt, .rfa, .rte or .rft. The file is read in this tab: no upload, no account,
+                  no tracking. Revit 2023, 2024 and 2025 projects open with their walls, doors,
+                  windows, floors, roofs, stairs, furniture and fixtures under Revit's own ElementIds
+                  and names; other releases and family files open with their metadata and schema.
+                  See <a href="https://github.com/helenkwok/rvt-open/blob/main/docs/viewer-privacy-posture.md">privacy</a>
+                  and <a href="https://github.com/helenkwok/rvt-open/blob/main/docs/status.md">status</a>.
+                </div>
+                <div id="app-version" class="hint version"></div>
+                <div class="hint version">Apache-2.0 · <a href="https://github.com/helenkwok/rvt-open/blob/main/LICENSE">LICENSE</a> · <a href="https://github.com/helenkwok/rvt-open/blob/main/NOTICE">NOTICE</a></div>
+                <button id="pick-file" type="button" aria-controls="file-input">Choose file…</button>
+                <input id="file-input" type="file" accept=".rvt,.rfa,.rte,.rft,.dwg,.dxf" hidden aria-label="Revit, DWG or DXF file picker" />
+              </div>
+              <section id="demo-gallery" class="panel" aria-label="Redistributable demo gallery">
+                <h2>Sample files</h2>
+                <div class="gallery-attribution" id="demo-attribution">Loading redistributable demos…</div>
+                <div id="demo-list" role="list"></div>
+              </section>
+            </div>
+            <section class="support-card panel" aria-labelledby="support-grid-heading">
+              <div class="support-card-grid">
+                <h2 id="support-grid-heading">What each Revit release opens with</h2>
+                <!-- Drawn from docs/support-matrix.json's releases table (main.ts). -->
+                <table class="support-grid" id="support-grid" aria-describedby="support-grid-legend"></table>
+                <ul class="support-legend" id="support-grid-legend"></ul>
+              </div>
+              <div class="support-card-rows" id="support-slot-canvas"></div>
+            </section>
+          </div>
+        </div>
+        <!--
+          Loading treatment. The bar sweeps until the decoder reports a stage
+          with a count (rvt::control::Stage), then fills with that
+          stage's own progress and names it; the elapsed seconds and the
+          size-derived expectation stay as the fallback before the first
+          report. A file likely to need more memory than a tab has says so
+          here before the decode. aria-hidden because #status already
+          announces every stage on the same polite channel.
+        -->
+        <div id="load-overlay" class="hidden" aria-hidden="true">
+          <div class="load-card panel">
+            <div id="load-step">Opening file</div>
+            <div
+              id="load-rail"
+              class="sweep-rail"
+              role="progressbar"
+              aria-label="Decoding progress"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            ></div>
+            <div id="load-metrics">
+              <span id="load-elapsed">0 s elapsed</span>
+              <span id="load-hint"></span>
+            </div>
+            <div id="load-warning" class="hidden" role="note"></div>
+            <div class="load-privacy">Parsed in this tab. Nothing is uploaded.</div>
+          </div>
+        </div>
+        <div id="scaffold-note" class="hidden">
+          <div class="note-card panel" role="note">
+            <div class="note-title" id="scaffold-note-title">Nothing to draw</div>
+            <p id="scaffold-note-body"></p>
+            <div class="note-actions">
+              <button class="note-btn" id="show-real-projects" type="button">
+                Show real projects
+              </button>
+              <button class="note-btn quiet" id="dismiss-scaffold-note" type="button">
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="drawing-pane" hidden>
+          <div class="drawing-toolbar panel" role="toolbar" aria-label="Drawing view">
+            <label for="drawing-layout">Layout</label>
+            <select class="mode-select" id="drawing-layout" aria-label="Layout"></select>
+            <button class="side-btn" id="drawing-fit" type="button" aria-label="Fit the drawing to the view" title="Fit (0)">Fit</button>
+          </div>
+          <div id="drawing-sheet" tabindex="0" role="region" aria-label="2D drawing. Drag to pan; wheel, + or - to zoom; 0 to fit."></div>
+        </div>
+        <div id="toast-region" aria-live="polite" aria-atomic="false"></div>
+        <div id="status" role="status" aria-live="polite">idle</div>
+      </main>
+
+      <aside id="sidebar-right" class="panel side" aria-label="File status and element details">
+        <h2>Element info</h2>
+        <div id="info-live" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+        <div id="info">Select an element in the 3-D view or scene tree (Enter / Space on a tree row). Double-click it or press F to zoom to it.</div>
+        <h2 class="rvt-only">Schedule</h2>
+        <div id="schedule-summary" class="rvt-only">
+          <!--
+            Only the total line announces. The per-type rows below it
+            are navigable content, not a status: reading the whole
+            breakdown aloud on every load would bury the one sentence
+            that actually changed.
+          -->
+          <div id="schedule-total" class="schedule-total" aria-live="polite">
+            Open a file to see the element breakdown.
+          </div>
+          <div id="schedule-groups" class="schedule-groups"></div>
+          <button class="side-btn" id="download-schedule" disabled type="button" aria-label="Download element schedule CSV" title="Every element the IFC export writes: type, level, material, placement, size, host. Opens in Excel, Sheets or LibreOffice.">Download element schedule (CSV)</button>
+          <button class="side-btn" id="download-rooms" disabled type="button" aria-label="Download room schedule CSV" title="Every space the IFC export writes (rooms, Areas and family instances written as spaces): number, name, level, area and kind.">Download room schedule (CSV)</button>
+        </div>
+        <h2>File status</h2>
+        <div class="status-panel" id="status-panel" aria-live="polite"></div>
+        <label class="option-toggle rvt-only" id="saved-meshes-toggle">
+          <input id="saved-meshes" type="checkbox" checked aria-describedby="saved-meshes-hint" />
+          Draw doors and windows from saved meshes
+        </label>
+        <p class="option-hint rvt-only" id="saved-meshes-hint">For Revit 2023 to 2027 files, as the command-line IFC export does. Off keeps each one's bounding box. Changing this reopens the open file.</p>
+        <label class="option-toggle hidden rvt-only" id="export-phase-field" for="export-phase">
+          <span>Phase</span>
+          <select class="mode-select" id="export-phase" aria-describedby="export-phase-hint"></select>
+        </label>
+        <p class="option-hint hidden rvt-only" id="export-phase-hint">The phase the model and its exports show, as rvt-ifc --phase chooses it; the last is the default. An element that does not exist in the phase, and a room whose own phase is not it, are left out. Where the last phase holds no room, the default shows the rooms of the latest phase that holds any; choosing a phase other than the default shows exactly that phase. Changing this reopens the open file.</p>
+        <button class="side-btn rvt-only" id="download-diagnostics" disabled type="button" aria-label="Download diagnostics JSON with the project's names replaced" title="The diagnostics with the file, project, level and material names replaced, so they can be posted publicly">Download diagnostics</button>
+        <details id="diagnostics-details" class="rvt-only">
+          <summary>Diagnostics details</summary>
+          <pre id="diagnostics-json" aria-label="Diagnostics JSON"></pre>
+        </details>
+        <details class="panel-details" id="mvp-workflow-details">
+          <summary>How to use it</summary>
+          <div class="mvp-workflow" id="mvp-workflow">
+            <strong>Open locally or pick a sample</strong> → read the Decode and Export rows above →
+            inspect the decoded elements → choose an IFC bar in the Export menu (scaffold is the
+            honest bar for synthetic files) → export after checking the quality label → download
+            diagnostics for partial exports. Typed elements come from Revit 2023, 2024 and 2025
+            projects, and experimentally from Revit 2008 to 2022, 2026 and 2027 projects; other
+            files export a scaffold.
+          </div>
+        </details>
+        <details class="panel-details" id="support-profile-home" hidden>
+          <summary>Supported profile</summary>
+        </details>
+        <div class="support-matrix" id="support-matrix" aria-label="Supported Revit file profile">
+          <details class="support-row">
+            <summary class="k">Formats</summary>
+            <span class="v">.rvt, .rfa, .rte, .rft — metadata/schema across verified Revit 2016–2026 family samples.</span>
+          </details>
+          <details class="support-row">
+            <summary class="k">Real projects</summary>
+            <span class="v">Core Interior (2024) opens from the gallery with walls, slabs, columns, doors, windows, rooms and real storeys, and Einhoven (2023) with its walls and storeys. Both come from magnetar-io/revit-test-datasets (MIT) and are the files the CI browser regression gates.</span>
+          </details>
+          <details class="support-row">
+            <summary class="k">Synthetics</summary>
+            <span class="v">The three synthetic sample files (architectural-2024, structural-2023, mep-2024) open cleanly but decode as scaffold ~25%. That is expected, not a fault.</span>
+          </details>
+          <details class="support-row">
+            <summary class="k">IFC now</summary>
+            <span class="v">Revit 2024 and 2025 projects export walls, doors, windows, columns, slabs, roofs, ceilings, stairs, railings, rooms, curtain-wall parts, furniture, casework, lighting and plumbing fixtures, equipment, ducts, pipes, structural framing and foundations, and site elements, each under the ElementId and, for family instances, the Family:Type name Revit's own export gives it. Bodies are bounding boxes, refined to sketched outlines for slabs, roofs and stair landings, roof planes along their slopes, trimmed runs for walls, beams along their axes, cylinders for pipes, and treads and risers for stair flights, spiral ones included; doors and windows are drawn from the meshes Revit saved for them where those decode whole. Revit 2023 projects export typed elements too, and Revit 2008 to 2022, 2026 and 2027 projects experimentally; other files export a valid scaffold. The typed / geometry / strict bars refuse a file that does not meet them.</span>
+          </details>
+          <details class="support-row">
+            <summary class="k">3-D view</summary>
+            <span class="v">Revit 2024 and 2025 walls, floors, roofs and ceilings are drawn as their layers, each in its material's shading colour, where the layers add up to the element's thickness. Other elements take their category's colour.</span>
+          </details>
+          <details class="support-row">
+            <summary class="k">Main target</summary>
+            <span class="v">Revit 2024/2025 projects: levels, walls, floors, doors, windows, rooms, materials, and the building products around them.</span>
+          </details>
+          <details class="support-row">
+            <summary class="k">Not ready</summary>
+            <span class="v">Element records outside Revit 2023 to 2025, which export only experimentally; true element geometry beyond bounding boxes and sketched outlines for most categories; most parameters; layer sets for elements drawn whole or sloped; some elements Revit's own export leaves out, such as opening-cut families and curtain panels with no resolved type, which rvt-open still exports; phase filtering; and semantic Revit editing.</span>
+          </details>
+          <a class="support-link" href="https://github.com/helenkwok/rvt-open/blob/main/docs/supported-profile.md">
+            Profile details
+          </a>
+          <a class="support-link" href="https://github.com/helenkwok/rvt-open/blob/main/docs/user-guide.md">
+            User guide
+          </a>
+          <a class="support-link" href="https://github.com/helenkwok/rvt-open/blob/main/docs/status.md">
+            Project status
+          </a>
+          <a class="support-link" href="https://github.com/helenkwok/rvt-open/blob/main/docs/diagnostic-semantics.md">
+            Diagnostic terms
+          </a>
+        </div>
+        <footer class="about" aria-label="About rvt-open">
+          rvt-open is open source under the Apache-2.0 licence:
+          <a href="https://github.com/helenkwok/rvt-open/blob/main/LICENSE">LICENSE</a> ·
+          <a href="https://github.com/helenkwok/rvt-open/blob/main/NOTICE">NOTICE</a> ·
+          <a href="https://github.com/helenkwok/rvt-open">source</a>.
+          Not affiliated with Autodesk; Revit is a trademark of Autodesk, Inc.
+        </footer>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/layout.ts"></script>
+  </body>
+</html>

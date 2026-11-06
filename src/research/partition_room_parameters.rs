@@ -1,0 +1,846 @@
+//! Room number / name / host Level from the Revit 2024 partition
+//! parameter block a room owns.
+//!
+//! A per-instance parameter *value* sits at a fixed
+//! negative offset from two copies of the owning `ElementId`, which is
+//! how the reader takes the `IFC Export As` override. A room's number and name
+//! are carried by the same shape, read from the other end: anchor on
+//! the owning `ElementId` and walk **forward**.
+//!
+//! ```text
+//! +0x000  u64  owning room ElementId
+//! +0x03c  u64  owning room ElementId   (confirmation; must agree)
+//! +0x044  u64  host Level ElementId
+//! +0x1f5  u32  room number length, in UTF-16 code units
+//! +0x1f9  2*n  room Number, UTF-16LE
+//! +…+ 8   u32  room name length, in UTF-16 code units   (8 bytes past
+//! +…+12   2*m  room Name, UTF-16LE                       the number)
+//! ```
+//!
+//! The name's offset is not fixed because the number's length is not:
+//! the name's length prefix sits [`NAME_GAP_AFTER_NUMBER`] bytes past
+//! the end of the number string, which is why the block is parsed
+//! forward from the owner rather than backward from either string.
+//!
+//! # Honesty
+//!
+//! - Every offset here is **measured**, on one file, over the 232
+//!   blocks that frame its 116 rooms. The parameter block's own header
+//!   is not decoded; these are fixed displacements inside it, exactly
+//!   as the two owner offsets are.
+//! - The scan is anchored on an ElementId the caller supplies, and it
+//!   requires the confirmation copy at [`OWNER_CONFIRM_OFFSET`] to
+//!   carry the same id. Measured over every one of the 26 425 ids
+//!   `Global/ElemTable` declares on `2024_Core_Interior.rvt`: the
+//!   framing accepts **116** of them and they are exactly the 116
+//!   rooms Revit's own export emits as `IfcSpace` — no other declared
+//!   id accepts it at all.
+//! - Recovery is **all or nothing per room**. A room framed by two
+//!   blocks that disagree resolves to nothing rather than to either.
+//!   On the recorded edge all 116 rooms are framed twice and no pair
+//!   disagrees.
+//! - The recovered `(number, name)` pairs were scored against the
+//!   reference export: 116 of 116 names equal the `IfcSpace.LongName`
+//!   Revit writes and 116 of 116 numbers equal its `IfcSpace.Name`.
+//! - The Level slot at [`LEVEL_OFFSET`] is returned verbatim. Nothing
+//!   here checks that it is a Level — the caller does, against the
+//!   `OST_Levels` id set, the same way
+//!   [`crate::element_record_level_refs`] does.
+
+use crate::le_bytes;
+use crate::{Result, RevitFile};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Releases where this framing is corpus-proven.
+pub const ROOM_PARAMETER_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024];
+
+/// Bytes from the owning ElementId to its confirmation copy.
+pub const OWNER_CONFIRM_OFFSET: usize = 0x3c;
+
+/// Bytes from the owning ElementId to the host Level ElementId.
+pub const LEVEL_OFFSET: usize = 0x44;
+
+/// Bytes from the owning ElementId to the number's `u32` length prefix.
+pub const NUMBER_LENGTH_OFFSET: usize = 505;
+
+/// Bytes from the end of the number string to the name's length prefix.
+pub const NAME_GAP_AFTER_NUMBER: usize = 8;
+
+/// Longest number / name the scan will accept, in UTF-16 code units.
+pub const MAX_VALUE_CHARS: usize = 64;
+
+/// Value recorded for where a recovered room number / name came from.
+pub const ROOM_PARAMETER_SOURCE: &str = "partition_room_parameter_block";
+
+/// One accepted room parameter block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomParameters {
+    /// Stream the block was found in, e.g. `"Partitions/46"`.
+    pub stream: String,
+    /// Byte offset of the owning ElementId in the inflated stream.
+    pub offset: usize,
+    /// The room this block belongs to.
+    pub element_id: u32,
+    /// Room number, e.g. `"66"`.
+    pub number: String,
+    /// Room name, e.g. `"Stair 2"`.
+    pub name: String,
+    /// Raw Level slot at [`LEVEL_OFFSET`], verbatim.
+    pub level_slot: u64,
+}
+
+impl RoomParameters {
+    /// The Level ElementId this block names, when it is one of
+    /// `level_ids`. Fail-closed on a slot outside the `u32` range or
+    /// outside the recovered Level set.
+    pub fn level_element_id(&self, level_ids: &BTreeSet<u32>) -> Option<u32> {
+        let id = u32::try_from(self.level_slot).ok()?;
+        level_ids.contains(&id).then_some(id)
+    }
+}
+
+/// Whether this release's room parameter framing is proven.
+pub fn supports_revit_version(revit_version: u32) -> bool {
+    ROOM_PARAMETER_SUPPORTED_REVIT_VERSIONS.contains(&revit_version)
+}
+
+/// A UTF-16LE string of `chars` code units at `at`, rejected when it
+/// holds a control character.
+fn utf16_at(buf: &[u8], at: usize, chars: usize) -> Option<String> {
+    if !(1..=MAX_VALUE_CHARS).contains(&chars) {
+        return None;
+    }
+    let bytes = buf.get(at..at.checked_add(chars.checked_mul(2)?)?)?;
+    let units: Vec<u16> = le_bytes::u16_units(bytes).collect();
+    let text = String::from_utf16(&units).ok()?;
+    if text.chars().any(char::is_control) {
+        return None;
+    }
+    Some(text)
+}
+
+/// Decode the room parameter block whose owning ElementId sits at
+/// `owner_at`, fail-closed.
+///
+/// Returns `None` unless the confirmation copy at
+/// [`OWNER_CONFIRM_OFFSET`] carries the same `element_id`, the name decodes as
+/// non-empty, control-free UTF-16LE and the number does, or is empty.
+pub fn decode_at(
+    stream: &str,
+    buf: &[u8],
+    owner_at: usize,
+    element_id: u32,
+) -> Option<RoomParameters> {
+    if le_bytes::u64_at(buf, owner_at)? != u64::from(element_id) {
+        return None;
+    }
+    let confirm_at = owner_at.checked_add(OWNER_CONFIRM_OFFSET)?;
+    if le_bytes::u64_at(buf, confirm_at)? != u64::from(element_id) {
+        return None;
+    }
+    let level_slot = le_bytes::u64_at(buf, owner_at.checked_add(LEVEL_OFFSET)?)?;
+
+    let number_len_at = owner_at.checked_add(NUMBER_LENGTH_OFFSET)?;
+    let number_chars = le_bytes::u32_at(buf, number_len_at)? as usize;
+    let number_at = number_len_at.checked_add(4)?;
+    // A room with no number has an empty one, and its name still follows.
+    let number = if number_chars == 0 {
+        String::new()
+    } else {
+        utf16_at(buf, number_at, number_chars)?
+    };
+
+    let name_len_at = number_at
+        .checked_add(number_chars.checked_mul(2)?)?
+        .checked_add(NAME_GAP_AFTER_NUMBER)?;
+    let name_chars = le_bytes::u32_at(buf, name_len_at)? as usize;
+    let name = utf16_at(buf, name_len_at.checked_add(4)?, name_chars)?;
+
+    Some(RoomParameters {
+        stream: stream.to_string(),
+        offset: owner_at,
+        element_id,
+        number,
+        name,
+        level_slot,
+    })
+}
+
+/// Every accepted room parameter block in `buf` for an id in `rooms`.
+pub fn find_room_parameters(
+    stream: &str,
+    buf: &[u8],
+    rooms: &BTreeSet<u32>,
+) -> Vec<RoomParameters> {
+    let mut out = Vec::new();
+    let (Some(&low), Some(&high)) = (rooms.first(), rooms.last()) else {
+        return out;
+    };
+    if buf.len() < 8 {
+        return out;
+    }
+    // Most offsets hold no room id; the range test settles them before
+    // the set lookup.
+    let (low, high) = (u64::from(low), u64::from(high));
+    for owner_at in 0..=(buf.len() - 8) {
+        let Some(raw) = le_bytes::u64_at(buf, owner_at) else {
+            continue;
+        };
+        if raw == 0 || raw < low || raw > high {
+            continue;
+        }
+        let element_id = raw as u32;
+        if !rooms.contains(&element_id) {
+            continue;
+        }
+        if let Some(block) = decode_at(stream, buf, owner_at, element_id) {
+            out.push(block);
+        }
+    }
+    out
+}
+
+/// Scan every `Partitions/*` stream for the parameter block of each
+/// room in `rooms`, keeping only rooms whose blocks all agree.
+///
+/// Returns an empty map for unsupported releases (fail closed).
+pub fn scan_room_parameters(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    rooms: &BTreeSet<u32>,
+) -> Result<BTreeMap<u32, RoomParameters>> {
+    if !supports_revit_version(revit_version) || rooms.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let mut found: BTreeMap<u32, Vec<RoomParameters>> = BTreeMap::new();
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        for block in find_room_parameters(&stream, inflated.bytes(), rooms) {
+            found.entry(block.element_id).or_default().push(block);
+        }
+    }
+    Ok(resolve_unique(found))
+}
+
+/// Keep one block per room: the newest partition's, and only when every
+/// block of that partition agrees on the number, the name and the Level
+/// slot. A renumbered room leaves its earlier blocks in older partitions.
+pub fn resolve_unique(found: BTreeMap<u32, Vec<RoomParameters>>) -> BTreeMap<u32, RoomParameters> {
+    let mut out = BTreeMap::new();
+    for (id, mut blocks) in found {
+        let newest = blocks
+            .iter()
+            .map(|block| crate::partition_names::partition_number(&block.stream))
+            .max();
+        blocks.retain(|block| {
+            Some(crate::partition_names::partition_number(&block.stream)) == newest
+        });
+        let Some(first) = blocks.first() else {
+            continue;
+        };
+        let agree = blocks.iter().all(|block| {
+            block.number == first.number
+                && block.name == first.name
+                && block.level_slot == first.level_slot
+        });
+        if agree {
+            out.insert(id, first.clone());
+        }
+    }
+    out
+}
+
+/// The number of partition stream `stream` (`Partitions/398` is 398), 0 for
+/// a name without one.
+pub(crate) fn partition_number(stream: &str) -> u32 {
+    stream
+        .rsplit('/')
+        .next()
+        .and_then(|number| number.parse().ok())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod partition_number_tests {
+    use super::partition_number;
+
+    #[test]
+    fn orders_by_number_not_by_name() {
+        assert!(partition_number("Partitions/9") < partition_number("Partitions/46"));
+        assert!(partition_number("Partitions/46") < partition_number("Partitions/189"));
+    }
+
+    #[test]
+    fn a_name_without_a_number_is_zero() {
+        assert_eq!(partition_number("Partitions/"), 0);
+        assert_eq!(partition_number("Global/Latest"), 0);
+        assert_eq!(partition_number("Partitions/x9"), 0);
+        assert_eq!(partition_number("Partitions/-1"), 0);
+    }
+
+    #[test]
+    fn a_number_past_u32_is_zero() {
+        assert_eq!(partition_number("Partitions/4294967296"), 0);
+        assert_eq!(partition_number("Partitions/4294967295"), u32::MAX);
+    }
+}
+
+/// One value per element from the copies of its data that several
+/// partitions hold: the latest partition's, which is the copy
+/// found current wherever an element's copies differ, and none where that
+/// partition's own entries disagree. On the BIM4LCA office's building-permit
+/// file every room and area has an older copy with Finnish names and a newer
+/// one with the English names Revit's export carries.
+pub(crate) struct LatestCopy<V> {
+    found: BTreeMap<u32, (u32, Option<V>)>,
+}
+
+impl<V> Default for LatestCopy<V> {
+    fn default() -> Self {
+        Self {
+            found: BTreeMap::new(),
+        }
+    }
+}
+
+impl<V: PartialEq> LatestCopy<V> {
+    /// `element`'s `value` as `partition` holds it.
+    pub(crate) fn offer(&mut self, element: u32, partition: u32, value: V) {
+        match self.found.get_mut(&element) {
+            Some((held_partition, held)) if *held_partition == partition => {
+                if held.as_ref() != Some(&value) {
+                    *held = None;
+                }
+            }
+            Some((held_partition, _)) if *held_partition > partition => {}
+            _ => {
+                self.found.insert(element, (partition, Some(value)));
+            }
+        }
+    }
+
+    pub(crate) fn into_values(self) -> BTreeMap<u32, V> {
+        self.found
+            .into_iter()
+            .filter_map(|(element, (_, value))| Some((element, value?)))
+            .collect()
+    }
+
+    /// Each element's value, `None` where its latest partition's copies
+    /// disagree.
+    pub(crate) fn into_options(self) -> BTreeMap<u32, Option<V>> {
+        self.found
+            .into_iter()
+            .map(|(element, (_, value))| (element, value))
+            .collect()
+    }
+}
+
+/// BuiltInParameter `ROOM_FINISH_FLOOR`, a room's Floor Finish.
+pub const ROOM_FINISH_FLOOR_PARAMETER: i64 = -1_006_903;
+/// Bytes of a data object's header on Revit 2024 and later: `i32 ElementId ·
+/// i32 0 · u32 Adler-32 · i32 size · i32 class`.
+pub const DATA_OBJECT_HEADER: usize = 20;
+/// How far before a parameter entry its data object's header is looked for.
+pub const DATA_OBJECT_SEARCH: usize = 200_000;
+
+/// The ElementId of the data object whose payload holds the byte at `at`
+///: the last header before it whose `size` bytes of payload end in
+/// the size again and enclose `at`, and whose Adler-32, over the class word
+/// and the payload less its last 4 bytes, verifies. Revit 2024 and later.
+pub fn enclosing_data_object(buf: &[u8], at: usize) -> Option<u32> {
+    let low = at.saturating_sub(DATA_OBJECT_SEARCH);
+    let mut p = at.checked_sub(DATA_OBJECT_HEADER)?;
+    loop {
+        if let Some(object) = verified_data_object(buf, p).filter(|object| object.end > at) {
+            return Some(object.element_id);
+        }
+        if p <= low {
+            return None;
+        }
+        p -= 1;
+    }
+}
+
+/// Every verified data object in `buf`, with its header's offset,
+/// in one pass: a header is tried only where its zero word, its size and the
+/// size that ends its payload agree, before its Adler-32 is computed. Use it
+/// where [`enclosing_data_object`] would be called for many offsets of one
+/// buffer, each a backward search of up to [`DATA_OBJECT_SEARCH`] bytes.
+pub fn data_objects(buf: &[u8]) -> Vec<(usize, DataObject)> {
+    let u32_at = |p: usize| le_bytes::u32_at(buf, p).unwrap_or(0);
+    let mut out = Vec::new();
+    let mut p = 0;
+    while p + DATA_OBJECT_HEADER <= buf.len() {
+        let size = u32_at(p + 12) as usize;
+        // On a 32-bit target a size read from arbitrary bytes can carry the
+        // end past `usize::MAX`; such an object cannot be in `buf`.
+        let end = (p + DATA_OBJECT_HEADER).checked_add(size);
+        let plausible = end.is_some_and(|end| {
+            u32_at(p + 4) == 0 && size >= 4 && end <= buf.len() && u32_at(end - 4) as usize == size
+        });
+        match plausible.then(|| verified_data_object(buf, p)).flatten() {
+            Some(object) => {
+                out.push((p, object));
+                p = object.end;
+            }
+            None => p += 1,
+        }
+    }
+    out
+}
+
+/// A data object whose header starts at a known offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataObject {
+    /// The ElementId in its header.
+    pub element_id: u32,
+    /// Its class word.
+    pub class: u32,
+    /// The offset just past its payload.
+    pub end: usize,
+}
+
+/// The data object whose header starts at `p`, when its payload ends in its
+/// size again and its Adler-32, over the class word and the payload less its
+/// last 4 bytes, verifies. Revit 2024 and later.
+pub fn verified_data_object(buf: &[u8], p: usize) -> Option<DataObject> {
+    let u32_at = |p: usize| le_bytes::u32_at(buf, p);
+    if u32_at(p.checked_add(4)?)? != 0 {
+        return None;
+    }
+    let (id, sum, size, class) = (u32_at(p)?, u32_at(p + 8)?, u32_at(p + 12)?, u32_at(p + 16)?);
+    let size = size as usize;
+    let end = p.checked_add(DATA_OBJECT_HEADER)?.checked_add(size)?;
+    if size < 4 || end > buf.len() || u32_at(end - 4) != Some(size as u32) {
+        return None;
+    }
+    let mut adler = simd_adler32::Adler32::new();
+    adler.write(&class.to_le_bytes());
+    adler.write(&buf[p + DATA_OBJECT_HEADER..end - 4]);
+    (adler.finish() == sum).then_some(DataObject {
+        element_id: id,
+        class,
+        end,
+    })
+}
+
+/// Each room's value of the text parameter `parameter`, by ElementId,
+/// on Revit 2024 and later. The value is an entry `parameter (i64) ·
+/// u32 n · UTF-16 × n`, joined to its room by the data object holding it
+/// ([`enclosing_data_object`]). Where its copies differ, the latest
+/// partition's is taken, and a room whose entries there disagree gets nothing.
+/// On RE1 Architecture the Floor Finish
+/// ([`ROOM_FINISH_FLOOR_PARAMETER`]) of 11 of 11 rooms is Revit's
+/// `Pset_SpaceCommon.FloorCovering`.
+pub fn scan_room_text_parameter(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    rooms: &BTreeSet<u32>,
+    parameter: i64,
+) -> BTreeMap<u32, String> {
+    scan_text_parameter(rf, revit_version, rooms, parameter)
+}
+
+/// Each element of `elements`' value of the text parameter `parameter`, a
+/// BuiltInParameter or a project or shared parameter's ElementId, by
+/// ElementId, on Revit 2024 and later: an entry `parameter (i64) · u32 n ·
+/// UTF-16 × n` in the element's own data object ([`enclosing_data_object`]),
+/// from the latest partition that holds one; an element
+/// whose entries there disagree gets nothing. An entry of `n` 0 is an
+/// empty value: it is the latest copy's too, so an element whose value was
+/// emptied gets nothing, though an older copy holds one.
+pub fn scan_text_parameter(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    elements: &BTreeSet<u32>,
+    parameter: i64,
+) -> BTreeMap<u32, String> {
+    if revit_version < 2024 || elements.is_empty() {
+        return BTreeMap::new();
+    }
+    let tag = parameter.to_le_bytes();
+    let mut found = LatestCopy::default();
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        let partition = partition_number(&stream);
+        let buf = inflated.bytes();
+        for hit in memchr::memmem::find_iter(buf, &tag) {
+            let value = match le_bytes::u32_at(buf, hit + tag.len()) {
+                Some(0) => String::new(),
+                _ => match utf16_entry(buf, hit + tag.len(), 256) {
+                    Some(value) => value,
+                    None => continue,
+                },
+            };
+            let Some(element) = enclosing_data_object(buf, hit).filter(|id| elements.contains(id))
+            else {
+                continue;
+            };
+            found.offer(element, partition, value);
+        }
+    }
+    found
+        .into_values()
+        .into_iter()
+        .filter(|(_, value)| !value.is_empty())
+        .collect()
+}
+
+/// BuiltInParameter `FUNCTION_PARAM`, a type's Function: 0 interior, 1
+/// exterior.
+pub const FUNCTION_PARAMETER: i64 = -1_001_006;
+
+/// Each element of `elements`' value of the integer parameter `parameter`,
+/// by ElementId, on Revit 2024 and later: an entry `parameter (i64)
+/// · u32 value` in the element's own data object ([`enclosing_data_object`]).
+/// The latest partition's copy is taken, and an element whose entries there
+/// disagree gets nothing. On RE1 Architecture the door and
+/// floor types' [`FUNCTION_PARAMETER`] is Revit's `IsExternal` on
+/// 5 of 5 doors (interior and exterior) and 2 of 2 floors.
+pub fn scan_integer_parameter(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    elements: &BTreeSet<u32>,
+    parameter: i64,
+) -> BTreeMap<u32, u32> {
+    if revit_version < 2024 || elements.is_empty() {
+        return BTreeMap::new();
+    }
+    let tag = parameter.to_le_bytes();
+    let mut found = LatestCopy::default();
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        let partition = partition_number(&stream);
+        let buf = inflated.bytes();
+        for hit in memchr::memmem::find_iter(buf, &tag) {
+            let Some(value) = le_bytes::u32_at(buf, hit + tag.len()) else {
+                continue;
+            };
+            let Some(element) = enclosing_data_object(buf, hit).filter(|id| elements.contains(id))
+            else {
+                continue;
+            };
+            found.offer(element, partition, value);
+        }
+    }
+    found.into_values()
+}
+
+/// The ElementId of the data object among `objects` (a stream's
+/// [`data_objects`], in offset order) whose payload holds the byte at `at`:
+/// the one [`enclosing_data_object`] finds, without its backward search.
+fn data_object_owner(objects: &[(usize, DataObject)], at: usize) -> Option<u32> {
+    let before = objects.partition_point(|(start, _)| start + DATA_OBJECT_HEADER <= at);
+    objects[..before]
+        .iter()
+        .rev()
+        .take_while(|(start, _)| at - start <= DATA_OBJECT_SEARCH)
+        .find(|(_, object)| object.end > at)
+        .map(|(_, object)| object.element_id)
+}
+
+/// [`scan_integer_parameter`] for each of `parameters` at once
+/// ([`scan_parameter_entries`] with [`EntryKind::Word`]).
+pub fn scan_integer_parameters(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    elements: &BTreeSet<u32>,
+    parameters: &[i64],
+) -> BTreeMap<i64, BTreeMap<u32, u32>> {
+    let wanted: Vec<(i64, EntryKind)> = parameters
+        .iter()
+        .map(|&parameter| (parameter, EntryKind::Word))
+        .collect();
+    scan_parameter_entries(rf, revit_version, elements, &wanted)
+        .into_iter()
+        .map(|(parameter, values)| {
+            let words = values
+                .into_iter()
+                .filter_map(|(element, value)| match value {
+                    EntryValue::Word(word) => Some((element, word)),
+                    _ => None,
+                })
+                .collect();
+            (parameter, words)
+        })
+        .collect()
+}
+
+/// How a parameter's value is stored after (or before) its key in an
+/// element's own data object, on Revit 2024 and later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    /// `parameter (i64) · u32 value`: a Yes/No or integer parameter.
+    Word,
+    /// `parameter (i64) · u32 n · UTF-16 × n`: a text parameter of up to 256
+    /// characters. An empty one, `n` 0, is read as an empty text,
+    /// so that it hides the value an older copy of the element holds.
+    Text,
+    /// `f64 value · parameter (i64)`: a number, a length in feet or another
+    /// quantity in its SI unit, immediately before its key.
+    Real,
+}
+
+/// A parameter's value as [`EntryKind`] reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EntryValue {
+    /// [`EntryKind::Word`].
+    Word(u32),
+    /// [`EntryKind::Text`].
+    Text(String),
+    /// [`EntryKind::Real`], a finite number.
+    Real(f64),
+}
+
+fn read_entry(buf: &[u8], hit: usize, kind: EntryKind) -> Option<EntryValue> {
+    match kind {
+        EntryKind::Word => le_bytes::u32_at(buf, hit + 8).map(EntryValue::Word),
+        EntryKind::Text => match le_bytes::u32_at(buf, hit + 8)? {
+            0 => Some(EntryValue::Text(String::new())),
+            _ => utf16_entry(buf, hit + 8, 256).map(EntryValue::Text),
+        },
+        EntryKind::Real => {
+            let bits = le_bytes::u64_at(buf, hit.checked_sub(8)?)?;
+            Some(f64::from_bits(bits))
+                .filter(|value| value.is_finite())
+                .map(EntryValue::Real)
+        }
+    }
+}
+
+/// Each element of `elements`' value of each of `parameters`, a project or
+/// shared parameter's ElementId (or a BuiltInParameter) with how its value is
+/// stored, by parameter and ElementId, on Revit 2024 and later: the entry with
+/// the parameter's key in the element's own data object, the
+/// innermost one holding it among the stream's data objects, memoised on the
+/// handle (`RevitFile::partition_data_objects`). Only the payloads of
+/// the elements' own objects are searched. The latest partition's copy is
+/// taken, and an element whose entries there disagree gets nothing.
+pub fn scan_parameter_entries(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    elements: &BTreeSet<u32>,
+    parameters: &[(i64, EntryKind)],
+) -> BTreeMap<i64, BTreeMap<u32, EntryValue>> {
+    if revit_version < 2024 || elements.is_empty() || parameters.is_empty() {
+        return BTreeMap::new();
+    }
+    let keys: Vec<[u8; 8]> = parameters
+        .iter()
+        .map(|(parameter, _)| parameter.to_le_bytes())
+        .collect();
+    let finders: Vec<memchr::memmem::Finder<'_>> =
+        keys.iter().map(memchr::memmem::Finder::new).collect();
+    let mut found: Vec<LatestCopy<EntryValue>> =
+        parameters.iter().map(|_| LatestCopy::default()).collect();
+    for stream in rf.partition_stream_names() {
+        let (Ok(inflated), Ok(objects)) = (
+            rf.inflated_partition(&stream),
+            rf.memoised_partition_data_objects(&stream),
+        ) else {
+            continue;
+        };
+        let partition = partition_number(&stream);
+        let buf = inflated.bytes();
+        for (start, object) in objects.iter() {
+            if !elements.contains(&object.element_id) {
+                continue;
+            }
+            let payload_start = start + DATA_OBJECT_HEADER;
+            let Some(payload) = buf.get(payload_start..object.end) else {
+                continue;
+            };
+            for ((finder, (_, kind)), latest) in
+                finders.iter().zip(parameters).zip(found.iter_mut())
+            {
+                for hit in finder.find_iter(payload) {
+                    let at = payload_start + hit;
+                    if data_object_owner(&objects, at) != Some(object.element_id) {
+                        continue;
+                    }
+                    if *kind == EntryKind::Real && hit < 8 {
+                        continue;
+                    }
+                    if let Some(value) = read_entry(buf, at, *kind) {
+                        latest.offer(object.element_id, partition, value);
+                    }
+                }
+            }
+        }
+    }
+    parameters
+        .iter()
+        .zip(found)
+        .map(|((parameter, _), latest)| (*parameter, latest.into_values()))
+        .collect()
+}
+
+/// Prefix of the first string of a project or shared parameter's definition:
+/// its group's ForgeTypeId.
+pub const PARAMETER_GROUP_PREFIX: &str = "autodesk.parameter.group:";
+/// How far past its group string a definition's name is looked for.
+pub const PARAMETER_NAME_WINDOW: usize = 64;
+
+/// Each project or shared parameter's ElementId by its name, on Revit 2024
+/// and later. A definition is a data object whose strings are its
+/// group's ForgeTypeId ([`PARAMETER_GROUP_PREFIX`]), its name and, for a
+/// shared parameter, its GUID (`revit.local.shared:…`); the name is the first
+/// `u32 n · UTF-16 × n` entry of 2 or more characters within
+/// [`PARAMETER_NAME_WINDOW`] bytes past the group string. On RE1 Electrical
+/// and Plumbing `Serial Number` is 490488 and 447886. A name two definitions
+/// give different ids gets nothing.
+pub fn find_parameter_definitions(rf: &mut RevitFile, revit_version: u32) -> BTreeMap<String, u32> {
+    if revit_version < 2024 {
+        return BTreeMap::new();
+    }
+    let needle: Vec<u8> = PARAMETER_GROUP_PREFIX
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let mut found: BTreeMap<String, Option<u32>> = BTreeMap::new();
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        let buf = inflated.bytes();
+        for hit in memchr::memmem::find_iter(buf, &needle) {
+            let Some(group) = hit.checked_sub(4).and_then(|at| utf16_entry(buf, at, 256)) else {
+                continue;
+            };
+            let after = hit + 2 * group.encode_utf16().count();
+            let name = (after..after + PARAMETER_NAME_WINDOW).find_map(|at| {
+                utf16_entry(buf, at, 256).filter(|name| name.encode_utf16().count() >= 2)
+            });
+            let (Some(name), Some(id)) = (name, enclosing_data_object(buf, hit)) else {
+                continue;
+            };
+            match found.get_mut(&name) {
+                None => {
+                    found.insert(name, Some(id));
+                }
+                Some(held) => {
+                    if *held != Some(id) {
+                        *held = None;
+                    }
+                }
+            }
+        }
+    }
+    found
+        .into_iter()
+        .filter_map(|(name, id)| Some((name, id?)))
+        .collect()
+}
+
+/// `u32 n · UTF-16 × n` at `at`: 1 to `limit` code units, no control character.
+fn utf16_entry(buf: &[u8], at: usize, limit: usize) -> Option<String> {
+    let n = usize::try_from(le_bytes::u32_at(buf, at)?).ok()?;
+    if !(1..=limit).contains(&n) {
+        return None;
+    }
+    let units: Vec<u16> = le_bytes::u16_units(buf.get(at + 4..at + 4 + 2 * n)?).collect();
+    let text = String::from_utf16(&units).ok()?;
+    (!text.chars().any(char::is_control)).then_some(text)
+}
+
+/// BuiltInParameter `ROOM_NUMBER`.
+pub const ROOM_NUMBER_PARAMETER: i64 = -1_006_901;
+/// BuiltInParameter `ROOM_NAME`.
+pub const ROOM_NAME_PARAMETER: i64 = -1_006_900;
+/// How far past a room's object its number and name are looked for.
+pub const ROOM_PARAMETER_ENTRY_WINDOW: usize = 0x400;
+/// Value of `m_room_parameter_source` for a room named by its parameter
+/// entries.
+pub const ROOM_PARAMETER_ENTRY_SOURCE: &str = "partition_room_parameter_entries";
+
+/// Each room's number and name from its parameter entries, by ElementId,
+/// on a release with an element-data layout
+/// ([`crate::partition_names::element_data_layout`]).
+///
+/// A room's data is an object `01 00 00 00 · id` (a `u32` id on Revit 2023,
+/// a `u64` on 2024 and 2025). Its number and name are the first
+/// `ROOM_NUMBER · u32 n · UTF-16 × n` entry within
+/// [`ROOM_PARAMETER_ENTRY_WINDOW`] past it, immediately followed by
+/// `ROOM_NAME · u32 m · UTF-16 × m`, the parameter ids as wide as the
+/// release's ElementIds: 377 or 389 bytes past the id on Exemplo_data
+/// (2023), 483 to 503 on RE1 Architecture (2025). An empty number or name is
+/// an entry of `n` 0, read as an empty text: the latest partition's
+/// copy decides even where it is empty, and a room whose entries there
+/// disagree gets nothing.
+pub fn scan_room_parameter_entries(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    rooms: &BTreeSet<u32>,
+) -> BTreeMap<u32, (String, String)> {
+    let Some(layout) = crate::partition_names::element_data_layout(revit_version) else {
+        return BTreeMap::new();
+    };
+    let (id_len, number_tag, name_tag) = if layout.wide_id {
+        (
+            8,
+            ROOM_NUMBER_PARAMETER.to_le_bytes().to_vec(),
+            ROOM_NAME_PARAMETER.to_le_bytes().to_vec(),
+        )
+    } else {
+        let narrow = |id: i64| i32::try_from(id).expect("a 32-bit BuiltInParameter");
+        (
+            4,
+            narrow(ROOM_NUMBER_PARAMETER).to_le_bytes().to_vec(),
+            narrow(ROOM_NAME_PARAMETER).to_le_bytes().to_vec(),
+        )
+    };
+    let string_at = |buf: &[u8], at: usize, limit: usize| -> Option<(String, usize)> {
+        let n = usize::try_from(le_bytes::u32_at(buf, at)?).ok()?;
+        if n > limit {
+            return None;
+        }
+        let units: Vec<u16> = le_bytes::u16_units(buf.get(at + 4..at + 4 + 2 * n)?).collect();
+        let text = String::from_utf16(&units).ok()?;
+        (!text.chars().any(char::is_control)).then_some((text, at + 4 + 2 * n))
+    };
+    let mut found = LatestCopy::default();
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        let partition = partition_number(&stream);
+        let buf = inflated.bytes();
+        for hit in memchr::memmem::find_iter(buf, &[1u8, 0, 0, 0]) {
+            let Some(id) = layout.id_at(buf, hit + 4).filter(|id| rooms.contains(id)) else {
+                continue;
+            };
+            let start = hit + 4 + id_len;
+            let end = (start + ROOM_PARAMETER_ENTRY_WINDOW).min(buf.len());
+            let Some(window) = buf.get(start..end) else {
+                continue;
+            };
+            let pair = memchr::memmem::find_iter(window, &number_tag).find_map(|at| {
+                let at = start + at;
+                // A room with no number has an empty one.
+                let (number, after) = match string_at(buf, at + number_tag.len(), 64) {
+                    Some(number) => number,
+                    None if le_bytes::u32_at(buf, at + number_tag.len()) == Some(0) => {
+                        (String::new(), at + number_tag.len() + 4)
+                    }
+                    None => return None,
+                };
+                (buf.get(after..after + name_tag.len())? == &name_tag[..]).then_some(())?;
+                let (name, _) = string_at(buf, after + name_tag.len(), 256)?;
+                Some((number, name))
+            });
+            let Some(pair) = pair else {
+                continue;
+            };
+            found.offer(id, partition, pair);
+        }
+    }
+    found.into_values()
+}

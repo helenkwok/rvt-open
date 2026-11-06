@@ -1,0 +1,228 @@
+//! Typed ArcWall partition decoder (Revit 2023 standard variant).
+//!
+//! ArcWall instance geometry lives in `Partitions/*` with a fixed
+//! `(tag, variant)` envelope — see [`crate::arc_wall_record`] — rather
+//! than the schema-field wire format used by [`crate::walker::ElementDecoder`].
+//! This module is therefore **not** registered in
+//! [`crate::elements::all_decoders`]; it sits beside that registry as the
+//! typed partition path for ArcWall.
+//!
+//! Downstream lanes (geometry, IFC) should call [`decode_at`], or with
+//! `unstable-research` `decode_candidate`, rather than inventing a parallel
+//! scanner.
+//!
+//! # Rejection rules
+//!
+//! | Condition | Error |
+//! |---|---|
+//! | Candidate `class_name` is `Some` and not `"ArcWall"` | wrong-schema |
+//! | Candidate `class_tag` ≠ [`crate::arc_wall_record::ARC_WALL_TAG`] | wrong-schema |
+//! | Buffer fails [`ArcWallRecord::decode_standard`] gates | tag / variant / short |
+//! | Optional schema name gate fails | wrong-schema |
+
+use crate::arc_wall_record::{ArcWallRecord, ArcWallTrailer, STANDARD_RECORD_MIN_SIZE};
+use crate::walker::{DecodedElement, InstanceField};
+use crate::{Error, Result};
+
+/// Typed view of a standard ArcWall recovered from partition bytes.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct ArcWall {
+    /// Fixed-size core record (tag, coords, envelope).
+    pub record: ArcWallRecord,
+    /// Optional singleton trailer fields (ElementId, type id, base Z).
+    pub trailer: Option<ArcWallTrailer>,
+    /// Convenience: trailer ElementId when validated.
+    pub element_id: Option<crate::ElementId>,
+    /// Convenience: trailer WallType / symbol candidate.
+    pub type_id: Option<crate::ElementId>,
+    /// Convenience: trailer base elevation in feet.
+    pub base_elevation_feet: Option<f64>,
+    /// Unconnected height from the core Z delta, when recoverable.
+    pub height_feet: Option<f64>,
+}
+
+impl ArcWall {
+    pub(crate) fn from_parts(record: ArcWallRecord, trailer: Option<ArcWallTrailer>) -> Self {
+        let element_id = trailer.and_then(|t| t.element_id);
+        let type_id = trailer.and_then(|t| t.type_id);
+        let base_elevation_feet = trailer.and_then(|t| t.base_elevation_feet);
+        let height_feet = record.height_feet();
+        Self {
+            record,
+            trailer,
+            element_id,
+            type_id,
+            base_elevation_feet,
+            height_feet,
+        }
+    }
+
+    /// Wall centerline start point (ft), on the hypothesis H16.
+    pub fn start_point(&self) -> (f64, f64, f64) {
+        self.record.start_point()
+    }
+
+    /// Wall centerline end point (ft), on the hypothesis H16.
+    pub fn end_point(&self) -> (f64, f64, f64) {
+        self.record.end_point()
+    }
+
+    /// Project into a [`DecodedElement`] for production `iter_elements`.
+    ///
+    /// Only recovered fields are populated — never invents thickness,
+    /// host, or sketch data. `byte_range` is the partition absolute
+    /// offset of the validated standard envelope.
+    pub fn to_decoded_element(&self, partition: &str, offset: usize) -> DecodedElement {
+        let (sx, sy, sz) = self.start_point();
+        let (ex, ey, ez) = self.end_point();
+        let mut fields = vec![
+            (
+                "m_start_x".into(),
+                InstanceField::Float { value: sx, size: 8 },
+            ),
+            (
+                "m_start_y".into(),
+                InstanceField::Float { value: sy, size: 8 },
+            ),
+            (
+                "m_start_z".into(),
+                InstanceField::Float { value: sz, size: 8 },
+            ),
+            (
+                "m_end_x".into(),
+                InstanceField::Float { value: ex, size: 8 },
+            ),
+            (
+                "m_end_y".into(),
+                InstanceField::Float { value: ey, size: 8 },
+            ),
+            (
+                "m_end_z".into(),
+                InstanceField::Float { value: ez, size: 8 },
+            ),
+            (
+                "m_source_stream".into(),
+                InstanceField::String(partition.to_string()),
+            ),
+            (
+                "m_source_offset".into(),
+                InstanceField::Integer {
+                    value: offset as i64,
+                    signed: false,
+                    size: 8,
+                },
+            ),
+        ];
+        if let Some(id) = self.element_id.and_then(crate::ElementId::as_u32) {
+            fields.push(("m_id".into(), InstanceField::ElementId { tag: 0, id }));
+        }
+        if let Some(id) = self.type_id.and_then(crate::ElementId::as_u32) {
+            fields.push(("m_type_id".into(), InstanceField::ElementId { tag: 0, id }));
+        }
+        if let Some(elev) = self.base_elevation_feet {
+            fields.push((
+                "m_base_elevation".into(),
+                InstanceField::Float {
+                    value: elev,
+                    size: 8,
+                },
+            ));
+            fields.push((
+                "m_base_offset".into(),
+                InstanceField::Float {
+                    value: elev,
+                    size: 8,
+                },
+            ));
+        }
+        if let Some(h) = self.height_feet {
+            fields.push((
+                "m_unconnected_height".into(),
+                InstanceField::Float { value: h, size: 8 },
+            ));
+        }
+        let end = offset.saturating_add(STANDARD_RECORD_MIN_SIZE);
+        let confidence = if self.element_id.is_some() {
+            0.95
+        } else {
+            0.85
+        };
+        DecodedElement {
+            id: self.element_id.and_then(crate::ElementId::as_u32),
+            class: "ArcWall".into(),
+            fields,
+            byte_range: offset..end,
+            provenance: crate::walker::ElementProvenance::partition(
+                partition,
+                offset,
+                "partition_arcwall",
+                "ArcWallRecord",
+                confidence,
+                std::iter::empty::<String>(),
+            ),
+        }
+    }
+}
+
+/// Build a typed [`ArcWall`] from a shared partition scan hit.
+#[cfg(feature = "unstable-research")]
+pub fn from_partition_arc_wall(wall: &crate::partition_arc_walls::PartitionArcWall) -> ArcWall {
+    ArcWall::from_parts(wall.record, wall.trailer)
+}
+
+/// Reject a class name that is present but not ArcWall.
+fn reject_wrong_class(class_name: Option<&str>) -> Result<()> {
+    match class_name {
+        None | Some("ArcWall") => Ok(()),
+        Some(other) => Err(Error::SchemaMismatch {
+            decoder: "ArcWall",
+            schema: other.to_string(),
+        }),
+    }
+}
+
+/// Decode a standard ArcWall at `offset` inside a decompressed partition
+/// buffer. When `expected_class` is `Some`, it must be `"ArcWall"`.
+pub fn decode_at(buf: &[u8], offset: usize, expected_class: Option<&str>) -> Result<ArcWall> {
+    reject_wrong_class(expected_class)?;
+    if buf.len().saturating_sub(offset) < STANDARD_RECORD_MIN_SIZE {
+        return Err(Error::Malformed {
+            what: "ArcWall record",
+            detail: format!(
+                "buffer too short ({} < {} at offset {})",
+                buf.len().saturating_sub(offset),
+                STANDARD_RECORD_MIN_SIZE,
+                offset
+            ),
+        });
+    }
+    let record = ArcWallRecord::decode_standard(buf, offset)?;
+    let trailer = ArcWallRecord::decode_trailer(buf, offset);
+    Ok(ArcWall::from_parts(record, trailer))
+}
+
+/// Decode from a generic partition scanner candidate.
+///
+/// Rejects when the candidate names a different class or carries a
+/// non-ArcWall tag, even if the bytes at `offset` happen to look like
+/// an ArcWall envelope.
+#[cfg(feature = "unstable-research")]
+pub fn decode_candidate(
+    candidate: &crate::partition_scanner::PartitionRecordCandidate,
+    buf: &[u8],
+) -> Result<ArcWall> {
+    use crate::arc_wall_record::ARC_WALL_TAG;
+
+    reject_wrong_class(candidate.class_name.as_deref())?;
+    if candidate.class_tag != ARC_WALL_TAG {
+        return Err(Error::Malformed {
+            what: "ArcWall record",
+            detail: format!(
+                "class tag 0x{:04x}, expected 0x{ARC_WALL_TAG:04x}",
+                candidate.class_tag
+            ),
+        });
+    }
+    decode_at(buf, candidate.offset, candidate.class_name.as_deref())
+}

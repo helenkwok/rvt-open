@@ -1,0 +1,12 @@
+{
+  "source_url": "https://github.com/helenkwok/rvt-open/tree/main/corpus/tier1/architectural-2024",
+  "source_repo": "helenkwok/rvt-open",
+  "source_path": "corpus/tier1/architectural-2024/architectural-2024.rvt",
+  "license": "Apache-2.0",
+  "sha256": "d7ee4f7f5918600e73c0e22292682ad4f86ffd9d03b31ee7e3c50f6307a8ef77",
+  "bytes": 20480,
+  "revit_release": "2024",
+  "file_type": ".rvt",
+  "redistribution": "public",
+  "notes": "Synthetic CFB test fixture. Not Autodesk-authored; will not open in Revit. Known counts: 5 levels, 5 walls, 5 floors, 5 doors, 5 windows."
+}

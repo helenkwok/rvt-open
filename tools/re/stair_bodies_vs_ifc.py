@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Score rvt-open stair bodies against Revit's own IFC export, per flight.
+
+For every `IfcStairFlight` both exports hold (same `Tag`, the run's
+ElementId), every `IfcStair` with its aggregated parts, and every landing
+(`IfcSlab` `.LANDING.`), this meshes the
+body with IfcOpenShell, in each file's own site frame (Revit writes the
+BIM4LCA office's site at its shared coordinates, rvt-open at its internal
+ones), and compares, in feet, as `roof_bodies_vs_ifc.py` does for roofs:
+
+- the volume of the two meshes;
+- how far each vertex of Revit's body lies from the nearest vertex of
+  rvt-open's, the worst of them;
+- how far each vertex of Revit's body lies from rvt-open's surface.
+
+A flight drawn as its record box has the box's volume and corners, so it
+misses on both; one drawn as its treads and risers matches on both or on
+neither. The surface test does not tell a box from a flight: a straight
+flight's vertices all lie on its two side faces, which are the box's sides.
+On `main` every flight of the R2025 stair models (13 to 17) is its box,
+with 4 to 57 ft3 of Revit's against 237 to 684 ft3.
+
+Needs IfcOpenShell (`pip install ifcopenshell`).
+
+Usage:
+
+    python3 tools/re/stair_bodies_vs_ifc.py <rvt-open.ifc> <revit.ifc>
+
+Every flight and stair both hold gets a line, matching or not.
+"""
+
+import argparse
+import math
+import os
+import sys
+
+import ifcopenshell
+import ifcopenshell.geom
+import numpy
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from opening_boxes_vs_ifc import site_frame  # noqa: E402
+from roof_bodies_vs_ifc import VERTEX_TOLERANCE_FT, VOLUME_TOLERANCE, farthest, shapes_of, surface_distances  # noqa: E402
+
+# A landing is an IfcSlab of PredefinedType LANDING in both exports.
+CLASSES = ("IfcStairFlight", "IfcStair", "IfcSlab")
+
+
+def bodies(path, cls):
+    """Tag -> (unique vertices, volume, triangles) of each `cls`, in feet and cubic feet."""
+    model = ifcopenshell.open(path)
+    frame = site_frame(model)
+    settings = ifcopenshell.geom.settings()
+    settings.set("use-world-coords", True)
+    out = {}
+    for element in model.by_type(cls):
+        if not element.Tag or element.is_a() != cls:
+            continue
+        if cls == "IfcSlab" and getattr(element, "PredefinedType", None) != "LANDING":
+            continue
+        vertices = set()
+        triangles = []
+        volume = 0.0
+        meshed = False
+        for part in shapes_of(element):
+            try:
+                shape = ifcopenshell.geom.create_shape(settings, part)
+            except RuntimeError:
+                continue
+            verts = shape.geometry.verts
+            faces = shape.geometry.faces
+            if not len(verts):
+                continue
+            points = [tuple(float(c) for c in p) for p in frame(numpy.array(verts, dtype=float).reshape(-1, 3))]
+            meshed = True
+            vertices.update(tuple(round(c, 6) for c in p) for p in points)
+            for i in range(0, len(faces), 3):
+                a, b, c = (points[faces[i + k]] for k in range(3))
+                triangles.append((a, b, c))
+                volume += (
+                    a[0] * (b[1] * c[2] - b[2] * c[1])
+                    - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0])
+                ) / 6.0
+        if meshed:
+            out[element.Tag] = (sorted(vertices), abs(volume), triangles)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("ours")
+    ap.add_argument("reference")
+    args = ap.parse_args()
+    for cls in CLASSES:
+        ours = bodies(args.ours, cls)
+        ref = bodies(args.reference, cls)
+        both = sorted(set(ours) & set(ref), key=lambda t: (len(t), t))
+        label = "IfcSlab .LANDING." if cls == "IfcSlab" else cls
+        print(f"{label} in Revit's export with a body: {len(ref)}; rvt-open writes one for {len(both)} of them")
+        if not both:
+            continue
+        ok = on_surface = 0
+        rows = []
+        for tag in both:
+            (our_vertices, our_volume, our_triangles), (ref_vertices, ref_volume, _) = ours[tag], ref[tag]
+            distance = farthest(ref_vertices, our_vertices)
+            surface = surface_distances(ref_vertices, our_triangles) if our_triangles else [math.inf]
+            on_surface += max(surface) <= VERTEX_TOLERANCE_FT
+            relative = abs(our_volume - ref_volume) / ref_volume if ref_volume > 0 else math.inf
+            matches = distance <= VERTEX_TOLERANCE_FT and relative <= VOLUME_TOLERANCE
+            ok += matches
+            heights = (
+                min(v[2] for v in our_vertices),
+                max(v[2] for v in our_vertices),
+                min(v[2] for v in ref_vertices),
+                max(v[2] for v in ref_vertices),
+            )
+            far = None
+            if not matches and our_vertices:
+                worst = max(ref_vertices, key=lambda p: min(math.dist(p, q) for q in our_vertices))
+                nearest = min(our_vertices, key=lambda q: math.dist(worst, q))
+                far = (worst, nearest, len(our_vertices))
+            rows.append((tag, matches, len(ref_vertices), distance, max(surface), our_volume, ref_volume, heights, far))
+        print(
+            f"  vertices within {VERTEX_TOLERANCE_FT} ft and volume within {VOLUME_TOLERANCE:g} of Revit's: "
+            f"{ok} of {len(both)}"
+        )
+        print(f"  every vertex of Revit's body within {VERTEX_TOLERANCE_FT} ft of rvt-open's surface: {on_surface} of {len(both)}")
+        for tag, matches, count, distance, surface, our_volume, ref_volume, (lo, hi, ref_lo, ref_hi), far in rows:
+            print(
+                f"    {tag}: {'match' if matches else 'differs'}, Revit {count} vertices, "
+                f"farthest {distance:.3g} ft, from rvt-open's surface at most {surface:.3g} ft, "
+                f"volume rvt-open {our_volume:.6f} ft3, Revit {ref_volume:.6f} ft3, "
+                f"z rvt-open {lo:.4f} to {hi:.4f}, Revit {ref_lo:.4f} to {ref_hi:.4f}"
+            )
+            if far:
+                worst, nearest, ours_count = far
+                print(
+                    f"      farthest Revit vertex {tuple(round(c, 4) for c in worst)}, nearest rvt-open vertex "
+                    f"{tuple(round(c, 4) for c in nearest)} of {ours_count}"
+                )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,10 @@
+Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+All files under corpus/tier1/ are synthetic CFB test fixtures made for
+rvt-open's tests. They contain no Autodesk-owned sample content
+and are redistributed under the same Apache-2.0 terms as the rvt-open
+repository (see the top-level LICENSE file for the full text).
+
+SPDX-License-Identifier: Apache-2.0

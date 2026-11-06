@@ -1,0 +1,108 @@
+name: Bug report
+description: rvt-open crashes, panics, misreads a file, or produces clearly-wrong output.
+title: "Bug: "
+labels: ["type:bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please include a minimal reproducer — a concrete command or API call plus the smallest file that triggers the issue.
+
+        Security-sensitive reports (malformed input that crashes, silent data corruption, information disclosure) should go through GitHub Security Advisories instead of a public issue.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: One-paragraph summary of what went wrong.
+      placeholder: "rvt-analyze panics when opening a family file saved in Revit 2019."
+    validations:
+      required: true
+  - type: input
+    id: rvt_open_version
+    attributes:
+      label: rvt-open version
+      description: Output of `cargo pkgid rvt` or the version from Cargo.toml.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: revit_file_version
+    attributes:
+      label: Revit release the input file came from
+      options:
+        - "2027"
+        - "2026"
+        - "2025"
+        - "2024"
+        - "2023"
+        - "2022"
+        - "2021"
+        - "2020"
+        - "2019"
+        - "2018"
+        - "2017"
+        - "2016"
+        - "2015"
+        - "Unknown"
+        - "Not applicable"
+    validations:
+      required: true
+  - type: input
+    id: file_size_bytes
+    attributes:
+      label: Input file size (bytes)
+      description: Optional. Useful for triage of large-file or size-limit bugs.
+      placeholder: "450000"
+  - type: textarea
+    id: command_or_api_call
+    attributes:
+      label: Command or API call
+      description: Minimal reproducer — the exact command or Rust/Python snippet.
+      render: text
+      placeholder: |
+        $ ./target/release/rvt-analyze path/to/bug.rfa
+        # or
+        let f = rvt::RevitFile::open("bug.rfa")?;
+        f.read_adocument()?;
+    validations:
+      required: true
+  - type: textarea
+    id: actual_output
+    attributes:
+      label: Actual output
+      description: Full stderr/stdout, including stack trace. `RUST_BACKTRACE=1` appreciated for panics.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected_output
+    attributes:
+      label: Expected output
+      description: What the correct behavior would be.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - "Linux"
+        - "macOS"
+        - "Windows"
+        - "Other"
+    validations:
+      required: true
+  - type: input
+    id: rust_version
+    attributes:
+      label: Rust toolchain
+      description: Output of `rustc --version`.
+      placeholder: "rustc 1.98.1"
+    validations:
+      required: true
+  - type: checkboxes
+    id: attached_fixture
+    attributes:
+      label: Fixture
+      options:
+        - label: "I have attached (or am willing to share privately) a fixture file that reproduces the bug."

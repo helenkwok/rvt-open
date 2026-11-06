@@ -1,0 +1,13 @@
+# The Python API tests (tests/python), the JSON schema checks and the type
+# stub check (mypy's stubtest), and the element table read-back test
+# (tests/python/test_table_readback.py: openpyxl, pyarrow) in CI. pyarrow
+# 26 needs Python 3.11.
+# Dependabot proposes updates (.github/dependabot.yml).
+# requirements-test.txt pins this and every dependency with its hashes, and pip
+# installs it with --require-hashes; after changing a pin here, regenerate it
+# with the uv command at its top.
+jsonschema==4.26.0
+mypy==2.4.1
+openpyxl==3.1.5
+pyarrow==26.0.1; python_version >= "3.11"
+pytest==9.2.0

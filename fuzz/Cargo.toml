@@ -1,0 +1,99 @@
+[package]
+name = "rvt-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+# The crate's own rust-version (Cargo.toml). The fuzz workspace has its own
+# lockfile; without this its resolution, and Dependabot's, ignores the MSRV and
+# fuzzes versions the crate cannot ship (encoding_rs 0.8.42 needs Rust 1.88).
+rust-version = "1.89"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+# The arc-wall and opening-index targets fuzz research readers.
+rvt = { package = "rvt-open", path = "..", features = ["unstable-research"] }
+
+# Prevent this from being picked up as part of the main workspace
+[workspace]
+
+[[bin]]
+name = "fuzz_open_bytes"
+path = "fuzz_targets/fuzz_open_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_gzip_header_len"
+path = "fuzz_targets/fuzz_gzip_header_len.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_inflate_at_with_limits"
+path = "fuzz_targets/fuzz_inflate_at_with_limits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parse_schema"
+path = "fuzz_targets/fuzz_parse_schema.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_find_chunks"
+path = "fuzz_targets/fuzz_find_chunks.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_basic_file_info"
+path = "fuzz_targets/fuzz_basic_file_info.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_part_atom"
+path = "fuzz_targets/fuzz_part_atom.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_walker_entry_detect"
+path = "fuzz_targets/fuzz_walker_entry_detect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_step_writer"
+path = "fuzz_targets/fuzz_step_writer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_elem_table"
+path = "fuzz_targets/fuzz_elem_table.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_public_byte_parsers"
+path = "fuzz_targets/fuzz_public_byte_parsers.rs"
+test = false
+doc = false
+bench = false
+

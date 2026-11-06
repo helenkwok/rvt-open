@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "id": "magnetar-revit-ifc5-einhoven",
+  "project_file": "Revit_IFC5_Einhoven.rvt",
+  "reference_ifc_file": null,
+  "source": {
+    "repo": "magnetar-io/revit-test-datasets",
+    "license": "MIT",
+    "revit_release": 2023,
+    "rvt_sha256": "d3a0c6d37d3f47a1726bc5aa7fe3880ed3c13bbe819b5e64680f6710b15aa948",
+    "rvt_bytes": 913408,
+    "notes": "Revit's own IFC4 exports of this file (2026-11-03, kept local, not in the repo) give the known rows below; the rest stay decoder baselines or unknowns. Curtain wall 7187 holds 24 loadable 'Family1' panels (1000 x 2000 mm frames, 250 mm deep, 0.14 m3) and no mullion; Wall 2808 hosts the 2 windows."
+  },
+  "counts": {
+    "levels": {
+      "status": "decoder_baseline",
+      "expected": 1,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree: one IfcBuildingStorey, Level 1",
+      "decoder_metric": "diagnostics.exported.storey_count",
+      "decoder_expected": 4,
+      "decoder_tolerance": 0,
+      "tracking": "einhoven_levels_2023",
+      "notes": "Einhoven's Level records do not decode, so its storeys come from the base elevations of its ArcWall records, which are the curtain panels' (Level 1 plus one per panel row, named Elevation 6.562 ft, 13.123 ft and Roof)."
+    },
+    "walls": {
+      "status": "known",
+      "expected": 1,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCWALL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCWALL",
+      "decoder_expected": 1,
+      "decoder_tolerance": 0,
+      "notes": "Wall 2808. The 24 curtain panels' ArcWall records (two of them with no ElementId, seven with a grid line's) and curtain wall 7187 are not written as walls."
+    },
+    "curtain_walls": {
+      "status": "known",
+      "expected": 1,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCCURTAINWALL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCCURTAINWALL",
+      "decoder_expected": 1,
+      "decoder_tolerance": 0,
+      "notes": "Curtain wall 7187, with no body of its own, aggregating its 24 panels. It has no mullion: its 8 grid lines' records name it."
+    },
+    "curtain_panels": {
+      "status": "known",
+      "expected": 24,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCPLATE",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCPLATE",
+      "decoder_expected": 24,
+      "decoder_tolerance": 0,
+      "notes": "The 24 Family1 panels, each drawn from the family's frame (open centre). The ArcWall records that carry some of the panels' ids do not keep them out."
+    },
+    "curtain_members": {
+      "status": "known",
+      "expected": 0,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCMEMBER",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCMEMBER",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "wall_geometry": {
+      "status": "known",
+      "expected": 27,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree: 1 wall, 24 plates and 2 windows with a body; the curtain wall has none",
+      "decoder_metric": "diagnostics.exported.building_elements_with_geometry",
+      "decoder_expected": 27,
+      "decoder_tolerance": 0,
+      "tolerance": 0
+    },
+    "floors": {
+      "status": "known",
+      "expected": 0,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCSLAB",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCSLAB",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "roofs": {
+      "status": "known",
+      "expected": 0,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCROOF",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCROOF",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "doors": {
+      "status": "known",
+      "expected": 0,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCDOOR",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCDOOR",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "windows": {
+      "status": "known",
+      "expected": 2,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCWINDOW",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCWINDOW",
+      "decoder_expected": 2,
+      "decoder_tolerance": 0,
+      "notes": "Windows 5317 and 5388, hosted by Wall 2808."
+    },
+    "rooms_spaces": {
+      "status": "known",
+      "expected": 0,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCSPACE",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCSPACE",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "columns": {
+      "status": "known",
+      "expected": 0,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCCOLUMN",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCCOLUMN",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "beams": {
+      "status": "known",
+      "expected": 0,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCBEAM",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCBEAM",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "mep": {
+      "status": "known",
+      "expected": 0,
+      "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree",
+      "source_ifc_type": "IFCFLOWTERMINAL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCFLOWTERMINAL",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "materials": {
+      "status": "decoder_baseline",
+      "expected": 36,
+      "source": "rvt-open Revit 2023 material objects (class tag 0x09fb) with their names and shading colours → IfcMaterial on Einhoven 2023",
+      "decoder_metric": "diagnostics.exported.material_count",
+      "decoder_expected": 36,
+      "decoder_tolerance": 0,
+      "tracking": "revit_compound_assemblies_and_walltype_widths",
+      "unsupported_feature": "revit_compound_assemblies_and_walltype_widths",
+      "notes": "The file's own 36 materials, every one named by its own name field and coloured: Default, Default Wall, Default Roof, Glass and the rest. No paired export scores them."
+    },
+    "units": {
+      "status": "decoder_baseline",
+      "expected": 1,
+      "source": "rvt-open generated IFC unit-assignment constructor count",
+      "decoder_metric": "step.IFCUNITASSIGNMENT",
+      "decoder_expected": 1,
+      "decoder_tolerance": 0,
+      "tracking": "units decoder baseline"
+    }
+  }
+}

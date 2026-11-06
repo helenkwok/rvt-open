@@ -1,0 +1,25 @@
+# Weekly dependency updates. Minor and patch updates are grouped into one PR per ecosystem and
+# directory; major updates come one PR each, so a breaking change is reviewed on its own.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories: ["/", "/fuzz"]
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: npm # covers pnpm-lock.yaml
+    directory: /viewer
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/fetch-corpus"]
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]

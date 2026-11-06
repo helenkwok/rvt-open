@@ -1,0 +1,345 @@
+name: CI
+# CI for rvt-open. Every action is pinned to a full commit SHA.
+# Test data: public samples only (Autodesk's own sample downloads, VTT's BIM4LCA models), fetched by
+# tools/ci/fetch-public-samples.sh and cached. Tests whose files have no public source skip and say so.
+on:
+  push:
+    branches: [main]
+  # A draft pull request runs the fast jobs (samples, box check, fmt, clippy);
+  # marking it ready runs the rest.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  # A draft's fast run and the full run marking it ready starts are in groups
+  # of their own, so marking a draft ready does not cancel its fast run.
+  group: ci-${{ github.ref }}-${{ github.event.pull_request.draft && 'fast' || 'full' }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.98.0"
+  PARTITIONS: 4
+
+jobs:
+  identity:
+    name: identity check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - run: tools/ci/identity-check.sh
+        env:
+          IDENTITY_DENYLIST: ${{ secrets.IDENTITY_DENYLIST }}
+          IDENTITY_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      - if: github.event_name == 'pull_request'
+        run: tools/ci/identity-check.sh --commits "$BASE..$HEAD"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          IDENTITY_DENYLIST: ${{ secrets.IDENTITY_DENYLIST }}
+          IDENTITY_FORK_PR: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+  samples:
+    name: Fetch public samples
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", lookup-only: true }
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: tools/ci/fetch-public-samples.sh _samples > _samples.env && cat _samples.env
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: mv _samples.env _samples/env
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
+
+  box-check:
+    name: Box check
+    needs: samples
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
+      - run: sed "s|^\([A-Z0-9_]*=\).*/_samples/|\1$GITHUB_WORKSPACE/_samples/|" _samples/env >> "$GITHUB_ENV"
+      - name: Einhoven (MIT, Revit 2023)
+        uses: ./.github/actions/fetch-corpus
+        with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }
+      - run: echo "RVT_PROJECT_CORPUS_DIR=$GITHUB_WORKSPACE/_project_corpus/Revit" >> "$GITHUB_ENV"
+      - run: cargo run --profile ci --example box_check -- tools/ci/box-baseline.tsv
+        env: { BOX_CHECK_JOBS: "3" }
+
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal -c rustfmt && rustup default "$RUST_VERSION"
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy and docs
+    needs: box-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo check --lib --bins
+        env: { RUSTFLAGS: "-D warnings -D unnameable_types" }
+      - run: cargo doc --no-deps --lib
+        env: { RUSTDOCFLAGS: "-D warnings" }
+
+  build:
+    name: build / ${{ matrix.os }}
+    needs: box-check
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install "${{ env.RUST_VERSION }}" --profile minimal && rustup default "${{ env.RUST_VERSION }}"
+      # The hosted Ubuntu image ships about 30 GB of SDKs this job never uses; the debug build of the
+      # whole workspace plus the ClamAV image no longer fit beside them.
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --workspace --lib --bins --all-features
+      # ClamAV (GPL-2.0) runs here as a separate program only; it is never linked into or shipped with rvt-open.
+      - name: ClamAV scan of the built binaries (official clamav image, pinned in the script)
+        if: runner.os == 'Linux'
+        run: |
+          tools/ci/clamav-scan.sh "$RUNNER_TEMP/clamav.md" "$RUNNER_TEMP/clamav.log" $(find target/debug -maxdepth 1 -type f -executable -name 'rvt-*')
+          cat "$RUNNER_TEMP/clamav.md" >> "$GITHUB_STEP_SUMMARY"
+      - run: cargo test --profile ci --doc
+      - run: cargo run --profile ci --example basics_inspect
+      - run: cargo run --profile ci --example basics_elements
+
+  dwg:
+    name: rvt-dwg (DWG/DXF, ACadSharp samples)
+    needs: box-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile }
+      - id: dwg-samples
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _dwg_samples, key: "dwg-samples-${{ hashFiles('rvt-dwg/tools/fetch-acadsharp-samples.sh') }}" }
+      # MIT sample drawings, pinned by commit and SHA-256 in the script.
+      - run: rvt-dwg/tools/fetch-acadsharp-samples.sh _dwg_samples
+      - run: cargo test --profile ci -p rvt-dwg
+        env: { RVT_DWG_SAMPLES: "${{ github.workspace }}/_dwg_samples" }
+
+  test:
+    name: tests ${{ matrix.part }}/4
+    needs: box-check
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile }
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with: { tool: cargo-nextest@0.9.146 }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
+      - run: sed "s|^\([A-Z0-9_]*=\).*/_samples/|\1$GITHUB_WORKSPACE/_samples/|" _samples/env >> "$GITHUB_ENV"
+      - name: Real-file, CLI and contract tests (partition ${{ matrix.part }} of ${{ env.PARTITIONS }})
+        run: tools/ci/verify-real-files.sh --profile ci --partition "count:${{ matrix.part }}/${{ env.PARTITIONS }}" --no-fail-fast
+
+  wasm:
+    name: wasm32 and wasm64
+    needs: box-check
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy -t wasm32-unknown-unknown
+          rustup default "$RUST_VERSION"
+          rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
+          echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with: { tool: "wasm-bindgen@${{ env.WB }}" }
+      - run: cargo clippy -p rvt-wasm --all-targets -- -D warnings
+      # The package the release ships: 32-bit and 64-bit builds and the loader, in one folder.
+      - run: tools/ci/wasm-package.sh pkg
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: wasm-pkg, path: pkg }
+
+  mcp:
+    name: MCP server (rvt-open-mcp)
+    needs: box-check
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile }
+      # A crate of its own (rmcp and tokio stay out of the core library), so
+      # the workspace jobs do not reach its lints or its end-to-end test.
+      - run: cargo clippy -p rvt-open-mcp --all-targets --no-deps -- -D warnings
+      # Stdio only: the dependency tree carries no HTTP client or server.
+      - run: tools/ci/audit-mcp-network.sh
+      # docs/mcp-tools.md is rendered from docs/mcp-tools.json.
+      - run: python3 tools/ci/render-mcp-tools.py --check
+      - name: Real sample projects (MIT)
+        uses: ./.github/actions/fetch-corpus
+        with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }
+      # The end-to-end test drives the built server over stdio on the
+      # synthetic fixture and on Einhoven, and compares its exports byte for
+      # byte with rvt-ifc's and rvt-gltf's.
+      - name: MCP server end to end
+        env:
+          RVT_PROJECT_CORPUS_DIR: ${{ github.workspace }}/_project_corpus/Revit
+          RVT_REQUIRE_CLI_PARITY: "1"
+        run: |
+          cargo build --profile ci --bin rvt-ifc --bin rvt-gltf
+          cargo test --profile ci -p rvt-open-mcp --no-fail-fast
+
+  formats:
+    name: Format validators
+    needs: box-check
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
+      - run: cargo build --profile ci --features sqlite --bin rvt-ifc --bin rvt-gltf --bin rvt-schedule
+      - name: Export public samples and run each format's official validator
+        run: |
+          s=_samples/2024; n=_samples/bim4lca/ARCH/REVIT/ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt
+          files=("$s/racbasicsampleproject.rvt" "$s/racadvancedsampleproject.rvt" "$s/rstbasicsampleproject.rvt" "$s/rmebasicsampleproject.rvt")
+          [ -f "$n" ] && files+=("$n") || echo "::warning::BIM4LCA model not fetched: not validated"
+          tools/ci/validators/public-check.sh target/ci "${files[@]}"
+      # Every room's plan area and outline against Revit's own export of the
+      # same project (tools/re/space_profiles_vs_ifc.py), on the two projects
+      # whose rooms were measured whole: Core Interior (Revit 2024) and RE1
+      # Architecture (Revit 2025). The minimums are the measured counts in
+      # area, outline and boundary; `--match globalid` keeps a room that loses
+      # Revit's GlobalId from pairing by position instead.
+      - name: Real sample projects with Revit's exports (MIT)
+        uses: ./.github/actions/fetch-corpus
+        with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }
+      - name: Room areas and outlines against Revit's exports
+        run: |
+          set -euo pipefail
+          base=https://raw.githubusercontent.com/Drshelden/IFC-ECS/9e8b37175a0fba1397f7011aeee917fe52de7623/data/RE1
+          dir=_project_corpus/Revit
+          while read -r name sum; do
+            curl -sSfL --retry 5 --retry-all-errors -o "$dir/$name" "$base/$name"
+            echo "$sum  $dir/$name" | sha256sum -c -
+          done <<'LIST'
+          RE1-Architecture.rvt 4a78bdd68e7f4dd7806060db07c222da9a810e20b3f303c17a443294b91c8ce4
+          RE1-Architecture.ifc a9b5d36677aa6a8bb91b77d8bc354ed9028a7ca3e9e2491a47ba14cfd8e26200
+          LIST
+          python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt
+          target/ci/rvt-ifc "$dir/2024_Core_Interior.rvt" -o "$RUNNER_TEMP/core-interior.ifc"
+          target/ci/rvt-ifc "$dir/RE1-Architecture.rvt" -o "$RUNNER_TEMP/re1-architecture.ifc"
+          "$RUNNER_TEMP/ifc/bin/python" tools/re/space_profiles_vs_ifc.py "$RUNNER_TEMP/core-interior.ifc" \
+            "_project_corpus/IFC Exports/2024_Core_Interior_slim.ifc" \
+            --match globalid --min-in-both 116 --min-area 116 --min-outline 116 --min-boundary 116
+          "$RUNNER_TEMP/ifc/bin/python" tools/re/space_profiles_vs_ifc.py "$RUNNER_TEMP/re1-architecture.ifc" \
+            "$dir/RE1-Architecture.ifc" \
+            --match globalid --min-in-both 11 --min-area 11 --min-outline 11 --min-boundary 11
+      - name: Element table read back with openpyxl, pyarrow and sqlite3
+        run: |
+          d=$RUNNER_TEMP/table; mkdir -p "$d"
+          for f in jsonl xlsx parquet sqlite; do
+            target/ci/rvt-schedule _samples/2024/racbasicsampleproject.rvt --format "$f" -o "$d/t.elements.$f"
+          done
+          python3 -m venv "$RUNNER_TEMP/py"
+          "$RUNNER_TEMP/py/bin/pip" install -q --require-hashes -r tools/ci/requirements-test.txt
+          RVT_TABLE_DIR="$d" "$RUNNER_TEMP/py/bin/pytest" -q -rs tests/python/test_table_readback.py
+      - name: 3D PDF structure (qpdf), U3D stream header and poster render (poppler)
+        run: |
+          # Bounded and retried: a hung Ubuntu mirror would otherwise use the whole job timeout.
+          for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq qpdf poppler-utils > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
+          tools/ci/pdf3d-check.sh target/ci _samples/2024/racbasicsampleproject.rvt _samples/2024/rstbasicsampleproject.rvt
+
+  viewer:
+    name: viewer (Playwright)
+    needs: box-check
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown
+          rustup default "$RUST_VERSION"
+          echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with: { tool: "wasm-bindgen@${{ env.WB }}" }
+      - name: Build the wasm package into viewer/pkg
+        run: |
+          cargo build -p rvt-wasm --release --target wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir viewer/pkg --out-name rvt target/wasm32-unknown-unknown/release/rvt_wasm.wasm
+      - name: Real sample projects for the demo gallery (MIT)
+        uses: ./.github/actions/fetch-corpus
+        with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }
+      - name: Family samples for the demo gallery
+        uses: ./.github/actions/fetch-corpus
+        with: { repository: phi-ag/rvt, path: _corpus }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24.22.1" }
+      - name: Shell, exports (3D PDF included) and the no-network invariant
+        working-directory: viewer
+        run: |
+          npm install -g pnpm@12.6.0
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+          pnpm run build
+          for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt; do
+            test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
+          done
+          pnpm exec playwright test tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts

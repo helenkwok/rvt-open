@@ -1,0 +1,285 @@
+//! A duct's or pipe's size and type, from its curve object.
+//!
+//! A duct is an `RbsDuctCurve` and a pipe an `RbsPipeCurve`, both `RbsCurve`s,
+//! whose first serialized field, `m_pConnectorManager`, is written as the tag
+//! of `RbsCurveConnectorManager`, `0xFF` × 4 and the next tag: the anchor.
+//! The schema's next fields follow it:
+//!
+//! ```text
+//! +8    f64   m_dWidthOrDiameter
+//! +16   f64   m_dHeight
+//! +64   u64   m_idType
+//! ```
+//!
+//! The anchors are one per curve, and a curve's connector entries (
+//! [`crate::partition_pipe_axes`]) follow its anchor within [`ANCHOR_WINDOW`]
+//! bytes: an anchor is the element's whose box alone holds the points of the
+//! first two entries after it. A neighbour joined at one end holds only that
+//! end, so the first entry in the stream that falls in a box is not enough. On
+//! the RE1 Mechanical and Plumbing models (Revit 2025, MIT), against Revit's
+//! own IFC: every duct and pipe has one (25, 6 and 63); the type id is
+//! Revit's type `Tag` on all 94; a duct's width and height are two of the
+//! three dimensions of Revit's extrusion on 25 of 25, and a pipe's are equal.
+//! A round duct is stored as width = height = diameter, as a pipe is, so the
+//! fields do not tell a round duct from a square one.
+
+use crate::le_bytes;
+use crate::partition_pipe_axes::{BoxGrid, holds};
+use crate::{Result, RevitFile};
+use std::collections::BTreeMap;
+
+/// Releases where this layout is measured: the RE1 models.
+pub const CURVE_FIELDS_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2025];
+
+/// Whether `revit_version` is a release this layout is measured on.
+pub fn supports_revit_version(revit_version: u32) -> bool {
+    CURVE_FIELDS_SUPPORTED_REVIT_VERSIONS.contains(&revit_version)
+}
+
+/// Releases where only `m_idType` is measured: against the Revit
+/// API it is the element's type on every duct and pipe whose anchor is found
+/// on the sample models, 0 wrong. The sizes are measured on the RE1 models
+/// only and are not read on these.
+pub const CURVE_TYPE_LINK_REVIT_VERSIONS: &[u32] = &[2024, 2026];
+
+/// Whether `revit_version` is a release where the type id of a curve is read.
+pub fn supports_type_links(revit_version: u32) -> bool {
+    supports_revit_version(revit_version) || CURVE_TYPE_LINK_REVIT_VERSIONS.contains(&revit_version)
+}
+
+/// Bytes after an anchor its curve's connector entries are looked for in. The
+/// first lies 1,253 to 1,324 bytes after the anchor on RE1.
+pub const ANCHOR_WINDOW: usize = 2_000;
+
+/// Offset of `m_dWidthOrDiameter` from the anchor.
+pub const WIDTH_OFFSET: usize = 8;
+/// Offset of `m_dHeight` from the anchor.
+pub const HEIGHT_OFFSET: usize = 16;
+/// Offset of `m_idType` from the anchor.
+pub const TYPE_OFFSET: usize = 64;
+
+/// Largest connector index an entry is taken to have.
+const MAX_CONNECTOR_INDEX: u32 = 255;
+
+/// The fields of one duct's or pipe's curve object.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CurveFields {
+    /// `m_dWidthOrDiameter`, feet.
+    pub width_feet: f64,
+    /// `m_dHeight`, feet.
+    pub height_feet: f64,
+    /// `m_idType`: the ElementId of the element's type.
+    pub type_id: u32,
+}
+
+impl CurveFields {
+    /// The element's length along its axis, from its record box `[min x, min
+    /// y, min z, max x, max y, max z]`: the one dimension of the box left
+    /// when the width and the height are matched to the other two, each to
+    /// `tolerance` feet. `None` when no dimension is left that way, or when
+    /// two are and their lengths differ. Only an element along one of the
+    /// model's axes has its section in its box like this.
+    pub fn length_in_box(&self, bbox: [f64; 6], tolerance: f64) -> Option<f64> {
+        let dims = [bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]];
+        let near = |a: f64, b: f64| (a - b).abs() <= tolerance;
+        let mut length: Option<f64> = None;
+        for axis in 0..3 {
+            let (a, b) = (dims[(axis + 1) % 3], dims[(axis + 2) % 3]);
+            let section = (near(a, self.width_feet) && near(b, self.height_feet))
+                || (near(a, self.height_feet) && near(b, self.width_feet));
+            if !section {
+                continue;
+            }
+            match length {
+                None => length = Some(dims[axis]),
+                Some(held) if near(held, dims[axis]) => {}
+                Some(_) => return None,
+            }
+        }
+        length.filter(|l| l.is_finite() && *l > 0.0)
+    }
+}
+
+/// The point of the connector entry whose marker `u32 1` starts at `at`.
+fn entry_point(buf: &[u8], at: usize) -> Option<[f64; 3]> {
+    if le_bytes::u32_at(buf, at.checked_sub(4)?)? > MAX_CONNECTOR_INDEX {
+        return None;
+    }
+    let mut point = [0.0; 3];
+    for (axis, slot) in point.iter_mut().enumerate() {
+        *slot = le_bytes::f64_at(buf, at + 4 + 8 * axis)?;
+        if !slot.is_finite() {
+            return None;
+        }
+    }
+    Some(point)
+}
+
+/// The fields at the anchor at `anchor`, when they are a size and a type.
+fn fields_at(buf: &[u8], anchor: usize) -> Option<CurveFields> {
+    let width = le_bytes::f64_at(buf, anchor + WIDTH_OFFSET)?;
+    let height = le_bytes::f64_at(buf, anchor + HEIGHT_OFFSET)?;
+    let type_id = u32::try_from(le_bytes::u64_at(buf, anchor + TYPE_OFFSET)?).ok()?;
+    let size = |v: f64| v.is_finite() && v > 0.0 && v < 1_000.0;
+    (size(width) && size(height) && type_id != 0).then_some(CurveFields {
+        width_feet: width,
+        height_feet: height,
+        type_id,
+    })
+}
+
+/// Bytes from the header of a pipe's `RbsPipeCurve` data object to its inner
+/// diameter; its outer diameter follows.
+pub const PIPE_INNER_DIAMETER_OFFSET: usize = 549;
+/// Largest diameter, feet, a pipe's two diameters are taken to be under.
+const MAX_PIPE_DIAMETER_FEET: f64 = 10.0;
+
+/// Each pipe of `pipes`' inner and outer diameters, feet, by ElementId
+///: the two `f64`s at [`PIPE_INNER_DIAMETER_OFFSET`] of the verified
+/// data object whose header carries the pipe's id and `RbsPipeCurve`'s tag.
+/// On RE1 Mechanical and Plumbing the inner diameter is the one Revit's
+/// `InvertElevation` implies on every pipe size. A pipe whose objects
+/// disagree, or whose two values are not 0 < inner < outer, is absent. Empty
+/// for a release this layout is not measured on.
+pub fn scan_pipe_diameters(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    pipes: &std::collections::BTreeSet<u32>,
+) -> Result<BTreeMap<u32, (f64, f64)>> {
+    if !supports_revit_version(revit_version) || pipes.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let classes = rf.memoised_schema_classes()?;
+    let Some(tag) = classes
+        .classes
+        .iter()
+        .find(|class| class.name == "RbsPipeCurve")
+        .map(|class| u32::from(class.tag))
+    else {
+        return Ok(BTreeMap::new());
+    };
+    let mut found: BTreeMap<u32, Option<(f64, f64)>> = BTreeMap::new();
+    for stream in rf.partition_stream_names() {
+        let (Ok(inflated), Ok(objects)) = (
+            rf.inflated_partition(&stream),
+            rf.memoised_partition_data_objects(&stream),
+        ) else {
+            continue;
+        };
+        let buf = inflated.bytes();
+        for &(p, object) in objects.iter() {
+            let id = object.element_id;
+            if object.class & 0xffff != tag || !pipes.contains(&id) {
+                continue;
+            }
+            let at = p + PIPE_INNER_DIAMETER_OFFSET;
+            let (Some(inner), Some(outer)) =
+                (le_bytes::f64_at(buf, at), le_bytes::f64_at(buf, at + 8))
+            else {
+                continue;
+            };
+            if !(inner > 0.0 && inner < outer && outer < MAX_PIPE_DIAMETER_FEET) {
+                continue;
+            }
+            match found.get(&id) {
+                None => {
+                    found.insert(id, Some((inner, outer)));
+                }
+                Some(Some(held)) if *held != (inner, outer) => {
+                    found.insert(id, None);
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    Ok(found
+        .into_iter()
+        .filter_map(|(id, diameters)| Some((id, diameters?)))
+        .collect())
+}
+
+/// The curve fields of each duct and pipe of `curves` (their record boxes, by
+/// the partition stream their records are in), by ElementId. An element whose
+/// anchor is not found, or whose fields are not a size and a type, is absent;
+/// so is one whose ElementId gives different fields in two streams. Empty for
+/// a release this layout is not measured on, or a schema with no
+/// `RbsCurveConnectorManager`.
+pub fn scan_curve_fields(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    curves: &BTreeMap<String, Vec<(u32, [f64; 6])>>,
+) -> Result<BTreeMap<u32, CurveFields>> {
+    if !supports_type_links(revit_version) || curves.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let classes = rf.memoised_schema_classes()?;
+    let Some(manager) = classes
+        .classes
+        .iter()
+        .find(|class| class.name == "RbsCurveConnectorManager")
+        .map(|class| class.tag)
+    else {
+        return Ok(BTreeMap::new());
+    };
+    let mut anchor = manager.to_le_bytes().to_vec();
+    anchor.extend_from_slice(&[0xff; 4]);
+    anchor.extend_from_slice(&manager.wrapping_add(1).to_le_bytes());
+    let mut found: BTreeMap<u32, Option<CurveFields>> = BTreeMap::new();
+    for (stream, boxes) in curves {
+        let Ok(inflated) = rf.inflated_partition(stream) else {
+            continue;
+        };
+        let buf = inflated.bytes();
+        let anchors: Vec<usize> = memchr::memmem::find_iter(buf, anchor.as_slice()).collect();
+        if anchors.is_empty() {
+            continue;
+        }
+        // Only the boxes near a point, and those too large to index, can
+        // hold it within the tolerance.
+        let grid = BoxGrid::new(boxes.iter().map(|(_, bbox)| bbox));
+        let candidates = |point: [f64; 3]| {
+            grid.near(point)
+                .iter()
+                .chain(&grid.oversized)
+                .map(|&index| &boxes[index])
+        };
+        // An anchor belongs to the one element whose box holds the points of
+        // the first two entries after it within the window: a curve's own two
+        // ends, of which a neighbour joined at one end holds only that one.
+        // Only the windows are searched for entries: the whole stream
+        // has millions of `u32 1`s, each tested against every box.
+        for &at in &anchors {
+            let window = &buf[at + 1..buf.len().min(at + ANCHOR_WINDOW + 4)];
+            let points: Vec<[f64; 3]> = memchr::memmem::find_iter(window, &1u32.to_le_bytes())
+                .filter_map(|offset| entry_point(buf, at + 1 + offset))
+                .filter(|point| candidates(*point).any(|(_, bbox)| holds(bbox, *point)))
+                .take(2)
+                .collect();
+            if points.is_empty() {
+                continue;
+            }
+            // A box holding every point holds the first.
+            let mut owners = candidates(points[0])
+                .filter(|(_, bbox)| points.iter().all(|point| holds(bbox, *point)));
+            let (Some((id, _)), None) = (owners.next(), owners.next()) else {
+                continue;
+            };
+            let Some(fields) = fields_at(buf, at) else {
+                continue;
+            };
+            match found.get(id) {
+                None => {
+                    found.insert(*id, Some(fields));
+                }
+                Some(Some(held)) if *held != fields => {
+                    found.insert(*id, None);
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    Ok(found
+        .into_iter()
+        .filter_map(|(id, fields)| Some((id, fields?)))
+        .collect())
+}

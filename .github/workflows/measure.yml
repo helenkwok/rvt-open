@@ -1,0 +1,102 @@
+name: Measure
+# Two measurements on public samples, written to the job summary and uploaded as artifacts.
+# large-partitions: models whose largest partition inflates past 256 MiB must read like any other
+#   (tools/ci/measure-large-partitions.sh); the job fails if one opens empty.
+# old-file-timing: rvt-ifc's export time and peak memory on the Revit 2015-2022 samples, at the
+#   main branch and at the checked-out commit, both built and run on the same runner
+#   (tools/ci/measure-timing.sh).
+# Every action is pinned to a full commit SHA.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/measure.yml
+      - tools/ci/measure-large-partitions.sh
+      - tools/ci/measure-timing.sh
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Timing rounds per file and build (the median is reported)
+        default: "3"
+      base_ref:
+        description: The ref timed against the checked-out commit
+        default: origin/main
+permissions:
+  contents: read
+concurrency:
+  group: measure-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.98.0"
+
+jobs:
+  large-partitions:
+    name: Partitions over 256 MiB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+          # Bounded and retried: a hung Ubuntu mirror would otherwise use the whole job timeout.
+          for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq time > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
+      - id: samples
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
+      - if: steps.samples.outputs.cache-hit != 'true'
+        run: tools/ci/fetch-public-samples.sh _samples
+      - run: cargo build --release --bin rvt-dump --bin rvt-ifc --bin rvt-gltf
+      - name: Read the models with the largest partitions
+        run: |
+          echo "commit: $(git rev-parse HEAD)"
+          # The public samples whose largest partition inflates past 256 MiB.
+          mapfile -t files < <(find _samples/flat _samples/bim4lca -name '2024-snowdon_towers_sample_architectural.rvt' \
+            -o -name 'ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt' -o -name 'ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt' \
+            -o -name 'ARK_NordicLCA_Office_Concrete_As-Built.rvt' | sort)
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::none of the large samples was fetched"; exit 1; }
+          set +e; tools/ci/measure-large-partitions.sh target/release measure-large "${files[@]}"; st=$?; set -e
+          { echo "## Partitions over 256 MiB ($(git rev-parse --short HEAD))"; echo; cat measure-large/summary.md; } >> "$GITHUB_STEP_SUMMARY"
+          exit $st
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: measure-large-partitions, path: measure-large, if-no-files-found: warn }
+
+  old-file-timing:
+    name: Revit 2015-2022 export time and memory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      BASE_REF: ${{ inputs.base_ref || 'origin/main' }}
+      ROUNDS: ${{ inputs.rounds || '3' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+          # Bounded and retried: a hung Ubuntu mirror would otherwise use the whole job timeout.
+          for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq time > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
+      - id: samples
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
+      - if: steps.samples.outputs.cache-hit != 'true'
+        run: tools/ci/fetch-public-samples.sh _samples
+      - name: Build rvt-ifc at the base ref and at the checked-out commit
+        run: |
+          git worktree add --detach _base "$BASE_REF"
+          (cd _base && cargo build --release --locked --bin rvt-ifc)
+          cargo build --release --locked --bin rvt-ifc
+      - name: Time both builds on each 2015-2022 sample
+        run: |
+          mkdir -p measure-timing
+          tools/ci/measure-timing.sh _base/target/release target/release measure-timing/timing.md _samples/flat/20{15,16,17,18,19,20,21,22}-*.rvt
+          {
+            echo "## Revit 2015-2022 export: $BASE_REF ($(git -C _base rev-parse --short HEAD)) vs $(git rev-parse --short HEAD)"
+            echo
+            echo "rvt-ifc, median of $ROUNDS rounds per file and build, both builds on this runner; peak is GNU time's maximum resident set size."
+            echo
+            cat measure-timing/timing.md
+          } | tee measure-timing/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: measure-old-file-timing, path: measure-timing, if-no-files-found: warn }

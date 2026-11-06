@@ -1,0 +1,12 @@
+{
+  "source_url": "https://github.com/helenkwok/rvt-open/tree/main/corpus/tier1/mep-2024",
+  "source_repo": "helenkwok/rvt-open",
+  "source_path": "corpus/tier1/mep-2024/mep-2024.rvt",
+  "license": "Apache-2.0",
+  "sha256": "3abbfa6cd09f3b4e6636da14a7cf2d568abafa60c39c60d44ed691c2f713b9b9",
+  "bytes": 20480,
+  "revit_release": "2024",
+  "file_type": ".rvt",
+  "redistribution": "public",
+  "notes": "Synthetic CFB test fixture. Not Autodesk-authored. Known counts: 4 levels, 4 walls, 0 floors, 4 doors, 4 windows, 4 MEP (Duct)."
+}

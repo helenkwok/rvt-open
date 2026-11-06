@@ -1,0 +1,127 @@
+//! ES reference occurrence locator contracts (no decoder yet).
+//!
+//! Public API types for localizing ElementId (and related) references
+//! inside Extensible Storage / ElementSettings-adjacent payloads once an
+//! oracle-backed decoder exists. **No ES byte layout is invented here.**
+
+use crate::evidence::EvidenceTier;
+use crate::identity::{DocumentIdentity, ScopedElementRef, SourceSpan};
+use serde::{Deserialize, Serialize};
+
+/// One segment in a logical path into an ES value tree.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EsPathSegment {
+    /// Named field / schema key.
+    Field { name: String },
+    /// Array or list index.
+    Index { index: u64 },
+    /// Map key when the value tree is dictionary-shaped.
+    MapKey { key: String },
+    /// Opaque segment when the shape is not yet classified (fail closed).
+    Opaque { label: String },
+}
+
+/// Locator for a single candidate ES-held reference occurrence.
+///
+/// Presence of this type in memory or JSON does **not** mean remapping
+/// was observed — only that a research harness may record a candidate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EsReferenceOccurrence {
+    pub document: DocumentIdentity,
+    /// Host element that owns the ES storage entity, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<ScopedElementRef>,
+    /// Referenced element id as interpreted by the observation (not proof).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub referenced: Option<ScopedElementRef>,
+    /// Logical path inside the ES value tree.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<EsPathSegment>,
+    /// Byte span when localized; absent until a decoder exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<SourceSpan>,
+    /// Evidence ceiling for this occurrence record.
+    pub tier: EvidenceTier,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+impl EsReferenceOccurrence {
+    /// Research stub: document-scoped placeholder with E0 tier.
+    pub fn stub(document: DocumentIdentity) -> Self {
+        Self {
+            document,
+            host: None,
+            referenced: None,
+            path: Vec::new(),
+            span: None,
+            tier: EvidenceTier::E0,
+            notes: vec!["EsReferenceOccurrence stub — no ES decoder; remapping not claimed".into()],
+        }
+    }
+}
+
+/// Semantic mutation applied between a before/after fixture pair.
+///
+/// Fixture law: **one mutation per transition**.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "mutation", rename_all = "snake_case")]
+pub enum FixtureMutation {
+    /// No semantic change — localization noise baseline.
+    NoOp,
+    /// Identity-preserving save / reserialize baseline.
+    IdentitySave,
+    /// Remap a single ElementId reference (R1 family).
+    RemapElementId { from_id: u32, to_id: u32 },
+    /// Null / clear a reference (N-family).
+    NullReference { element_id: u32 },
+    /// Copy / duplicate semantics (C-family) — details in manifest.
+    CopyEntity { label: String },
+    /// Explicitly unsupported / not yet classified — fail closed.
+    Unsupported { reason: String },
+}
+
+/// Before/after fixture transition contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FixtureTransition {
+    pub transition_id: String,
+    pub before_fixture_id: String,
+    pub after_fixture_id: String,
+    pub mutation: FixtureMutation,
+    /// Evidence tier for the transition record itself (usually E0 until oracle).
+    pub tier: EvidenceTier,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+impl FixtureTransition {
+    /// A transition that changes nothing: the baseline a fixture manifest
+    /// compares its other transitions against.
+    pub fn no_op_baseline(transition_id: impl Into<String>, fixture_id: impl Into<String>) -> Self {
+        let id = fixture_id.into();
+        Self {
+            transition_id: transition_id.into(),
+            before_fixture_id: id.clone(),
+            after_fixture_id: id,
+            mutation: FixtureMutation::NoOp,
+            tier: EvidenceTier::E0,
+            notes: vec!["No-op baseline — requires Revit oracle before byte claims".into()],
+        }
+    }
+}
+
+/// Identifiers of the ES reference families (documentation and manifest only).
+pub mod families {
+    pub const N1: &str = "N1";
+    pub const N2: &str = "N2";
+    pub const N3: &str = "N3";
+    pub const N4: &str = "N4";
+    pub const R1: &str = "R1";
+    pub const R2: &str = "R2";
+    pub const C1: &str = "C1";
+    pub const C2: &str = "C2";
+    pub const C3A: &str = "C3a";
+    pub const C4A: &str = "C4a";
+    pub const ES_REMAP_00: &str = "ES-remap-00";
+}

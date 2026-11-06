@@ -1,0 +1,1921 @@
+//! Partition element-record headers: ElementId + BuiltInCategory + bbox.
+//!
+//! Revit 2024 project partitions frame each *element* record with a
+//! fixed 88-byte prologue whose first field is the record's own
+//! `ElementId` and whose sixth field is the element's Revit
+//! `BuiltInCategory` id (a negative, publicly documented constant).
+//! The prologue is followed by the element's model-space bounding
+//! box as six `f64` feet values.
+//!
+//! Layout observed on `2024_Core_Interior.rvt`
+//! (sha256 `c805df44…`, Revit 2024, eight `Partitions/*` streams,
+//! ~190 MiB inflated):
+//!
+//! ```text
+//! +0x00  u64  ElementId of this record (declared in Global/ElemTable)
+//! +0x08  u32  record flags (0x00e1 / 0x0111 / 0x0131 / 0x0141 / … )
+//! +0x0c  u32  0x0000059f on every observed record of this shape
+//! +0x10  u16  0
+//! +0x12  i64  BuiltInCategory id, negative (OST_Columns = -2000100)
+//! +0x1a  16B  0xff sentinel padding (two u64 slots, never set here)
+//! +0x2a u64 design option ElementId, 0xff×8 = main model
+//! +0x32  u64  container ElementId, 0xffff_ffff_ffff_ffff = none
+//! +0x3a  u64  0xff sentinel (never set on observed records)
+//! +0x42  u32  placement kind: 0xffffef7f placed / 0xffff8000 symbol
+//! +0x46 u32 flags (m_abFlags4Bytes, not interpreted)
+//! +0x4a  u16  class tag: the element's class as the definition ordinal of
+//! the file's own Formats/Latest ([`crate::formats::schema_classes`])
+//! +0x4c  u32  0xffffffff on every observed record of this shape
+//! +0x50  8B   bbox marker 46 01 ff ff ff ff ab 05
+//! +0x58  48B  bounding box: min x/y/z, max x/y/z, feet, f64 LE
+//! +0x88  u32  reference-list length n
+//! +0x8c  n*8  n u64 reference slots
+//! ```
+//!
+//! The two fields at `+0x32` and `+0x42` are what separates the
+//! records Revit's own exporter emits as building elements from the
+//! rest — see [`PartitionElementRecord::is_exported_instance`].
+//!
+//! The counted reference list that follows the bounding box is what
+//! binds a door or window to its host wall — see
+//! [`decode_reference_list`],
+//! [`PartitionElementRecord::preceding_reference`].
+//!
+//! 24880 records of this shape were found on that file; 23470 of
+//! them (94.3 %) carry the bbox marker at exactly `+0x50`, which is
+//! why the marker offset is treated as fixed rather than searched.
+//! Every `ElementId` recovered this way is declared in
+//! `Global/ElemTable`, and the scan requires that join — an offset
+//! whose leading `u64` is not a declared id is rejected, so a random
+//! byte match cannot become an element.
+//!
+//! # Honesty
+//!
+//! - The `BuiltInCategory` ids are Autodesk's published API
+//!   constants; nothing here is derived from Revit binaries.
+//! - Only the fields above are claimed. The sentinel runs, the flags
+//!   word, `0x059f`, `+0x46` and `+0x4a` are recorded, not interpreted.
+//! - `+0x32` is named `container` because every non-sentinel value
+//!   observed is an ElementId declared in `Global/ElemTable`, is
+//!   lower than every member id that names it, owns a contiguous
+//!   ElementId block spanning several categories at once, and has no
+//!   element record of its own. What kind of container Revit calls it
+//!   is not claimed.
+//! - `+0x42` is named `placement_kind` because it takes exactly two
+//!   values on the corpus and they partition the records into placed
+//!   instances and type/symbol envelopes. The numbers are recorded,
+//!   not decoded.
+//! - The `+0x88` list is named a *reference list* because its slots
+//!   hold ElementIds and because the slot before the record's own id
+//!   is, on every door and window record of the recorded edge, the
+//!   host wall Revit's own exporter voids. What the other slots mean
+//!   is recorded, not claimed: the leading slot is `3` on every
+//!   observed record, and the remaining slots are family / type /
+//!   level ids in ascending order. The list length is `u32`-counted,
+//!   not sentinel-terminated, and the count is bounded by
+//!   [`REFERENCE_LIST_MAX_ENTRIES`] so a garbage word cannot make the
+//!   decoder walk off.
+//! - One more slot of that list is read, and only for placed
+//!   instances: [`PartitionElementRecord::type_symbol_reference`],
+//!   the last slot before the record's own id that is itself a
+//!   `PLACEMENT_KIND_SYMBOL` record of the same `BuiltInCategory`.
+//!   On the recorded edge that is `5755` on all 256 exported
+//!   `OST_Columns` instances, which is the `IfcColumnType.Tag` Revit's
+//!   own export writes for every one of them. What the
+//!   remaining slots mean is still recorded, not claimed.
+//! - A *second* counted list follows the first, framed identically.
+//!   Its last slot is named [`PartitionElementRecord::owner_reference`]
+//!   because on every [`OST_SKETCH_LINES`] record of the recorded edge
+//!   it names the element whose sketch the line belongs to: the 3106
+//!   sketch-line records on `2024_Core_Interior.rvt` name 135 owners,
+//!   and 100 of them are exactly the 80 `IfcSlab` + 20
+//!   `IfcShadingDevice` ElementIds the reference export tags.
+//!   On other categories it is only what the byte says.
+//! - Category membership alone is **not** an instance claim: a
+//!   family symbol carries the same category as its instances.
+
+use crate::le_bytes;
+use crate::{Result, RevitFile};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Releases where this record shape is corpus-proven: 2024 on
+/// `2024_Core_Interior.rvt` against Revit's own export, 2025 on the
+/// `Drshelden/IFC-ECS` RE1 projects (MIT) against theirs, 2026 on
+/// one house against its export, and 2027 against the 2026 copies
+/// of Autodesk's sample projects, with no 2027 export.
+pub const PARTITION_ELEMENT_RECORD_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
+
+/// The name Revit's `Category` parameter gives an element of each
+/// `BuiltInCategory`, a sub-category as `Parent: Name`.
+///
+/// The ids are Autodesk's published API constants; each name is the one
+/// Revit 2024's own IFC export writes as `Other.Category` for elements whose
+/// record carries the id, measured on the seven Autodesk Revit 2024 samples
+/// whose records this module reads (26,656 elements, 57 categories, no id
+/// with two names). Revit writes the name in its UI language: these are the
+/// English names. An id not listed has no name here.
+pub const BUILTIN_CATEGORY_NAMES: &[(i64, &str)] = &[
+    (-2_000_011, "Walls"),
+    (-2_000_014, "Windows"),
+    (-2_000_023, "Doors"),
+    (-2_000_032, "Floors"),
+    (-2_000_035, "Roofs"),
+    (-2_000_038, "Ceilings"),
+    (-2_000_045, "Lines: <Sketch>"),
+    (-2_000_051, "Lines"),
+    (-2_000_080, "Furniture"),
+    (-2_000_100, "Columns"),
+    (-2_000_120, "Stairs"),
+    (-2_000_123, "Stairs: Supports"),
+    (-2_000_126, "Railings"),
+    (-2_000_151, "Generic Models"),
+    (-2_000_170, "Curtain Panels"),
+    (-2_000_171, "Curtain Wall Mullions"),
+    (-2_000_181, "Walls: Wall Sweeps"),
+    (-2_000_182, "Walls: Reveals"),
+    (-2_000_267, "Assemblies"),
+    (-2_000_919, "Stairs: Runs"),
+    (-2_000_920, "Stairs: Landings"),
+    (-2_000_996, "Shaft Openings"),
+    (-2_000_997, "Walls: Rectangular Straight Wall Opening"),
+    (-2_001_000, "Casework"),
+    (-2_001_040, "Electrical Equipment"),
+    (-2_001_060, "Electrical Fixtures"),
+    (-2_001_100, "Furniture Systems"),
+    (-2_001_120, "Lighting Fixtures"),
+    (-2_001_140, "Mechanical Equipment"),
+    (-2_001_160, "Plumbing Fixtures"),
+    (-2_001_180, "Parking"),
+    (-2_001_263, "Site: Pads"),
+    (-2_001_300, "Structural Foundations"),
+    (-2_001_320, "Structural Framing"),
+    (-2_001_327, "Structural Beam Systems"),
+    (-2_001_330, "Structural Columns"),
+    (-2_001_336, "Structural Trusses"),
+    (-2_001_350, "Specialty Equipment"),
+    (-2_001_354, "Structural Stiffeners"),
+    (-2_001_360, "Planting"),
+    (-2_001_370, "Entourage"),
+    (-2_001_392, "Floors: Slab Edges"),
+    (-2_003_400, "Mass"),
+    (-2_008_000, "Ducts"),
+    (-2_008_010, "Duct Fittings"),
+    (-2_008_013, "Air Terminals"),
+    (-2_008_016, "Duct Accessories"),
+    (-2_008_020, "Flex Ducts"),
+    (-2_008_044, "Pipes"),
+    (-2_008_049, "Pipe Fittings"),
+    (-2_008_050, "Flex Pipes"),
+    (-2_008_055, "Pipe Accessories"),
+    (-2_008_079, "Security Devices"),
+    (-2_008_081, "Communication Devices"),
+    (-2_008_083, "Data Devices"),
+    (-2_008_087, "Lighting Devices"),
+    (-2_008_099, "Sprinklers"),
+    (-2_008_122, "Pipe Insulations"),
+    (-2_008_123, "Duct Insulations"),
+    (-2_008_124, "Duct Linings"),
+    (-2_008_126, "Cable Tray Fittings"),
+    (-2_008_128, "Conduit Fittings"),
+    (-2_008_130, "Cable Trays"),
+    (-2_008_132, "Conduits"),
+    (-2_009_000, "Structural Rebar"),
+    (-2_009_030, "Structural Connections"),
+];
+
+/// [`BUILTIN_CATEGORY_NAMES`]' name for `id`.
+pub fn builtin_category_name(id: i64) -> Option<&'static str> {
+    BUILTIN_CATEGORY_NAMES
+        .iter()
+        .find(|(known, _)| *known == id)
+        .map(|(_, name)| *name)
+}
+
+/// Autodesk `BuiltInCategory.OST_Columns` — architectural columns.
+pub const OST_COLUMNS: i64 = -2_000_100;
+/// Autodesk `BuiltInCategory.OST_Walls`.
+pub const OST_WALLS: i64 = -2_000_011;
+/// Autodesk `BuiltInCategory.OST_Doors`.
+pub const OST_DOORS: i64 = -2_000_023;
+/// Autodesk `BuiltInCategory.OST_Windows`.
+pub const OST_WINDOWS: i64 = -2_000_014;
+/// Autodesk `BuiltInCategory.OST_Floors` — floor slabs.
+pub const OST_FLOORS: i64 = -2_000_032;
+/// Autodesk `BuiltInCategory.OST_BuildingPad` — site/building pads.
+///
+/// Revit's own exporter emits a building pad as `IfcSlab`, which is
+/// why it joins `OST_FLOORS` in the slab recovery: on
+/// `2024_Core_Interior.rvt` the single exported slab with no
+/// `OST_Floors` record (`Pad:Site Pad`, ElementId 21975) carries this
+/// category instead.
+pub const OST_BUILDING_PAD: i64 = -2_001_263;
+
+/// Autodesk `BuiltInCategory.OST_Rooms` — Revit room elements, which
+/// Revit's own exporter emits as `IfcSpace`.
+///
+/// The category was not assumed: a brute scan of all 23 470 decodable
+/// element records on `2024_Core_Interior.rvt` histogrammed every
+/// `BuiltInCategory` present and scored each one's instance-rule
+/// selection against the 116 room ElementIds the reference export
+/// carries in `IfcSpaceType.Tag`. `OST_Rooms` selects **116, exactly
+/// that set** — no false positive, no miss — and no other category
+/// intersects it at all.
+pub const OST_ROOMS: i64 = -2_000_160;
+
+/// Autodesk `BuiltInCategory.OST_Areas` — the areas of an area scheme.
+/// Their records are `RoomElem` like rooms' (30 on the Nordic
+/// LCA office); Revit's export writes each as an `IfcSpace`.
+pub const OST_AREAS: i64 = -2_003_200;
+
+/// Autodesk `BuiltInCategory.OST_MEPSpaces` — MEP (HVAC) spaces, `RoomElem`
+/// records too (87 on the 2023 MEP advanced sample).
+pub const OST_MEP_SPACES: i64 = -2_003_600;
+
+/// Autodesk `BuiltInCategory.OST_SketchLines` — the lines of a
+/// sketch (floor / roof / ceiling boundary, extrusion profile).
+///
+/// Records of this category carry the sketch segment's own bounding
+/// box, which for a plan boundary line is the segment itself, and
+/// name the sketched element in
+/// [`PartitionElementRecord::owner_reference`].
+pub const OST_SKETCH_LINES: i64 = -2_000_045;
+/// `BuiltInCategory::OST_ShaftOpening`: a shaft cut through the floors,
+/// roofs and ceilings within its height.
+pub const OST_SHAFT_OPENING: i64 = -2_000_996;
+
+// Categories whose element records export as typed products.
+// Each was found the way `OST_Rooms` was: a census of every decodable
+// record's category, scored against the `Tag` sets of Revit's own
+// exports (see `PRODUCT_RECORD_CATEGORIES`). The names are the public
+// `BuiltInCategory` enum members.
+
+// MEP device and equipment categories, scored the same way on the
+// four RE1 models (Revit 2025, MIT) against Revit's own exports of them.
+
+/// Autodesk `BuiltInCategory.OST_LightingDevices`: switches, sensors.
+pub const OST_LIGHTING_DEVICES: i64 = -2_008_087;
+/// Autodesk `BuiltInCategory.OST_FireAlarmDevices`.
+pub const OST_FIRE_ALARM_DEVICES: i64 = -2_008_085;
+/// Autodesk `BuiltInCategory.OST_DataDevices`.
+pub const OST_DATA_DEVICES: i64 = -2_008_083;
+/// Autodesk `BuiltInCategory.OST_ElectricalFixtures`: receptacles, junction
+/// boxes.
+pub const OST_ELECTRICAL_FIXTURES: i64 = -2_001_060;
+/// Autodesk `BuiltInCategory.OST_ElectricalEquipment`: panels, controllers.
+pub const OST_ELECTRICAL_EQUIPMENT: i64 = -2_001_040;
+/// Autodesk `BuiltInCategory.OST_MechanicalEquipment`.
+pub const OST_MECHANICAL_EQUIPMENT: i64 = -2_001_140;
+/// Autodesk `BuiltInCategory.OST_Mass`: mass instances, which Revit's export
+/// writes only where their "Export to IFC As" names an entity.
+pub const OST_MASS: i64 = -2_003_400;
+
+/// Device categories whose shared nested components are element records of
+/// their own that Revit's export leaves out: a switch or receptacle
+/// family nests a symbol of its own category.
+pub const NESTED_COMPONENT_CATEGORIES: [i64; 3] = [
+    OST_LIGHTING_DEVICES,
+    OST_ELECTRICAL_FIXTURES,
+    OST_ELECTRICAL_EQUIPMENT,
+];
+
+/// Autodesk `BuiltInCategory.OST_Furniture`.
+pub const OST_FURNITURE: i64 = -2_000_080;
+/// Autodesk `BuiltInCategory.OST_Casework`.
+pub const OST_CASEWORK: i64 = -2_001_000;
+/// Autodesk `BuiltInCategory.OST_PlumbingFixtures`.
+pub const OST_PLUMBING_FIXTURES: i64 = -2_001_160;
+/// Autodesk `BuiltInCategory.OST_SpecialityEquipment`.
+pub const OST_SPECIALITY_EQUIPMENT: i64 = -2_001_350;
+/// Autodesk `BuiltInCategory.OST_Ceilings`.
+pub const OST_CEILINGS: i64 = -2_000_038;
+/// Autodesk `BuiltInCategory.OST_CurtainWallMullions`.
+pub const OST_CURTAIN_WALL_MULLIONS: i64 = -2_000_171;
+/// Autodesk `BuiltInCategory.OST_CurtainWallPanels`.
+pub const OST_CURTAIN_WALL_PANELS: i64 = -2_000_170;
+/// Autodesk `BuiltInCategory.OST_StairsRailing` — railings.
+pub const OST_STAIRS_RAILING: i64 = -2_000_126;
+/// Autodesk `BuiltInCategory.OST_Cornices` — wall sweeps.
+pub const OST_CORNICES: i64 = -2_000_181;
+/// Autodesk `BuiltInCategory.OST_DuctCurves` — ducts.
+pub const OST_DUCT_CURVES: i64 = -2_008_000;
+/// Autodesk `BuiltInCategory.OST_DuctFitting`.
+pub const OST_DUCT_FITTING: i64 = -2_008_010;
+/// Autodesk `BuiltInCategory.OST_PipeCurves` — pipes.
+pub const OST_PIPE_CURVES: i64 = -2_008_044;
+/// Autodesk `BuiltInCategory.OST_PipeFitting`.
+pub const OST_PIPE_FITTING: i64 = -2_008_049;
+
+// Conduits, conduit fittings and gutters, measured on the one file
+// with a Revit export that holds them (BIM-Speed Vitoria `ALD26 Before`,
+// Revit 2018): every instance the selects is a `Tag` of Revit's
+// own export, as `IfcFlowSegment` or `IfcFlowFitting`, and none is missing.
+// The centerline categories that sit beside every conduit and fitting
+// (`OST_ConduitCenterLine` -2008139, `OST_ConduitFittingCenterLine`
+// -2008141, and for pipes `OST_PipeCurvesCenterLine` -2008045 and
+// `OST_PipeFittingCenterLine` -2008072) are never recovered: none is in
+// Revit's export, and Revit's IFC exporter's `ElementFilteringUtil` lists the conduit
+// ones among the categories it leaves out. Cable trays and cable tray
+// fittings (`OST_CableTray` -2008130, `OST_CableTrayFitting` -2008126) are
+// not recovered either: no file with a Revit export holds an instance of
+// either, so nothing shows that Revit's export writes them.
+
+/// Autodesk `BuiltInCategory.OST_Gutter` — gutters. Revit's IFC2X3 export
+/// writes them as `IfcFlowSegment`.
+pub const OST_GUTTER: i64 = -2_001_391;
+
+// Structural categories. Nearly every frame of these uses the
+// second prologue, so their instances export through the inferred
+// ElementIds; the oracle is the VIM export of the same sample.
+
+/// Autodesk `BuiltInCategory.OST_StructuralFraming` — beams, joists,
+/// girders and purlins.
+pub const OST_STRUCTURAL_FRAMING: i64 = -2_001_320;
+/// Autodesk `BuiltInCategory.OST_StructuralFramingSystem` — beam systems.
+pub const OST_STRUCTURAL_FRAMING_SYSTEM: i64 = -2_001_327;
+/// `OST_StructuralTruss`: Structural Trusses.
+pub const OST_STRUCTURAL_TRUSS: i64 = -2_001_336;
+/// Autodesk `BuiltInCategory.OST_StructuralColumns`.
+pub const OST_STRUCTURAL_COLUMNS: i64 = -2_001_330;
+/// Autodesk `BuiltInCategory.OST_StructuralFoundation` — isolated
+/// footings, wall foundations and foundation slabs.
+pub const OST_STRUCTURAL_FOUNDATION: i64 = -2_001_300;
+/// Autodesk `BuiltInCategory.OST_GenericModel`.
+pub const OST_GENERIC_MODEL: i64 = -2_000_151;
+
+// Fixtures, site and circulation categories. Scored like the others,
+// against the `Tag` sets of Revit's own exports, with the second-prologue ids.
+
+/// Autodesk `BuiltInCategory.OST_LightingFixtures`.
+pub const OST_LIGHTING_FIXTURES: i64 = -2_001_120;
+/// Autodesk `BuiltInCategory.OST_DuctTerminal` — air terminals.
+pub const OST_DUCT_TERMINAL: i64 = -2_008_013;
+/// Autodesk `BuiltInCategory.OST_FoodServiceEquipment`.
+pub const OST_FOOD_SERVICE_EQUIPMENT: i64 = -2_001_043;
+/// Autodesk `BuiltInCategory.OST_Planting`.
+pub const OST_PLANTING: i64 = -2_001_360;
+/// Autodesk `BuiltInCategory.OST_Parking`.
+pub const OST_PARKING: i64 = -2_001_180;
+/// Autodesk `BuiltInCategory.OST_Entourage`.
+pub const OST_ENTOURAGE: i64 = -2_001_370;
+/// Autodesk `BuiltInCategory.OST_Hardscape`.
+pub const OST_HARDSCAPE: i64 = -2_001_036;
+/// Autodesk `BuiltInCategory.OST_VerticalCirculation` — elevators.
+pub const OST_VERTICAL_CIRCULATION: i64 = -2_001_052;
+/// Autodesk `BuiltInCategory.OST_Ramps`.
+pub const OST_RAMPS: i64 = -2_000_180;
+
+//: stairs and the parts Revit's export aggregates under them.
+// The stair exports as a bodiless `IfcStair` whose runs, landings and
+// stringers name it in their reference lists.
+
+/// Autodesk `BuiltInCategory.OST_Stairs`.
+pub const OST_STAIRS: i64 = -2_000_120;
+/// Autodesk `BuiltInCategory.OST_StairsRuns`.
+pub const OST_STAIRS_RUNS: i64 = -2_000_919;
+/// Autodesk `BuiltInCategory.OST_StairsLandings`.
+pub const OST_STAIRS_LANDINGS: i64 = -2_000_920;
+/// Autodesk `BuiltInCategory.OST_StairsStringerCarriage` — stair
+/// stringers.
+pub const OST_STAIRS_STRINGER_CARRIAGE: i64 = -2_000_123;
+
+/// Autodesk `BuiltInCategory.OST_Roofs`. Exported as `IfcRoof` with the
+/// record's box, the entity Revit's own export gives every Snowdon roof
+pub const OST_ROOFS: i64 = -2_000_035;
+
+/// Autodesk `BuiltInCategory.OST_EdgeSlab` — slab edges. Revit's own export
+/// writes them as `IfcBuildingElementProxy`; on Snowdon Towers it holds all
+/// 59 slab edges outside a non-primary design option and none of the 9 in
+/// one.
+pub const OST_EDGE_SLAB: i64 = -2_001_392;
+
+// MEP categories whose records were read as placed instances but
+// not exported. Each id is the public `BuiltInCategory` member; on
+// a project model the Revit 2022 API names every one of them, and the
+// element records carrying it are the `Tag`s of Revit's own IFC export as
+// the class [`crate::ifc::category_map`] gives (public samples).
+
+/// Autodesk `BuiltInCategory.OST_Sprinklers`.
+pub const OST_SPRINKLERS: i64 = -2_008_099;
+/// Autodesk `BuiltInCategory.OST_PipeAccessory`: valves.
+pub const OST_PIPE_ACCESSORY: i64 = -2_008_055;
+/// Autodesk `BuiltInCategory.OST_DuctAccessory`: dampers.
+pub const OST_DUCT_ACCESSORY: i64 = -2_008_016;
+/// Autodesk `BuiltInCategory.OST_CableTray`.
+pub const OST_CABLE_TRAY: i64 = -2_008_130;
+/// Autodesk `BuiltInCategory.OST_Conduit`.
+pub const OST_CONDUIT: i64 = -2_008_132;
+/// Autodesk `BuiltInCategory.OST_CableTrayFitting`.
+pub const OST_CABLE_TRAY_FITTING: i64 = -2_008_126;
+/// Autodesk `BuiltInCategory.OST_ConduitFitting`.
+pub const OST_CONDUIT_FITTING: i64 = -2_008_128;
+/// Autodesk `BuiltInCategory.OST_FlexDuctCurves`.
+pub const OST_FLEX_DUCT_CURVES: i64 = -2_008_020;
+/// Autodesk `BuiltInCategory.OST_FlexPipeCurves`.
+pub const OST_FLEX_PIPE_CURVES: i64 = -2_008_050;
+/// Autodesk `BuiltInCategory.OST_PipeInsulations`.
+pub const OST_PIPE_INSULATIONS: i64 = -2_008_122;
+/// Autodesk `BuiltInCategory.OST_DuctInsulations`.
+pub const OST_DUCT_INSULATIONS: i64 = -2_008_123;
+/// Autodesk `BuiltInCategory.OST_DuctLinings`.
+pub const OST_DUCT_LININGS: i64 = -2_008_124;
+/// Autodesk `BuiltInCategory.OST_CommunicationDevices`.
+pub const OST_COMMUNICATION_DEVICES: i64 = -2_008_081;
+/// Autodesk `BuiltInCategory.OST_SecurityDevices`.
+pub const OST_SECURITY_DEVICES: i64 = -2_008_079;
+
+/// Categories whose placed element records export directly as typed IFC
+/// products, with the class name each is decoded as.
+///
+/// On every file where a category occurs, the instance rule (no
+/// container reference, placed) selects only ElementIds that Revit's own
+/// export carries as `Tag`, with no false positive:
+///
+/// - `Drshelden/IFC-ECS` RE1 (Revit 2025, MIT): furniture 13, casework
+///   10, plumbing fixtures 7, specialty equipment 9, ceilings 6,
+///   mullions 10, panels 2, railings 1 (Architecture); ducts 13, duct
+///   fittings 14, pipes 3, pipe fittings 3 (Mechanical); pipes 3, pipe
+///   fittings 6 (Plumbing);
+/// - Snowdon Towers Architectural (Revit 2024, local only): wall sweeps
+///   36, furniture 1.
+///
+/// Then structural framing, structural columns, structural
+/// foundations and generic models. Nearly all of their frames use the
+/// second prologue, so their ids are the enclosing records'. On
+/// Snowdon Towers Structural every one of them the VIM export of the model
+/// carries has the record's category there (914 framing members, 74
+/// columns, 90 foundations, 91 generic models, none under another
+/// category), and 260 of the 261 generic models on the architectural
+/// sample are in Revit's IFC4 export. The 261st is in a non-primary design
+/// option, which the exporter now leaves out.
+///
+/// Then lighting fixtures, air terminals, food-service equipment,
+/// planting, parking, entourage, hardscape, vertical circulation and
+/// ramps, each exported element a `Tag` of Revit's own export with none
+/// outside it: 447 lighting fixtures, 26 food-service items, 157 site
+/// elements, 2 ramps and 2 elevators on Snowdon Towers; 7 air terminals on
+/// RE1 Mechanical; 12 lighting fixtures on RE1 Electrical.
+///
+/// Then stairs with their runs, landings and stringers, and roofs,
+/// and slab edges, once elements in non-primary design options are
+/// left out: all 59 exported on Snowdon Towers are Revit's.
+///
+/// conduits and their fittings, flex ducts and pipes, MEP insulation and
+/// linings, communication and security devices: placed instances that the
+/// record scan already read, every one a `Tag` of Revit's own export.
+/// Gutters: on BIM-Speed Vitoria `ALD26 Before` (Revit 2018) both
+/// instances the rule selects are `Tag`s of Revit's own export, written there
+/// as `IfcFlowSegment`.
+pub const PRODUCT_RECORD_CATEGORIES: [(i64, &str); 54] = [
+    (OST_FURNITURE, "Furniture"),
+    (OST_CASEWORK, "Casework"),
+    (OST_PLUMBING_FIXTURES, "PlumbingFixture"),
+    (OST_SPECIALITY_EQUIPMENT, "SpecialtyEquipment"),
+    (OST_CEILINGS, "Ceiling"),
+    (OST_CURTAIN_WALL_MULLIONS, "CurtainWallMullion"),
+    (OST_CURTAIN_WALL_PANELS, "CurtainWallPanel"),
+    (OST_STAIRS_RAILING, "Railing"),
+    (OST_CORNICES, "WallSweep"),
+    (OST_DUCT_CURVES, "Duct"),
+    (OST_DUCT_FITTING, "DuctFitting"),
+    (OST_PIPE_CURVES, "Pipe"),
+    (OST_PIPE_FITTING, "PipeFitting"),
+    (OST_GUTTER, "Gutter"),
+    (OST_STRUCTURAL_FRAMING, "StructuralFraming"),
+    (OST_STRUCTURAL_COLUMNS, "StructuralColumn"),
+    (OST_STRUCTURAL_FOUNDATION, "StructuralFoundation"),
+    (OST_GENERIC_MODEL, "GenericModel"),
+    (OST_LIGHTING_FIXTURES, "LightingFixture"),
+    (OST_DUCT_TERMINAL, "DuctTerminal"),
+    (OST_FOOD_SERVICE_EQUIPMENT, "FoodServiceEquipment"),
+    (OST_PLANTING, "Planting"),
+    (OST_PARKING, "Parking"),
+    (OST_ENTOURAGE, "Entourage"),
+    (OST_HARDSCAPE, "Hardscape"),
+    (OST_VERTICAL_CIRCULATION, "VerticalCirculation"),
+    (OST_RAMPS, "Ramp"),
+    (OST_STAIRS, "Stair"),
+    (OST_STAIRS_RUNS, "StairsRun"),
+    (OST_STAIRS_LANDINGS, "StairsLanding"),
+    (OST_STAIRS_STRINGER_CARRIAGE, "StairsStringer"),
+    (OST_ROOFS, "Roof"),
+    (OST_EDGE_SLAB, "SlabEdge"),
+    (OST_LIGHTING_DEVICES, "LightingDevice"),
+    (OST_FIRE_ALARM_DEVICES, "FireAlarmDevice"),
+    (OST_DATA_DEVICES, "DataDevice"),
+    (OST_ELECTRICAL_FIXTURES, "ElectricalFixture"),
+    (OST_ELECTRICAL_EQUIPMENT, "ElectricalEquipment"),
+    (OST_MECHANICAL_EQUIPMENT, "MechanicalEquipment"),
+    (OST_SPRINKLERS, "Sprinkler"),
+    (OST_PIPE_ACCESSORY, "PipeAccessory"),
+    (OST_DUCT_ACCESSORY, "DuctAccessory"),
+    (OST_CABLE_TRAY, "CableTray"),
+    (OST_CONDUIT, "Conduit"),
+    (OST_CABLE_TRAY_FITTING, "CableTrayFitting"),
+    (OST_CONDUIT_FITTING, "ConduitFitting"),
+    (OST_FLEX_DUCT_CURVES, "FlexDuct"),
+    (OST_FLEX_PIPE_CURVES, "FlexPipe"),
+    (OST_PIPE_INSULATIONS, "PipeInsulation"),
+    (OST_DUCT_INSULATIONS, "DuctInsulation"),
+    (OST_DUCT_LININGS, "DuctLining"),
+    (OST_COMMUNICATION_DEVICES, "CommunicationDevice"),
+    (OST_SECURITY_DEVICES, "SecurityDevice"),
+    (OST_MASS, "Mass"),
+];
+
+/// Smallest bounding-box extent, in feet, a placed instance needs on every
+/// axis to count as having a 3D body ([`PartitionElementRecord::has_volume`]).
+pub const VOLUME_EPSILON_FEET: f64 = 1e-6;
+
+/// Lower bound of the Revit `BuiltInCategory` id band.
+pub const BUILTIN_CATEGORY_MIN: i64 = -2_100_000;
+/// Upper bound of the Revit `BuiltInCategory` id band.
+pub const BUILTIN_CATEGORY_MAX: i64 = -1_990_000;
+
+/// Offset of the `BuiltInCategory` id from the record start.
+pub const CATEGORY_OFFSET: usize = 0x12;
+/// Offset of the container ElementId reference from the record start.
+pub const CONTAINER_OFFSET: usize = 0x32;
+/// Sentinel value of the container reference meaning "no container".
+pub const CONTAINER_NONE: u64 = u64::MAX;
+/// Offset of the design-option ElementId from the record start: `0xff`×8
+/// for an element of the main model, otherwise the `OST_DesignOptions`
+/// record the element belongs to. The same offset holds it in
+/// the second prologue.
+pub const DESIGN_OPTION_OFFSET: usize = 0x2a;
+/// Offset of the placement-kind word from the record start.
+pub const PLACEMENT_KIND_OFFSET: usize = 0x42;
+/// Placement-kind value carried by a placed element instance.
+pub const PLACEMENT_KIND_INSTANCE: u32 = 0xffff_ef7f;
+/// Placement-kind value carried by a family/type symbol envelope.
+pub const PLACEMENT_KIND_SYMBOL: u32 = 0xffff_8000;
+/// Offset of the bounding-box marker from the record start.
+/// Offset of the class tag.
+pub const CLASS_TAG_OFFSET: usize = 0x4a;
+pub const BBOX_MARKER_OFFSET: usize = 0x50;
+/// Offset of the six bounding-box doubles from the record start.
+pub const BBOX_OFFSET: usize = 0x58;
+/// Minimum bytes a complete record header occupies.
+pub const RECORD_MIN_LEN: usize = BBOX_OFFSET + 48;
+/// Offset of the counted reference list, immediately after the box.
+pub const REFERENCE_LIST_OFFSET: usize = RECORD_MIN_LEN;
+/// Largest reference-list length the decoder will accept.
+///
+/// The longest list observed on `2024_Core_Interior.rvt` is 101 slots
+/// (an `OST_Walls` record); the bound is an order of magnitude above
+/// that so an unrelated `u32` cannot make the scan read megabytes.
+pub const REFERENCE_LIST_MAX_ENTRIES: usize = 1024;
+
+/// Marker that precedes the bounding box on Revit 2024 files.
+///
+/// The marker is per release: the serialization tags of the
+/// classes `Outline` and `ElementParents` in the file's own schema, with
+/// `0xFF`×4 between them: the record writes its box as an
+/// `Outline` and its reference lists as `ElementParents`. On 2024 those
+/// are 326 and 1451 (`0x0146`, `0x05ab`). Use [`bbox_marker`] for a given
+/// release.
+pub const BBOX_MARKER: [u8; 8] = [0x46, 0x01, 0xff, 0xff, 0xff, 0xff, 0xab, 0x05];
+
+/// The bbox marker of Revit 2025 files: `0x0159`, `0xFF`×4, `0x05d3`
+/// (1451 + 40), measured on the RE1 projects and on two other 2025
+/// files.
+pub const BBOX_MARKER_2025: [u8; 8] = [0x59, 0x01, 0xff, 0xff, 0xff, 0xff, 0xd3, 0x05];
+
+/// The bbox marker of Revit 2026 files: `0x0161`, `0xFF`×4, `0x05f1`
+/// (1481 + 40, as predicted from 2024 and 2025), measured on the flowbim.ee
+/// single-dwelling house against Revit's own export.
+pub const BBOX_MARKER_2026: [u8; 8] = [0x61, 0x01, 0xff, 0xff, 0xff, 0xff, 0xf1, 0x05];
+
+/// The bbox marker of Revit 2027 files: `0x0164`, `0xFF`×4, `0x0610`, the
+/// tags of `Outline` and `ElementParents` in the schema of all seven of
+/// Autodesk's 2027 sample files.
+pub const BBOX_MARKER_2027: [u8; 8] = [0x64, 0x01, 0xff, 0xff, 0xff, 0xff, 0x10, 0x06];
+
+/// The bbox marker measured on `revit_version`'s files, or `None` where no
+/// constant is recorded. A scan takes its marker from the file's own schema
+/// ([`file_bbox_marker`]); these constants are the cross-check.
+pub fn bbox_marker(revit_version: u32) -> Option<[u8; 8]> {
+    match revit_version {
+        2024 => Some(BBOX_MARKER),
+        2025 => Some(BBOX_MARKER_2025),
+        2026 => Some(BBOX_MARKER_2026),
+        2027 => Some(BBOX_MARKER_2027),
+        _ => None,
+    }
+}
+
+/// The bbox marker the file's own schema gives: `Outline`'s tag, `0xFF`×4,
+/// `ElementParents`' tag. `None` when the schema does not
+/// parse or lacks either class.
+pub fn schema_bbox_marker(rf: &mut RevitFile) -> Option<[u8; 8]> {
+    crate::partition_element_records_2023::record_marker(rf).map(|(marker, _)| marker)
+}
+
+/// The bbox marker to scan `rf` with, on a release whose record shape is
+/// proven: the one the file's own schema gives ([`schema_bbox_marker`]),
+/// cross-checked against the release's measured constant ([`bbox_marker`]).
+/// A file whose schema gives another marker than the constant is not
+/// scanned (fail closed). One whose schema does not parse keeps the
+/// constant, and a release with no constant needs the schema. On every
+/// 2024 to 2027 file measured the two agree. The readers pass
+/// [`RevitFile::layout_release`], so a file that kept an older release's
+/// schema is checked against that release's constant.
+pub fn file_bbox_marker(rf: &mut RevitFile, revit_version: u32) -> Option<[u8; 8]> {
+    if !supports_revit_version(revit_version) {
+        return None;
+    }
+    let measured = bbox_marker(revit_version);
+    match (schema_bbox_marker(rf), measured) {
+        (Some(schema), Some(measured)) if schema != measured => None,
+        (Some(schema), _) => Some(schema),
+        (None, measured) => measured,
+    }
+}
+
+/// The release whose schema the file carries: the 2024 to 2027 release
+/// whose [`bbox_marker`] the schema gives, or the 2015 to 2023 release whose
+/// [`schema_tags`](crate::partition_element_records_2023::schema_tags) it
+/// has. `None` when the schema does not parse or matches no release
+/// measured.
+///
+/// A file can carry an older release's schema than the release that saved
+/// it: of 49 project files saved by Revit 2024 to 2027 in a field report,
+/// 25 carried the marker of 2022, 2023, 2024 or 2025, and their record
+/// histories list that release. Their records take that release's
+/// layout, so [`RevitFile::layout_release`] reads them as that release.
+pub fn schema_release(rf: &mut RevitFile) -> Option<u32> {
+    use crate::partition_element_records_2023::{
+        REVIT_32BIT_RELEASES, file_schema_tags, schema_tags,
+    };
+    let marker = schema_bbox_marker(rf)?;
+    if let Some(release) = (2024..=2027).find(|&release| bbox_marker(release) == Some(marker)) {
+        return Some(release);
+    }
+    let tags = file_schema_tags(rf)?;
+    REVIT_32BIT_RELEASES
+        .clone()
+        .find(|&release| schema_tags(release) == Some(tags))
+}
+
+/// A decoded partition element-record header.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PartitionElementRecord {
+    /// Stream the record was found in, e.g. `"Partitions/46"`.
+    pub stream: String,
+    /// Byte offset of the record in the concatenated inflated stream.
+    pub offset: usize,
+    /// The record's own Revit ElementId (cross-checked against ElemTable).
+    pub element_id: u32,
+    /// Unattributed flags word at `+0x08`.
+    pub flags: u32,
+    /// Revit `BuiltInCategory` id (negative).
+    pub builtin_category: i64,
+    /// Raw container reference at `+0x32`; [`CONTAINER_NONE`] when unset.
+    pub container: u64,
+    /// Raw placement-kind word at `+0x42`.
+    pub placement_kind: u32,
+    /// The element's class at `+0x4a`: the definition ordinal of a class in
+    /// the file's own schema. Core Interior's walls are `SWall`,
+    /// floors `Floor`, rooms `RoomElem`, and door, window and column records
+    /// `FamilyInstance` or, for their type symbols, `FamilySymbol`. Resolve
+    /// it with [`crate::formats::SchemaClasses::by_tag`].
+    #[serde(default)]
+    pub class_tag: u16,
+    /// Model bounding box in feet: `[min_x, min_y, min_z, max_x, max_y, max_z]`.
+    pub bbox_feet: [f64; 6],
+    /// Reference slot immediately before this record's own ElementId
+    /// in the counted list at `+0x88`.
+    ///
+    /// `None` when the list does not decode, does not name the
+    /// record's own id, names it in the first slot, or when the slot
+    /// before it holds a value outside the `u32` ElementId range.
+    ///
+    /// On a door or window record this is the host wall; on other
+    /// categories it is only what the byte says. Nothing here checks
+    /// that the value is a wall — the caller does
+    /// (`partition_schema_mvp::opening_instances_from_records`).
+    pub preceding_reference: Option<u32>,
+    /// Last slot of the *second* counted reference list at `+0x88`.
+    ///
+    /// `None` when either list does not decode, when the second list
+    /// is empty, or when its last slot is outside the `u32`
+    /// ElementId range.
+    ///
+    /// On an [`OST_SKETCH_LINES`] record this is the element whose
+    /// sketch the line belongs to. Nothing here checks what kind of
+    /// element that is — the caller does
+    /// (`element_record_plan_profiles`).
+    pub owner_reference: Option<u32>,
+    /// The first counted reference list at `+0x88`, verbatim.
+    ///
+    /// Empty when the list does not decode. [`Self::preceding_reference`]
+    /// is one read of this list; [`Self::type_symbol_reference`] is
+    /// another. The slots are kept as `u64` so a caller sees the list
+    /// exactly as framed.
+    #[serde(default)]
+    pub references: Vec<u64>,
+    /// `true` when the frame carries no ElementId at `+0x00` (the second
+    /// prologue) and [`Self::element_id`] is the id of the partition
+    /// record the frame sits in ([`assign_second_prologue_ids`]; on
+    /// Revit 2008 to 2023, which write the id as a `u32` further back,
+    /// [`crate::partition_element_records_2023::record_spans`]).
+    /// `false` for a frame that starts its record, with the id at `+0x00`.
+    #[serde(default)]
+    pub id_from_enclosing_record: bool,
+    /// The design option the element belongs to, from `+0x2a`
+    /// ([`DESIGN_OPTION_OFFSET`]), or on Revit 2008 to 2023 from the `u32`
+    /// 26 bytes before the record marker. `None` for the main
+    /// model, and for a value outside the `u32` ElementId range.
+    ///
+    /// Whether the option is its set's primary one is document-level
+    /// knowledge: see [`crate::partition_design_options`].
+    #[serde(default)]
+    pub design_option: Option<u32>,
+}
+
+impl PartitionElementRecord {
+    /// The order frames are written in: the number of the `Partitions/NN`
+    /// stream the frame is in, then the stream's name and the frame's
+    /// offset. The number, not the name, decides, since `Partitions/9` is
+    /// older than `Partitions/46` though its name sorts after it. A stream
+    /// whose name ends in no number sorts first.
+    pub fn frame_order(&self) -> (u32, &str, usize) {
+        (
+            crate::partition_room_parameters::partition_number(&self.stream),
+            self.stream.as_str(),
+            self.offset,
+        )
+    }
+
+    /// Plan-footprint origin, quantised to 1e-4 ft, for de-duplication.
+    pub fn footprint_key(&self) -> (i64, i64, i64) {
+        (
+            quantise(self.bbox_feet[0]),
+            quantise(self.bbox_feet[1]),
+            quantise(self.bbox_feet[2]),
+        )
+    }
+
+    /// Plan centre of the bounding box, in feet.
+    pub fn plan_centre_feet(&self) -> (f64, f64) {
+        (
+            (self.bbox_feet[0] + self.bbox_feet[3]) * 0.5,
+            (self.bbox_feet[1] + self.bbox_feet[4]) * 0.5,
+        )
+    }
+
+    /// Bounding-box extents `(dx, dy, dz)` in feet.
+    pub fn extents_feet(&self) -> (f64, f64, f64) {
+        (
+            self.bbox_feet[3] - self.bbox_feet[0],
+            self.bbox_feet[4] - self.bbox_feet[1],
+            self.bbox_feet[5] - self.bbox_feet[2],
+        )
+    }
+
+    /// Whether the record's bounding box has extent on all three axes
+    /// (more than [`VOLUME_EPSILON_FEET`]).
+    ///
+    /// A placed instance with no volume is a 2D symbol family: a floor
+    /// drain drawn in plan, a wheelchair turning circle, an accessible
+    /// clearance zone. Revit's IFC export leaves such an instance out,
+    /// because it has no 3D body to write. On Snowdon Towers all 60 placed
+    /// instances without volume (45 specialty equipment, 15 plumbing
+    /// fixtures) are missing from Revit's export, and none of the 4,077
+    /// instances the export does hold, nor any on `2024_Core_Interior.rvt`
+    /// or the RE1 models, lacks volume.
+    pub fn has_volume(&self) -> bool {
+        let (dx, dy, dz) = self.extents_feet();
+        [dx, dy, dz]
+            .iter()
+            .all(|extent| extent.is_finite() && *extent > VOLUME_EPSILON_FEET)
+    }
+
+    /// True when the bbox is expressed in family-local coordinates
+    /// (centred on the plan origin) rather than project coordinates.
+    ///
+    /// Retained as a diagnostic. It is a *proxy* for
+    /// [`Self::is_type_symbol`] and a strictly weaker one: on
+    /// `2024_Core_Interior.rvt` it agrees on all 17 `OST_Columns`
+    /// symbols but misses the 15 `OST_Doors`, 2 `OST_Windows` and 1
+    /// `OST_Walls` symbol whose envelope is centred on only one axis.
+    pub fn is_family_local(&self) -> bool {
+        is_family_local_bbox(&self.bbox_feet)
+    }
+
+    /// The container ElementId this record belongs to, if any.
+    ///
+    /// `None` when `+0x32` carries [`CONTAINER_NONE`], and also when
+    /// it carries a value outside the `u32` ElementId range — an
+    /// unrecognised encoding is not turned into an id.
+    pub fn container_element_id(&self) -> Option<u32> {
+        if self.container == CONTAINER_NONE || self.container > u64::from(u32::MAX) {
+            return None;
+        }
+        Some(self.container as u32)
+    }
+
+    /// True when `+0x32` is set, i.e. the record is a member of a
+    /// container element rather than a standalone element.
+    pub fn is_container_member(&self) -> bool {
+        self.container != CONTAINER_NONE
+    }
+
+    /// True when `+0x42` marks a placed element instance.
+    pub fn is_placed_instance(&self) -> bool {
+        self.placement_kind == PLACEMENT_KIND_INSTANCE
+    }
+
+    /// True when `+0x42` marks a family/type symbol envelope.
+    pub fn is_type_symbol(&self) -> bool {
+        self.placement_kind == PLACEMENT_KIND_SYMBOL
+    }
+
+    /// The instance rule: a record is a standalone placed
+    /// instance — the thing Revit's own exporter emits as a building
+    /// element — when it carries no container reference **and** its
+    /// placement kind is [`PLACEMENT_KIND_INSTANCE`].
+    ///
+    /// Measured on `2024_Core_Interior.rvt` against the ElementId set
+    /// Revit's full IFC export tags: `OST_Walls` 360/360, `OST_Doors`
+    /// 132/132, `OST_Windows` 6/6, `OST_Columns` 256/256 — exact id
+    /// sets, no false positives, no misses. It is a *test*, not a
+    /// heuristic: it replaces the family-local bbox proxy and the
+    /// highest-id-per-footprint collapse that used for columns.
+    ///
+    /// The same measurement on `OST_Floors` finds
+    /// the rule exact there too, once the reference side is read
+    /// correctly: the 99 selected ElementIds are *all* exported — 79
+    /// as `IfcSlab` and 20 as `IfcShadingDevice` — so there are no
+    /// false positives, and the 80th exported slab (`Pad:Site Pad`,
+    /// 21975) simply carries [`OST_BUILDING_PAD`] rather than
+    /// `OST_Floors`. `OST_Floors` + `OST_BuildingPad` under this rule
+    /// reproduce the export's 80 `IFCSLAB` and 20 `IFCSHADINGDEVICE`
+    /// id sets exactly.
+    pub fn is_exported_instance(&self) -> bool {
+        !self.is_container_member() && self.is_placed_instance()
+    }
+
+    /// The family/type symbol this instance is placed from.
+    ///
+    /// `symbols` is the ElementId set of the records of the **same**
+    /// `BuiltInCategory` that carry [`PLACEMENT_KIND_SYMBOL`] — the
+    /// type envelopes. The answer is the last
+    /// slot of [`Self::references`] **before** the record's own
+    /// ElementId that is in that set.
+    ///
+    /// Slots after the record's own id are ignored on purpose: 81 door records carry a trailing symbol slot
+    /// that is not the door's own type, and every column record on
+    /// the recorded edge carries `75407` there while its type is
+    /// `5755`.
+    ///
+    /// Measured on `2024_Core_Interior.rvt`: all 256 exported
+    /// `OST_Columns` instances have exactly one candidate before
+    /// their own id and it is `5755` (`Column_Sqaure : 24" x 24"`),
+    /// which is the `IfcColumnType.Tag` Revit's own export writes for
+    /// every one of them.
+    pub fn type_symbol_reference(&self, symbols: &BTreeSet<u32>) -> Option<u32> {
+        let own = u64::from(self.element_id);
+        let index = self.references.iter().position(|slot| *slot == own)?;
+        self.references[..index]
+            .iter()
+            .rev()
+            .filter(|slot| **slot <= u64::from(u32::MAX))
+            .map(|slot| *slot as u32)
+            .find(|id| symbols.contains(id))
+    }
+}
+
+/// Quantise to 1e-4 ft so bit-identical doubles group exactly.
+pub(crate) fn quantise(v: f64) -> i64 {
+    (v * 10_000.0).round() as i64
+}
+
+/// A bbox centred on the plan origin is a family/type definition
+/// envelope, not a placed instance: Revit stores symbol geometry in
+/// family coordinates, so `min_x == -max_x` and `min_y == -max_y`.
+pub fn is_family_local_bbox(bbox: &[f64; 6]) -> bool {
+    (bbox[0] + bbox[3]).abs() < 1e-6 && (bbox[1] + bbox[4]).abs() < 1e-6
+}
+
+/// Whether this release's partition element-record shape is proven. The
+/// marker comes from each file's schema ([`file_bbox_marker`]), so this does
+/// not depend on a measured constant.
+pub fn supports_revit_version(revit_version: u32) -> bool {
+    PARTITION_ELEMENT_RECORD_SUPPORTED_REVIT_VERSIONS.contains(&revit_version)
+}
+
+/// Decode the counted reference list whose `u32` length prefix sits
+/// at `at`.
+///
+/// Returns `None` when the length word is zero, exceeds
+/// [`REFERENCE_LIST_MAX_ENTRIES`], or would run past the end of
+/// `buf`. The slots are returned verbatim as `u64`; a slot outside
+/// the `u32` ElementId range is kept rather than dropped, so callers
+/// see the list exactly as framed.
+pub fn decode_reference_list(buf: &[u8], at: usize) -> Option<Vec<u64>> {
+    let count = le_bytes::u32_at(buf, at)? as usize;
+    if count == 0 || count > REFERENCE_LIST_MAX_ENTRIES {
+        return None;
+    }
+    let start = at.checked_add(4)?;
+    let end = start.checked_add(count.checked_mul(8)?)?;
+    if end > buf.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(count);
+    for index in 0..count {
+        out.push(le_bytes::u64_at(buf, start + index * 8)?);
+    }
+    Some(out)
+}
+
+/// Decode the last slot of the *second* counted reference list whose
+/// first list's `u32` length prefix sits at `at`.
+///
+/// Both lists are framed identically — a `u32` count followed by that
+/// many `u64` slots — so the second starts `4 + 8 * n1` bytes after
+/// the first. Returns `None` unless both decode through
+/// [`decode_reference_list`] and the second's last slot is a non-zero
+/// `u32`-range ElementId.
+pub fn decode_owner_reference(buf: &[u8], at: usize) -> Option<u32> {
+    let first = decode_reference_list(buf, at)?;
+    let second_at = at
+        .checked_add(4)?
+        .checked_add(first.len().checked_mul(8)?)?;
+    let second = decode_reference_list(buf, second_at)?;
+    let last = *second.last()?;
+    if last == 0 || last > u64::from(u32::MAX) {
+        return None;
+    }
+    Some(last as u32)
+}
+
+/// The slot immediately before `element_id`'s last occurrence in
+/// `entries`, when that slot is a `u32`-range ElementId.
+fn slot_before(entries: &[u64], element_id: u32) -> Option<u32> {
+    let target = u64::from(element_id);
+    let index = entries.iter().rposition(|value| *value == target)?;
+    let previous = *entries.get(index.checked_sub(1)?)?;
+    if previous == 0 || previous > u64::from(u32::MAX) {
+        return None;
+    }
+    Some(previous as u32)
+}
+
+/// Decode one Revit 2024 record at `offset`, fail-closed.
+///
+/// `declared_ids` is the `Global/ElemTable` id set; a record whose
+/// leading `u64` is not declared there is rejected outright.
+pub fn decode_at(
+    stream: &str,
+    buf: &[u8],
+    offset: usize,
+    declared_ids: &BTreeSet<u32>,
+) -> Option<PartitionElementRecord> {
+    decode_at_with_marker(stream, buf, offset, declared_ids, &BBOX_MARKER)
+}
+
+/// [`decode_at`] for the release whose bbox marker is `marker`
+/// (see [`bbox_marker`]).
+pub fn decode_at_with_marker(
+    stream: &str,
+    buf: &[u8],
+    offset: usize,
+    declared_ids: &BTreeSet<u32>,
+    marker: &[u8; 8],
+) -> Option<PartitionElementRecord> {
+    if offset.checked_add(RECORD_MIN_LEN)? > buf.len() {
+        return None;
+    }
+    let raw_id = le_bytes::u64_at(buf, offset)?;
+    if carries_no_element_id(raw_id) {
+        return None;
+    }
+    let element_id = raw_id as u32;
+    if !declared_ids.contains(&element_id) {
+        return None;
+    }
+    decode_frame_as(stream, buf, offset, element_id, marker)
+}
+
+/// Decode the frame at `offset` as the record of `element_id`, which the
+/// caller has already established: the ElementId at `+0x00` for a
+/// first-prologue frame, or its enclosing record's id
+/// ([`assign_second_prologue_ids`]) for a second-prologue frame. Everything from `+0x10` on is read and
+/// validated exactly as for any record.
+pub fn decode_frame_as(
+    stream: &str,
+    buf: &[u8],
+    offset: usize,
+    element_id: u32,
+    marker: &[u8; 8],
+) -> Option<PartitionElementRecord> {
+    if offset.checked_add(RECORD_MIN_LEN)? > buf.len() {
+        return None;
+    }
+    if le_bytes::u16_at(buf, offset + 0x10)? != 0 {
+        return None;
+    }
+    let builtin_category = le_bytes::u64_at(buf, offset + CATEGORY_OFFSET)? as i64;
+    if !(BUILTIN_CATEGORY_MIN..=BUILTIN_CATEGORY_MAX).contains(&builtin_category) {
+        return None;
+    }
+    if buf[offset + BBOX_MARKER_OFFSET..offset + BBOX_MARKER_OFFSET + 8] != marker[..] {
+        return None;
+    }
+    let mut bbox_feet = [0.0f64; 6];
+    for (index, slot) in bbox_feet.iter_mut().enumerate() {
+        let value = le_bytes::f64_at(buf, offset + BBOX_OFFSET + index * 8)?;
+        if !value.is_finite() {
+            return None;
+        }
+        *slot = value;
+    }
+    for axis in 0..3 {
+        if bbox_feet[axis + 3] < bbox_feet[axis] {
+            return None;
+        }
+    }
+    let flags = le_bytes::u64_at(buf, offset + 0x08).map(|v| (v & 0xffff_ffff) as u32)?;
+    let container = le_bytes::u64_at(buf, offset + CONTAINER_OFFSET)?;
+    let placement_kind =
+        le_bytes::u64_at(buf, offset + PLACEMENT_KIND_OFFSET).map(|v| (v & 0xffff_ffff) as u32)?;
+    let references = offset
+        .checked_add(REFERENCE_LIST_OFFSET)
+        .and_then(|at| decode_reference_list(buf, at))
+        .unwrap_or_default();
+    let preceding_reference = slot_before(&references, element_id);
+    let owner_reference = offset
+        .checked_add(REFERENCE_LIST_OFFSET)
+        .and_then(|at| decode_owner_reference(buf, at));
+    let design_option = frame_design_option(buf, offset);
+    let class_tag = le_bytes::u16_at(buf, offset + CLASS_TAG_OFFSET)?;
+    Some(PartitionElementRecord {
+        stream: stream.to_string(),
+        offset,
+        element_id,
+        flags,
+        builtin_category,
+        container,
+        placement_kind,
+        class_tag,
+        bbox_feet,
+        preceding_reference,
+        owner_reference,
+        references,
+        id_from_enclosing_record: false,
+        design_option,
+    })
+}
+
+/// The design option at `+0x2a` of the frame at `offset`
+/// ([`PartitionElementRecord::design_option`]).
+pub fn frame_design_option(buf: &[u8], offset: usize) -> Option<u32> {
+    le_bytes::u64_at(buf, offset.checked_add(DESIGN_OPTION_OFFSET)?)
+        .filter(|value| *value != u64::MAX)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+/// Whether the frame at `offset` is a placed instance under the
+/// instance rule: no container reference and the placed-instance kind. Both fields
+/// sit at the same offsets in the second prologue.
+fn is_instance_frame(buf: &[u8], offset: usize) -> bool {
+    le_bytes::u64_at(buf, offset + CONTAINER_OFFSET) == Some(CONTAINER_NONE)
+        && le_bytes::u64_at(buf, offset + PLACEMENT_KIND_OFFSET)
+            .is_some_and(|v| (v & 0xffff_ffff) as u32 == PLACEMENT_KIND_INSTANCE)
+}
+
+/// Length of the header that opens every partition record: the `u64`
+/// ElementId, the `u32` record size, the `u16` prologue constant
+/// ([`record_prologue_constant`]) and a `u16` count.
+pub const PARTITION_RECORD_HEADER_LEN: usize = 16;
+
+/// Length of the trailer that closes every partition record: an unread
+/// `u64`, a `u32` flag word (`0` or `0x0100_0000`) and the record size
+/// again.
+pub const PARTITION_RECORD_TRAILER_LEN: usize = 16;
+
+/// The `u16` at `+0x0c` of every partition record header: the release
+/// constant plus 28 (`0x059f` on 2024, `0x05c7` on 2025), which is 12
+/// below the constant the release's [`bbox_marker`] ends with.
+///
+/// The schema's `ElementHeader` tag is 12 below its `ElementParents` tag
+/// on every file of 2019 to 2027 measured, but 9 below on 2016 to 2018,
+/// so this does not hold for a marker of those releases.
+pub fn record_prologue_constant(marker: &[u8; 8]) -> u16 {
+    u16::from_le_bytes([marker[6], marker[7]]).wrapping_sub(12)
+}
+
+/// One record of a partition's leading record chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PartitionRecordSpan {
+    /// Offset of the record header.
+    pub start: usize,
+    /// Offset one past the record body, where its trailer starts.
+    pub end: usize,
+    /// The `u64` the header opens with: the ElementId the record belongs
+    /// to. It is declared in `Global/ElemTable` for every project element;
+    /// the caller checks.
+    pub element_id: u64,
+}
+
+/// The leading chain of records in one inflated partition.
+///
+/// A partition opens with one record per element, back to back: a
+/// [`PARTITION_RECORD_HEADER_LEN`]-byte header, the body, and a
+/// [`PARTITION_RECORD_TRAILER_LEN`]-byte trailer that repeats the size.
+/// A frame with the element's ElementId at `+0x00` (the first prologue)
+/// starts its record, so its header *is* the record header; a
+/// second-prologue frame sits inside its element's record body.
+///
+/// The walk starts at offset 0 and stops at the first position that is
+/// not a header whose trailer echoes its size. What follows (the records
+/// of loaded families' own documents, with their own ElementIds) is not
+/// part of the chain. Every step moves at least
+/// `PARTITION_RECORD_HEADER_LEN + PARTITION_RECORD_TRAILER_LEN` bytes, so
+/// the walk is linear in `buf`.
+pub fn partition_record_chain(buf: &[u8], marker: &[u8; 8]) -> Vec<PartitionRecordSpan> {
+    let constant = record_prologue_constant(marker);
+    let mut chain = Vec::new();
+    let mut at = 0usize;
+    while let Some(element_id) = le_bytes::u64_at(buf, at) {
+        let Some(size) = le_bytes::u32_at(buf, at + 8).map(|v| v as usize) else {
+            break;
+        };
+        if size < PARTITION_RECORD_HEADER_LEN || le_bytes::u16_at(buf, at + 0x0c) != Some(constant)
+        {
+            break;
+        }
+        let Some(end) = at.checked_add(size) else {
+            break;
+        };
+        let flags = end.checked_add(8).and_then(|t| le_bytes::u32_at(buf, t));
+        let echo = end.checked_add(12).and_then(|t| le_bytes::u32_at(buf, t));
+        if !matches!(flags, Some(0 | 0x0100_0000)) || echo.map(|v| v as usize) != Some(size) {
+            break;
+        }
+        chain.push(PartitionRecordSpan {
+            start: at,
+            end,
+            element_id,
+        });
+        at = end + PARTITION_RECORD_TRAILER_LEN;
+    }
+    chain
+}
+
+/// The record of `chain` whose body contains `offset`.
+pub fn enclosing_record(
+    chain: &[PartitionRecordSpan],
+    offset: usize,
+) -> Option<&PartitionRecordSpan> {
+    let index = chain.partition_point(|span| span.start <= offset);
+    let span = chain.get(index.checked_sub(1)?)?;
+    (offset < span.end).then_some(span)
+}
+
+/// [`PartitionElementRecord::has_volume`] read straight off the frame at
+/// `offset`, for frames that are never decoded.
+fn frame_has_volume(buf: &[u8], offset: usize) -> bool {
+    let mut bbox = [0.0f64; 6];
+    for (index, slot) in bbox.iter_mut().enumerate() {
+        match le_bytes::f64_at(buf, offset + BBOX_OFFSET + index * 8) {
+            Some(value) if value.is_finite() => *slot = value,
+            _ => return false,
+        }
+    }
+    (0..3).all(|axis| bbox[axis + 3] - bbox[axis] > VOLUME_EPSILON_FEET)
+}
+
+/// ElementIds for the second-prologue frames of one partition, by frame
+/// offset.
+///
+/// A second-prologue frame carries no ElementId at `+0x00`, but it
+/// sits inside its element's record in the partition's leading record
+/// chain ([`partition_record_chain`]), whose header carries the ElementId.
+/// A placed-instance frame whose enclosing record's id is
+/// declared in `Global/ElemTable` gets that id. Frames outside the chain
+/// (loaded families' own documents) and frames whose record id is not
+/// declared get none (fail closed).
+///
+/// On every first-prologue frame of the corpus (23,470 on
+/// `2024_Core_Interior.rvt`, 2,075 on Snowdon Towers, 152 / 50 / 136 on
+/// the RE1 models) the enclosing record starts at the frame and carries
+/// the same id. On Snowdon Towers, the RE1 models and both `255ribeiro`
+/// 2025 projects, every id this gives a recovered category is either a
+/// `Tag` of Revit's own export, of the entity that category exports as,
+/// or an element Revit's export leaves out.
+pub fn assign_second_prologue_ids(
+    buf: &[u8],
+    marker: &[u8; 8],
+    declared_ids: &BTreeSet<u32>,
+) -> BTreeMap<usize, u32> {
+    assign_second_prologue_ids_with(buf, marker, declared_ids, false)
+}
+
+/// The first release whose type-symbol frames take their enclosing record's
+/// id too ([`assign_second_prologue_ids_with`]).
+pub const SECOND_PROLOGUE_SYMBOLS_FROM: u32 = 2027;
+
+/// [`assign_second_prologue_ids`], giving type-symbol frames
+/// ([`PLACEMENT_KIND_SYMBOL`]) their enclosing record's id as well when
+/// `symbols` is set.
+///
+/// Revit 2027 writes most frames in the second prologue, type symbols among
+/// them: 938 of the 1,265 on Autodesk's 2027 `rac_basic`, where its
+/// 2026 copy writes none. Of the 17,621 such frames on the 2027 `rac_basic`,
+/// `rac_advanced` and `rme_basic`, 17,619 get the id the 2026 copy's
+/// first-prologue frame of the same category, kind and box carries. Before
+/// 2027 symbols are left out: on Snowdon Towers Facades (2025) they would
+/// give seven columns a type section no export here checks.
+pub fn assign_second_prologue_ids_with(
+    buf: &[u8],
+    marker: &[u8; 8],
+    declared_ids: &BTreeSet<u32>,
+    symbols: bool,
+) -> BTreeMap<usize, u32> {
+    let chain = partition_record_chain(buf, marker);
+    let mut out = BTreeMap::new();
+    for hit in memchr::memmem::find_iter(buf, marker) {
+        let Some(offset) = hit.checked_sub(BBOX_MARKER_OFFSET) else {
+            continue;
+        };
+        if !is_second_prologue_frame(buf, offset, symbols) {
+            continue;
+        }
+        let Some(span) = enclosing_record(&chain, offset) else {
+            continue;
+        };
+        if let Ok(id) = u32::try_from(span.element_id) {
+            if declared_ids.contains(&id) {
+                out.insert(offset, id);
+            }
+        }
+    }
+    out
+}
+
+/// Whether a frame's `+0x00` `u64` holds no ElementId: `0`, a value above
+/// `u32::MAX` (the second prologue), or `u32::MAX`, the 32-bit form of
+/// Revit's invalid ElementId −1.
+pub fn carries_no_element_id(raw: u64) -> bool {
+    raw == 0 || raw >= u64::from(u32::MAX)
+}
+
+/// Whether the frame at `offset` is a placed instance (or, with `symbols`,
+/// a type symbol) in the `BuiltInCategory` band with no ElementId at
+/// `+0x00` ([`carries_no_element_id`]): the frames
+/// [`assign_second_prologue_ids_with`] resolves.
+fn is_second_prologue_frame(buf: &[u8], offset: usize, symbols: bool) -> bool {
+    le_bytes::u64_at(buf, offset + CATEGORY_OFFSET)
+        .is_some_and(|v| (BUILTIN_CATEGORY_MIN..=BUILTIN_CATEGORY_MAX).contains(&(v as i64)))
+        && le_bytes::u64_at(buf, offset).is_some_and(carries_no_element_id)
+        && (is_instance_frame(buf, offset) || (symbols && is_symbol_frame(buf, offset)))
+}
+
+/// Whether the frame at `offset` carries the type-symbol placement kind
+/// ([`PLACEMENT_KIND_SYMBOL`]).
+fn is_symbol_frame(buf: &[u8], offset: usize) -> bool {
+    le_bytes::u64_at(buf, offset + PLACEMENT_KIND_OFFSET)
+        .is_some_and(|v| (v & 0xffff_ffff) as u32 == PLACEMENT_KIND_SYMBOL)
+}
+
+/// Second-prologue ElementIds for a whole file, keyed by partition stream
+/// and frame offset. Empty where the release's record shape is not
+/// proven. `RevitFile::second_prologue_ids` memoises it.
+pub fn compute_second_prologue_ids(rf: &mut RevitFile) -> SecondPrologueIds {
+    let mut out = SecondPrologueIds::new();
+    let Ok(version) = rf.layout_release() else {
+        return out;
+    };
+    let Some(marker) = file_bbox_marker(rf, version) else {
+        return out;
+    };
+    let declared: BTreeSet<u32> = match crate::elem_table::parse_records(rf) {
+        Ok(records) => crate::elem_table::declared_ids(&records),
+        Err(_) => return out,
+    };
+    if declared.is_empty() {
+        return out;
+    }
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        let assigned = assign_second_prologue_ids_with(
+            inflated.bytes(),
+            &marker,
+            &declared,
+            version >= SECOND_PROLOGUE_SYMBOLS_FROM,
+        );
+        if !assigned.is_empty() {
+            out.insert(stream, assigned);
+        }
+    }
+    out
+}
+
+/// Second-prologue ElementIds: partition stream, then frame offset.
+pub type SecondPrologueIds = BTreeMap<String, BTreeMap<usize, u32>>;
+
+/// [`find_category_records_with_marker`], also decoding the
+/// second-prologue frames of `builtin_category` that
+/// [`assign_second_prologue_ids`] gave an id.
+pub fn find_category_records_assigned(
+    stream: &str,
+    buf: &[u8],
+    builtin_category: i64,
+    declared_ids: &BTreeSet<u32>,
+    marker: &[u8; 8],
+    assigned: &BTreeMap<usize, u32>,
+) -> Vec<PartitionElementRecord> {
+    let mut out =
+        find_category_records_with_marker(stream, buf, builtin_category, declared_ids, marker);
+    for (&offset, &element_id) in assigned {
+        if le_bytes::u64_at(buf, offset + CATEGORY_OFFSET).map(|v| v as i64)
+            != Some(builtin_category)
+        {
+            continue;
+        }
+        if let Some(mut record) = decode_frame_as(stream, buf, offset, element_id, marker) {
+            record.id_from_enclosing_record = true;
+            out.push(record);
+        }
+    }
+    out.sort_by_key(|record| record.offset);
+    out
+}
+
+/// [`find_category_records_assigned`] for several categories in one sweep:
+/// `out[i]` holds the records of `builtin_categories[i]`, exactly as a call
+/// for that category alone returns them.
+///
+/// A call per category searches the whole partition once per category, and
+/// the product sweep asks for dozens. Category ids share their top six
+/// bytes (`e1 ff ff ff ff ff` for every `OST_*` id read so far), so the
+/// categories are grouped by those bytes, each group costs one search, and
+/// each hit's low two bytes pick its category. Every occurrence of a
+/// category's 8 bytes carries its group's 6 at `+2`, and the search steps
+/// one byte past each hit, so no occurrence is missed.
+pub fn find_categories_records_assigned(
+    stream: &str,
+    buf: &[u8],
+    builtin_categories: &[i64],
+    declared_ids: &BTreeSet<u32>,
+    marker: &[u8; 8],
+    assigned: &BTreeMap<usize, u32>,
+) -> Vec<Vec<PartitionElementRecord>> {
+    let mut out: Vec<Vec<PartitionElementRecord>> = vec![Vec::new(); builtin_categories.len()];
+    if buf.len() >= RECORD_MIN_LEN {
+        // By the id's high six bytes, then its low two: a scan for every
+        // category looks each hit up instead of walking a list.
+        let mut groups: BTreeMap<[u8; 6], BTreeMap<[u8; 2], Vec<usize>>> = BTreeMap::new();
+        for (index, category) in builtin_categories.iter().enumerate() {
+            let bytes = (*category as u64).to_le_bytes();
+            let suffix: [u8; 6] = bytes[2..].try_into().expect("6 bytes");
+            groups
+                .entry(suffix)
+                .or_default()
+                .entry([bytes[0], bytes[1]])
+                .or_default()
+                .push(index);
+        }
+        for (suffix, members) in &groups {
+            let finder = memchr::memmem::Finder::new(suffix);
+            let mut cursor = 2usize;
+            while cursor + suffix.len() <= buf.len() {
+                let Some(found) = finder.find(&buf[cursor..]) else {
+                    break;
+                };
+                let at = cursor + found - 2;
+                cursor += found + 1;
+                let low = [buf[at], buf[at + 1]];
+                for index in members.get(&low).into_iter().flatten() {
+                    if at >= CATEGORY_OFFSET {
+                        if let Some(record) = decode_at_with_marker(
+                            stream,
+                            buf,
+                            at - CATEGORY_OFFSET,
+                            declared_ids,
+                            marker,
+                        ) {
+                            out[*index].push(record);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut by_category: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
+    for (index, category) in builtin_categories.iter().enumerate() {
+        by_category.entry(*category).or_default().push(index);
+    }
+    for (&offset, &element_id) in assigned {
+        let Some(category) = le_bytes::u64_at(buf, offset + CATEGORY_OFFSET).map(|v| v as i64)
+        else {
+            continue;
+        };
+        for index in by_category.get(&category).into_iter().flatten() {
+            if let Some(mut record) = decode_frame_as(stream, buf, offset, element_id, marker) {
+                record.id_from_enclosing_record = true;
+                out[*index].push(record);
+            }
+        }
+    }
+    for records in &mut out {
+        records.sort_by_key(|record| record.offset);
+    }
+    out
+}
+
+/// Find every element record in `buf` carrying `builtin_category`.
+///
+/// The scan anchors on the 8-byte little-endian encoding of the
+/// category id and back-references [`CATEGORY_OFFSET`] to the record
+/// start, then validates through [`decode_at`].
+pub fn find_category_records(
+    stream: &str,
+    buf: &[u8],
+    builtin_category: i64,
+    declared_ids: &BTreeSet<u32>,
+) -> Vec<PartitionElementRecord> {
+    find_category_records_with_marker(stream, buf, builtin_category, declared_ids, &BBOX_MARKER)
+}
+
+/// [`find_category_records`] for the release whose bbox marker is
+/// `marker`.
+pub fn find_category_records_with_marker(
+    stream: &str,
+    buf: &[u8],
+    builtin_category: i64,
+    declared_ids: &BTreeSet<u32>,
+    marker: &[u8; 8],
+) -> Vec<PartitionElementRecord> {
+    let needle = (builtin_category as u64).to_le_bytes();
+    let mut out = Vec::new();
+    if buf.len() < RECORD_MIN_LEN {
+        return out;
+    }
+    let mut cursor = 0usize;
+    while cursor + 8 <= buf.len() {
+        let Some(found) = find_subslice(&buf[cursor..], &needle) else {
+            break;
+        };
+        let hit = cursor + found;
+        if hit >= CATEGORY_OFFSET {
+            if let Some(record) =
+                decode_at_with_marker(stream, buf, hit - CATEGORY_OFFSET, declared_ids, marker)
+            {
+                out.push(record);
+            }
+        }
+        cursor = hit + 1;
+    }
+    out
+}
+
+/// First occurrence of `needle` in `haystack`.
+///
+/// A single-category scan runs this over every inflated `Partitions/*`
+/// byte; the product sweep asks for dozens of categories at once through
+/// [`find_categories_records_assigned`] instead. `memchr::memmem` is the
+/// vectorised form of exactly the first-byte-then-compare loop this used
+/// to spell out by hand.
+pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    memchr::memmem::find(haystack, needle)
+}
+
+/// The categories the exporter recovers instances of, with the class name
+/// each is decoded as: the architectural core plus
+/// [`PRODUCT_RECORD_CATEGORIES`].
+pub const RECOVERED_CATEGORIES: [(i64, &str); 63] = [
+    (OST_WALLS, "Wall"),
+    (OST_DOORS, "Door"),
+    (OST_WINDOWS, "Window"),
+    (OST_COLUMNS, "Column"),
+    (OST_FLOORS, "Floor"),
+    (OST_BUILDING_PAD, "BuildingPad"),
+    (OST_ROOMS, "Room"),
+    (OST_AREAS, "Area"),
+    (OST_MEP_SPACES, "Space"),
+    (OST_FURNITURE, "Furniture"),
+    (OST_CASEWORK, "Casework"),
+    (OST_PLUMBING_FIXTURES, "PlumbingFixture"),
+    (OST_SPECIALITY_EQUIPMENT, "SpecialtyEquipment"),
+    (OST_CEILINGS, "Ceiling"),
+    (OST_CURTAIN_WALL_MULLIONS, "CurtainWallMullion"),
+    (OST_CURTAIN_WALL_PANELS, "CurtainWallPanel"),
+    (OST_STAIRS_RAILING, "Railing"),
+    (OST_CORNICES, "WallSweep"),
+    (OST_DUCT_CURVES, "Duct"),
+    (OST_DUCT_FITTING, "DuctFitting"),
+    (OST_PIPE_CURVES, "Pipe"),
+    (OST_PIPE_FITTING, "PipeFitting"),
+    (OST_GUTTER, "Gutter"),
+    (OST_STRUCTURAL_FRAMING, "StructuralFraming"),
+    (OST_STRUCTURAL_COLUMNS, "StructuralColumn"),
+    (OST_STRUCTURAL_FOUNDATION, "StructuralFoundation"),
+    (OST_GENERIC_MODEL, "GenericModel"),
+    (OST_LIGHTING_FIXTURES, "LightingFixture"),
+    (OST_DUCT_TERMINAL, "DuctTerminal"),
+    (OST_FOOD_SERVICE_EQUIPMENT, "FoodServiceEquipment"),
+    (OST_PLANTING, "Planting"),
+    (OST_PARKING, "Parking"),
+    (OST_ENTOURAGE, "Entourage"),
+    (OST_HARDSCAPE, "Hardscape"),
+    (OST_VERTICAL_CIRCULATION, "VerticalCirculation"),
+    (OST_RAMPS, "Ramp"),
+    (OST_STAIRS, "Stair"),
+    (OST_STAIRS_RUNS, "StairsRun"),
+    (OST_STAIRS_LANDINGS, "StairsLanding"),
+    (OST_STAIRS_STRINGER_CARRIAGE, "StairsStringer"),
+    (OST_ROOFS, "Roof"),
+    (OST_EDGE_SLAB, "SlabEdge"),
+    (OST_LIGHTING_DEVICES, "LightingDevice"),
+    (OST_FIRE_ALARM_DEVICES, "FireAlarmDevice"),
+    (OST_DATA_DEVICES, "DataDevice"),
+    (OST_ELECTRICAL_FIXTURES, "ElectricalFixture"),
+    (OST_ELECTRICAL_EQUIPMENT, "ElectricalEquipment"),
+    (OST_MECHANICAL_EQUIPMENT, "MechanicalEquipment"),
+    (OST_SPRINKLERS, "Sprinkler"),
+    (OST_PIPE_ACCESSORY, "PipeAccessory"),
+    (OST_DUCT_ACCESSORY, "DuctAccessory"),
+    (OST_CABLE_TRAY, "CableTray"),
+    (OST_CONDUIT, "Conduit"),
+    (OST_CABLE_TRAY_FITTING, "CableTrayFitting"),
+    (OST_CONDUIT_FITTING, "ConduitFitting"),
+    (OST_FLEX_DUCT_CURVES, "FlexDuct"),
+    (OST_FLEX_PIPE_CURVES, "FlexPipe"),
+    (OST_PIPE_INSULATIONS, "PipeInsulation"),
+    (OST_DUCT_INSULATIONS, "DuctInsulation"),
+    (OST_DUCT_LININGS, "DuctLining"),
+    (OST_COMMUNICATION_DEVICES, "CommunicationDevice"),
+    (OST_SECURITY_DEVICES, "SecurityDevice"),
+    (OST_MASS, "Mass"),
+];
+
+/// Placed-instance frames in `buf`, per category, that carry the bbox
+/// marker at `+0x50` and one of `categories` at `+0x12` but no ElementId
+/// at `+0x00` (a `u64` of 0 or above `u32::MAX`).
+///
+/// This is the second prologue measured on Autodesk's Snowdon
+/// Towers samples: shaped like an element record from the category to
+/// the bounding box, with no attributable ElementId, so [`decode_at`]
+/// rejects it. Counting them is what lets an export say how much of a
+/// file it could not attribute instead of looking complete. None on
+/// `2024_Core_Interior.rvt`.
+///
+/// Only frames that pass the instance rule count: no container
+/// reference at [`CONTAINER_OFFSET`] and the placed-instance kind at
+/// [`PLACEMENT_KIND_OFFSET`]. The second prologue keeps both fields where
+/// the first has them, and with the rule the count reproduces
+/// the number of elements Revit's own export holds that rvt-open does not:
+/// on Snowdon Towers 1,425 mullions, 118 columns, 131 railings, 68
+/// ceilings and 344 furniture and casework, all exactly; on the RE1 MEP
+/// models 60 pipes, 48 pipe fittings, 18 duct fittings and 15 duct and
+/// pipe segments, all exactly. Without it, container members and type
+/// symbols counted too (6,019 frames on Snowdon against 4,886).
+pub fn count_unattributed_frames(buf: &[u8], categories: &[i64]) -> BTreeMap<i64, usize> {
+    count_unattributed_frames_with_marker(buf, categories, &BBOX_MARKER)
+}
+
+/// [`count_unattributed_frames`] for the release whose bbox marker is
+/// `marker`.
+pub fn count_unattributed_frames_with_marker(
+    buf: &[u8],
+    categories: &[i64],
+    marker: &[u8; 8],
+) -> BTreeMap<i64, usize> {
+    count_unattributed_frames_excluding(buf, categories, marker, &BTreeMap::new())
+}
+
+/// [`count_unattributed_frames_with_marker`], leaving out the frames at the
+/// offsets in `assigned` ([`assign_second_prologue_ids`]).
+///
+/// Only frames inside the partition's leading record chain
+/// ([`partition_record_chain`]) count: the records after it belong to
+/// loaded families' own documents, whose frames are not model elements.
+pub fn count_unattributed_frames_excluding(
+    buf: &[u8],
+    categories: &[i64],
+    marker: &[u8; 8],
+    assigned: &BTreeMap<usize, u32>,
+) -> BTreeMap<i64, usize> {
+    let mut counts = BTreeMap::new();
+    for (_, category) in unattributed_frames_excluding(buf, categories, marker, assigned) {
+        *counts.entry(category).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// The frames [`count_unattributed_frames_excluding`] counts, each as its
+/// offset in `buf` and its `BuiltInCategory`, in file order.
+pub fn unattributed_frames_excluding(
+    buf: &[u8],
+    categories: &[i64],
+    marker: &[u8; 8],
+    assigned: &BTreeMap<usize, u32>,
+) -> Vec<(usize, i64)> {
+    let mut frames = Vec::new();
+    let chain = partition_record_chain(buf, marker);
+    for hit in memchr::memmem::find_iter(buf, marker) {
+        let Some(offset) = hit.checked_sub(BBOX_MARKER_OFFSET) else {
+            continue;
+        };
+        if assigned.contains_key(&offset) || enclosing_record(&chain, offset).is_none() {
+            continue;
+        }
+        let Some(category) = le_bytes::u64_at(buf, offset + CATEGORY_OFFSET).map(|v| v as i64)
+        else {
+            continue;
+        };
+        if !categories.contains(&category) {
+            continue;
+        }
+        if !le_bytes::u64_at(buf, offset).is_some_and(carries_no_element_id) {
+            continue;
+        }
+        // A frame with no volume is a 2D symbol Revit's export leaves out,
+        // so it is not a missing element either.
+        if is_instance_frame(buf, offset) && frame_has_volume(buf, offset) {
+            frames.push((offset, category));
+        }
+    }
+    frames
+}
+
+/// An element an export leaves out, or a frame that carries no ElementId, and
+/// where its record was read. The diagnostics' `skipped` counts are
+/// made from these.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeftOutElement {
+    /// Its ElementId; `None` for a frame that carries none.
+    pub element_id: Option<u32>,
+    /// Its class, as the diagnostics count it.
+    pub class: String,
+    /// The stream its record was read from, where known.
+    pub stream: Option<String>,
+    /// The offset of the record in that stream inflated, where known.
+    pub offset: Option<usize>,
+    /// What else tells the reason apart, such as the reason an Area's body is
+    /// not proven.
+    pub detail: Option<String>,
+}
+
+impl LeftOutElement {
+    /// The element a partition element record frames, of `class`.
+    pub fn from_record(record: &PartitionElementRecord, class: &str) -> Self {
+        Self {
+            element_id: Some(record.element_id),
+            class: class.to_string(),
+            stream: Some(record.stream.clone()),
+            offset: Some(record.offset),
+            detail: None,
+        }
+    }
+}
+
+/// The class a `BuiltInCategory` of the [`RECOVERED_CATEGORIES`] is counted
+/// under.
+pub fn recovered_class(category: i64) -> Option<&'static str> {
+    RECOVERED_CATEGORIES
+        .iter()
+        .find(|(candidate, _)| *candidate == category)
+        .map(|(_, class)| *class)
+}
+
+/// [`count_unattributed_frames`] over every `Partitions/*` stream for the
+/// [`RECOVERED_CATEGORIES`]: each frame with its class and where it sits;
+/// the diagnostics count them by class. Empty on releases where the
+/// record shape is not proven.
+pub fn scan_unattributed_frames(
+    rf: &mut RevitFile,
+    revit_version: u32,
+) -> Result<Vec<LeftOutElement>> {
+    let mut frames = Vec::new();
+    let Some(marker) = file_bbox_marker(rf, revit_version) else {
+        return Ok(frames);
+    };
+    let categories: Vec<i64> = RECOVERED_CATEGORIES.iter().map(|(c, _)| *c).collect();
+    let assigned_all = rf.memoised_second_prologue_ids();
+    let none = BTreeMap::new();
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        // A frame given an id is exported, not missing.
+        let assigned = assigned_all.get(&stream).unwrap_or(&none);
+        for (offset, category) in
+            unattributed_frames_excluding(inflated.bytes(), &categories, &marker, assigned)
+        {
+            if let Some(class) = recovered_class(category) {
+                frames.push(LeftOutElement {
+                    element_id: None,
+                    class: class.to_string(),
+                    stream: Some(stream.clone()),
+                    offset: Some(offset),
+                    detail: None,
+                });
+            }
+        }
+    }
+    Ok(frames)
+}
+
+/// Placed instances of the [`RECOVERED_CATEGORIES`] whose bounding box has
+/// no volume ([`PartitionElementRecord::has_volume`]), one per ElementId, in
+/// ElementId order, each with its class and the frame it was read from. The
+/// export leaves them out, as Revit's does; the diagnostics count them
+/// by class so they can say so.
+pub fn scan_volumeless_instances(
+    rf: &mut RevitFile,
+    revit_version: u32,
+) -> Result<Vec<LeftOutElement>> {
+    let mut left_out = Vec::new();
+    if !supports_revit_version(revit_version) {
+        return Ok(left_out);
+    }
+    let declared: BTreeSet<u32> = match crate::elem_table::parse_records(rf) {
+        Ok(records) => crate::elem_table::declared_ids(&records),
+        Err(_) => return Ok(left_out),
+    };
+    let categories: Vec<i64> = RECOVERED_CATEGORIES.iter().map(|(c, _)| *c).collect();
+    let records = scan_category_records_multi(rf, revit_version, &categories, &declared)?;
+    // An element in a non-primary design option, or not in the export phase,
+    // is left out for that reason instead, and counted by
+    // `partition_design_options::scan_non_primary_option_instances` or
+    // `native_phases::scan_phase_excluded_instances`.
+    let options = rf.memoised_design_options();
+    let phases = rf.memoised_phase_filter();
+    // An element framed more than once counts once, and only when no frame
+    // of it has volume.
+    let mut with_volume: BTreeSet<u32> = BTreeSet::new();
+    let mut without: BTreeMap<u32, &PartitionElementRecord> = BTreeMap::new();
+    for record in records
+        .iter()
+        .filter(|r| r.is_exported_instance() && !options.excludes(r) && !phases.excludes(r))
+    {
+        if record.has_volume() {
+            with_volume.insert(record.element_id);
+        } else {
+            without.insert(record.element_id, record);
+        }
+    }
+    for (id, record) in without {
+        if with_volume.contains(&id) {
+            continue;
+        }
+        if let Some(class) = recovered_class(record.builtin_category) {
+            left_out.push(LeftOutElement::from_record(record, class));
+        }
+    }
+    Ok(left_out)
+}
+
+/// The shaft openings (`OST_ShaftOpening`) of a Revit 2025, 2026 or 2027
+/// file, one per ElementId, in ElementId order, each with its class
+/// `ShaftOpening` and the frame it was read from. A shaft is cut from the
+/// floors, ceilings and roofs it passes through on Revit 2024 only
+/// ([`crate::partition_beam_axes::SHAFT_OUTLINE_SUPPORTED_REVIT_VERSIONS`]), so on a later release those stay whole, and the diagnostics count
+/// these (`shaft_opening_not_cut`). Empty on 2024, where they are cut, and on
+/// a release whose element records are not read.
+pub fn scan_shafts_not_cut(rf: &mut RevitFile, revit_version: u32) -> Result<Vec<LeftOutElement>> {
+    if !supports_revit_version(revit_version)
+        || crate::partition_beam_axes::supports_shaft_outlines(revit_version)
+    {
+        return Ok(Vec::new());
+    }
+    let declared: BTreeSet<u32> = match crate::elem_table::parse_records(rf) {
+        Ok(records) => crate::elem_table::declared_ids(&records),
+        Err(_) => return Ok(Vec::new()),
+    };
+    let records = scan_category_records(rf, revit_version, OST_SHAFT_OPENING, &declared)?;
+    let mut by_id: BTreeMap<u32, &PartitionElementRecord> = BTreeMap::new();
+    for record in &records {
+        by_id.insert(record.element_id, record);
+    }
+    Ok(by_id
+        .into_values()
+        .map(|record| LeftOutElement::from_record(record, "ShaftOpening"))
+        .collect())
+}
+
+/// Placed instances of `builtin_category` whose record carries no box:
+/// ElementId → `(stream, offset)` of the record.
+///
+/// Such a record is an element record up to the class tag, then a `u32` of
+/// 0 where a boxed one has `0xFFFF_FFFF` and the `Outline` tag, then
+/// `0xFF`×4 and the `ElementParents` tag at `+0x50` and its reference list
+/// at `+0x56`: the box is simply absent. [`decode_at`] rejects it, so the
+/// element was dropped. On BIM4LCA `ARK_NordicLCA_Office_Timber_As-Built`
+/// the one such room (3128929) is a space in Revit's own IFC export; across
+/// the twelve BIM4LCA files and the Autodesk 2024 samples no other room
+/// record has this shape. Only records of the partition's leading chain
+/// ([`partition_record_chain`]) count, and only standalone placed
+/// instances ([`PartitionElementRecord::is_exported_instance`]'s rule) of
+/// the main model or a primary design option.
+pub fn scan_boxless_instances(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    builtin_category: i64,
+    declared_ids: &BTreeSet<u32>,
+) -> BTreeMap<u32, (String, usize)> {
+    let mut out = BTreeMap::new();
+    let Some(marker) = file_bbox_marker(rf, revit_version) else {
+        return out;
+    };
+    let options = rf.memoised_design_options();
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        let buf = inflated.bytes();
+        for span in partition_record_chain(buf, &marker) {
+            let o = span.start;
+            let Ok(id) = u32::try_from(span.element_id) else {
+                continue;
+            };
+            let boxless = le_bytes::u64_at(buf, o + CATEGORY_OFFSET)
+                == Some(builtin_category as u64)
+                && le_bytes::u32_at(buf, o + 0x4c) == Some(0)
+                && buf.get(o + BBOX_MARKER_OFFSET..o + BBOX_MARKER_OFFSET + 6)
+                    == Some(&marker[2..])
+                && le_bytes::u64_at(buf, o + CONTAINER_OFFSET) == Some(CONTAINER_NONE)
+                && le_bytes::u32_at(buf, o + PLACEMENT_KIND_OFFSET)
+                    == Some(PLACEMENT_KIND_INSTANCE)
+                && declared_ids.contains(&id)
+                && !frame_design_option(buf, o).is_some_and(|opt| options.excludes_option(opt));
+            if boxless {
+                out.entry(id).or_insert((stream.clone(), o));
+            }
+        }
+    }
+    out
+}
+
+/// Scan every `Partitions/*` stream for records in `builtin_category`.
+///
+/// Returns an empty vector for unsupported releases (fail closed).
+pub fn scan_category_records(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    builtin_category: i64,
+    declared_ids: &BTreeSet<u32>,
+) -> Result<Vec<PartitionElementRecord>> {
+    scan_category_records_multi(rf, revit_version, &[builtin_category], declared_ids)
+}
+
+/// Scan every `Partitions/*` stream once for records in **any** of
+/// `builtin_categories`.
+///
+/// Same result as calling [`scan_category_records`] per category and
+/// concatenating, but each stream is inflated once instead of once
+/// per category — inflation dominates the cost on a 190 MiB project
+/// file, and the slab path needs three categories at a time
+/// (`OST_Floors`, `OST_BuildingPad`, `OST_SketchLines`).
+///
+/// Records are returned grouped by category in the order given, and
+/// within a category in the order of [`RevitFile::partition_stream_names`]
+/// (by partition number) and then by offset.
+pub fn scan_category_records_multi(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    builtin_categories: &[i64],
+    declared_ids: &BTreeSet<u32>,
+) -> Result<Vec<PartitionElementRecord>> {
+    let Some(marker) = file_bbox_marker(rf, revit_version) else {
+        return Ok(Vec::new());
+    };
+    if declared_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let streams = rf.partition_stream_names();
+    let assigned_all = rf.memoised_second_prologue_ids();
+    let none = BTreeMap::new();
+    let mut per_category: Vec<Vec<PartitionElementRecord>> =
+        vec![Vec::new(); builtin_categories.len()];
+    for stream in streams {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        let assigned = assigned_all.get(&stream).unwrap_or(&none);
+        for (index, records) in find_categories_records_assigned(
+            &stream,
+            inflated.bytes(),
+            builtin_categories,
+            declared_ids,
+            &marker,
+            assigned,
+        )
+        .into_iter()
+        .enumerate()
+        {
+            per_category[index].extend(records);
+        }
+    }
+    Ok(per_category.into_iter().flatten().collect())
+}

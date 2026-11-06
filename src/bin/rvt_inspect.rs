@@ -1,0 +1,640 @@
+//! `rvt-inspect` — plain-language file health and export readiness.
+
+use clap::Parser;
+use rvt::{
+    RevitFile,
+    ifc::{ExportDiagnostics, RvtDocExporter},
+    walker::WalkerLimits,
+};
+use serde::Serialize;
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+const INSPECT_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "rvt-inspect",
+    version,
+    about = "Summarize Revit file health, decoded model coverage, and IFC export readiness",
+    after_help = "Examples:\n  \
+        rvt-inspect model.rvt\n  \
+        rvt-inspect model.rvt --json > model.inspect.json\n  \
+        rvt-inspect model.rvt --json --anonymize > inspect.json   to post publicly"
+)]
+struct Cli {
+    /// Path to a `.rvt` / `.rfa` / `.rte` / `.rft` file.
+    file: PathBuf,
+
+    /// Emit a stable JSON report instead of the human summary.
+    #[arg(long)]
+    json: bool,
+
+    /// Keep original paths in the report. By default, paths are redacted
+    /// so support output is safe to share.
+    #[arg(long)]
+    no_redact: bool,
+    /// Replace every name the report takes from the project with a
+    /// placeholder: paths and file names, the project name, levels,
+    /// materials and sample element names. Counts and ElementIds stay, so
+    /// the report can be posted publicly.
+    #[arg(long, conflicts_with = "no_redact")]
+    anonymize: bool,
+    /// Maximum decompressed Global/Latest / Partitions bytes scanned.
+    #[arg(long)]
+    max_walker_scan_bytes: Option<usize>,
+    /// Maximum schema-scan / ArcWall candidates retained.
+    #[arg(long)]
+    max_walker_candidates: Option<usize>,
+    /// Maximum trial decodes attempted by the walker.
+    #[arg(long)]
+    max_walker_trial_offsets: Option<usize>,
+    /// Maximum bytes inspected while decoding one walker candidate.
+    #[arg(long)]
+    max_walker_record_decode_bytes: Option<usize>,
+    /// Maximum records accepted in walker reference containers.
+    #[arg(long)]
+    max_walker_container_records: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct InspectReport {
+    schema_version: u32,
+    failure_mode: FailureMode,
+    file: FileHealth,
+    decoded: DecodedHealth,
+    export: ExportReadiness,
+    warnings: Vec<String>,
+    next_steps: Vec<String>,
+    export_diagnostics: ExportDiagnostics,
+}
+
+#[derive(Debug, Serialize)]
+struct InspectErrorReport {
+    schema_version: u32,
+    failure_mode: FailureMode,
+    error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FailureMode {
+    kind: String,
+    title: String,
+    summary: String,
+    severity: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FileHealth {
+    input_path: String,
+    file_size_bytes: u64,
+    file_opened: bool,
+    supported_revit_version: bool,
+    revit_version: Option<u32>,
+    build: Option<String>,
+    original_path: Option<String>,
+    stream_count: usize,
+    schema_parsed: bool,
+    /// How the file's release is read, as the export diagnostics give it.
+    release_support: Option<rvt::capability::ReleaseSupport>,
+}
+
+#[derive(Debug, Serialize)]
+struct DecodedHealth {
+    class_name_count: usize,
+    production_elements: usize,
+    diagnostic_candidates: usize,
+    arcwall_records: usize,
+    geometry_elements: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportReadiness {
+    level: String,
+    score: f32,
+    summary: String,
+    can_write_ifc: bool,
+    building_elements: usize,
+    building_elements_with_geometry: usize,
+    unsupported_features: Vec<String>,
+}
+
+fn main() -> ExitCode {
+    rvt::cli::exit_quietly_on_broken_pipe();
+    let cli = Cli::parse();
+    match run(&cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let failure_mode = corrupt_or_unreadable_failure_mode();
+            let error = if cli.anonymize {
+                anonymize_input_path(&err.to_string(), &cli.file)
+            } else {
+                err.to_string()
+            };
+            if cli.json {
+                let report = InspectErrorReport {
+                    schema_version: INSPECT_SCHEMA_VERSION,
+                    failure_mode,
+                    error,
+                };
+                match serde_json::to_string_pretty(&report) {
+                    Ok(json) => println!("{json}"),
+                    Err(json_err) => eprintln!("error: {json_err}"),
+                }
+            } else {
+                eprintln!("failure mode: {}", failure_mode.title);
+                eprintln!("{}", failure_mode.summary);
+                eprintln!("error: {error}");
+            }
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run(cli: &Cli) -> anyhow::Result<()> {
+    let report = build_report(
+        &cli.file,
+        !cli.no_redact,
+        cli.anonymize,
+        walker_limits_from_cli(cli),
+    )?;
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_human_report(&report);
+    }
+    Ok(())
+}
+
+fn build_report(
+    path: &std::path::Path,
+    redact: bool,
+    anonymize: bool,
+    walker_limits: WalkerLimits,
+) -> anyhow::Result<InspectReport> {
+    let file_size_bytes = std::fs::metadata(path)?.len();
+    let mut rf = RevitFile::open(path)?;
+    let mut summary = rf.summarize_lossy()?.value;
+    if redact {
+        redact_summary(&mut summary);
+    }
+    let schema_parsed = rf.schema().is_ok();
+    let export_result =
+        RvtDocExporter.export_with_diagnostics_and_limits(&mut rf, walker_limits)?;
+    let mut diagnostics = export_result.diagnostics;
+    if anonymize {
+        diagnostics.anonymize();
+        summary.original_path = summary
+            .original_path
+            .as_deref()
+            .map(rvt::redact::anonymize_file_name);
+    }
+    let warnings = diagnostics.warnings.clone();
+    let input_path = if anonymize {
+        rvt::redact::anonymize_file_name(&path.display().to_string())
+    } else {
+        display_path(path, redact)
+    };
+    // The releases rvt-open reads, 2008 to 2022, 2026 and 2027 experimentally.
+    let supported_revit_version = matches!(summary.version, 2008..=2027);
+    let decoded = DecodedHealth {
+        class_name_count: summary.class_name_count,
+        production_elements: diagnostics.decoded.production_walker_elements,
+        diagnostic_candidates: diagnostics.decoded.diagnostic_proxy_candidates,
+        arcwall_records: diagnostics.decoded.arcwall_records,
+        geometry_elements: diagnostics.exported.building_elements_with_geometry,
+    };
+    let export = export_readiness(&diagnostics);
+    let failure_mode = classify_failure_mode(
+        supported_revit_version,
+        schema_parsed,
+        &decoded,
+        &diagnostics,
+        &export,
+    );
+    let next_steps = next_steps(&diagnostics, schema_parsed);
+
+    Ok(InspectReport {
+        schema_version: INSPECT_SCHEMA_VERSION,
+        failure_mode,
+        file: FileHealth {
+            input_path,
+            file_size_bytes,
+            file_opened: true,
+            supported_revit_version,
+            revit_version: Some(summary.version),
+            build: summary.build,
+            original_path: summary.original_path,
+            stream_count: summary.streams.len(),
+            schema_parsed,
+            release_support: diagnostics.input.release_support.clone(),
+        },
+        decoded,
+        export,
+        warnings,
+        next_steps,
+        export_diagnostics: diagnostics,
+    })
+}
+
+fn classify_failure_mode(
+    supported_revit_version: bool,
+    schema_parsed: bool,
+    decoded: &DecodedHealth,
+    diagnostics: &ExportDiagnostics,
+    export: &ExportReadiness,
+) -> FailureMode {
+    if !supported_revit_version {
+        return failure_mode(
+            "unsupported_revit_version",
+            "Unsupported Revit version",
+            "This file opened, but its Revit version is outside the 2008 to 2027 releases rvt-open reads.",
+            "warning",
+        );
+    }
+
+    if export.level == "unknown" {
+        return failure_mode(
+            "parser_bug_please_report",
+            "Parser bug, please report",
+            "The file opened, but export readiness could not be classified from diagnostics.",
+            "error",
+        );
+    }
+
+    if !schema_parsed {
+        return failure_mode(
+            "partial_decode",
+            "Partial decode",
+            "The file opened, but required schema streams were not decoded completely.",
+            "warning",
+        );
+    }
+
+    if export.building_elements == 0 && decoded.diagnostic_candidates > 0 {
+        return failure_mode(
+            "unsupported_model_layout",
+            "Supported file, unsupported model layout",
+            "The file opened, but only diagnostic candidates were found; no validated model elements met the production confidence bar.",
+            "warning",
+        );
+    }
+
+    if export.level == "scaffold" || export.building_elements == 0 {
+        return failure_mode(
+            "scaffold_only_export",
+            "Scaffold-only export",
+            "The IFC path can write a valid framework, but no validated building elements were decoded.",
+            "warning",
+        );
+    }
+
+    let unexported = diagnostics.confidence.unexported_element_records;
+    if unexported > 0 {
+        return FailureMode {
+            kind: "incomplete_model".into(),
+            title: "Incomplete model".into(),
+            summary: format!(
+                "Model elements were recovered, but {unexported} model element record(s) use a layout whose ElementId this release cannot locate and are not exported."
+            ),
+            severity: "warning".into(),
+        };
+    }
+
+    if let Some(support) = diagnostics
+        .input
+        .release_support
+        .as_ref()
+        .filter(|support| support.status == "experimental")
+    {
+        return FailureMode {
+            kind: "experimental_release".into(),
+            title: "Experimental Revit release".into(),
+            summary: format!(
+                "Model elements were recovered, but this file's Revit release is read experimentally ({}): too few files of it are measured against Revit's own export to rely on its elements.",
+                support
+                    .capability
+                    .as_deref()
+                    .unwrap_or("no support-matrix row")
+            ),
+            severity: "warning".into(),
+        };
+    }
+
+    if !diagnostics.unsupported_features.is_empty()
+        || !diagnostics.warnings.is_empty()
+        || export.building_elements_with_geometry == 0
+    {
+        return failure_mode(
+            "partial_decode",
+            "Partial decode",
+            "Some model data was recovered, but warnings, unsupported features, or missing geometry remain.",
+            "warning",
+        );
+    }
+
+    failure_mode(
+        "supported_profile",
+        "Supported profile",
+        "The decoded output meets the currently supported export profile.",
+        "ok",
+    )
+}
+
+fn corrupt_or_unreadable_failure_mode() -> FailureMode {
+    failure_mode(
+        "corrupt_file",
+        "Corrupt or unreadable file",
+        "The input could not be opened as a readable Revit OLE/CFB container.",
+        "error",
+    )
+}
+
+fn failure_mode(kind: &str, title: &str, summary: &str, severity: &str) -> FailureMode {
+    FailureMode {
+        kind: kind.to_string(),
+        title: title.to_string(),
+        summary: summary.to_string(),
+        severity: severity.to_string(),
+    }
+}
+
+fn redact_summary(summary: &mut rvt::reader::Summary) {
+    if let Some(path) = &summary.original_path {
+        summary.original_path = Some(rvt::redact::redact_sensitive(path));
+    }
+}
+
+/// `text` with the input path, its file name and its stem replaced by the
+/// anonymized file name, for an error that names the file it could not read.
+fn anonymize_input_path(text: &str, path: &std::path::Path) -> String {
+    let raw = path.display().to_string();
+    let replacement = rvt::redact::anonymize_file_name(&raw);
+    let mut out = text.replace(&raw, &replacement);
+    for part in [path.file_name(), path.file_stem()]
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part.to_str())
+        .filter(|part| part.chars().count() >= 3)
+    {
+        out = out.replace(part, &replacement);
+    }
+    out
+}
+
+fn display_path(path: &std::path::Path, redact: bool) -> String {
+    let raw = path.display().to_string();
+    if redact {
+        rvt::redact::redact_sensitive(&raw)
+    } else {
+        raw
+    }
+}
+
+fn export_readiness(diagnostics: &ExportDiagnostics) -> ExportReadiness {
+    let level = diagnostics.confidence.level.clone();
+    let summary = match level.as_str() {
+        "geometry" => "IFC export includes decoded element geometry.",
+        "typed_no_geometry" => "IFC export includes typed elements, but no decoded geometry.",
+        "diagnostic_partial" => {
+            "IFC export includes diagnostic proxy candidates; treat them as support evidence."
+        }
+        "proxy_only" => "IFC export contains proxy elements only.",
+        "scaffold" => "IFC export is scaffold-only; no validated building elements were decoded.",
+        _ => "IFC export readiness is unknown.",
+    }
+    .to_string();
+    let unexported = diagnostics.confidence.unexported_element_records;
+    let summary = if unexported > 0 {
+        format!("{summary} Incomplete: {unexported} model element record(s) could not be exported.")
+    } else {
+        summary
+    };
+
+    ExportReadiness {
+        level,
+        score: diagnostics.confidence.score,
+        summary,
+        can_write_ifc: true,
+        building_elements: diagnostics.exported.building_elements,
+        building_elements_with_geometry: diagnostics.exported.building_elements_with_geometry,
+        unsupported_features: diagnostics.unsupported_features.clone(),
+    }
+}
+
+fn next_steps(diagnostics: &ExportDiagnostics, schema_parsed: bool) -> Vec<String> {
+    let mut steps = Vec::new();
+    if !schema_parsed {
+        steps.push("Attach the diagnostics JSON; the schema stream could not be parsed.".into());
+    }
+    if diagnostics.exported.building_elements == 0 {
+        steps.push(
+            "This file currently exports as an IFC scaffold. Share diagnostics before relying on element counts."
+                .into(),
+        );
+    }
+    if diagnostics.exported.building_elements_with_geometry == 0 {
+        steps.push(
+            "No real-file element geometry was decoded. Use the output for metadata/status, not geometry handoff."
+                .into(),
+        );
+    }
+    let unexported = diagnostics.confidence.unexported_element_records;
+    if unexported > 0 {
+        steps.push(format!(
+            "{unexported} element record(s) are missing from the export. Do not use its element counts as a takeoff."
+        ));
+    }
+    if diagnostics
+        .input
+        .release_support
+        .as_ref()
+        .is_some_and(|support| support.status == "experimental")
+    {
+        steps.push(
+            "This Revit release is read experimentally. Check its elements against Revit before relying on them."
+                .into(),
+        );
+    }
+    if diagnostics.confidence.warning_count > 0 {
+        steps
+            .push("Review warnings before sending this file through an automated workflow.".into());
+    }
+    if steps.is_empty() {
+        steps.push("This file meets the currently decoded export profile.".into());
+    }
+    steps
+}
+
+/// What a support-matrix status means for a reader of this file.
+fn release_status_note(status: &str) -> &'static str {
+    match status {
+        "verified" => "measured element for element against Revit",
+        "partial" => "measured against Revit, not everything read",
+        "experimental" => "too few files measured to rely on",
+        _ => "element records not read",
+    }
+}
+
+fn print_human_report(report: &InspectReport) {
+    println!("File health");
+    println!(
+        "  Opened: yes · Revit {}{} · {} streams · {}",
+        report
+            .file
+            .revit_version
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".into()),
+        match (
+            &report.file.release_support,
+            report.file.supported_revit_version
+        ) {
+            (Some(support), true) => format!(
+                " ({}, {})",
+                support.status,
+                release_status_note(&support.status)
+            ),
+            (None, true) => " (supported)".to_string(),
+            (_, false) => " (outside the releases rvt-open reads)".to_string(),
+        },
+        report.file.stream_count,
+        if report.file.schema_parsed {
+            "schema parsed"
+        } else {
+            "schema not parsed"
+        }
+    );
+    if let Some(build) = &report.file.build {
+        println!("  Build: {build}");
+    }
+    if let Some(original_path) = &report.file.original_path {
+        println!("  Original path: {original_path}");
+    }
+    if let Some(fmt) = &report.export_diagnostics.formats_latest_integrity {
+        println!("  Formats integrity: {}", fmt.summary_line());
+        let status = match fmt.integrity_status {
+            rvt::compression::FormatsIntegrityStatus::Ok => "ok",
+            rvt::compression::FormatsIntegrityStatus::Uncertain => "uncertain",
+            rvt::compression::FormatsIntegrityStatus::Incomplete => "incomplete",
+            _ => "unknown",
+        };
+        let strip = match fmt.checksum_tail_stripping {
+            rvt::compression::ChecksumTailStripping::Disabled => "disabled",
+            rvt::compression::ChecksumTailStripping::Enabled => "enabled",
+            _ => "unknown",
+        };
+        if let Some(code) = &fmt.diagnostic_code {
+            println!("    status={status} · strip={strip} · code={code}");
+        } else {
+            println!("    status={status} · strip={strip}");
+        }
+    }
+
+    println!("\nFailure mode");
+    println!(
+        "  {} ({})",
+        report.failure_mode.title, report.failure_mode.kind
+    );
+    println!("  {}", report.failure_mode.summary);
+
+    println!("\nDecoded coverage");
+    println!("  Class names: {}", report.decoded.class_name_count);
+    println!(
+        "  Validated elements: {}",
+        report.decoded.production_elements
+    );
+    println!(
+        "  Diagnostic candidates: {}",
+        report.decoded.diagnostic_candidates
+    );
+    println!("  ArcWall records: {}", report.decoded.arcwall_records);
+    println!(
+        "  Elements with geometry: {}",
+        report.decoded.geometry_elements
+    );
+    let prod = &report.export_diagnostics.decoded.production_class_counts;
+    if !prod.is_empty() {
+        let mut parts: Vec<String> = prod.iter().map(|(k, v)| format!("{k}:{v}")).collect();
+        parts.sort();
+        println!("  Production classes: {}", parts.join(" · "));
+    }
+    println!(
+        "  IFC storeys: {} · materials: {}",
+        report.export_diagnostics.exported.storey_count,
+        report.export_diagnostics.exported.material_count
+    );
+    let storey_names = &report.export_diagnostics.exported.storey_names;
+    if !storey_names.is_empty() {
+        println!("  Storeys: {}", storey_names.join(", "));
+    }
+    let mat_sample = &report.export_diagnostics.exported.material_names_sample;
+    if !mat_sample.is_empty() {
+        let extra = report
+            .export_diagnostics
+            .exported
+            .material_count
+            .saturating_sub(mat_sample.len());
+        if extra > 0 {
+            println!(
+                "  Materials (sample): {} · +{extra} more",
+                mat_sample.join(", ")
+            );
+        } else {
+            println!("  Materials: {}", mat_sample.join(", "));
+        }
+    }
+    let param_values = report.export_diagnostics.decoded.parameter_value_count;
+    if param_values > 0 {
+        println!("  Parameter values: {param_values} in the IFC common property sets (Pset_*)");
+    } else {
+        println!("  Parameter values: none in the IFC common property sets");
+    }
+
+    println!("\nIFC export readiness");
+    println!(
+        "  {} · {}%",
+        report.export.level,
+        (report.export.score * 100.0).round() as u32
+    );
+    println!("  {}", report.export.summary);
+    if !report.export.unsupported_features.is_empty() {
+        println!("  Unsupported features:");
+        for feature in &report.export.unsupported_features {
+            println!("    - {feature}");
+        }
+    }
+
+    println!("\nWarnings");
+    if report.warnings.is_empty() {
+        println!("  none");
+    } else {
+        for warning in &report.warnings {
+            println!("  - {warning}");
+        }
+    }
+
+    println!("\nNext steps");
+    for step in &report.next_steps {
+        println!("  - {step}");
+    }
+    println!(
+        "\nCapability ceiling: docs/support-matrix.json (honest statuses; not converter-grade)."
+    );
+}
+
+fn walker_limits_from_cli(cli: &Cli) -> WalkerLimits {
+    let defaults = WalkerLimits::default();
+    WalkerLimits {
+        max_scan_bytes: cli.max_walker_scan_bytes.unwrap_or(defaults.max_scan_bytes),
+        max_candidates: cli.max_walker_candidates.unwrap_or(defaults.max_candidates),
+        max_trial_offsets: cli
+            .max_walker_trial_offsets
+            .unwrap_or(defaults.max_trial_offsets),
+        max_per_record_decode_bytes: cli
+            .max_walker_record_decode_bytes
+            .unwrap_or(defaults.max_per_record_decode_bytes),
+        max_container_records: cli
+            .max_walker_container_records
+            .unwrap_or(defaults.max_container_records),
+    }
+}

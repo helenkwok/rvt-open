@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="rvt-open reads Revit .rvt, .rfa, .rte and .rft files without Revit and exports them to IFCX, IFC4, ThatOpen Fragments, OpenUSD, glTF, 3D PDF, plan SVG and CSV schedules.">
+  <title>rvt-open: open Revit files without Revit</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="nav">
+    <a class="logo" href="./"><span class="mark" aria-hidden="true"></span>rvt-open</a>
+    <nav aria-label="Main">
+      <ul>
+        <li><a href="viewer/">Viewer</a></li>
+        <li><a href="#formats">Formats</a></li>
+        <li class="hide-sm"><a href="#download">Download</a></li>
+        <li><a href="https://github.com/helenkwok/rvt-open">GitHub</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="title">
+      <div class="hero-copy">
+        <p class="chip"><span aria-hidden="true">●</span> Runs in the browser tab · nothing uploaded</p>
+        <h1 id="title">Revit files,<br><span>opened anywhere.</span></h1>
+        <p class="lead">rvt-open reads Autodesk Revit project, family and template files (<code>.rvt</code>, <code>.rfa</code>, <code>.rte</code>, <code>.rft</code>) without Revit: their elements, geometry, materials and parameters. Walk the model in your browser, or convert it to open formats from the command line.</p>
+        <p class="actions">
+          <a class="button primary" href="viewer/">Open the viewer <span aria-hidden="true">→</span></a>
+          <a class="button" href="https://github.com/helenkwok/rvt-open/releases/latest">Download the tools</a>
+        </p>
+      </div>
+      <figure class="hero-art" aria-hidden="true">
+        <svg viewBox="0 0 520 440" focusable="false">
+          <g class="iso-grid">
+            <path d="M20 330 L260 450 M80 300 L320 420 M140 270 L380 390 M200 240 L440 360 M260 210 L500 330 M20 330 L260 210 M80 360 L320 240 M140 390 L380 270 M200 420 L440 300 M260 450 L500 330" />
+          </g>
+          <g class="slabs">
+            <path class="side" d="M120 300 L260 370 L400 300 L400 308 L260 378 L120 308 Z" />
+            <path class="top" d="M120 300 L260 230 L400 300 L260 370 Z" />
+          </g>
+          <g class="floor" transform="translate(0 -52)">
+            <path class="side" d="M130 300 L260 365 L260 412 L130 347 Z" />
+            <path class="side2" d="M260 365 L390 300 L390 347 L260 412 Z" />
+            <path class="glass" d="M146 314 L250 366 L250 404 L146 352 Z M270 366 L374 314 L374 352 L270 404 Z" />
+            <path class="top" d="M122 296 L260 227 L398 296 L260 365 Z" />
+          </g>
+          <g class="floor" transform="translate(0 -104)">
+            <path class="side" d="M130 300 L260 365 L260 412 L130 347 Z" />
+            <path class="side2" d="M260 365 L390 300 L390 347 L260 412 Z" />
+            <path class="glass sel" d="M146 314 L250 366 L250 404 L146 352 Z" />
+            <path class="glass" d="M270 366 L374 314 L374 352 L270 404 Z" />
+            <path class="top" d="M122 296 L260 227 L398 296 L260 365 Z" />
+          </g>
+          <g class="floor" transform="translate(0 -156)">
+            <path class="side" d="M130 300 L260 365 L260 412 L130 347 Z" />
+            <path class="side2" d="M260 365 L390 300 L390 347 L260 412 Z" />
+            <path class="glass" d="M146 314 L250 366 L250 404 L146 352 Z M270 366 L374 314 L374 352 L270 404 Z" />
+            <path class="top" d="M122 296 L260 227 L398 296 L260 365 Z" />
+          </g>
+          <g class="dims">
+            <path d="M110 330 L110 130 M104 330 L116 330 M104 130 L116 130" />
+          </g>
+        </svg>
+        <figcaption class="readout"><b>sample-project.rvt</b> · Revit 2024<br>walls · floors · curtain panels · ElementIds</figcaption>
+      </figure>
+    </section>
+
+    <section class="band" id="formats" aria-labelledby="formats-title">
+      <h2 id="formats-title">One file in. Open formats out.</h2>
+      <p class="sub">It reads Revit releases 2008 to 2027, and decodes elements from 2010 on. Every export prints diagnostics saying what was approximated or left out; read them before using a file for measurement or coordination. rvt-open reads Revit files; it does not write them.</p>
+      <div class="flow">
+        <ul class="col ins" aria-label="Reads">
+          <li class="tile"><b>.rvt</b><span>projects</span></li>
+          <li class="tile"><b>.rfa</b><span>families</span></li>
+          <li class="tile"><b>.rte · .rft</b><span>templates</span></li>
+        </ul>
+        <span class="arrow" aria-hidden="true">→</span>
+        <div class="core"><strong>rvt-open</strong><small>browser · command line · Rust · Python</small></div>
+        <span class="arrow" aria-hidden="true">→</span>
+        <ul class="outs" aria-label="Exports">
+          <li class="tile"><b>IFCX</b><span>buildingSMART IFC5 alpha</span></li>
+          <li class="tile"><b>IFC4</b><span>coordination</span></li>
+          <li class="tile"><b>glTF 2.0</b><span>binary .glb</span></li>
+          <li class="tile"><b>3D PDF</b><span>U3D in a PDF 3D annotation</span></li>
+          <li class="tile"><b>Plan SVG</b><span>floor plans</span></li>
+          <li class="tile"><b>CSV schedules</b><span>element and room takeoffs</span></li>
+          <li class="tile"><b>OpenUSD</b><span>.usda, .usdc</span></li>
+          <li class="tile"><b>ThatOpen Fragments</b><span>.frag</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="band split" aria-label="Two ways to use it">
+      <div class="card" id="viewer">
+        <h2>In the browser</h2>
+        <p>The <a href="viewer/">viewer</a> opens a Revit file inside the page with the WebAssembly build. Nothing is uploaded: the file is parsed in the tab and discarded when the tab closes. The page has no analytics, no CDNs and no telemetry, and its Content-Security-Policy limits connections to the page's own files. See the <a href="https://github.com/helenkwok/rvt-open/blob/main/docs/viewer-privacy-posture.md">viewer privacy posture</a>.</p>
+        <ul class="ticks">
+          <li>Scene tree, categories and element properties</li>
+          <li>Export IFC, glTF, 3D PDF, plan SVG and CSV schedules</li>
+          <li>No account, no upload</li>
+        </ul>
+        <p class="note">In the browser, wasm32 has a 4 GiB memory ceiling, so files over about 130 MB can exceed it. Use the command line for those.</p>
+        <p class="actions"><a class="button primary" href="viewer/">Open the viewer</a></p>
+      </div>
+      <div class="card" id="quick-start">
+        <h2>On the command line</h2>
+        <p>Command-line tools, a Rust library, Python bindings and a WebAssembly package. <code>--help</code> on any tool lists its options.</p>
+        <pre class="term"><code><span class="c"># release, worksharing, previews, schema summary</span>
+<span class="p">$</span> rvt-info my-project.rvt
+<span class="p">$</span> rvt-ifc my-project.rvt -o out.ifc \
+    --ifcx out.ifcx --frag out.frag --usda out.usda --usdc out.usdc
+<span class="p">$</span> rvt-gltf my-project.rvt -o out.glb
+<span class="p">$</span> rvt-gltf my-project.rvt --format pdf3d   <span class="c"># writes my-project.pdf</span>
+<span class="p">$</span> rvt-sheet my-project.rvt -o plan.svg
+<span class="p">$</span> rvt-schedule my-project.rvt              <span class="c"># schedules as CSV</span></code></pre>
+      </div>
+    </section>
+
+    <section class="band" id="download" aria-labelledby="download-title">
+      <h2 id="download-title">Download</h2>
+      <div class="split">
+        <div>
+          <p>The <a href="https://github.com/helenkwok/rvt-open/releases/latest">latest release</a> has the command-line tools for Linux (x86_64, arm64), macOS (Apple silicon, Intel) and Windows (x86_64), and the WebAssembly package. To build from source instead, see <a href="https://github.com/helenkwok/rvt-open/blob/main/docs/install.md">install</a>.</p>
+          <p class="actions"><a class="button primary" href="https://github.com/helenkwok/rvt-open/releases/latest">Latest release</a></p>
+        </div>
+        <div>
+          <h3>Verifying downloads</h3>
+          <p>Each release archive has a build provenance attestation, an entry in <code>SHA256SUMS</code>, a CycloneDX SBOM and a Trivy report, and releases built with VirusTotal enabled list each archive's VirusTotal report in <code>virustotal.md</code>. To check that an archive was built by this repository's release workflow:</p>
+          <pre class="term"><code>gh attestation verify rvt-open-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz -R helenkwok/rvt-open</code></pre>
+          <p>To check the checksum of the files you downloaded:</p>
+          <pre class="term"><code>sha256sum -c SHA256SUMS --ignore-missing</code></pre>
+          <p><a href="https://github.com/helenkwok/rvt-open/blob/main/SECURITY.md">SECURITY.md</a> covers every check, and how to report a vulnerability privately.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="band" id="docs" aria-labelledby="docs-title">
+      <h2 id="docs-title">Documentation</h2>
+      <ul class="doclinks">
+        <li><a href="https://github.com/helenkwok/rvt-open/blob/main/docs/user-guide.md"><b>User guide</b><span>Every tool and option</span></a></li>
+        <li><a href="https://github.com/helenkwok/rvt-open/blob/main/docs/install.md"><b>Install</b><span>Releases and building from source</span></a></li>
+        <li><a href="https://github.com/helenkwok/rvt-open/blob/main/SECURITY.md"><b>Security</b><span>Checks and private reports</span></a></li>
+        <li><a href="https://github.com/helenkwok/rvt-open/blob/main/CLEANROOM.md"><b>Clean room</b><span>Built from public observations of the file format and public documentation, never from Autodesk code</span></a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>rvt-open is open source under the Apache-2.0 licence: see <a href="https://github.com/helenkwok/rvt-open/blob/main/LICENSE">LICENSE</a> and <a href="https://github.com/helenkwok/rvt-open/blob/main/NOTICE">NOTICE</a>.</p>
+    <p>Not affiliated with Autodesk. Autodesk and Revit are registered trademarks of Autodesk, Inc. Fonts: Space Grotesk and JetBrains Mono, <a href="fonts/README.md">SIL Open Font License</a>.</p>
+  </footer>
+</body>
+</html>

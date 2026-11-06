@@ -1,0 +1,126 @@
+rvt-rs — open reader for Autodesk Revit files
+Copyright 2026 Griffin Long
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+rvt-open — derived from rvt-rs (https://github.com/DrunkOnJava/rvt-rs,
+commit 120e2f9). Modifications Copyright 2026 Helen Kwok, also under the
+Apache License, Version 2.0. Any file that came from rvt-rs and differs
+from it at that commit was modified in rvt-open; this repository's history
+starts from a single commit containing those files. Includes contributions submitted
+to rvt-rs by their authors (e.g. pinterbanget), credited in the history of
+rvt-rs.
+
+The files of this work were modified by rvt-open contributors.
+
+==============================================================================
+Trademark and attribution notices
+==============================================================================
+
+"Autodesk" and "Revit" are registered trademarks of Autodesk, Inc.
+This project is not affiliated with, endorsed by, or sponsored by
+Autodesk. All references to "Autodesk" and "Revit" in this project's
+source, tests, documentation, and output are nominative fair use —
+they identify the file format this reader parses, and no more.
+
+This project neither uses nor distributes any Autodesk source code,
+object code, proprietary SDK components, or header files. All
+file-format observations documented here were obtained by inspecting
+the bytes of files written by Autodesk Revit — publicly shipped
+sample content — using only public tools (the Microsoft Compound
+File Binary Format specification [MS-CFB], RFC 1952 gzip, and
+standard Rust crates).
+
+==============================================================================
+Interoperability basis
+==============================================================================
+
+Reverse engineering for the sole purpose of achieving interoperability
+between independently-developed software and the Autodesk Revit file
+format is recognised as lawful fair use under:
+
+  * United States — Sega Enterprises v. Accolade, 977 F.2d 1510
+    (9th Cir. 1992); Sony Computer Entertainment v. Connectix, 203
+    F.3d 596 (9th Cir. 2000).
+  * European Union — Article 6 of Directive 2009/24/EC (Software
+    Directive).
+  * Australia — Copyright Act 1968, Section 47D.
+
+File formats themselves are not copyrightable subject matter (Baker
+v. Selden, 101 U.S. 99 (1879); Lotus Development v. Borland, 516
+U.S. 233 (1996)). The Microsoft Compound File Binary Format is a
+published public specification; the compression (RFC 1951 DEFLATE)
+is an Internet standard.
+
+No access-control or rights-management technology has been
+circumvented by this project — the underlying Revit files are not
+encrypted and carry no technological protection measures.
+
+==============================================================================
+Third-party dependencies (runtime)
+==============================================================================
+
+  cfb           — MIT OR Apache-2.0
+  flate2        — MIT OR Apache-2.0
+  encoding_rs   — Apache-2.0 OR MIT
+  quick-xml     — MIT
+  serde         — MIT OR Apache-2.0
+  serde_json    — MIT OR Apache-2.0
+  clap          — MIT OR Apache-2.0
+  anyhow        — MIT OR Apache-2.0
+  thiserror     — MIT OR Apache-2.0
+  acadrust      — MPL-2.0 (rvt-dwg's DWG/DXF engine, https://github.com/hakanaktt/acadrust,
+                  used unmodified from crates.io at version 0.6.8; its source is available
+                  there. acadrust's DWG code is ported from ACadSharp, MIT, Copyright (c) 2021
+                  Albert Domenech, as acadrust's THIRD_PARTY_NOTICES.md records.)
+
+See each dependency's own license for full terms. The runtime
+dependencies are permissively licensed, except acadrust (MPL-2.0,
+file-level copyleft, used unmodified), and all are compatible with
+Apache-2.0 redistribution.
+
+==============================================================================
+Test-corpus attribution
+==============================================================================
+
+  rvt-dwg's tests read the ACadSharp sample drawings (samples/ at commit
+  d9f3de8c), MIT, Copyright (c) 2021 Albert Domenech, fetched at test time by
+  rvt-dwg/tools/fetch-acadsharp-samples.sh and not committed.
+
+The integration test suite uses the publicly-available
+`rac_basic_sample_family` RFA fixture family distributed by
+Autodesk as part of every Revit release, and curated into a
+Git-LFS-hosted repository by Andreas Philipp at
+https://github.com/phi-ag/rvt under the Unlicense. The sample
+family files themselves are Autodesk property; this project
+consumes them only for interoperability-verification testing and
+does not redistribute them (the phi-ag/rvt test corpus is pulled
+via LFS from their repo at `git clone` time; it is not vendored
+here).
+
+==============================================================================
+Test data
+==============================================================================
+
+Fetched for Measure runs, checked against pinned hashes and never committed.
+
+  The R2025 sample models (R2025_Models.zip, 23 Revit 2025 projects;
+  R2025_TU_Roof.zip; R2025_Models_wRVTSets.zip): Apache-2.0, made and
+  released by puzzbobb (pinned in research/r2025-models.tsv).
+  The held-out pairs (rvt-holdout-models at commit b9499a43, two projects
+  saved and exported by Revit 2022, 2024, 2025, 2026 and 2027): modelling
+  CC BY 4.0, credit "hemanth1986"; the Autodesk template families they use
+  are not covered by that licence (pinned in research/holdout-models.tsv).
+    Fetch base (holdout-pairs): https://raw.githubusercontent.com/hemanth1986/rvt-holdout-models/b9499a43a9b7d20bdad6111babedc4affe47b095/
+
+==============================================================================
+Vendored code
+==============================================================================
+
+vendor/craft-atomic: craft-atomic (crash-safe atomic file writes), from
+craft-libs, https://github.com/storytold/craft-libs, commit
+fe4e2ff3efe2dfc5c6f4871c968a9fb561fd5305.
+Copyright (c) 2026 ArtCraft Team and the craft-libs contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your
+option; used here under the Apache License, Version 2.0. Its licence texts,
+notice and source record are in vendor/craft-atomic/.

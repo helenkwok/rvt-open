@@ -1,0 +1,17 @@
+# rvt-open code ownership
+# Pattern: path -> owner(s)
+# Default: @helenkwok
+* @helenkwok
+
+# IFC emission — review changes carefully against IFC viewers and validators
+/src/ifc/ @helenkwok
+/tests/ifc_*.rs @helenkwok
+/tests/fixtures/*.ifc @helenkwok
+
+# File format readers — low-level; changes must preserve decoder contracts
+/src/formats.rs @helenkwok
+/src/walker.rs @helenkwok
+
+# Release plumbing
+/.github/ @helenkwok
+/Cargo.toml @helenkwok

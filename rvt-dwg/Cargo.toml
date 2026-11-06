@@ -1,0 +1,34 @@
+[package]
+name = "rvt-dwg"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "DWG and DXF for rvt-open: read drawings into a plain 2D model, write entity/layer/block tables, SVG and report.json, and write DXF and DWG 2000-2018."
+authors = ["rvt-open contributors"]
+repository = "https://github.com/helenkwok/rvt-open"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The DWG/DXF engine (MPL-2.0), used unmodified as a crates.io dependency; see NOTICE.
+# Its own defaults pull rayon for parallel decoding, which wasm cannot use.
+acadrust = { version = "=0.6.8", default-features = false }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
+clap = { version = "=4.6.7", features = ["derive"], optional = true }
+
+[features]
+default = ["cli", "parallel"]
+# The `rvt-dwg` command-line tool.
+cli = ["dep:clap"]
+# Parallel section decoding in the engine (native only).
+parallel = ["acadrust/parallel"]
+
+[[bin]]
+name = "rvt-dwg"
+path = "src/bin/rvt_dwg.rs"
+required-features = ["cli"]

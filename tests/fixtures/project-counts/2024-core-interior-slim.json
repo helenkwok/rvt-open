@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "id": "magnetar-2024-core-interior-slim",
+  "project_file": "2024_Core_Interior.rvt",
+  "reference_ifc_file": "../IFC Exports/2024_Core_Interior_slim.ifc",
+  "source": {
+    "repo": "magnetar-io/revit-test-datasets",
+    "license": "MIT",
+    "revit_release": 2024,
+    "rvt_sha256": "c805df445d613b408e37337765572021265e3f5dfdc7d1fa53b22ba1600b8014",
+    "rvt_bytes": 33718272,
+    "reference_ifc_sha256": "bfdf36ffb0bb768f3409d818403990e64d4c262c6780603be87f8077387ad86d",
+    "reference_ifc_bytes": 1665968,
+    "notes": "Full-project export of the same .rvt as magnetar-2024-core-interior, written by Autodesk Revit 24.0.20.20 (ENU) - IFC 24.0.20.20; FILE_DESCRIPTION ViewDefinition [ReferenceView_V1.2], ExchangeRequirement [Architecture]; FILE_SCHEMA IFC4; 19879 entity instances. It lives beside the Revit/ tree in the dataset, hence the '../IFC Exports/' path relative to RVT_PROJECT_CORPUS_DIR. Every `expected` below was measured with IfcOpenShell 0.8.5 (by_type, include_subtypes=False), independently reproduced with IFClite 7.1.1 (ifc-lite-core, own STEP scanner) and by the STEP-constructor count this test uses; all three agree exactly on all thirteen types. The source side is the same .rvt, so every decoder_* value here is identical to the sibling manifest — what changes is the reference side, which is a real project schedule instead of a 20 KB element fixture, so the gaps are visible instead of hidden behind zeros."
+  },
+  "counts": {
+    "levels": {
+      "status": "known",
+      "expected": 15,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCBUILDINGSTOREY",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.storey_count",
+      "decoder_expected": 15,
+      "decoder_tolerance": 0,
+      "notes": "The storeys are the Revit Level elements themselves. Fifteen of the seventy-five OST_Levels records on this .rvt are standalone placed instances under the rule, and each owns exactly one name/elevation block; the recovery is all-or-nothing, so a level with no block emits no storey at all. Measured on this artifact: 15 of 15 (name, elevation) pairs equal an IfcBuildingStorey in this export exactly - Basement 2 -40, Basement 1 -20, Level 1 0, Mez 1-2 15, Level 3/4/4 - Wall Layouts 1/2/3 at 31/46/61, Level 6..13 at 76/91/106/121/136/151/166/185.5 ft - no wrong elevation, no missing storey, no extra storey, tolerance 0. The exact pair set is scored by the storeys.IFCBUILDINGSTOREY row below."
+    },
+    "walls": {
+      "status": "known",
+      "expected": 360,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCWALL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCWALL",
+      "decoder_expected": 360,
+      "decoder_tolerance": 0,
+      "tracking": "walls",
+      "notes": "The partition element-record prologue carries a container reference at +0x32 (0xffffffffffffffff = none) and a placement-kind word at +0x42 (0xffffef7f placed instance / 0xffff8000 type-symbol envelope). Records that are standalone AND placed reproduce Revit's exported ElementId set exactly. Measured on this artifact: 360 of 360 IFCWALL recovered, exact id-set match against the export's Tag values — no false positives, no misses, tolerance 0. All 138 doors and windows void into their host wall, scored by the relations.IFCRELFILLSELEMENT row below. An element can be framed by more than one partition record and the newest frame - the greatest (stream, offset) - is the current one, which makes the box's thin plan extent equal the nominal thickness of the IfcWallType this export assigns on 360 of 360 walls (201 of 360 on the oldest frame); and the box's run is the untrimmed centreline, cut back at each end by half the thickness of the perpendicular recovered wall whose centreline lands on it. Measured in world coordinates against this export with IfcOpenShell 0.8.5 at 1e-3 ft: 336 of 360 walls match its axis-aligned bounding box exactly, worst residual 0.3333 ft. Body geometry is not a field of this manifest, so the support-matrix row element-record-wall-join-trim stays partial. Eight OST_Walls records carry the bbox-less type-record shape with placement kind 0xffff8080 (ids 1710, 1711, 3897, 11356, 17328, 17337, 17339, 17341), of which Revit exports four as IfcWallType and never places the other four. Every one of the 360 exported wall instance records names exactly one of the eight in its +0x88 reference list, and it is the IfcWallType.Tag the export assigns - 360 of 360, no wrong answer, no miss, against 356 of 360 for a positional references[1] read: the four 18\" Basement walls carry 1851 (a record of category -2009014) at references[1] and 3897 (a wall type record) one slot later, so the set test picks the right one. The join is library-side (rvt::partition_type_records::unique_type_reference, gated by tests/iter_elements_typed.rs::core_interior_2024_wall_type_record_join); it is not yet a property on the emitted wall, so no count in this manifest moves."
+    },
+    "floors": {
+      "status": "known",
+      "expected": 80,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCSLAB",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCSLAB",
+      "decoder_expected": 80,
+      "decoder_tolerance": 0,
+      "tracking": "floors",
+      "notes": "The instance rule (no container reference at +0x32, placement kind 0xffffef7f at +0x42) is exact on OST_Floors too - the 99 ElementIds it selects are all exported, 79 as IFCSLAB and 20 as IFCSHADINGDEVICE. Two further facts complete the set. (1) The 80th exported slab, 'Pad:Site Pad' ElementId 21975, carries BuiltInCategory OST_BuildingPad (-2001263), not OST_Floors; its record decodes with the same header shape and Revit's exporter maps a building pad to IfcSlab.FLOOR. (2) The IfcSlab / IfcShadingDevice split is a per-instance Revit 'IFC Export As' override - the reference export carries IFCSLABTYPE and IFCSHADINGDEVICETYPE rows with the same Tag (4166, 71848), so the same FloorType lands on both sides - and it is readable: the UTF-16LE string 'IfcShadingDevice' sits in the element's parameter block with the owning ElementId as a u64 220 bytes ahead of it and again at 286, both of which must agree and be declared in Global/ElemTable. Thirty entries pass that test on this file, naming exactly the 20 IFCSHADINGDEVICE Tag values. Measured: 80 of 80 IFCSLAB and 20 of 20 IFCSHADINGDEVICE, exact id-set matches against the export's Tag values - no false positives, no misses, tolerance 0, verified with IfcOpenShell 0.8.5 and IFClite 7.1.1. Bodies are the record's own bounding box, but the vertical extent is the slab's real thickness - it equals the export's IfcExtrudedAreaSolid.Depth on 79 of 80 slabs and sums to it on the 80th (22756 'Floor:Basement Slab', exported as 0.3333 ft + 1.1667 ft = the recorded 1.5 ft), which closes floor_slab_extrusion_thickness. The export's 20 IFCSHADINGDEVICE are scored by their own row. Segments are chained by closure rather than fitted, and an ambiguous one rejects the whole element. Measured against the export's IfcExtrudedAreaSolid swept areas in the project plan frame, tolerance 1e-3 ft per vertex: 80 of 80 slab profiles exact across 122 loops (80 outer + 42 rectangular voids), worst vertex deviation 1.563e-12 ft, and 2.842e-14 ft re-measured on the emitted IFC. 42 perimeter plates emit IFCARBITRARYPROFILEDEFWITHVOIDS and 38 IFCARBITRARYCLOSEDPROFILEDEF."
+    },
+    "roofs": {
+      "status": "known",
+      "expected": 0,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCROOF",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCROOF",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "doors": {
+      "status": "known",
+      "expected": 132,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCDOOR",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCDOOR",
+      "decoder_expected": 132,
+      "decoder_tolerance": 0,
+      "tracking": "doors",
+      "notes": "The partition element-record prologue carries a container reference at +0x32 (0xffffffffffffffff = none) and a placement-kind word at +0x42 (0xffffef7f placed instance / 0xffff8000 type-symbol envelope). Records that are standalone AND placed reproduce Revit's exported ElementId set exactly. Measured on this artifact: 132 of 132 IFCDOOR recovered, exact id-set match against the export's Tag values — no false positives, no misses, tolerance 0. Bodies are the record's own bounding box (envelope, not a resolved profile or wall location curve); base/top Level binding stays open."
+    },
+    "windows": {
+      "status": "known",
+      "expected": 6,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCWINDOW",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCWINDOW",
+      "decoder_expected": 6,
+      "decoder_tolerance": 0,
+      "tracking": "windows",
+      "notes": "The partition element-record prologue carries a container reference at +0x32 (0xffffffffffffffff = none) and a placement-kind word at +0x42 (0xffffef7f placed instance / 0xffff8000 type-symbol envelope). Records that are standalone AND placed reproduce Revit's exported ElementId set exactly. Measured on this artifact: 6 of 6 IFCWINDOW recovered, exact id-set match against the export's Tag values — no false positives, no misses, tolerance 0. Bodies are the record's own bounding box (envelope, not a resolved profile or wall location curve); base/top Level binding stays open."
+    },
+    "rooms_spaces": {
+      "status": "known",
+      "expected": 116,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCSPACE",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCSPACE",
+      "decoder_expected": 116,
+      "decoder_tolerance": 0,
+      "tracking": "rooms spaces",
+      "notes": "Revit rooms are carried by the same partition element record every other category uses: BuiltInCategory OST_Rooms (-2000160), under the instance rule (no container reference at +0x32, placement kind 0xffffef7f at +0x42). The category was measured, not assumed - a brute scan of all 23470 decodable element records on this .rvt histogrammed every BuiltInCategory present and scored each one's instance-rule selection against the 116 room ElementIds this export carries in IfcSpaceType.Tag; OST_Rooms selects 116 and they are exactly that set (TP 116, FP 0, FN 0, tolerance 0), and no other category intersects it at all. Measured: 116 of 116 rooms accept the framing and every one is framed twice with no disagreement, and no other one of the 26425 ids Global/ElemTable declares accepts it at all. The recovered names equal this export's IfcSpace.LongName on 116 of 116 and the numbers equal its IfcSpace.Name on 116 of 116. Bodies are the record's own bounding box: measured on the emitted IFC against this export's IfcExtrudedAreaSolid swept areas in world coordinates, the plan envelope is exact on 116 of 116 (worst 1.640e-06 ft, which is the writer's six-decimal metre rounding) and the vertical extent is exact on 116 of 116 (worst 1.421e-14 ft) - the storey elevation at the base, the real floor-to-ceiling height (8 ft on this file) at the top. What is NOT recovered is the boundary polygon: 76 of the 116 record boxes equal their room's polygon exactly in area and 40 over-state it (total 20870.7 sq ft of box against 19582.1 sq ft of polygon, ratio 1.0658, worst 2.037 on room 25945), so ProfileResolved stays false. Storey containment is exact: all 116 bind through the Level ElementId their record's counted reference list names, each of the ten Levels named maps to exactly one IfcBuildingStorey of this export, and the parameter block's own Level slot agrees on 116 of 116."
+    },
+    "columns": {
+      "status": "known",
+      "expected": 256,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCCOLUMN",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCCOLUMN",
+      "decoder_expected": 256,
+      "decoder_tolerance": 0,
+      "tracking": "columns",
+      "notes": "`partition_element_records` decodes the Revit 2024 partition element-record header (`u64` ElementId, `i64` BuiltInCategory at +0x12, container reference at +0x32, placement kind at +0x42, bbox marker at +0x50, six `f64` feet at +0x58) and keeps OST_Columns (-2000100) records whose ElementId is declared in Global/ElemTable and which are standalone placed instances. The direct test reproduces 256 of 256 and the exact wall / door / window id sets. It is the same 2 ft square the instance envelope already had (worst disagreement 8.0e-15 ft), so no vertex moves; 176 of 256 columns match this export's world bounding box exactly and the 80 that do not have a body Revit cuts inset from the full prism, which no section can produce."
+    },
+    "beams": {
+      "status": "known",
+      "expected": 0,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCBEAM",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCBEAM",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "mep": {
+      "status": "known",
+      "expected": 0,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCFLOWTERMINAL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCFLOWTERMINAL",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "materials": {
+      "status": "known_gap",
+      "expected": 10,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCMATERIAL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.material_count",
+      "decoder_expected": 87,
+      "decoder_tolerance": 0,
+      "tracking": "revit_compound_assemblies_and_walltype_widths",
+      "unsupported_feature": "revit_compound_assemblies_and_walltype_widths",
+      "notes": "On Revit 2024 and 2025 every OST_Materials record with a name is counted. The export writes 10 IfcMaterial (9 named, plus '<Unnamed>') and 150 IfcMaterialConstituentSet / 309 IfcMaterialConstituent, only for the materials its exported elements use. All 9 named are among rvt-open's 78, with Revit's colours, so the count stays a known gap by design rather than by misreading. Of the 86, 8 family materials have no name found and are left out. Family instances are not joined to their materials; layered floors and shading devices are, through their layer sets (88); this export is a ReferenceView_V1.2 file with no IfcMaterialLayerSet, so those are scored against the faces its bodies style with each material."
+    },
+    "units": {
+      "status": "known",
+      "expected": 1,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCUNITASSIGNMENT",
+      "tolerance": 0,
+      "decoder_metric": "step.IFCUNITASSIGNMENT",
+      "decoder_expected": 1,
+      "decoder_tolerance": 0
+    },
+    "property_sets": {
+      "status": "known_gap",
+      "expected": 0,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCPROPERTYSET",
+      "tolerance": 0,
+      "decoder_metric": "step.IFCPROPERTYSET",
+      "decoder_expected": 6510,
+      "decoder_tolerance": 8,
+      "tracking": "partial_revit_element_parameters",
+      "unsupported_feature": "partial_revit_element_parameters",
+      "notes": "The Pset_ sets carry the Revit parameters rvt-open reads (Reference, FloorCovering, IsExternal and the storey and building sets), so the diagnostics count them and claim the narrower gap. The row stays known_gap because the paired export's property-set inventory still differs from Revit's: neither side is a subset of the other."
+    },
+    "shading_devices": {
+      "status": "known",
+      "expected": 20,
+      "source": "full Revit IFC export",
+      "source_ifc_type": "IFCSHADINGDEVICE",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCSHADINGDEVICE",
+      "decoder_expected": 20,
+      "decoder_tolerance": 0,
+      "tracking": "shading devices",
+      "notes": "Twenty OST_Floors instances carry a per-element Revit 'IFC Export As' override naming IfcShadingDevice, so Revit's exporter emits them as IFCSHADINGDEVICE rather than IFCSLAB even though they share a FloorType with elements that stay slabs. rvt-open reads the override string out of the partition parameter block and honours it; measured 20 of 20 with an exact id-set match against the export's Tag values, tolerance 0. The plan profile of these 20 stays the record box rectangle: they are rotated plates whose 57 sketch-line boxes include one of zero extent and 21 diagonals with no axis-parallel anchor, so the closure rule declines all 20 and ProfileResolved stays false."
+    }
+  },
+  "storeys": {
+    "building_storeys": {
+      "status": "known",
+      "storey_ifc_type": "IFCBUILDINGSTOREY",
+      "expected_storeys": 15,
+      "source": "full Revit IFC export",
+      "decoder_metric": "diagnostics.exported.storey_count",
+      "decoder_expected_storeys": 15,
+      "tracking": "building storeys",
+      "notes": "The compared value is the exact set of [Name, Elevation] pairs, with the elevation converted from each file's declared LENGTHUNIT to feet and rendered at 1e-6 ft: this export declares FOOT (IfcConversionBasedUnit, ratio 0.3048) while rvt-open writes METRE, so the field would be incomparable as raw numbers. Measured on this artifact: 15 of 15 pairs reproduced exactly. Names are asserted, not guessed: each elevation comes out of the parameter block owned by the Level's own ElementId, so the pairing is stated by the file rather than joined by rank (which would put Level 6 at 91 ft where this export puts Level 7). 372 of them reach it through the Level ElementId their own partition element record names in its counted reference list at +0x88, accepted only when the list names exactly one recovered Level - a Revit column or wall carries a base and a top constraint, and all 344 OST_Columns records that name a Level at all name two, so they resolve to nothing and keep the elevation join. The other 481 reach it through the record-face elevation match. Where both joins answer the same element the two agree 537 of 537 times, with 0 disagreements, which is why the stated join runs first. The only element left on the IfcBuilding is Wall 55840, whose record names no single Level; IFCRELCONTAINEDINSPATIALSTRUCTURE stays 14."
+    }
+  },
+  "relations": {
+    "opening_fills": {
+      "status": "known",
+      "relation_ifc_type": "IFCRELFILLSELEMENT",
+      "expected_pairs": 138,
+      "source": "full Revit IFC export",
+      "decoder_metric": "step.IFCRELFILLSELEMENT",
+      "decoder_expected_pairs": 138,
+      "tracking": "opening fills",
+      "notes": "Revit's exporter voids each door and window out of its host wall with an IfcOpeningElement: IfcRelVoidsElement binds the opening to the wall, IfcRelFillsElement binds the opening to the door or window. This export carries 201 IfcOpeningElement, of which 138 are filled - 132 IfcDoor and 6 IfcWindow, every one hosted by an IfcWall - and 63 are unfilled penetrations of an IfcSlab or IfcShadingDevice, which are out of scope here. The pair set compared is [host Tag, filling Tag], read through the void/fill chain by all three witnesses independently: IfcOpenShell 0.8.5 by_type + attribute access, IFClite 7.1.1 EntityScanner + parse_entity, and rvt-open by splitting its own emitted STEP. rvt-open recovers the host from the partition element record's counted reference list at +0x88: the slot immediately before the record's own ElementId, accepted only when it is one of the 360 ElementIds the same instance rule selects as exported walls. Measured on this artifact: 138 of 138 pairs reproduced exactly - no wrong host, no missing pair, no extra pair - across all 273 records that frame those 138 elements. The 63 slab and shading-device openings are not emitted: rvt-open recovers no opening that is not filled by a recovered element."
+    }
+  }
+}

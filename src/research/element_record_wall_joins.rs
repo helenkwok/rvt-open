@@ -1,0 +1,1290 @@
+//! Wall bodies: the record box is the *untrimmed* wall, the joins cut it.
+//!
+//! A Revit 2024 `OST_Walls` partition element record carries the
+//! wall's model bounding box (`partition_element_records`). Measured
+//! against Revit's own IFC export of `2024_Core_Interior.rvt`, that
+//! box is **not** the wall's exported body: it is the wall's location
+//! line taken to its raw endpoints, inflated by half the wall's
+//! thickness across the run. Revit's exported body is the same prism
+//! after the joins have cut it back.
+//!
+//! Two facts make the difference recoverable from the records alone
+//! (background):
+//!
+//! 1. **The box's thin plan extent is the wall's thickness.** On the
+//!    recorded edge the thin extent equals the nominal thickness of
+//!    the `IfcWallType` Revit's export assigns on **360 of 360**
+//!    walls, once the newest frame of each element is the one read
+//!    (`partition_schema_mvp::select_instance_records`).
+//! 2. **The trim at an end is half the thickness of the wall whose
+//!    centreline lands on that end.** Every non-zero end delta
+//!    between the record box and Revit's `Axis` polyline on the
+//!    recorded edge is exactly one of `0.25`, `0.3333`, `0.75` ft —
+//!    half of the 6", 8" and 18" wall thicknesses on the file — and
+//!    zero everywhere else.
+//!
+//! 3. **The record names the walls it joins.** The counted reference
+//!    list at `+0x88` holds, besides the type and the two Levels, the
+//!    ElementIds of the other walls this wall is joined to. Requiring
+//!    a candidate to be named there removes 14 over-trims on the
+//!    recorded edge and costs nothing: 16 of the 360 walls name no
+//!    other wall at all, and every one of them is a wall Revit leaves
+//!    untrimmed.
+//!
+//! 4. **A candidate only cuts where its own cut-back run reaches.**
+//!    A wall whose end has itself been cut back no longer covers the
+//!    centreline of a wall beyond that cut, and Revit does not trim
+//!    there. The candidate's run is therefore reduced by its own
+//!    trims before the span test — ignoring the trims imposed by
+//!    walls on the line being resolved, which are the joins this very
+//!    end makes and cannot pre-empt itself.
+//!
+//! [`join_trims`] applies (2)–(4) to the wall set recovered from the
+//! records. It is a solver over recorded boxes, not a fit: a
+//! candidate must be perpendicular, must be named in this record's
+//! reference list, must have its centreline exactly on the end being
+//! resolved, must span this wall's centreline along its own reduced
+//! run, and must overlap it in elevation. When the candidates at one
+//! end disagree about their thickness the **whole element** is
+//! declined and keeps its record box.
+//!
+//! # Honesty
+//!
+//! - The *which walls join* half is read from the file; the *where
+//!   the join cuts* half is still modelled. Revit's per-pair
+//!   butt/mitre choice is not in the record — the trimmed endpoints
+//!   were searched as `f64` over 4 KiB past every wall record on the
+//!   recorded edge and no fixed carrier holds them.
+//! - Measured end to end on `2024_Core_Interior.rvt`, world
+//!   axis-aligned bounding box against Revit's own export: the
+//!   trimmed box is exact on **351 of 360** walls, up from 336 for
+//!   the geometry-only solver and 39 for the untrimmed box; worst
+//!   corner residual 0.3333 ft, mean 0.0220 → 0.0081 ft. Per end,
+//!   689 → **711 of 720** correct, with no end that the geometry-only
+//!   solver had right made wrong.
+//! - The 9 residual ends are one side of a **true L corner** — two
+//!   walls whose runs both stop at the other's centreline, with
+//!   nothing continuing past the corner. Revit cuts exactly one of
+//!   the pair and the file offers no feature that says which: across
+//!   the two distinct corners on the recorded edge the survivor is
+//!   the thicker wall once and the thinner wall once, the lower
+//!   ElementId once and the higher once. They are recorded, not
+//!   papered over.
+//! - Only axis-parallel walls are resolved. Every wall on the
+//!   recorded edge is axis-parallel; a wall whose box is square in
+//!   plan has no identifiable thin axis and is declined.
+
+use crate::partition_element_records::PartitionElementRecord;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Field carrying which body a recovered wall is emitting.
+pub const WALL_BODY_SOURCE_FIELD: &str = "m_wall_body_source";
+/// Value of [`WALL_BODY_SOURCE_FIELD`] when the joins were resolved.
+pub const WALL_BODY_JOIN_TRIMMED: &str = "partition_element_record_join_trimmed";
+/// Field carrying the wall thickness read off the box's thin axis.
+pub const WALL_THICKNESS_FIELD: &str = "m_wall_thickness";
+/// Field carrying the trim applied at the low end of the wall run.
+pub const WALL_TRIM_START_FIELD: &str = "m_wall_trim_start";
+/// Field carrying the trim applied at the high end of the wall run.
+pub const WALL_TRIM_END_FIELD: &str = "m_wall_trim_end";
+/// Value of the thickness-source property for the thin-axis read.
+pub const WALL_THICKNESS_SOURCE: &str = "partition_element_record_bbox_thin_axis";
+
+/// Plan tolerance for "this centreline lands on that end", in feet.
+///
+/// Revit writes these coordinates as exact doubles and the record
+/// carries the same bits, so the tolerance only absorbs the last
+/// bits of a subtraction.
+pub const JOIN_EPS_FEET: f64 = 1e-6;
+
+/// One wall reduced to the run / thickness / elevation the solver needs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WallRun {
+    /// The wall's own ElementId.
+    pub element_id: u32,
+    /// Plan axis the wall runs along: `0` = x, `1` = y.
+    pub axis: usize,
+    /// Thickness in feet — the box's extent across the run.
+    pub thickness_feet: f64,
+    /// Centreline coordinate across the run, in feet.
+    pub centre_feet: f64,
+    /// Low end of the untrimmed run, in feet.
+    pub start_feet: f64,
+    /// High end of the untrimmed run, in feet.
+    pub end_feet: f64,
+    /// Base of the box, in feet.
+    pub base_feet: f64,
+    /// Top of the box, in feet.
+    pub top_feet: f64,
+}
+
+/// The trims a wall's two ends take, in feet.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WallJoinTrim {
+    /// Plan axis the wall runs along: `0` = x, `1` = y.
+    pub axis: usize,
+    /// Thickness in feet.
+    pub thickness_feet: f64,
+    /// Trim at the low end.
+    pub start_feet: f64,
+    /// Trim at the high end.
+    pub end_feet: f64,
+}
+
+impl WallJoinTrim {
+    /// True when either end was actually cut back.
+    pub fn is_trimmed(&self) -> bool {
+        self.start_feet > 0.0 || self.end_feet > 0.0
+    }
+}
+
+/// Reduce a record to a [`WallRun`], or `None` when its plan box has
+/// no identifiable long axis.
+pub fn wall_run(record: &PartitionElementRecord) -> Option<WallRun> {
+    let (dx, dy, _) = record.extents_feet();
+    if !dx.is_finite() || !dy.is_finite() {
+        return None;
+    }
+    if (dx - dy).abs() <= JOIN_EPS_FEET {
+        return None;
+    }
+    let axis = usize::from(dy > dx);
+    let across = 1 - axis;
+    let thickness_feet = if axis == 0 { dy } else { dx };
+    if thickness_feet <= 0.0 {
+        return None;
+    }
+    Some(WallRun {
+        element_id: record.element_id,
+        axis,
+        thickness_feet,
+        centre_feet: (record.bbox_feet[across] + record.bbox_feet[across + 3]) * 0.5,
+        start_feet: record.bbox_feet[axis],
+        end_feet: record.bbox_feet[axis + 3],
+        base_feet: record.bbox_feet[2],
+        top_feet: record.bbox_feet[5],
+    })
+}
+
+/// The other recovered walls a record names in its counted reference
+/// list at `+0x88`.
+///
+/// `wall_ids` is the ElementId set of the recovered wall instances,
+/// so a slot that names a type, a Level, a column or an id this
+/// decoder has not recovered is dropped rather than guessed at. The
+/// record's own id is never a join partner and is excluded.
+pub fn joined_walls(record: &PartitionElementRecord, wall_ids: &BTreeSet<u32>) -> BTreeSet<u32> {
+    record
+        .references
+        .iter()
+        .filter(|slot| **slot <= u64::from(u32::MAX))
+        .map(|slot| *slot as u32)
+        .filter(|id| *id != record.element_id && wall_ids.contains(id))
+        .collect()
+}
+
+/// The wall set plus the join partners each record names, which is
+/// everything the solver reads.
+struct Solver<'a> {
+    runs: &'a [WallRun],
+    joined: &'a BTreeMap<u32, BTreeSet<u32>>,
+}
+
+impl<'a> Solver<'a> {
+    fn names(&self, wall: &WallRun, other: &WallRun) -> bool {
+        self.joined
+            .get(&wall.element_id)
+            .is_some_and(|set| set.contains(&other.element_id))
+    }
+
+    /// Every wall that is perpendicular to `wall`, named by it, whose
+    /// centreline lands on `coord`, whose own run spans `wall`'s
+    /// centreline and whose elevation range overlaps it.
+    ///
+    /// `skip_centre` drops candidates sitting on that plan line; it is
+    /// how a candidate's own reduction ignores the joins it makes with
+    /// the line currently being resolved.
+    fn candidates(&self, wall: &WallRun, coord: f64, skip_centre: Option<f64>) -> Vec<&'a WallRun> {
+        self.runs
+            .iter()
+            .filter(|other| other.element_id != wall.element_id && other.axis != wall.axis)
+            .filter(|other| (other.centre_feet - coord).abs() <= JOIN_EPS_FEET)
+            .filter(|other| self.names(wall, other))
+            .filter(|other| {
+                skip_centre.is_none_or(|line| (other.centre_feet - line).abs() > JOIN_EPS_FEET)
+            })
+            .filter(|other| {
+                wall.centre_feet >= other.start_feet - JOIN_EPS_FEET
+                    && wall.centre_feet <= other.end_feet + JOIN_EPS_FEET
+            })
+            .filter(|other| {
+                wall.top_feet.min(other.top_feet) - wall.base_feet.max(other.base_feet)
+                    > JOIN_EPS_FEET
+            })
+            .collect()
+    }
+
+    /// Half the one thickness the candidates agree on, `Some(0.0)`
+    /// when there are none, `None` when they disagree.
+    fn half_thickness(candidates: &[&WallRun]) -> Option<f64> {
+        let mut thickness: Option<f64> = None;
+        for other in candidates {
+            match thickness {
+                None => thickness = Some(other.thickness_feet),
+                Some(held) if (held - other.thickness_feet).abs() <= JOIN_EPS_FEET => {}
+                Some(_) => return None,
+            }
+        }
+        Some(thickness.map_or(0.0, |value| value * 0.5))
+    }
+
+    /// `candidate`'s own run, cut back by the joins it makes with
+    /// walls that are **not** on `line` — the plan line whose trim is
+    /// being resolved. Disagreeing candidates reduce nothing, which
+    /// keeps the run at its recorded length rather than inventing one.
+    fn reduced_run(&self, candidate: &WallRun, line: f64) -> (f64, f64) {
+        let start =
+            Self::half_thickness(&self.candidates(candidate, candidate.start_feet, Some(line)))
+                .unwrap_or(0.0);
+        let end = Self::half_thickness(&self.candidates(candidate, candidate.end_feet, Some(line)))
+            .unwrap_or(0.0);
+        (candidate.start_feet + start, candidate.end_feet - end)
+    }
+
+    /// The trim `wall` takes at `coord`, or `None` when the candidates
+    /// there disagree about their thickness.
+    fn trim_at(&self, wall: &WallRun, coord: f64) -> Option<f64> {
+        let reaching: Vec<&WallRun> = self
+            .candidates(wall, coord, None)
+            .into_iter()
+            .filter(|candidate| {
+                let (start, end) = self.reduced_run(candidate, wall.centre_feet);
+                wall.centre_feet >= start - JOIN_EPS_FEET && wall.centre_feet <= end + JOIN_EPS_FEET
+            })
+            .collect();
+        Self::half_thickness(&reaching)
+    }
+}
+
+/// The join trim of every wall in `records`, keyed by ElementId.
+///
+/// Walls that decline — no long axis, disagreeing candidates, or a
+/// trim that would collapse the run — are simply absent from the map
+/// and keep their record box.
+pub fn join_trims(records: &[PartitionElementRecord]) -> BTreeMap<u32, WallJoinTrim> {
+    let wall_ids: BTreeSet<u32> = records.iter().map(|record| record.element_id).collect();
+    let joined: BTreeMap<u32, BTreeSet<u32>> = records
+        .iter()
+        .map(|record| (record.element_id, joined_walls(record, &wall_ids)))
+        .collect();
+    let runs: Vec<WallRun> = records.iter().filter_map(wall_run).collect();
+    let solver = Solver {
+        runs: &runs,
+        joined: &joined,
+    };
+    let mut out = BTreeMap::new();
+    for wall in &runs {
+        let (Some(start), Some(end)) = (
+            solver.trim_at(wall, wall.start_feet),
+            solver.trim_at(wall, wall.end_feet),
+        ) else {
+            continue;
+        };
+        if wall.end_feet - end - (wall.start_feet + start) <= JOIN_EPS_FEET {
+            continue;
+        }
+        out.insert(
+            wall.element_id,
+            WallJoinTrim {
+                axis: wall.axis,
+                thickness_feet: wall.thickness_feet,
+                start_feet: start,
+                end_feet: end,
+            },
+        );
+    }
+    out
+}
+
+/// How far off perpendicular two centrelines may be for their butt join to
+/// be read, as the cosine of the angle between them. Revit writes the
+/// joined ends as the same doubles; every such pair on Snowdon Towers is
+/// within `1e-12`.
+pub const PERPENDICULAR_EPS: f64 = 1e-6;
+
+/// The largest `|cos|` of the angle between two walls at which an angled
+/// join is read: 45 to 135 degrees. On Snowdon Towers Revit butt-joins walls
+/// whose corner is 82.5 to 114.5 degrees, and none of the 14 ends at sharper
+/// corners (7.5 and 24.5 degrees) or shallower bends (148 to 172.5 degrees).
+pub const ANGLED_JOIN_MAX_COSINE: f64 = std::f64::consts::FRAC_1_SQRT_2;
+
+/// A wall's centreline, its type's thickness and layers, its exterior side
+/// and its elevation range, which is what [`butt_joins`] reads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WallLine {
+    /// The wall's own ElementId.
+    pub element_id: u32,
+    /// Plan start of the centreline, feet.
+    pub start: [f64; 2],
+    /// Plan end of the centreline, feet.
+    pub end: [f64; 2],
+    /// The type's layers summed, feet.
+    pub thickness_feet: f64,
+    /// The type's layers of non-zero width, exterior first, each its width
+    /// in feet and its function (1 structure, 2 substrate, 3 thermal or
+    /// air, 4 finish 1, 5 finish 2).
+    pub layers: Vec<(f64, u32)>,
+    /// Plan unit vector towards the wall's exterior face.
+    pub exterior: [f64; 2],
+    /// Base of the wall's record box, feet.
+    pub base_feet: f64,
+    /// Top of the wall's record box, feet.
+    pub top_feet: f64,
+    /// How thick its type's layers outside its core are on its exterior
+    /// and its interior side, feet, where its type's native record gives
+    /// them.
+    pub shells: Option<[f64; 2]>,
+}
+
+/// How one end of a wall meets another wall: a butt join its join lists
+/// decide, or a T joint.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ButtJoin {
+    /// The one other wall whose centreline ends there too, or, at a T
+    /// joint, whose centreline the end lies on.
+    pub partner: u32,
+    /// True where this wall runs on to the partner's far face, false where
+    /// it stops at its near face or, at a joint only the joined-wall lists
+    /// decide, ends at the joint.
+    pub runs_through: bool,
+    /// How far past the line's end the body reaches, negative where it
+    /// stops short: half the partner's thickness. `None` unless both walls
+    /// have a single layer, or, at a T joint, this one has; at a joint only
+    /// the joined-wall lists decide, always set, and 0 where it ends at the
+    /// joint.
+    pub reach_feet: Option<f64>,
+    /// How far past the line's end each layer reaches, exterior first,
+    /// where both walls are layered alike or where this wall is
+    /// layered and stops at a T joint. `None` otherwise.
+    pub layer_reach_feet: Option<Vec<f64>>,
+    /// Where the two walls meet at an angle, how far past the line's end
+    /// each layer reaches along its exterior-side and its interior-side
+    /// edge, exterior first: its end is a slanted line. A
+    /// single-layer wall has one pair, its two faces. `None` otherwise.
+    pub layer_edge_reach_feet: Option<Vec<[f64; 2]>>,
+}
+
+/// The butt join at each end of each wall, keyed by ElementId,
+/// `[start, end]`.
+///
+/// An end is read when exactly one other wall overlapping it in elevation
+/// ends its centreline there too, perpendicular to it. Revit runs one of
+/// the two on to the other's far face and stops the other at its near
+/// face, and the wall that runs through is the one that names the other
+/// in its join lists (`partners`,
+/// [`crate::partition_compound_structure::scan_wall_join_partners`]) and
+/// is not named back. A perpendicular pair that name each other or neither
+/// is decided by their joined-wall lists where they can;
+/// otherwise it, a joint of three walls and an
+/// angled joint stay `None`.
+///
+/// Where either wall has several layers the end is still read, but it has
+/// no `reach_feet`. Revit cleans such a join layer by layer and its
+/// finishes wrap the corner, so the body's end is no longer one face: on
+/// Snowdon Towers 631 of 667 such ends, against none of the 158 where both
+/// walls have one layer.
+///
+/// The layers then nest like concentric Ls ([`layer_reaches`]):
+/// counting both walls' layers from the outside of the corner, layer `i` of
+/// the wall that runs through reaches the outer edge of the partner's layer
+/// `i`, and layer `i` of the wall that stops, its inner edge. That holds
+/// where both walls show the same layer functions in the same order from
+/// the corner and share their base and top, and those ends get
+/// `layer_reach_feet`.
+///
+/// An end no other wall's centreline ends at is read as a T joint where it
+/// lies part way along another wall's centreline ([`tee_join`]).
+///
+/// Two walls that meet at 45 to 135 degrees, rather than at a right angle,
+/// are read the same way, and their ends slant along the other
+/// wall's lines ([`angled_layer_edges`], [`angled_tee_edges`]).
+pub fn butt_joins(
+    walls: &[WallLine],
+    partners: &BTreeMap<u32, BTreeSet<u32>>,
+    joined: &BTreeMap<u32, BTreeMap<u32, Vec<u32>>>,
+) -> BTreeMap<u32, [Option<ButtJoin>; 2]> {
+    let length = |wall: &WallLine| (wall.end[0] - wall.start[0]).hypot(wall.end[1] - wall.start[1]);
+    let lines: Vec<&WallLine> = walls
+        .iter()
+        .filter(|wall| length(wall).is_finite() && length(wall) > 1e-9)
+        .collect();
+    let mut ends: Vec<([f64; 2], usize)> = lines
+        .iter()
+        .enumerate()
+        .flat_map(|(index, wall)| [(wall.start, index), (wall.end, index)])
+        .collect();
+    ends.sort_by(|a, b| a.0[0].total_cmp(&b.0[0]));
+    let names = |from: &WallLine, to: &WallLine| {
+        partners
+            .get(&from.element_id)
+            .is_some_and(|named| named.contains(&to.element_id))
+    };
+    let mut out = BTreeMap::new();
+    for (index, wall) in lines.iter().enumerate() {
+        let run = length(wall);
+        let along = [
+            (wall.end[0] - wall.start[0]) / run,
+            (wall.end[1] - wall.start[1]) / run,
+        ];
+        let mut joins = [None, None];
+        for (slot, point) in [wall.start, wall.end].into_iter().enumerate() {
+            let from = ends.partition_point(|(p, _)| p[0] < point[0] - JOIN_EPS_FEET);
+            let mates: BTreeSet<usize> = ends[from..]
+                .iter()
+                .take_while(|(p, _)| p[0] <= point[0] + JOIN_EPS_FEET)
+                .filter(|(p, other)| *other != index && (p[1] - point[1]).abs() <= JOIN_EPS_FEET)
+                .map(|(_, other)| *other)
+                .filter(|other| {
+                    let other = lines[*other];
+                    wall.top_feet.min(other.top_feet) - wall.base_feet.max(other.base_feet)
+                        > JOIN_EPS_FEET
+                })
+                .collect();
+            let into = if slot == 0 {
+                along
+            } else {
+                [-along[0], -along[1]]
+            };
+            if mates.is_empty() {
+                joins[slot] = tee_join(wall, &lines, point, into);
+                continue;
+            }
+            let [mate] = mates.into_iter().collect::<Vec<_>>()[..] else {
+                continue;
+            };
+            let other = lines[mate];
+            let other_run = length(other);
+            let cosine = (along[0] * (other.end[0] - other.start[0])
+                + along[1] * (other.end[1] - other.start[1]))
+                / other_run;
+            if cosine.abs() > PERPENDICULAR_EPS && cosine.abs() > ANGLED_JOIN_MAX_COSINE {
+                continue;
+            }
+            let runs_through = match (names(wall, other), names(other, wall)) {
+                (true, false) => true,
+                (false, true) => false,
+                _ => {
+                    if cosine.abs() <= PERPENDICULAR_EPS {
+                        joins[slot] = joined_stop(joined, wall, other);
+                    }
+                    continue;
+                }
+            };
+            if cosine.abs() > PERPENDICULAR_EPS {
+                joins[slot] = Some(ButtJoin {
+                    partner: other.element_id,
+                    runs_through,
+                    reach_feet: None,
+                    layer_reach_feet: None,
+                    layer_edge_reach_feet: angled_layer_edges(
+                        wall,
+                        other,
+                        point,
+                        into,
+                        runs_through,
+                    ),
+                });
+                continue;
+            }
+            let half = other.thickness_feet * 0.5;
+            let single = wall.layers.len() == 1 && other.layers.len() == 1;
+            joins[slot] = Some(ButtJoin {
+                partner: other.element_id,
+                runs_through,
+                reach_feet: single.then_some(if runs_through { half } else { -half }),
+                layer_reach_feet: layer_reaches(wall, other, point, into, runs_through),
+                layer_edge_reach_feet: None,
+            });
+        }
+        if joins.iter().any(Option::is_some) {
+            out.insert(wall.element_id, joins);
+        }
+    }
+    out
+}
+
+/// Whether a joined-wall entry's words are one run of consecutive values.
+fn consecutive(words: Option<&Vec<u32>>) -> bool {
+    words.is_some_and(|words| {
+        words.len() >= 2
+            && words
+                .windows(2)
+                .all(|pair| pair[1] == pair[0].wrapping_add(1))
+    })
+}
+
+/// The end `wall` makes at a perpendicular L joint its join lists leave
+/// undecided, from the two walls' joined-wall entries for each other
+///: where exactly one of the two entries is a run of consecutive
+/// values, that wall stops at the other's near face with every layer and
+/// the other ends at the joint, its line's end. On Core Interior no wall
+/// that runs through at a joint the join lists decide has such an entry
+/// (0 of 122), 111 of the 122 that stop do, and the rule places all 18
+/// undecided ends it reads as Revit's body does.
+fn joined_stop(
+    joined: &BTreeMap<u32, BTreeMap<u32, Vec<u32>>>,
+    wall: &WallLine,
+    other: &WallLine,
+) -> Option<ButtJoin> {
+    let own = joined
+        .get(&wall.element_id)
+        .and_then(|entries| entries.get(&other.element_id));
+    let theirs = joined
+        .get(&other.element_id)
+        .and_then(|entries| entries.get(&wall.element_id));
+    let reach = match (consecutive(own), consecutive(theirs)) {
+        (true, false) => -other.thickness_feet * 0.5,
+        (false, true) => 0.0,
+        _ => return None,
+    };
+    Some(ButtJoin {
+        partner: other.element_id,
+        runs_through: false,
+        reach_feet: Some(reach),
+        layer_reach_feet: (wall.layers.len() > 1).then(|| vec![reach; wall.layers.len()]),
+        layer_edge_reach_feet: None,
+    })
+}
+
+/// The T joint `wall` makes where its centreline ends at `point`, part way
+/// along one other wall's centreline. `into` points from `point`
+/// along `wall`.
+///
+/// The other wall runs through, and `wall` stops against it layer by layer,
+/// by Revit's layer priorities (1 structure, 2 substrate, 3 thermal or air,
+/// 4 finish 1, 5 finish 2): each of `wall`'s layers runs on into the other
+/// wall through its layers of lower priority, counted from the face `wall`
+/// meets, and stops at the first of equal or higher priority. So a core
+/// passes the other wall's finishes and stops at its core, and a finish
+/// stops at its face. A single-layer wall stops at the other wall's face.
+/// A layer inside `wall`'s core also runs on through the other wall's
+/// layers outside its core on the side `wall` meets, whatever their
+/// priority, so it reaches at least the other wall's core: on the
+/// BIM4LCA office, where every layer of the partition types is marked
+/// structure, that is where Revit ends the wall.
+/// On Snowdon Towers that is every layer's end on 280 of the 313 T joints
+/// measured against Revit's IFC4 bodies; 16 of the rest Revit draws as a
+/// clean stop at the face, as it does at all three on RE1 (Revit 2025).
+///
+/// `None` unless exactly one other wall overlapping it in elevation has
+/// `point` on its centreline, at 45 to 135 degrees to `wall` (a slanted
+/// end below a right angle, [`angled_tee_edges`]), far enough from its ends
+/// that all of `wall`'s width meets its side. Where the other wall ends
+/// within that width, Revit stops `wall` at the other wall's face or does
+/// not join the two at all (Core Interior's 8), so it is left alone.
+pub fn tee_join(
+    wall: &WallLine,
+    lines: &[&WallLine],
+    point: [f64; 2],
+    into: [f64; 2],
+) -> Option<ButtJoin> {
+    let dot = |a: [f64; 2], b: [f64; 2]| a[0] * b[0] + a[1] * b[1];
+    let hosts: Vec<&WallLine> = lines
+        .iter()
+        .copied()
+        .filter(|other| other.element_id != wall.element_id)
+        .filter(|other| {
+            wall.top_feet.min(other.top_feet) - wall.base_feet.max(other.base_feet) > JOIN_EPS_FEET
+        })
+        .filter(|other| {
+            let run = (other.end[0] - other.start[0]).hypot(other.end[1] - other.start[1]);
+            let axis = [
+                (other.end[0] - other.start[0]) / run,
+                (other.end[1] - other.start[1]) / run,
+            ];
+            let offset = [point[0] - other.start[0], point[1] - other.start[1]];
+            let at = dot(offset, axis);
+            let across = dot(offset, [-axis[1], axis[0]]);
+            // At an angle the wall's width meets more of the other's side.
+            let sine = (1.0 - dot(into, axis).powi(2)).max(0.0).sqrt();
+            if sine <= 0.0 {
+                return false;
+            }
+            let clear = wall.thickness_feet * 0.5 / sine - JOIN_EPS_FEET;
+            at > clear && at < run - clear && across.abs() <= JOIN_EPS_FEET
+        })
+        .collect();
+    let [host] = hosts[..] else {
+        return None;
+    };
+    let run = (host.end[0] - host.start[0]).hypot(host.end[1] - host.start[1]);
+    let cosine = dot(
+        into,
+        [
+            (host.end[0] - host.start[0]) / run,
+            (host.end[1] - host.start[1]) / run,
+        ],
+    );
+    if cosine.abs() > ANGLED_JOIN_MAX_COSINE || wall.layers.is_empty() || host.layers.is_empty() {
+        return None;
+    }
+    if cosine.abs() > PERPENDICULAR_EPS {
+        return Some(ButtJoin {
+            partner: host.element_id,
+            runs_through: false,
+            reach_feet: None,
+            layer_reach_feet: None,
+            layer_edge_reach_feet: Some(angled_tee_edges(wall, host, point, into)?),
+        });
+    }
+    let half = host.thickness_feet * 0.5;
+    if wall.layers.len() == 1 {
+        return Some(ButtJoin {
+            partner: host.element_id,
+            runs_through: false,
+            reach_feet: Some(-half),
+            layer_reach_feet: None,
+            layer_edge_reach_feet: None,
+        });
+    }
+    // The host's layers from the face `wall` meets: its exterior faces
+    // `wall` where it points along `into`.
+    let near_first: Vec<(f64, u32)> = if dot(host.exterior, into) > 0.0 {
+        host.layers.clone()
+    } else {
+        host.layers.iter().rev().copied().collect()
+    };
+    // The other wall's layers outside its core on the near side.
+    let near_shell = host.shells.map(|[exterior, interior]| {
+        if dot(host.exterior, into) > 0.0 {
+            exterior
+        } else {
+            interior
+        }
+    });
+    let mut from_exterior = 0.0;
+    let reaches: Vec<f64> = wall
+        .layers
+        .iter()
+        .map(|(width, function)| {
+            let by_priority = -half
+                + near_first
+                    .iter()
+                    .take_while(|(_, other)| other > function)
+                    .map(|(width, _)| width)
+                    .sum::<f64>();
+            let core = wall.shells.is_some_and(|[exterior, interior]| {
+                from_exterior >= exterior - JOIN_EPS_FEET
+                    && from_exterior + width <= wall.thickness_feet - interior + JOIN_EPS_FEET
+            });
+            from_exterior += width;
+            match near_shell {
+                Some(shell) if core => by_priority.max(shell - half),
+                _ => by_priority,
+            }
+        })
+        .collect();
+    Some(ButtJoin {
+        partner: host.element_id,
+        runs_through: false,
+        reach_feet: None,
+        layer_reach_feet: Some(reaches),
+        layer_edge_reach_feet: None,
+    })
+}
+
+/// Where the line through `from` along `direction` meets the line through
+/// `on` along `along`, as a multiple of `direction`. `None` for parallel
+/// lines.
+fn meet(from: [f64; 2], direction: [f64; 2], on: [f64; 2], along: [f64; 2]) -> Option<f64> {
+    let cross = direction[0] * along[1] - direction[1] * along[0];
+    if cross.abs() < 1e-12 {
+        return None;
+    }
+    let gap = [on[0] - from[0], on[1] - from[1]];
+    Some((gap[0] * along[1] - gap[1] * along[0]) / cross)
+}
+
+/// How far past `point` each of `wall`'s layers reaches along its two edges,
+/// exterior first, where every edge of layer `i` stops on the line
+/// `targets[i]` (a point on it and its direction). `into` points from
+/// `point` along `wall`.
+fn edge_reaches(
+    wall: &WallLine,
+    point: [f64; 2],
+    into: [f64; 2],
+    targets: &[([f64; 2], [f64; 2])],
+) -> Option<Vec<[f64; 2]>> {
+    if targets.len() != wall.layers.len() {
+        return None;
+    }
+    let mut edge = wall.thickness_feet * 0.5;
+    let mut out = Vec::with_capacity(targets.len());
+    for ((width, _), (on, along)) in wall.layers.iter().zip(targets) {
+        let mut pair = [0.0; 2];
+        for (side, offset) in [edge, edge - width].into_iter().enumerate() {
+            let from = [
+                point[0] + wall.exterior[0] * offset,
+                point[1] + wall.exterior[1] * offset,
+            ];
+            let reach = -meet(from, into, *on, *along)?;
+            if !reach.is_finite() {
+                return None;
+            }
+            pair[side] = reach;
+        }
+        out.push(pair);
+        edge -= width;
+    }
+    Some(out)
+}
+
+/// The lines `other`'s layer boundaries lie on, from the face
+/// `side_normal` points out of: its offsets from `other`'s centreline along
+/// `side_normal`, with its layers in that order.
+fn boundaries_from(other: &WallLine, side_normal: [f64; 2]) -> (Vec<f64>, Vec<(f64, u32)>) {
+    let layers: Vec<(f64, u32)> =
+        if other.exterior[0] * side_normal[0] + other.exterior[1] * side_normal[1] > 0.0 {
+            other.layers.clone()
+        } else {
+            other.layers.iter().rev().copied().collect()
+        };
+    let mut at = other.thickness_feet * 0.5;
+    let mut offsets = vec![at];
+    for (width, _) in &layers {
+        at -= width;
+        offsets.push(at);
+    }
+    (offsets, layers)
+}
+
+/// The slanted end `wall` takes at an angled butt join with `other`, whose
+/// centreline ends at `point` too. Each of its layers ends on one of
+/// `other`'s boundary lines, along both of its edges:
+/// - between single-layer walls, the wall that runs through reaches the
+///   other's far face and the other stops at its near face;
+/// - between layered walls whose layers match from the outside of the
+///   corner and which share their base and top, layer `i` of the wall that
+///   runs through reaches the outer edge of the other's layer `i`, and
+///   layer `i` of the wall that stops, its inner edge.
+///
+/// `into` points from `point` along `wall`. `None` for any other pair.
+pub fn angled_layer_edges(
+    wall: &WallLine,
+    other: &WallLine,
+    point: [f64; 2],
+    into: [f64; 2],
+    runs_through: bool,
+) -> Option<Vec<[f64; 2]>> {
+    let dot = |a: [f64; 2], b: [f64; 2]| a[0] * b[0] + a[1] * b[1];
+    let far = if (other.start[0] - point[0]).hypot(other.start[1] - point[1]) <= JOIN_EPS_FEET {
+        other.end
+    } else {
+        other.start
+    };
+    let run = (far[0] - point[0]).hypot(far[1] - point[1]);
+    if !(run.is_finite() && run > 1e-9) {
+        return None;
+    }
+    let away = [(far[0] - point[0]) / run, (far[1] - point[1]) / run];
+    // Each wall's outer side faces away from the other wall.
+    let normal = [-away[1], away[0]];
+    let outer = if dot(normal, into) < 0.0 {
+        normal
+    } else {
+        [-normal[0], -normal[1]]
+    };
+    let (offsets, theirs) = boundaries_from(other, outer);
+    let line = |offset: f64| {
+        (
+            [point[0] + outer[0] * offset, point[1] + outer[1] * offset],
+            away,
+        )
+    };
+    let exterior_outside = dot(wall.exterior, away) < 0.0;
+    let targets: Vec<([f64; 2], [f64; 2])> = if wall.layers.len() == 1 && other.layers.len() == 1 {
+        vec![line(if runs_through { offsets[0] } else { offsets[1] })]
+    } else {
+        if wall.layers.len() < 2
+            || other.layers.len() != wall.layers.len()
+            || (wall.base_feet - other.base_feet).abs() > LAYER_JOIN_HEIGHT_EPS_FEET
+            || (wall.top_feet - other.top_feet).abs() > LAYER_JOIN_HEIGHT_EPS_FEET
+        {
+            return None;
+        }
+        let ours: Vec<u32> = if exterior_outside {
+            wall.layers.iter().map(|(_, f)| *f).collect()
+        } else {
+            wall.layers.iter().rev().map(|(_, f)| *f).collect()
+        };
+        let theirs: Vec<u32> = theirs.iter().map(|(_, f)| *f).collect();
+        if ours != theirs {
+            return None;
+        }
+        let from_corner: Vec<([f64; 2], [f64; 2])> = (0..wall.layers.len())
+            .map(|rank| line(offsets[if runs_through { rank } else { rank + 1 }]))
+            .collect();
+        if exterior_outside {
+            from_corner
+        } else {
+            from_corner.into_iter().rev().collect()
+        }
+    };
+    edge_reaches(wall, point, into, &targets)
+}
+
+/// The slanted end `wall` takes where it stops against `host` at an angled
+/// T joint: each of its layers ends, along both of its edges, on
+/// the host boundary line the layer priorities give, counted from the
+/// face it meets. A single-layer wall stops at that face.
+pub fn angled_tee_edges(
+    wall: &WallLine,
+    host: &WallLine,
+    point: [f64; 2],
+    into: [f64; 2],
+) -> Option<Vec<[f64; 2]>> {
+    let run = (host.end[0] - host.start[0]).hypot(host.end[1] - host.start[1]);
+    let axis = [
+        (host.end[0] - host.start[0]) / run,
+        (host.end[1] - host.start[1]) / run,
+    ];
+    let normal = [-axis[1], axis[0]];
+    let near = if normal[0] * into[0] + normal[1] * into[1] > 0.0 {
+        normal
+    } else {
+        [-normal[0], -normal[1]]
+    };
+    let (offsets, near_first) = boundaries_from(host, near);
+    let targets: Vec<([f64; 2], [f64; 2])> = wall
+        .layers
+        .iter()
+        .map(|(_, function)| {
+            let passed = if wall.layers.len() == 1 {
+                0
+            } else {
+                near_first
+                    .iter()
+                    .take_while(|(_, other)| other > function)
+                    .count()
+            };
+            (
+                [
+                    point[0] + near[0] * offsets[passed],
+                    point[1] + near[1] * offsets[passed],
+                ],
+                axis,
+            )
+        })
+        .collect();
+    edge_reaches(wall, point, into, &targets)
+}
+
+/// How far past the joint `point` each of `wall`'s layers reaches, exterior
+/// first, where `wall` meets `other` at a layered butt join.
+/// `into` points from the joint along `wall`.
+///
+/// `None` unless both walls have several layers, both show the same layer
+/// functions in the same order counted from the outside of the corner, and
+/// both share their base and top: on Snowdon Towers, 522 of the 528 such
+/// ends are cleaned layer by layer, against 17 of 75 clean where the walls'
+/// heights differ.
+pub fn layer_reaches(
+    wall: &WallLine,
+    other: &WallLine,
+    point: [f64; 2],
+    into: [f64; 2],
+    runs_through: bool,
+) -> Option<Vec<f64>> {
+    if wall.layers.len() < 2
+        || other.layers.len() != wall.layers.len()
+        || (wall.base_feet - other.base_feet).abs() > LAYER_JOIN_HEIGHT_EPS_FEET
+        || (wall.top_feet - other.top_feet).abs() > LAYER_JOIN_HEIGHT_EPS_FEET
+    {
+        return None;
+    }
+    let dot = |a: [f64; 2], b: [f64; 2]| a[0] * b[0] + a[1] * b[1];
+    // The partner runs from the joint to its other end. On the side of
+    // `wall` it runs to, `wall`'s face is inside the corner.
+    let far = if (other.start[0] - point[0]).hypot(other.start[1] - point[1]) <= JOIN_EPS_FEET {
+        other.end
+    } else {
+        other.start
+    };
+    let partner_on_exterior = dot([far[0] - point[0], far[1] - point[1]], wall.exterior) > 0.0;
+    // How far past the joint each of the partner's layer boundaries lies,
+    // its exterior face first: the partner is perpendicular, so its
+    // exterior points along `into` or against it.
+    let outward = if dot(other.exterior, [-into[0], -into[1]]) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let mut bound = other.thickness_feet * 0.5;
+    let mut bounds = vec![bound * outward];
+    for (width, _) in &other.layers {
+        bound -= width;
+        bounds.push(bound * outward);
+    }
+    // Both walls' layers counted from the outside of the corner.
+    let ours: Vec<u32> = if partner_on_exterior {
+        wall.layers.iter().rev().map(|(_, f)| *f).collect()
+    } else {
+        wall.layers.iter().map(|(_, f)| *f).collect()
+    };
+    let partner_outside_first = outward > 0.0;
+    let theirs: Vec<u32> = if partner_outside_first {
+        other.layers.iter().map(|(_, f)| *f).collect()
+    } else {
+        other.layers.iter().rev().map(|(_, f)| *f).collect()
+    };
+    if ours != theirs {
+        return None;
+    }
+    bounds.sort_by(|a, b| b.total_cmp(a));
+    let reaches: Vec<f64> = (0..wall.layers.len())
+        .map(|rank| bounds[if runs_through { rank } else { rank + 1 }])
+        .collect();
+    Some(if partner_on_exterior {
+        reaches.into_iter().rev().collect()
+    } else {
+        reaches
+    })
+}
+
+/// How closely two walls' bases and tops must agree for their layered join
+/// to be read ([`layer_reaches`]), in feet.
+pub const LAYER_JOIN_HEIGHT_EPS_FEET: f64 = 1e-3;
+
+/// What a wall's native record says about the joins at its two ends, for
+/// [`corner_joins`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NativeEnds {
+    /// The walls in the join at the wall's start and at its end, in the order
+    /// the record lists them, the wall included, each with the end it joins
+    /// by (0 its start, 1 its end, 2 or 3 its middle). `None` where no join
+    /// lists that end or several do.
+    pub members: [Option<Vec<(u32, u32)>>; 2],
+    /// The join's `m_wallJoinType` at each end: 0 a butt join, 1 a mitre.
+    pub join_types: [Option<i64>; 2],
+    /// Whether an element other than a wall (a column, a curtain wall) cuts
+    /// the wall or is joined to it.
+    pub other_cutters: bool,
+}
+
+/// How far two faces may differ for them to be one, feet.
+pub const CORNER_AGREE_FEET: f64 = 1e-3;
+
+/// How far from -1 the cosine of the angle between a wall and one that
+/// continues it across a joint may be, as a fraction (about 0.08 degrees).
+pub const COLLINEAR_EPS: f64 = 1e-6;
+
+/// How a wall in a corner meets the wall whose end is read.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Meets {
+    Itself,
+    /// Perpendicular, running away from the joint to one side.
+    Across,
+    /// A continuation of the wall on the other side of the joint.
+    Along,
+}
+
+/// One wall of a corner, in the frame of the wall whose end is read: `x` runs
+/// out past the joint along that wall, `y` across it, and the member's own
+/// end point is at `(x, y)`.
+#[derive(Debug, Clone, Copy)]
+struct CornerMember {
+    id: u32,
+    meets: Meets,
+    /// Plan unit vector along the member, away from the joint.
+    away: [f64; 2],
+    x: f64,
+    y: f64,
+    /// Whether the member's own line ends at the joint.
+    on_line: bool,
+    thickness_feet: f64,
+    layered: bool,
+}
+
+/// How a wall is cut at one end of a corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CornerEnd {
+    /// The body ends square, this far past its line's end (negative where it
+    /// stops short), every layer alike. Where one perpendicular wall alone
+    /// decides the end, `partner` names it and whether this wall runs
+    /// through it (true) or stops at it (false).
+    Reach {
+        reach_feet: f64,
+        partner: Option<(u32, bool)>,
+    },
+    /// The wall meets one other wall at a mitre: its end is the slanted line
+    /// through the two walls' outer corner and inner corner. How far past its
+    /// line's end it reaches along its exterior-side edge and along its
+    /// interior-side edge, feet.
+    Mitre([f64; 2]),
+}
+
+/// The end of the wall `wall` at `slot` (0 its start, 1 its end), where three
+/// or more walls meet end to end at a butt join, from the order the record
+/// lists them, or where two single-layer walls meet at right angles at a mitre.
+///
+/// Counting only the walls that overlap `wall` in elevation, the record lists
+/// the walls of a corner in the order Revit joined them, and an earlier wall
+/// wins over a later one:
+/// - a perpendicular wall listed before `wall` is the one `wall` stops
+///   against, as at a T joint: it ends at that wall's near face;
+/// - otherwise, if a wall that continues `wall` across the joint is listed
+///   before the first perpendicular wall after it, the two meet flush and
+///   `wall` ends at the joint;
+/// - otherwise `wall` runs through the perpendicular walls listed after it,
+///   to their far face.
+///
+/// Faces are taken from where each wall's own line ends, not from the joint,
+/// since walls of different thickness are often aligned on a face rather
+/// than a centreline (a bar of 0.656 ft and 0.492 ft walls has its faces
+/// 0.082 ft apart). Two walls that continue `wall` across the joint are flush
+/// with it only if their lines end at the joint. The rule is read only where:
+/// - the join is a butt join, no wall of the join is missing from `walls`
+///   or meets `wall` at another angle than a right angle or straight on,
+///   no layered wall that continues `wall` ends off the joint, and no
+///   element but a wall cuts `wall`;
+/// - the deciding walls' faces agree;
+/// - `wall` has one layer, or has several and stops against walls of one
+///   layer each: against a layered wall, Revit's layers nest and a rule for
+///   the outermost does not give the others.
+///
+/// A mitre (`m_wallJoinType` 1) of two single-layer walls whose lines end at
+/// one point at right angles ends each on the line through the outer corner,
+/// where the outer faces meet, and the inner corner, where the inner faces
+/// meet: half the other wall's thickness past the line's end along the outer
+/// edge, and as much short of it along the inner.
+pub fn corner_joins(
+    walls: &[WallLine],
+    native: &BTreeMap<u32, NativeEnds>,
+) -> BTreeMap<u32, [Option<CornerEnd>; 2]> {
+    let by_id: BTreeMap<u32, &WallLine> =
+        walls.iter().map(|wall| (wall.element_id, wall)).collect();
+    let mut out = BTreeMap::new();
+    for wall in walls {
+        let Some(ends) = native.get(&wall.element_id).filter(|e| !e.other_cutters) else {
+            continue;
+        };
+        let cuts = [0, 1].map(|slot| corner_end(wall, slot, ends, &by_id));
+        if cuts.iter().any(Option::is_some) {
+            out.insert(wall.element_id, cuts);
+        }
+    }
+    out
+}
+
+fn corner_end(
+    wall: &WallLine,
+    slot: usize,
+    ends: &NativeEnds,
+    by_id: &BTreeMap<u32, &WallLine>,
+) -> Option<CornerEnd> {
+    let mitred = match ends.join_types[slot] {
+        Some(0) => false,
+        Some(1) => true,
+        _ => return None,
+    };
+    if wall.layers.is_empty() {
+        return None;
+    }
+    let end_index = u32::try_from(slot).ok()?;
+    let members = ends.members[slot].as_ref()?;
+    let length = (wall.end[0] - wall.start[0]).hypot(wall.end[1] - wall.start[1]);
+    if !(length.is_finite() && length > 1e-9) {
+        return None;
+    }
+    let (point, far) = if slot == 0 {
+        (wall.start, wall.end)
+    } else {
+        (wall.end, wall.start)
+    };
+    let into = [(far[0] - point[0]) / length, (far[1] - point[1]) / length];
+    let out = [-into[0], -into[1]];
+    let across = [-into[1], into[0]];
+    let mut corner: Vec<CornerMember> = Vec::new();
+    let mut itself = None;
+    for &(id, joined_end) in members {
+        if corner.iter().any(|member| member.id == id) {
+            return None;
+        }
+        if id == wall.element_id {
+            if joined_end != end_index {
+                return None;
+            }
+            itself = Some(corner.len());
+            corner.push(CornerMember {
+                id,
+                meets: Meets::Itself,
+                away: [0.0, 0.0],
+                x: 0.0,
+                y: 0.0,
+                on_line: true,
+                thickness_feet: wall.thickness_feet,
+                layered: wall.layers.len() > 1,
+            });
+            continue;
+        }
+        let other = by_id.get(&id)?;
+        if wall.top_feet.min(other.top_feet) - wall.base_feet.max(other.base_feet) <= JOIN_EPS_FEET
+        {
+            continue;
+        }
+        if joined_end > 1 || other.layers.is_empty() {
+            return None;
+        }
+        let (joint, beyond) = if joined_end == 0 {
+            (other.start, other.end)
+        } else {
+            (other.end, other.start)
+        };
+        let run = (beyond[0] - joint[0]).hypot(beyond[1] - joint[1]);
+        if !(run.is_finite() && run > 1e-9) {
+            return None;
+        }
+        let cosine = (into[0] * (beyond[0] - joint[0]) + into[1] * (beyond[1] - joint[1])) / run;
+        let meets = if cosine.abs() <= PERPENDICULAR_EPS {
+            Meets::Across
+        } else if cosine < -(1.0 - COLLINEAR_EPS) {
+            Meets::Along
+        } else {
+            return None;
+        };
+        let offset = [joint[0] - point[0], joint[1] - point[1]];
+        let (x, y) = (
+            offset[0] * out[0] + offset[1] * out[1],
+            offset[0] * across[0] + offset[1] * across[1],
+        );
+        // A wall of the join meets this wall's end within the two walls'
+        // thicknesses; one whose line ends further off is not at this end.
+        if x.hypot(y) > wall.thickness_feet + other.thickness_feet {
+            return None;
+        }
+        corner.push(CornerMember {
+            id,
+            meets,
+            away: [(beyond[0] - joint[0]) / run, (beyond[1] - joint[1]) / run],
+            x,
+            y,
+            on_line: x.abs() <= CORNER_AGREE_FEET && y.abs() <= CORNER_AGREE_FEET,
+            thickness_feet: other.thickness_feet,
+            layered: other.layers.len() > 1,
+        });
+    }
+    let itself = itself?;
+    if mitred {
+        let [first, second] = corner[..] else {
+            return None;
+        };
+        let other = if itself == 0 { second } else { first };
+        return mitre_end(wall, &other, by_id.get(&other.id)?);
+    }
+    if corner.len() < 3 || !corner.iter().any(|member| member.meets == Meets::Across) {
+        return None;
+    }
+    // A wall that continues the wall across the joint but whose line ends
+    // off the joint is aligned on a face rather than a centreline. It
+    // changes nothing about the walls Revit's end stops against, but it is
+    // not flush with the wall.
+    let off_line = |member: &&CornerMember| member.meets == Meets::Along && !member.on_line;
+    if corner.iter().filter(off_line).any(|member| member.layered) {
+        return None;
+    }
+    let layered_wall = corner[itself].layered;
+    let layered_others = corner
+        .iter()
+        .enumerate()
+        .any(|(index, member)| index != itself && member.layered);
+    let agreed = |faces: Vec<f64>| -> Option<(f64, f64)> {
+        let low = faces.iter().copied().reduce(f64::min)?;
+        let high = faces.iter().copied().reduce(f64::max)?;
+        (high - low <= CORNER_AGREE_FEET).then_some((low, high))
+    };
+    let earlier_walls: Vec<&CornerMember> = corner[..itself]
+        .iter()
+        .filter(|member| member.meets == Meets::Across)
+        .collect();
+    if !earlier_walls.is_empty() {
+        if layered_wall && layered_others {
+            return None;
+        }
+        let faces: Vec<f64> = earlier_walls
+            .iter()
+            .map(|member| member.x - member.thickness_feet / 2.0)
+            .collect();
+        let partner = match earlier_walls[..] {
+            [only] => Some((only.id, false)),
+            _ => None,
+        };
+        return agreed(faces).map(|(low, _)| CornerEnd::Reach {
+            reach_feet: low,
+            partner,
+        });
+    }
+    if layered_wall {
+        return None;
+    }
+    let later = &corner[itself + 1..];
+    let first_perpendicular = itself
+        + 1
+        + later
+            .iter()
+            .position(|member| member.meets == Meets::Across)?;
+    if corner[..first_perpendicular]
+        .iter()
+        .any(|member| member.meets == Meets::Along)
+    {
+        if corner.iter().any(|member| off_line(&member)) {
+            return None;
+        }
+        return Some(CornerEnd::Reach {
+            reach_feet: 0.0,
+            partner: None,
+        });
+    }
+    let later_walls: Vec<&CornerMember> = later
+        .iter()
+        .filter(|member| member.meets == Meets::Across)
+        .collect();
+    let faces: Vec<f64> = later_walls
+        .iter()
+        .map(|member| member.x + member.thickness_feet / 2.0)
+        .collect();
+    let partner = match later_walls[..] {
+        [only] => Some((only.id, true)),
+        _ => None,
+    };
+    agreed(faces).map(|(_, high)| CornerEnd::Reach {
+        reach_feet: high,
+        partner,
+    })
+}
+
+/// The mitre `wall` makes with `other` at one end, when both walls have one
+/// layer and the same base and top, `other` runs away at a right angle from
+/// the point `wall`'s line ends at, and its own line ends there too.
+fn mitre_end(wall: &WallLine, other: &CornerMember, line: &WallLine) -> Option<CornerEnd> {
+    if other.meets != Meets::Across
+        || other.layered
+        || wall.layers.len() != 1
+        || other.x.abs() > CORNER_AGREE_FEET
+        || other.y.abs() > CORNER_AGREE_FEET
+        || (wall.base_feet - line.base_feet).abs() > LAYER_JOIN_HEIGHT_EPS_FEET
+        || (wall.top_feet - line.top_feet).abs() > LAYER_JOIN_HEIGHT_EPS_FEET
+    {
+        return None;
+    }
+    let half = other.thickness_feet / 2.0;
+    let towards = wall.exterior[0] * other.away[0] + wall.exterior[1] * other.away[1];
+    if towards.abs() < 0.5 {
+        return None;
+    }
+    // The outer corner is on the side the other wall runs away from.
+    Some(CornerEnd::Mitre(if towards > 0.0 {
+        [-half, half]
+    } else {
+        [half, -half]
+    }))
+}

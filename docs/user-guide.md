@@ -1,0 +1,487 @@
+# User Guide
+
+This guide is for BIM, architecture, engineering, construction, and facilities
+users who want to inspect a Revit file without installing Revit or uploading the
+file to a cloud service.
+
+rvt-open is useful today for safe local inspection, metadata extraction, schema
+inspection, previews, diagnostics, and scaffold-level IFC checks. It is not yet
+a general-purpose Revit-to-IFC replacement for real project models.
+
+## What The Tool Does
+
+Use rvt-open when you need to:
+
+- Check that a `.rvt`, `.rfa`, `.rte`, or `.rft` file opens.
+- See the Revit version, build, stream inventory, project metadata, and schema
+  status.
+- Preview what model data rvt-open decoded.
+- Export diagnostics that explain why a file is unsupported or partial.
+- Produce IFC4 STEP output for support and interoperability testing; geometry
+  is limited to the model parts the current decoders recover.
+
+Do not use rvt-open yet as the only conversion path for production BIM delivery,
+coordination, quantity takeoff, fabrication, permitting, or contractual model
+exchange.
+
+## What Stays Private
+
+The browser viewer at the locally built viewer parses files
+inside your browser tab.
+
+- No model upload.
+- No account.
+- No telemetry.
+- No third-party analytics.
+- No network requests after the static viewer files load.
+
+Downloads such as IFC, glTF, SVG, and diagnostics are created in the browser and
+saved by you. The privacy posture is documented in
+[viewer-privacy-posture.md](viewer-privacy-posture.md).
+
+There is no native desktop app (Tauri/Electron). The supported product path is
+the hosted or self-hosted static viewer.
+
+## Open A File In The Browser
+
+1. Open the locally built viewer.
+2. Drop a `.rvt`, `.rfa`, `.rte`, or `.rft` file onto the page, choose a file
+   with the file picker, or open a redistributable entry from the demo gallery.
+   The gallery leads with two MIT-licensed real Revit projects:
+   `Revit_IFC5_Einhoven.rvt` (2023, 913 KB, opens in about half a second) and
+   `2024_Core_Interior.rvt` (2024, 33.7 MB, about 3 seconds to decode —
+   measured on the deployed site, about 7 seconds including the download).
+   Everything below them is a 20 KB synthetic that decodes to a scaffold only.
+3. Read the File status panel and export-quality label before exporting anything.
+4. Use Diagnostics details or Download diagnostics when the status panel reports
+   warnings, partial decode, unsupported model layout, or scaffold-only export.
+
+### Supported MVP workflow
+
+1. Open locally (nothing uploads).
+2. Confirm decode/confidence status.
+3. Inspect whatever elements were actually decoded.
+4. Export IFC / glTF / plan with the quality label in mind.
+5. Attach diagnostics JSON to bug reports for partial exports.
+
+Partition MVP recovers Level / Material / Room names on supported project
+files, 2023 ArcWall geometry on the research path, and — on Revit 2024 —
+Wall / Door / Window / Column / Floor / BuildingPad instances from partition
+element records, with a measured slab thickness and, for all 80
+exported slabs, the plan profile their `OST_SketchLines` records close. Wall bodies carry the wall's real thickness and the length
+its joins leave it — the element record names the walls a wall is joined
+to, and with the lists of walls each wall is joined to that
+takes all 360 walls to an exact match against Revit's own
+export in world coordinates, and every column is the record prism minus
+the walls that cut it, exact on 256 of 256. Rooms come out as 116 `IFCSPACE` carrying their real Revit name,
+number and storey, with a body that is the record's bounding box — exactly
+the reference export's plan envelope and floor-to-ceiling extent on all
+116. Those elements land on the Revit Level their own element
+record names, or their base constraint where it names two, so all 970
+exported elements on Core Interior are contained in the storey Revit's own
+export gives them. An element whose record names no
+Level is contained in the building rather than filed under an arbitrary
+storey. Every wall also joins to its
+`IfcWallType` exactly, 360 of 360, though that join is library-side today
+and is not yet written onto the exported wall. Still blocked
+(measured negative on the magnetar corpora): schema-field Walls, typed
+Door/Window host binding, room boundary polygons — a room record carries
+no sketch — door and window bodies, the
+profile of the 20 rotated shading plates. Compound layers are read from
+each type's own data and written as layer sets with their
+material names; the reference export is a `ReferenceView_V1.2`
+file with no `IfcMaterialLayerSet` in it, so they are scored against the
+faces its bodies style with each material. See [status.md](status.md) and
+[supported-profile.md](supported-profile.md).
+
+The viewer can show a scene, categories, element info, schedule summary, export
+quality, a demo gallery with license/provenance, and a supported-profile matrix.
+Geometry shown in the viewer is limited to what rvt-open actually decoded.
+
+The scene tree lists each storey's elements by category, with a count per
+category. A category opens to its elements, sorted by family and type. Each
+element row leads with its type name, with the family and ElementId on a
+second line, so "Basic Wall:8" Interior Partition 3 Hour:20796" reads as
+"8" Interior Partition 3 Hour" over "Basic Wall · 20796". A curtain wall
+opens to its panels and mullions, and a stair to its flights. Doors and
+windows are listed in their own category; the info panel names the wall
+that hosts them. Selecting a category lights up its elements. Picking an
+element in the 3-D view opens its category and scrolls to it. An element of
+separate loops, such as a ceiling, is one row: picking any of its loops
+selects it, and its highlight and its zoom cover all of them. The arrow
+keys move through the tree: Right opens a row, Left closes it or moves to
+its parent, and Home and End go to the first and last rows.
+
+Type in the filter above the tree, or press / to reach it, to keep only the
+elements whose name or IFC type contains the text: "M_Single", "IfcDoor" or
+an ElementId such as "20796". The storeys and categories that hold them
+open, and a count shows under the box. Enter moves to the first match, and
+Escape clears the filter.
+
+Selecting an element fills the info panel with typed rows rather than raw
+record fields: name, IFC type and predefined type, ElementId, Revit's own
+GlobalId where the file yields it, the storey the IFC export puts it
+on (clickable — it selects that storey in the tree), placement and extents
+in feet (none for an element of separate loops, whose body is several items),
+and each property set as labelled rows carrying their units, then the element's
+saved parameters (instance, then type) as read from the file when you select it:
+named ones with their value and unit, built-in ones by their id, behind a fold,
+because the file stores no name for them. The panel says when a release's
+parameters are not read, when an element has none and when a read failed. Host
+and hosted rows let you jump from a door or window to its wall and back.
+The schedule groups the elements by IFC type with a count per type, and each
+row toggles a tint over every mesh of that type in the 3-D scene. Where a
+field is simply absent it is omitted; a one-line "Not recovered" note names
+a field only where the export diagnostics confirm it as a known decode gap,
+so an omission is never mistaken for a failure.
+
+To bring an element into view, double-click it in the tree or the 3-D view,
+press F with it selected, or use Zoom to element in the info panel.
+Double-clicking a storey frames everything on it, and F with nothing
+selected frames the whole model. Dragging in the view orbits without
+changing the selection; a click without a drag selects.
+
+### Performance
+
+Opening a large project is fast, which inflates each partition
+stream once per file instead of once per consumer. `rvt-ifc --mode geometry`
+on the 33.7 MB `2024_Core_Interior.rvt` went from 26.07 s and 2641.4 MiB of
+peak RSS to **1.69 s and 490.1 MiB** (Apple Silicon, `/usr/bin/time -l`,
+best of three), and the exported IFC is byte-identical. In the browser the
+same file decodes in **about 3 seconds**, measured on the deployed site,
+where it used to take about 28. Nothing about the decode changed — only how
+many times the same bytes were decompressed.
+
+The partition scans that later releases added each searched every partition
+once per thing they looked for: once per element category, once per Level,
+once per type. They now make one pass for all of them. `rvt-ifc` on Core
+Interior went from 5.3 s to **2.75 s**, and on Autodesk's 95 MB Snowdon
+Towers sample from 17.9 s to **10.1 s**, with the same peak memory (Apple
+Silicon, `/usr/bin/time -l`, both builds measured back to back). The browser
+viewer gains more, since WebAssembly searches without SIMD: Snowdon Towers
+now opens in **24 seconds** instead of 56. The IFC and the diagnostics are
+byte-identical on all 14 local test files.
+
+The scan for length-prefixed strings (project units, Level names) then
+tested every byte of every partition. It now tests 64 offsets at a time for
+the bytes a string must have: 0.22 s instead of 0.85 s over Snowdon's 443 MB
+of partitions, finding the same 644,367 strings.
+
+## Inspect A File From The Command Line
+
+Use `rvt-inspect` when you want a shareable support report:
+
+```bash
+rvt-inspect model.rvt
+rvt-inspect model.rvt --json > model.inspect.json
+```
+
+The text output is intended for quick triage. The JSON output is intended for
+automation and GitHub issues. By default, paths are redacted so the report is
+safer to share.
+
+## Inventory A Folder Of Revit Files
+
+`rvt-info` answers "which Revit release saved this, is it workshared, and
+when was it last saved?" for one file or a whole folder tree:
+
+```bash
+rvt-info model.rvt                              # detailed report for one file
+rvt-info projects/                              # one row per .rvt/.rfa/.rte/.rft file
+rvt-info projects/ -f csv > inventory.csv       # open in Excel / Sheets
+rvt-info projects/ -f jsonl                     # one JSON object per line, for scripts
+rvt-info projects/ --no-recurse                 # top level only
+```
+
+The folder mode reads only the two small identity streams of each file, so
+a share full of large projects scans in seconds. Each row carries the Revit
+release, build, worksharing state (`Not enabled`, or the role of the saved
+copy in a workshared project), central model path, the user and time of the
+last save, the document GUID, and Revit's save counter. Revit backup copies
+(`name.0001.rvt`) are marked. A file that cannot be read gets a row with the
+reason, and the command exits with status 1 so scripts notice.
+
+Pass `--redact` before sharing the output: it replaces the last-saved-by
+user name everywhere it appears (Revit names a local copy
+`<central>_<user>.rvt`) and scrubs Windows user folders from paths.
+
+## Get A Schedule Into Excel
+
+`rvt-schedule` writes the elements the IFC export writes, or the rooms, as a
+CSV file that Excel, Google Sheets and LibreOffice open directly:
+
+```bash
+rvt-schedule model.rvt                          # model.elements.csv next to the model
+rvt-schedule model.rvt --schedule rooms         # model.rooms.csv: number, name, level, area, kind
+rvt-schedule model.rvt --metric --excel         # metres, and a BOM so Excel reads non-ASCII names
+rvt-schedule model.rvt -o -                     # print the CSV instead of writing a file
+rvt-schedule model.rvt --phase "Existing"       # another phase than the project's last (a name or an ElementId)
+```
+
+The element schedule has one row per building element the IFC export writes:
+Revit ElementId, IFC type, level and its elevation, material, placement, body
+size, the host wall of each door and window, and where the body came from
+(`body_source`, `profile_resolved`). A value rvt-open did not decode is an
+empty cell, never a guess. The rows and the level column are the export's own
+decision, the same the IFC file and the MCP server give: a further piece of
+an element of separate loops, which the export writes as an item of its
+owner's body, has no row; a part of a stair (a run, landing or stringer) or
+of a curtain wall (a member) is on the storey of its whole, an element in a
+room on the storey of the room, and an opening on the storey of the door,
+window or wall it is cut from. An element the export puts in the building
+only, with no storey, has empty level cells. A ceiling of separate loops is
+one row, with empty size cells, where it used to have a row for each loop
+(47 fewer rows on each BIM4LCA office file): its body is several items, which
+one width, depth and height cannot state. The room schedule gives a room's
+plan area where its outline was read from the solid Revit stores for it
+, and an Area's where its boundary lines gave it a region; a
+room that keeps its bounding box has an empty area, since the area of a box
+is not the area of a room. The room schedule lists every `IfcSpace` the export
+writes, Areas, Revit Spaces and family instances written as spaces among the
+rooms, and its last column, `space_kind`, says which each is.
+
+The columns, in order. Lengths are in feet; with `--metric` they are in
+metres and `_ft` in a column's name becomes `_m`. A later release may add
+columns after these, but will not rename, drop or reorder one without
+calling it a breaking change.
+
+<!-- element-columns -->
+| Column | What it holds |
+|---|---|
+| `revit_element_id` | The element's Revit ElementId |
+| `ifc_type` | The IFC entity it is exported as, as the STEP file spells it, such as `IFCWALL` |
+| `predefined_type` | The IFC predefined type, where one is set |
+| `name` | The element's name |
+| `level` | The name of the storey the IFC export puts the element on: its own, or that of its room, its whole (the stair or curtain wall a part belongs to) or its host (for an opening); empty where the export puts it in the building only, or where no storey is reached through its room, whole or host |
+| `level_elevation_ft` | That level's elevation |
+| `material` | Its material's name; for a layered wall, floor, roof or ceiling, the name of its layer set (its `Family:Type`); for a family instance of several materials, their names separated by `; ` |
+| `x_ft` | Placement, x |
+| `y_ft` | Placement, y |
+| `z_ft` | Placement, z |
+| `rotation_deg` | Its rotation in plan, in degrees. A door or window set in a plain wall carries the turn of Revit's own placement (0, 90, 180 or -90; empty at 0), so its `width_ft` is along its own X, the door's width |
+| `width_ft` | Width of a body written as a plain extrusion of a rectangle; empty for every other body, placed extrusions such as stair runs, sloped beams and turned boxes included, and for an element whose body holds several items (an element of separate loops, with the pieces the export folds into it) |
+| `depth_ft` | Depth of the same rectangle |
+| `height_ft` | Height of a body written as a plain extrusion; empty otherwise |
+| `host_revit_element_id` | The ElementId of a door's or window's host |
+| `body_source` | Where the body came from, such as `partition_element_record_bbox` (the record's box) or `partition_wall_centreline` |
+| `profile_resolved` | `true` where the body's shape was read from the file (a sketch, a type's section, a beam's or pipe's axis, a stair run, a wall's centreline or arc, an I-column's section), `false` where none of those did. A `false` body can still be cut: a joined column's top or bottom moves to the cut |
+
+<!-- room-columns -->
+| Column | What it holds |
+|---|---|
+| `revit_element_id` | The room's Revit ElementId |
+| `number` | The room number |
+| `name` | The room name |
+| `level` | The name of its level |
+| `level_elevation_ft` | That level's elevation |
+| `area_ft2` | Plan area, where the room's outline was read |
+| `body_source` | Where the room's solid came from |
+| `space_kind` | What the space is: `room`, `area` (a Revit Area), `mep_space` (a Revit Space) or `family_instance` (any other element that its "Export to IFC As" writes as a space, a family instance or a mass in the files measured); the same as `RvtElementRecordGeometry.SpaceKind` in the IFC. Filter on this, not on how the area was read. `mep_space` is the kind of a Revit Space (MEP), which rvt-open does not read from a file's partition records, so none is written today; that says what rvt-open writes, not what the files hold |
+
+What the schedules contain is what rvt-open decodes and the IFC export writes,
+so check `rvt-inspect model.rvt` first: Revit 2024 project files with element
+records give walls, doors, windows, columns, slabs and rooms; other files
+give few or no rows. The browser viewer has the same two schedules as
+**Download element schedule (CSV)** and **Download room schedule (CSV)**
+under Schedule, built in the tab like every other export.
+
+## Export IFC
+
+The default IFC mode writes a valid IFC4 framework when possible:
+
+```bash
+rvt-ifc model.rvt -o model.ifc
+```
+
+For automation, use strict mode so incomplete real-model exports fail instead of
+quietly producing a scaffold:
+
+```bash
+rvt-ifc model.rvt -o model.ifc --mode strict --diagnostics model.diagnostics.json
+```
+
+Export modes:
+
+| Mode | Use when |
+|---|---|
+| `scaffold` | You want a valid IFC envelope and diagnostics even if no validated model elements were decoded. |
+| `typed-no-geometry` | You require at least one typed building element, but geometry is not required. |
+| `geometry` | You require at least one building element with decoded geometry. |
+| `strict` | You require typed elements, geometry, project metadata, units, storeys, no warnings, and no unsupported features. |
+
+If strict mode fails, read the diagnostics JSON. The failure may mean the file is
+valid Revit but outside the current rvt-open support profile.
+
+### The phase an export shows
+
+Revit's IFC export shows one phase of the project, the last unless the export
+setup names another, and leaves out what does not exist in it: an element
+created after it or demolished in it or before it, and a room whose own phase
+is not it. `rvt-ifc` does the same, and counts what it leaves out in the
+diagnostics (`element_record_not_in_export_phase`, `room_not_in_export_phase`).
+`--phase` names another phase, exactly as the project spells it or by its
+ElementId:
+
+```bash
+rvt-ifc model.rvt -o model.ifc --phase "Working Drawings"
+```
+
+A phase the file does not list is an error that lists the ones it does. A
+phase you name is exact, the last included. Without `--phase`, a project whose
+last phase holds no room (Autodesk's `rac_basic_sample_project` has its 14
+rooms in Working Drawings and none in Learning Content, its last) writes the
+rooms of the latest phase that holds any, so that its rooms are not lost;
+`rvt-ifc`, `rvt-gltf`, `rvt-schedule` and `rvt-sheet` print a line saying so, the
+diagnostics' `room_phase_fallback` names the phase and counts the rooms, and the
+Python bindings raise a `RuntimeWarning`. Every other element is still of the last phase. A room whose
+phase is unset or unread is written whatever the phase, and so is an Area or an
+MEP space, which Revit's export does not check against a phase either. The
+Python bindings and the viewer export the default phase.
+
+### Large models
+
+rvt-open caps what it reads so that a hostile file cannot exhaust memory: 2 GiB
+for the file, 256 MiB for one stream, 256 MiB for one inflated member and 1 GiB
+inflated per stream. Large project models can keep most of their elements in
+one partition stream of 400 MiB to 1 GiB. When a limit stops a stream,
+`rvt-ifc` names it, writes no IFC and exits with status 3:
+
+```text
+rvt-ifc: 1 stream(s) not read whole, so the export is missing what they hold:
+  stream Partitions/189 (422248448 bytes stored) is larger than the stream limit of 268435456 bytes, so what it holds is missing
+```
+
+Re-run with `--large-model` (streams up to 2 GiB, 8 GiB inflated), or set
+`--max-stream-bytes` and `--max-inflate-bytes` yourself. A model whose largest
+partition is 1 GiB stored needs several GB of memory. `--allow-partial` writes
+the incomplete IFC anyway; the diagnostics list the streams it lacks
+(`stream_not_read_resource_limit`). `rvt-gltf` takes the same flags. In Python,
+open the file with `max_stream_bytes` and `max_inflate_bytes`; `write_ifc()`
+raises `ValueError` while a stream is unread. The browser viewer opens a file
+at the default limits and, when a stream is not read, shows "Part of the file
+not read" in the File status panel with a "Retry with large-model limits"
+button, which reopens the same file with `--large-model`'s limits (streams up
+to 2 GiB). A browser tab can use at most 4 GiB of memory, so a very large
+model can still fail to open there; `rvt-ifc --large-model` is not held to a
+tab's 4 GiB (its caps are a 2 GiB stream and, on a 64-bit machine, 8 GiB
+inflated, and a file over 2 GiB is rejected whatever the flags).
+
+Two exports of the same file are the same bytes except for the export time,
+which the IFC header and owner history record. Set `SOURCE_DATE_EPOCH` (Unix
+seconds) to fix it, for example to keep an exported IFC under version control:
+
+```bash
+SOURCE_DATE_EPOCH=1700000000 rvt-ifc model.rvt -o model.ifc
+```
+
+### Compare with Revit's own export
+
+rvt-open writes IFC4 in metres, with the project at Revit's internal origin:
+`IfcSite` at the identity placement, no latitude or longitude, and no
+`IfcMapConversion`. A Revit export made with shared coordinates or a
+survey point therefore sits elsewhere in a federated model; one made with
+Revit's built-in "IFC4 Reference View" setup and its default coordinate base
+is the closer comparison (not yet checked on a Revit seat). Then:
+
+```bash
+rvt-ifc model.rvt -o ours.ifc --diagnostics ours.diagnostics.json --anonymize
+rvt-ifc-compare ours.ifc revit-export.ifc --json compare.json
+```
+
+`rvt-ifc-compare` reads each file in its own length unit, so Revit's feet or
+millimetres compare with rvt-open's metres. Counts by IFC class, storeys and
+objects only on one side are what a practitioner
+report
+needs; no model file is.
+
+To check what the sidecar reports against the file itself, `--element-provenance`
+adds where each decoded element was read from: its stream, its byte offset in
+the inflated stream (the bytes `rvt-dump` writes as `Partitions_NN.decomp`) and
+its class. It is off by default, since the list is much larger than the rest of
+the sidecar ([Export diagnostics](export-diagnostics.md#cli)).
+`--export-decisions` adds why each element was left out, a body is only its
+record's box, an opening was not cut or an outline was not read, one entry per
+element and bounded per reason ([Export decisions](export-diagnostics.md#export-decisions)).
+
+## Export A 3D PDF
+
+```bash
+rvt-gltf model.rvt --format pdf3d          # writes model.pdf
+```
+
+The PDF holds one page with a 3D annotation: the glTF export's meshes as U3D
+(ECMA-363), one model node per element named `<name> [<ElementId>]`, with the
+ElementId, IFC class and category as node metadata. It opens on an isometric
+view. Adobe Acrobat and Reader, Foxit and PDF-XChange show it in 3D, with the
+model tree; browsers' built-in PDF viewers and poppler show the flat poster of
+the same view instead. In the browser viewer, **Export 3D PDF** builds the same
+file in the tab.
+
+## Understand Warnings
+
+The most important status words are:
+
+| Status | Meaning |
+|---|---|
+| Supported profile | The decoded output meets the current export profile. |
+| Scaffold-only export | IFC can be written as a framework, but no validated building elements were decoded. |
+| Partial decode | Some data was recovered, but warnings, unsupported features, or missing geometry remain. |
+| Supported file, unsupported model layout | The file opened, but rvt-open did not recover validated model elements from this layout. |
+| Unsupported Revit version | The file opened, but its version is outside the 2008 to 2027 releases rvt-open reads. |
+| Corrupt or unreadable file | The input could not be opened as a readable Revit OLE/CFB container. |
+| Parser bug, please report | The file opened, but diagnostics could not classify export readiness. |
+
+For the precise terminology, read
+[diagnostic-semantics.md](diagnostic-semantics.md).
+
+## Supported Files
+
+Supported today:
+
+- `.rvt`, `.rfa`, `.rte`, and `.rft` containers that use the standard Revit
+  OLE/CFB layout.
+- Metadata and schema inspection across the verified 2016-2026 family corpus.
+- Browser and CLI diagnostics for support triage.
+- IFC4 scaffold output and narrow version-gated typed evidence.
+
+The first real-model conversion target is narrower: Revit 2023/2024
+architectural `.rvt` project files with levels, walls, floors, doors, windows,
+rooms, materials, and common parameters. See
+[supported-profile.md](supported-profile.md).
+
+## Report A Bad File
+
+1. Run:
+
+   ```bash
+   rvt-inspect model.rvt --json --anonymize > model.inspect.json
+   rvt-ifc model.rvt -o model.ifc --mode strict --diagnostics model.diagnostics.json --anonymize
+   ```
+
+   `--anonymize` replaces every name the inspect report and the diagnostics
+   take from the project (the file and project names, levels, materials,
+   sample element names, stored folder paths) with a placeholder, keeping
+   counts and ElementIds, so those two files can be attached to a public
+   issue. It does not change the IFC: `model.ifc` keeps every name. Without it, `rvt-inspect`
+   replaces only a path's `\Users\<name>\` part and Autodesk build and
+   project-id folders.
+
+2. Open a GitHub issue (the practitioner
+   report
+   form if you ran it on your own models) and include:
+
+   - Revit version, if known.
+   - File type: `.rvt`, `.rfa`, `.rte`, or `.rft`.
+   - What you expected to see.
+   - The failure mode shown by `rvt-inspect` or the viewer.
+   - The diagnostics JSON.
+
+3. Do not attach proprietary model files unless you have permission to publish
+   them. Diagnostics are designed to be useful without raw model bytes.
+
+## Where To Go Next
+
+- Current support boundary: [status.md](status.md)
+- Supported MVP profile: [supported-profile.md](supported-profile.md)
+- Diagnostic terminology: [diagnostic-semantics.md](diagnostic-semantics.md)
+- Python API: [python.md](python.md)

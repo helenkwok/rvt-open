@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "id": "magnetar-2024-core-interior",
+  "project_file": "2024_Core_Interior.rvt",
+  "reference_ifc_file": "2024_Core_Interior.ifc",
+  "source": {
+    "repo": "magnetar-io/revit-test-datasets",
+    "license": "MIT",
+    "revit_release": 2024,
+    "rvt_sha256": "c805df445d613b408e37337765572021265e3f5dfdc7d1fa53b22ba1600b8014",
+    "rvt_bytes": 33718272,
+    "reference_ifc_sha256": "d07c7462aee22640661faed5262cf802ce0fcbc663f312961a39be92bf857050",
+    "reference_ifc_bytes": 20392,
+    "notes": "The paired IFC export is the only authoritative count source currently available for this project. It appears to be an element-export fixture, not a full project schedule."
+  },
+  "counts": {
+    "levels": {
+      "status": "known",
+      "expected": 15,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCBUILDINGSTOREY",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.storey_count",
+      "decoder_expected": 15,
+      "decoder_tolerance": 0,
+      "notes": "The storeys are the Revit Level elements themselves — rvt-open reads the fifteen standalone OST_Levels partition records and, for each, the name/elevation parameter block whose owner slot carries that Level's own ElementId. Every (name, elevation) pair equals an IfcBuildingStorey in this export exactly, so the row is known. This 20 KB element fixture carries the full fifteen-storey spatial hierarchy even though it carries one building element, so the reference side is authoritative here as well as on the sibling full-project manifest."
+    },
+    "walls": {
+      "status": "decoder_baseline",
+      "expected": 0,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCWALL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCWALL",
+      "decoder_expected": 360,
+      "decoder_tolerance": 0,
+      "tracking": "walls decoder baseline",
+      "notes": "The paired 20 KB element fixture carries none of this type; the same .rvt carries 360, scored against the full export in the sibling manifest magnetar-2024-core-interior-slim. Recorded as a decoder baseline here so the reference side stays the element fixture and the count is not double-claimed."
+    },
+    "floors": {
+      "status": "decoder_baseline",
+      "expected": 0,
+      "source": "paired Revit IFC export; this 20 KB element fixture carries no IFCSLAB",
+      "source_ifc_type": "IFCSLAB",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCSLAB",
+      "decoder_expected": 80,
+      "decoder_tolerance": 0,
+      "tracking": "floors decoder baseline",
+      "notes": "This reference is an element-export fixture with one element in it and no IFCSLAB at all, so `expected` is 0 and the row is a decoder baseline, like walls / doors / windows / columns here. The authoritative measurement is the sibling full-project manifest, where the 80 id set matches Revit's export exactly at tolerance 0."
+    },
+    "roofs": {
+      "status": "known",
+      "expected": 0,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCROOF",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCROOF",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "doors": {
+      "status": "decoder_baseline",
+      "expected": 0,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCDOOR",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCDOOR",
+      "decoder_expected": 132,
+      "decoder_tolerance": 0,
+      "tracking": "doors decoder baseline",
+      "notes": "The paired 20 KB element fixture carries none of this type; the same .rvt carries 132, scored against the full export in the sibling manifest magnetar-2024-core-interior-slim. Recorded as a decoder baseline here so the reference side stays the element fixture and the count is not double-claimed."
+    },
+    "windows": {
+      "status": "decoder_baseline",
+      "expected": 0,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCWINDOW",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCWINDOW",
+      "decoder_expected": 6,
+      "decoder_tolerance": 0,
+      "tracking": "windows decoder baseline",
+      "notes": "The paired 20 KB element fixture carries none of this type; the same .rvt carries 6, scored against the full export in the sibling manifest magnetar-2024-core-interior-slim. Recorded as a decoder baseline here so the reference side stays the element fixture and the count is not double-claimed."
+    },
+    "rooms_spaces": {
+      "status": "decoder_baseline",
+      "expected": 0,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCSPACE",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCSPACE",
+      "decoder_expected": 116,
+      "decoder_tolerance": 0,
+      "tracking": "rooms spaces decoder baseline",
+      "notes": "The decoder emits 116 record-backed IFCSPACE, so partial_element_geometry does not fire on this file - every one of the 970 emitted building elements carries a body - and this row is a decoder_baseline. The recall claim is scored on the magnetar-2024-core-interior-slim manifest, whose reference side is the full-project export that actually contains the 116 spaces; this paired element fixture exports 0, so its 0 is the fixture's scope, not the decoder's recall."
+    },
+    "columns": {
+      "status": "decoder_baseline",
+      "expected": 0,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCCOLUMN",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCCOLUMN",
+      "decoder_expected": 256,
+      "decoder_tolerance": 0,
+      "tracking": "columns decoder baseline",
+      "notes": "The paired 20 KB element fixture carries no IFCCOLUMN; the same .rvt carries 256, which is scored against the full export in the sibling manifest magnetar-2024-core-interior-slim. Recorded as a decoder baseline here so the reference side stays the element fixture and the count is not double-claimed."
+    },
+    "beams": {
+      "status": "known",
+      "expected": 0,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCBEAM",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCBEAM",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "mep": {
+      "status": "known",
+      "expected": 0,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCFLOWTERMINAL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCFLOWTERMINAL",
+      "decoder_expected": 0,
+      "decoder_tolerance": 0
+    },
+    "materials": {
+      "status": "known_gap",
+      "expected": 1,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCMATERIAL",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.material_count",
+      "decoder_expected": 87,
+      "decoder_tolerance": 0,
+      "tracking": "revit_compound_assemblies_and_walltype_widths",
+      "unsupported_feature": "revit_compound_assemblies_and_walltype_widths",
+      "notes": "On Revit 2024 and 2025 every OST_Materials record with a name is counted. The paired 20 KB element export expects 1, and Revit writes only the materials its exported elements use, so the count stays a known gap. Of the 86, 8 family materials have no name found and are left out. Family instances are not joined to their materials; layered walls, floors, roofs and ceilings are, through their layer sets."
+    },
+    "units": {
+      "status": "known",
+      "expected": 1,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCUNITASSIGNMENT",
+      "tolerance": 0,
+      "decoder_metric": "step.IFCUNITASSIGNMENT",
+      "decoder_expected": 1,
+      "decoder_tolerance": 0
+    },
+    "property_sets": {
+      "status": "known_gap",
+      "expected": 25,
+      "source": "paired Revit IFC export",
+      "source_ifc_type": "IFCPROPERTYSET",
+      "tolerance": 0,
+      "decoder_metric": "step.IFCPROPERTYSET",
+      "decoder_expected": 6510,
+      "decoder_tolerance": 8,
+      "tracking": "partial_revit_element_parameters",
+      "unsupported_feature": "partial_revit_element_parameters",
+      "notes": "The Pset_ sets carry the Revit parameters rvt-open reads (Reference, FloorCovering, IsExternal and the storey and building sets), so the diagnostics count them and claim the narrower gap. The row stays known_gap because the paired export's property-set inventory still differs from Revit's: neither side is a subset of the other."
+    },
+    "shading_devices": {
+      "status": "decoder_baseline",
+      "expected": 1,
+      "source": "paired Revit IFC export; the fixture's single element is IFCSHADINGDEVICE 'Floor:Structural Slab:71411'",
+      "source_ifc_type": "IFCSHADINGDEVICE",
+      "tolerance": 0,
+      "decoder_metric": "diagnostics.exported.by_ifc_type.IFCSHADINGDEVICE",
+      "decoder_expected": 20,
+      "decoder_tolerance": 0,
+      "tracking": "shading devices decoder baseline",
+      "notes": "Rvt-open reads the per-element Revit 'IFC Export As' override out of the partition parameter block and emits 20 IFCSHADINGDEVICE on this .rvt. The fixture's one element, ElementId 71411, is one of those 20, so the set relation holds; the row is a decoder baseline because a one-element reference cannot score twenty. The sibling full-project manifest scores the same 20 as an exact id-set match at tolerance 0."
+    }
+  },
+  "relations": {
+    "opening_fills": {
+      "status": "decoder_baseline",
+      "relation_ifc_type": "IFCRELFILLSELEMENT",
+      "expected_pairs": 0,
+      "source": "paired Revit IFC export",
+      "decoder_metric": "step.IFCRELFILLSELEMENT",
+      "decoder_expected_pairs": 138,
+      "tracking": "opening fills decoder baseline",
+      "notes": "Excluded first-class, exactly as the walls / doors / windows / columns / floors rows on this manifest are. The paired export is a 20 KB element fixture with one IfcOpeningElement and no IfcRelFillsElement at all, while rvt-open reads the same .rvt and recovers 138 door/window host bindings, so the two sides are not comparable here. The strong half of this edge is magnetar-2024-core-interior-slim, where the same 138 pairs are inside the claimed surface at exact-set equality."
+    }
+  },
+  "storeys": {
+    "building_storeys": {
+      "status": "known",
+      "storey_ifc_type": "IFCBUILDINGSTOREY",
+      "expected_storeys": 15,
+      "source": "paired Revit IFC export",
+      "decoder_metric": "diagnostics.exported.storey_count",
+      "decoder_expected_storeys": 15,
+      "tracking": "building storeys",
+      "notes": "The compared value is the exact set of [Name, Elevation] pairs, elevation converted from each file's declared LENGTHUNIT to feet and rendered at 1e-6 ft — this export declares FOOT while rvt-open writes METRE, so the field would be incomparable without the conversion. All three witnesses read it independently: IfcOpenShell 0.8.5 by_type + ifcopenshell.util.unit, IFClite 7.1.1 EntityScanner + extract_length_unit_scale, and rvt-open by splitting its own emitted STEP. rvt-open recovers the pair from the .rvt: the fifteen standalone OST_Levels partition element records give the Level ElementIds, and each Level's name/elevation parameter block is keyed by that ElementId at a fixed negative offset (owner at value-0x47), so nothing is joined by rank. Measured on this artifact: 15 of 15 pairs reproduced exactly - no wrong elevation, no missing storey, no extra storey. 372 of them reach it through the Level ElementId their own partition element record names in its counted reference list at +0x88, accepted only when the list names exactly one recovered Level - a Revit column or wall carries a base and a top constraint, and all 344 OST_Columns records that name a Level at all name two, so they resolve to nothing and keep the elevation join. The other 481 reach it through the record-face elevation match. Where both joins answer the same element the two agree 537 of 537 times, with 0 disagreements, which is why the stated join runs first."
+    }
+  }
+}

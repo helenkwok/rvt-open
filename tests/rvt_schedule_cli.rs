@@ -1,0 +1,304 @@
+//! `rvt-schedule`: CSV element and room schedules. The tier-1 synthetic
+//! fixture proves the file shape everywhere; the 2024 magnetar project
+//! (skipped unless `RVT_PROJECT_CORPUS_DIR` holds it) pins the counts the
+//! element-record work measured against Revit's own export.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+fn tier1() -> Option<PathBuf> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("corpus")
+        .join("tier1")
+        .join("architectural-2024")
+        .join("architectural-2024.rvt");
+    path.exists().then_some(path)
+}
+
+fn core_interior() -> Option<PathBuf> {
+    let dir = std::env::var_os("RVT_PROJECT_CORPUS_DIR")?;
+    let path = PathBuf::from(dir).join("2024_Core_Interior.rvt");
+    path.exists().then_some(path)
+}
+
+fn re1_architecture() -> Option<PathBuf> {
+    let dir = std::env::var_os("RVT_PROJECT_CORPUS_DIR")?;
+    let path = PathBuf::from(dir).join("RE1-Architecture.rvt");
+    path.exists().then_some(path)
+}
+
+fn schedule(args: &[&std::ffi::OsStr]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rvt-schedule"))
+        .args(args)
+        .output()
+        .expect("run rvt-schedule")
+}
+
+fn csv_rows(csv: &str) -> Vec<Vec<String>> {
+    // The schedules never embed CR/LF inside a cell for these inputs, so a
+    // line split is enough; quoted commas are handled.
+    csv.trim_start_matches('\u{FEFF}')
+        .split("\r\n")
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let mut cells = Vec::new();
+            let mut cell = String::new();
+            let mut quoted = false;
+            let mut chars = line.chars().peekable();
+            while let Some(c) = chars.next() {
+                match c {
+                    '"' if quoted && chars.peek() == Some(&'"') => {
+                        cell.push('"');
+                        chars.next();
+                    }
+                    '"' => quoted = !quoted,
+                    ',' if !quoted => cells.push(std::mem::take(&mut cell)),
+                    other => cell.push(other),
+                }
+            }
+            cells.push(cell);
+            cells
+        })
+        .collect()
+}
+
+#[test]
+fn writes_next_to_the_input_and_to_stdout() {
+    let Some(fixture) = tier1() else { return };
+    let dir = std::env::temp_dir().join(format!("rvt-schedule-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("model.rvt");
+    std::fs::copy(&fixture, &input).unwrap();
+
+    let out = schedule(&[input.as_os_str()]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let csv = std::fs::read_to_string(dir.join("model.elements.csv")).expect("elements csv");
+    let rows = csv_rows(&csv);
+    assert!(rows.iter().all(|r| r.len() == rows[0].len()), "ragged rows");
+
+    let out = schedule(&[
+        input.as_os_str(),
+        "--schedule".as_ref(),
+        "rooms".as_ref(),
+        "--metric".as_ref(),
+        "--excel".as_ref(),
+        "-o".as_ref(),
+        "-".as_ref(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let csv = String::from_utf8(out.stdout).unwrap();
+    assert!(csv.starts_with('\u{FEFF}'), "--excel writes a BOM");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A column table of the user guide ("Get A Schedule Into Excel"), after
+/// its `<!-- marker -->`, in order.
+fn documented_columns(marker: &str) -> Vec<String> {
+    let guide = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs")
+            .join("user-guide.md"),
+    )
+    .expect("read the user guide");
+    let start = guide
+        .find(&format!("<!-- {marker} -->"))
+        .unwrap_or_else(|| panic!("the user guide has no {marker} table"));
+    guide[start..]
+        .lines()
+        .skip(1)
+        .take_while(|line| line.starts_with('|'))
+        .skip(2)
+        .map(|row| {
+            row.split('|')
+                .nth(1)
+                .unwrap()
+                .trim()
+                .trim_matches('`')
+                .to_string()
+        })
+        .collect()
+}
+
+/// The schedules are a published output (S2): each begins with the
+/// columns the user guide lists, in that order, in feet and in metres. A
+/// column may be added after them; renaming, dropping or reordering one is
+/// a breaking change and fails here.
+#[test]
+fn schedules_begin_with_the_documented_columns() {
+    let Some(fixture) = tier1() else { return };
+    for (kind, marker) in [("elements", "element-columns"), ("rooms", "room-columns")] {
+        let documented = documented_columns(marker);
+        assert!(!documented.is_empty(), "the {marker} table is empty");
+        for metric in [false, true] {
+            let mut args = vec![
+                fixture.as_os_str(),
+                "--schedule".as_ref(),
+                kind.as_ref(),
+                "-o".as_ref(),
+                "-".as_ref(),
+            ];
+            if metric {
+                args.push("--metric".as_ref());
+            }
+            let out = schedule(&args);
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let csv = String::from_utf8(out.stdout).unwrap();
+            let header = csv_rows(&csv).remove(0);
+            let expected: Vec<String> = documented
+                .iter()
+                .map(|c| {
+                    if metric {
+                        c.replace("_ft", "_m")
+                    } else {
+                        c.clone()
+                    }
+                })
+                .collect();
+            assert!(
+                header.starts_with(&expected),
+                "{kind} schedule (metric {metric}) columns {header:?} do not begin with the documented {expected:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_missing_input_is_one_named_error() {
+    let out = schedule(&["no/such/model.rvt".as_ref()]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.starts_with("error: "), "{err}");
+    assert_eq!(err.matches("no/such/model.rvt").count(), 1, "{err}");
+}
+
+/// Counts measured against Revit's own full-project export: 970 building
+/// elements of which 116 are rooms, and every door and window hosted.
+/// Every room's outline is read from its stored solid, so every
+/// room has an area.
+#[test]
+fn core_interior_schedules_match_the_measured_counts() {
+    let Some(model) = core_interior() else {
+        eprintln!("skipping: 2024_Core_Interior.rvt not under RVT_PROJECT_CORPUS_DIR");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("rvt-schedule-core-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let elements_path = dir.join("core.elements.csv");
+    let out = schedule(&[model.as_os_str(), "-o".as_ref(), elements_path.as_os_str()]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rows = csv_rows(&std::fs::read_to_string(&elements_path).unwrap());
+    let body = &rows[1..];
+    let count = |ifc: &str| body.iter().filter(|r| r[1] == ifc).count();
+    assert_eq!(body.len(), 970);
+    assert_eq!(count("IFCWALL"), 360);
+    assert_eq!(count("IFCDOOR"), 132);
+    assert_eq!(count("IFCWINDOW"), 6);
+    assert_eq!(count("IFCCOLUMN"), 256);
+    assert_eq!(count("IFCSPACE"), 116);
+    for opening in body
+        .iter()
+        .filter(|r| r[1] == "IFCDOOR" || r[1] == "IFCWINDOW")
+    {
+        assert!(!opening[14].is_empty(), "unhosted opening {opening:?}");
+    }
+
+    let rooms_path = dir.join("core.rooms.csv");
+    let out = schedule(&[
+        model.as_os_str(),
+        "--schedule".as_ref(),
+        "rooms".as_ref(),
+        "-o".as_ref(),
+        rooms_path.as_os_str(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rooms = csv_rows(&std::fs::read_to_string(&rooms_path).unwrap());
+    assert_eq!(rooms.len() - 1, 116);
+    assert!(
+        rooms[1..]
+            .iter()
+            .all(|r| !r[1].is_empty() && !r[2].is_empty())
+    );
+    assert!(
+        rooms[1..].iter().all(|r| !r[5].is_empty()),
+        "a Core Interior room with no area"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--phase` schedules another phase, as `rvt-ifc --phase` and
+/// Python's `schedule_csv(phase=...)` do. RE1 Architecture's phases are
+/// Existing (12589) and New Construction (86961, the last), and its 11 rooms
+/// sit in the second.
+#[test]
+fn phase_chooses_the_scheduled_phase_of_a_real_file() {
+    let Some(rvt) = re1_architecture() else {
+        return;
+    };
+    let rooms = |phase: Option<&str>| -> Output {
+        let mut args: Vec<&std::ffi::OsStr> = vec![
+            rvt.as_os_str(),
+            "--schedule".as_ref(),
+            "rooms".as_ref(),
+            "-o".as_ref(),
+            "-".as_ref(),
+        ];
+        if let Some(phase) = phase {
+            args.push("--phase".as_ref());
+            args.push(phase.as_ref());
+        }
+        schedule(&args)
+    };
+    let rows = |output: &Output| -> usize {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        csv_rows(&String::from_utf8_lossy(&output.stdout)).len() - 1
+    };
+
+    // The default is the last phase, with every room.
+    let default = rooms(None);
+    assert_eq!(rows(&default), 11);
+    // The last phase, by its name and by its ElementId, is the default.
+    for phase in ["New Construction", "86961"] {
+        assert_eq!(
+            rooms(Some(phase)).stdout,
+            default.stdout,
+            "--phase {phase} is the default schedule"
+        );
+    }
+    // The first phase has none of them.
+    for phase in ["Existing", "12589"] {
+        assert_eq!(rows(&rooms(Some(phase))), 0, "--phase {phase}");
+    }
+    // A phase the file lacks is an error that lists the file's phases.
+    let unknown = rooms(Some("No such phase"));
+    assert_eq!(unknown.status.code(), Some(1), "an unknown phase");
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(
+        stderr.contains("Existing") && stderr.contains("New Construction"),
+        "the error lists the file's phases: {stderr}"
+    );
+}

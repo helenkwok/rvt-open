@@ -1,0 +1,284 @@
+//! `rvt-doc` — dump ADocument's instance fields as JSON or text.
+//!
+//! This is the first end-user-facing command that reads actual
+//! instance data out of a Revit file (not just schema or metadata).
+//! Coverage is currently limited: reliable on Revit 2024–2026; older
+//! releases return "ADocument record not locatable" until the
+//! entry-point detector is extended (see the walker module docs).
+
+use clap::Parser;
+use rvt::walker::{
+    ADocumentInstance, InstanceField, WalkerLimits, read_adocument_lossy_with_limits,
+};
+use rvt::{RevitFile, redact};
+use serde::Serialize;
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(
+    version,
+    about = "Dump ADocument's instance fields from a Revit file",
+    after_help = "Examples:\n  \
+        rvt-doc family.rfa\n  \
+        rvt-doc family.rfa --json --redact"
+)]
+struct Args {
+    /// Path to a `.rvt` / `.rfa` / `.rte` / `.rft` file.
+    path: PathBuf,
+    /// Emit JSON instead of human-readable text.
+    #[arg(long)]
+    json: bool,
+    /// Scrub usernames and Autodesk-internal paths from any string
+    /// fields surfaced.
+    #[arg(long)]
+    redact: bool,
+    /// Maximum decompressed Global/Latest bytes scanned by the walker.
+    #[arg(long)]
+    max_walker_scan_bytes: Option<usize>,
+    /// Maximum trial decodes attempted by ADocument detection.
+    #[arg(long)]
+    max_walker_trial_offsets: Option<usize>,
+    /// Maximum bytes inspected while decoding one walker candidate.
+    #[arg(long)]
+    max_walker_record_decode_bytes: Option<usize>,
+    /// Maximum records accepted in walker reference containers.
+    #[arg(long)]
+    max_walker_container_records: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct OutField {
+    name: String,
+    kind: String,
+    value: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct Output {
+    path: String,
+    version: u32,
+    adocument_entry_offset: Option<String>,
+    fields: Vec<OutField>,
+    notes: Vec<String>,
+}
+
+fn render(inst: &ADocumentInstance) -> Vec<OutField> {
+    inst.fields
+        .iter()
+        .map(|(name, v)| match v {
+            InstanceField::Pointer { raw } => OutField {
+                name: name.clone(),
+                kind: "pointer".into(),
+                value: serde_json::json!({ "slot_a": raw[0], "slot_b": raw[1] }),
+            },
+            InstanceField::ElementId { tag, id } => OutField {
+                name: name.clone(),
+                kind: "element_id".into(),
+                value: serde_json::json!({ "tag": tag, "id": id }),
+            },
+            InstanceField::RefContainer { col_a, col_b } => OutField {
+                name: name.clone(),
+                kind: "ref_container".into(),
+                value: serde_json::json!({
+                    "count": col_a.len(),
+                    "col_a": col_a,
+                    "col_b": col_b,
+                }),
+            },
+            InstanceField::Integer {
+                value,
+                signed,
+                size,
+            } => OutField {
+                name: name.clone(),
+                kind: "integer".into(),
+                value: serde_json::json!({
+                    "value": value,
+                    "signed": signed,
+                    "size": size,
+                }),
+            },
+            InstanceField::Float { value, size } => OutField {
+                name: name.clone(),
+                kind: "float".into(),
+                value: serde_json::json!({ "value": value, "size": size }),
+            },
+            InstanceField::Bool(b) => OutField {
+                name: name.clone(),
+                kind: "bool".into(),
+                value: serde_json::json!({ "value": b }),
+            },
+            InstanceField::Guid(g) => OutField {
+                name: name.clone(),
+                kind: "guid".into(),
+                value: serde_json::json!({ "bytes": g.to_vec() }),
+            },
+            InstanceField::String(s) => OutField {
+                name: name.clone(),
+                kind: "string".into(),
+                value: serde_json::json!({ "value": s }),
+            },
+            InstanceField::Vector(elems) => OutField {
+                name: name.clone(),
+                kind: "vector".into(),
+                value: serde_json::json!({ "count": elems.len() }),
+            },
+            InstanceField::Bytes(b) => OutField {
+                name: name.clone(),
+                kind: "bytes".into(),
+                value: serde_json::json!({ "len": b.len() }),
+            },
+            _ => OutField {
+                name: name.clone(),
+                kind: "unknown".into(),
+                value: serde_json::Value::Null,
+            },
+        })
+        .collect()
+}
+
+fn main() -> std::process::ExitCode {
+    rvt::cli::exit_quietly_on_broken_pipe();
+    match run(Args::parse()) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+fn run(args: Args) -> anyhow::Result<()> {
+    let path_str = if args.redact {
+        redact::redact_path_str(&args.path.display().to_string())
+    } else {
+        args.path.display().to_string()
+    };
+
+    let mut rf = RevitFile::open(&args.path)?;
+    let decoded = read_adocument_lossy_with_limits(&mut rf, walker_limits_from_args(&args))?;
+    let maybe_inst = if decoded
+        .diagnostics
+        .failed_streams
+        .iter()
+        .any(|s| s == "ADocument")
+    {
+        None
+    } else {
+        Some(decoded.value)
+    };
+    let version = rf.basic_file_info().ok().map(|b| b.version).unwrap_or(0);
+
+    let (entry, fields, notes) = match maybe_inst {
+        Some(inst) => {
+            let e = format!("0x{:06x}", inst.entry_offset);
+            let f = render(&inst);
+            let mut n = diagnostic_notes(&decoded.diagnostics);
+            if !(2024..=2026).contains(&inst.version) {
+                n.push(
+                    "Walker currently validated on Revit 2024–2026. \
+                     Values for this release are experimental."
+                        .into(),
+                );
+            }
+            (Some(e), f, n)
+        }
+        None => (None, Vec::new(), {
+            let mut notes = diagnostic_notes(&decoded.diagnostics);
+            notes.push(
+                "ADocument record not locatable in this release's stream \
+                 layout. This is expected for Revit 2016–2023 today \
+                 (see the walker module docs \
+                 for current status)."
+                    .into(),
+            );
+            notes
+        }),
+    };
+
+    let out = Output {
+        path: path_str,
+        version,
+        adocument_entry_offset: entry,
+        fields,
+        notes,
+    };
+
+    if args.json {
+        serde_json::to_writer_pretty(std::io::stdout(), &out)?;
+        println!();
+    } else {
+        println!("path:              {}", out.path);
+        println!("version:           {}", out.version);
+        if let Some(e) = &out.adocument_entry_offset {
+            println!("adocument entry:   {}", e);
+        } else {
+            println!("adocument entry:   <not located>");
+        }
+        println!();
+        for f in &out.fields {
+            match f.kind.as_str() {
+                "pointer" => {
+                    let a = f.value["slot_a"].as_u64().unwrap_or(0);
+                    let b = f.value["slot_b"].as_u64().unwrap_or(0);
+                    println!(
+                        "  {:36} :: Pointer    [a=0x{:08x}, b=0x{:08x}]",
+                        f.name, a, b
+                    );
+                }
+                "element_id" => {
+                    let tag = f.value["tag"].as_u64().unwrap_or(0);
+                    let id = f.value["id"].as_u64().unwrap_or(0);
+                    println!("  {:36} :: ElementId  [tag={}, id={}]", f.name, tag, id);
+                }
+                "ref_container" => {
+                    let count = f.value["count"].as_u64().unwrap_or(0);
+                    let col_a = f.value["col_a"].as_array().map(|a| a.len()).unwrap_or(0);
+                    let col_b = f.value["col_b"].as_array().map(|a| a.len()).unwrap_or(0);
+                    println!(
+                        "  {:36} :: Container  [count={count}, col_a={col_a}, col_b={col_b}]",
+                        f.name
+                    );
+                }
+                _ => {
+                    println!("  {:36} :: {}", f.name, f.kind);
+                }
+            }
+        }
+        if !out.notes.is_empty() {
+            println!();
+            for n in &out.notes {
+                println!("note: {n}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn walker_limits_from_args(args: &Args) -> WalkerLimits {
+    let defaults = WalkerLimits::default();
+    WalkerLimits {
+        max_scan_bytes: args
+            .max_walker_scan_bytes
+            .unwrap_or(defaults.max_scan_bytes),
+        max_candidates: defaults.max_candidates,
+        max_trial_offsets: args
+            .max_walker_trial_offsets
+            .unwrap_or(defaults.max_trial_offsets),
+        max_per_record_decode_bytes: args
+            .max_walker_record_decode_bytes
+            .unwrap_or(defaults.max_per_record_decode_bytes),
+        max_container_records: args
+            .max_walker_container_records
+            .unwrap_or(defaults.max_container_records),
+    }
+}
+
+fn diagnostic_notes(diagnostics: &rvt::parse_mode::Diagnostics) -> Vec<String> {
+    diagnostics
+        .warnings
+        .iter()
+        .map(|w| format!("{}: {}", w.code, w.message))
+        .collect()
+}

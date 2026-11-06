@@ -1,0 +1,273 @@
+#!/usr/bin/env node
+/**
+ * Stage redistributable viewer demos into viewer/public/demos/.
+ *
+ * Reads docs/viewer-demos.json, copies/generates available binaries,
+ * writes catalog.json + SVG thumbnails. Safe to run without the LFS
+ * corpus — loadable RFAs are skipped with a warning; tier1 fixtures
+ * copy from corpus/tier1/; real-project samples copy from
+ * the magnetar-io/revit-test-datasets checkout (_project_corpus/) and are
+ * refused when their bytes do not match the sha256 pinned in the catalog.
+ *
+ * Privacy: only redistributable files are staged. Nothing is uploaded.
+ */
+
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const viewerRoot = path.resolve(__dirname, '..');
+const repoRoot = path.resolve(viewerRoot, '..');
+const catalogSrc = path.join(repoRoot, 'docs', 'viewer-demos.json');
+const publicDemos = path.join(viewerRoot, 'public', 'demos');
+const thumbDir = path.join(publicDemos, 'thumbnails');
+
+/** Known in-repo tier1 fixtures. */
+const TIER1_IDS = new Set(['architectural-2024', 'structural-2023', 'mep-2024']);
+/** Catalog tag for MIT real-project samples (magnetar-io/revit-test-datasets). */
+const REAL_PROJECT_TAG = 'real-project';
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function resolveExisting(candidates, base = repoRoot) {
+  for (const candidate of candidates) {
+    const resolved = path.isAbsolute(candidate)
+      ? candidate
+      : path.resolve(base, candidate);
+    if (fs.existsSync(resolved)) return resolved;
+  }
+  return null;
+}
+
+function writeThumbnail(filePath, label, accent) {
+  // A flat neutral tile for every demo without a capture: the card shows it
+  // at 56 x 36, where a building mark reads and text would not. The label
+  // rides along as the SVG title.
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180" role="img">
+  <title>${escapeXml(label)}</title>
+  <rect width="320" height="180" fill="${accent.tint}"/>
+  <g fill="none" stroke="${accent.ink}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M112 146 V74 L160 42 L208 74 V146 Z"/>
+    <path d="M112 98 H208 M112 122 H208"/>
+  </g>
+</svg>
+`;
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, svg);
+}
+
+function escapeXml(text) {
+  return String(text)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+function copyFile(src, dest) {
+  ensureDir(path.dirname(dest));
+  fs.copyFileSync(src, dest);
+  return fs.statSync(dest).size;
+}
+
+function stageTier1(demo, destAbs) {
+  const candidates = [
+    ...(demo.source_candidates ?? []),
+    demo.provenance,
+    path.join('corpus', 'tier1', demo.id, `${demo.id}.rvt`),
+  ].filter(Boolean);
+  const src = resolveExisting(candidates);
+  if (!src) {
+    return { ok: false, note: `tier1 source missing for ${demo.id}` };
+  }
+  const size = copyFile(src, destAbs);
+  // Also stage license sidecar when present (attribution).
+  const licenseSrc = src.replace(/\.rvt$/i, '.license.json');
+  if (fs.existsSync(licenseSrc)) {
+    const licenseDest = destAbs.replace(/\.rvt$/i, '.license.json');
+    copyFile(licenseSrc, licenseDest);
+  }
+  return {
+    ok: true,
+    size,
+    note: `copied from ${path.relative(repoRoot, src)}`,
+  };
+}
+
+function sha256File(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function stageRealProject(demo, destAbs) {
+  const base = path.basename(demo.file);
+  const envSample = process.env.RVT_VIEWER_SAMPLE;
+  const candidates = [
+    ...(demo.source_candidates ?? []),
+    ...(envSample && path.basename(envSample) === base ? [envSample] : []),
+    path.join('_project_corpus', 'Revit', base),
+  ];
+  const src = resolveExisting(candidates);
+  if (!src) {
+    return {
+      ok: false,
+      note: `real-project source missing for ${demo.id} (checkout magnetar-io/revit-test-datasets with LFS into _project_corpus/)`,
+    };
+  }
+  if (demo.sha256) {
+    const actual = sha256File(src);
+    if (actual !== demo.sha256) {
+      return {
+        ok: false,
+        note: `sha256 mismatch for ${demo.id}: catalog pins ${demo.sha256.slice(0, 12)}…, ${path.relative(repoRoot, src)} is ${actual.slice(0, 12)}… — not staged`,
+      };
+    }
+  }
+  const size = copyFile(src, destAbs);
+  const licenseDest = destAbs.replace(/\.rvt$/i, '.license.json');
+  const sidecar = {
+    source_url: 'https://github.com/magnetar-io/revit-test-datasets',
+    source_repo: 'magnetar-io/revit-test-datasets',
+    source_path: `Revit/${base}`,
+    license: 'MIT',
+    sha256: demo.sha256 ?? sha256File(src),
+    bytes: size,
+    revit_release: demo.revit_version ? String(demo.revit_version) : null,
+    file_type: path.extname(base).toLowerCase(),
+    redistribution: 'public',
+    notes: demo.description,
+  };
+  fs.writeFileSync(licenseDest, `${JSON.stringify(sidecar, null, 2)}\n`);
+  return {
+    ok: true,
+    size,
+    note: `copied from ${path.relative(repoRoot, src)} (sha256 verified)`,
+  };
+}
+
+// Tint (the ramp's lightest step) and ink (its step 6) from the design
+// system's blue, green, amber and gray ramps.
+// One neutral glyph: only a capture of the viewer's own drawing may show
+// what a demo decodes to.
+// No fill of its own: the card's tile colour shows through in either scheme.
+const NEUTRAL_THUMB = { tint: 'none', ink: '#909398' };
+
+function main() {
+  if (!fs.existsSync(catalogSrc)) {
+    console.error(`missing catalog: ${catalogSrc}`);
+    process.exit(1);
+  }
+
+  ensureDir(publicDemos);
+  ensureDir(thumbDir);
+
+  const catalog = JSON.parse(fs.readFileSync(catalogSrc, 'utf8'));
+  const staged = [];
+  const warnings = [];
+
+  for (const demo of catalog.demos) {
+    const destRel = demo.file.replace(/^\.?\/?/, '');
+    const destAbs = path.join(viewerRoot, 'public', destRel);
+    const thumbRel = (demo.thumbnail || '').replace(/^\.?\/?/, '');
+    let available = false;
+    let sizeBytes = demo.size_bytes ?? null;
+    let stageNote = 'not staged';
+
+    if ((demo.tags ?? []).includes(REAL_PROJECT_TAG)) {
+      const result = stageRealProject(demo, destAbs);
+      available = result.ok;
+      sizeBytes = result.size ?? sizeBytes;
+      stageNote = result.note;
+      if (!result.ok) warnings.push(`${demo.id}: ${result.note}`);
+    } else if (TIER1_IDS.has(demo.id)) {
+      const result = stageTier1(demo, destAbs);
+      available = result.ok;
+      sizeBytes = result.size ?? sizeBytes;
+      stageNote = result.note;
+      if (!result.ok) warnings.push(`${demo.id}: ${result.note}`);
+    } else if (demo.format === 'ifc') {
+      const src = resolveExisting([
+        path.join(repoRoot, 'tests', 'fixtures', path.basename(demo.file)),
+        ...(demo.provenance ? [demo.provenance] : []),
+      ]);
+      if (src) {
+        sizeBytes = copyFile(src, destAbs);
+        available = true;
+        stageNote = `copied from ${path.relative(repoRoot, src)}`;
+      } else {
+        warnings.push(`${demo.id}: IFC fixture missing`);
+      }
+    } else if (demo.loadable) {
+      const candidates = [
+        ...(demo.source_candidates ?? []),
+        path.join('_corpus', 'examples', 'Autodesk', path.basename(demo.file).replace(/_/g, '')),
+        `_corpus/examples/Autodesk/racbasicsamplefamily-${demo.revit_version}.rfa`,
+        `../_corpus/examples/Autodesk/racbasicsamplefamily-${demo.revit_version}.rfa`,
+      ];
+      const src = resolveExisting(candidates);
+      if (src) {
+        sizeBytes = copyFile(src, destAbs);
+        available = true;
+        stageNote = `copied from ${path.relative(repoRoot, src)}`;
+      } else {
+        warnings.push(
+          `${demo.id}: source not found (optional corpus) — gallery will mark unavailable`,
+        );
+      }
+    }
+
+    if (thumbRel) {
+      const thumbAbs = path.join(viewerRoot, 'public', thumbRel);
+      if (demo.capture) {
+        // A capture of the viewer drawing this demo, committed under
+        // viewer/demo-captures/.
+        copyFile(path.join(repoRoot, demo.capture), thumbAbs);
+      } else {
+        writeThumbnail(thumbAbs, demo.name, NEUTRAL_THUMB);
+      }
+    }
+
+    staged.push({
+      ...demo,
+      size_bytes: sizeBytes,
+      available,
+      stage_note: stageNote,
+    });
+  }
+
+  const outCatalog = {
+    ...catalog,
+    demos: staged,
+    staged_at: new Date().toISOString(),
+  };
+  fs.writeFileSync(
+    path.join(publicDemos, 'catalog.json'),
+    `${JSON.stringify(outCatalog, null, 2)}\n`,
+  );
+
+  const availableCount = staged.filter((d) => d.available).length;
+  console.log(
+    `staged ${availableCount}/${staged.length} demos → ${path.relative(repoRoot, publicDemos)}`,
+  );
+  for (const demo of staged) {
+    console.log(`  - ${demo.id}: ${demo.available ? 'ok' : 'missing'} (${demo.stage_note})`);
+  }
+  for (const warning of warnings) {
+    console.warn(`  warning: ${warning}`);
+  }
+
+  const hasLoadableRvt = staged.some(
+    (d) => d.available && d.loadable && d.format === 'rvt',
+  );
+  if (!hasLoadableRvt) {
+    console.warn(
+      'warning: no loadable .rvt demo was staged (need corpus/tier1 for Playwright coverage)',
+    );
+  }
+}
+
+main();

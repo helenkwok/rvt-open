@@ -1,0 +1,29 @@
+{
+  "name": "rvt-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "In-browser Revit viewer powered by rvt-open compiled to WebAssembly. Zero upload — every byte stays in the tab.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@12.6.0",
+  "scripts": {
+    "stage:demos": "node scripts/stage-demos.mjs",
+    "predev": "pnpm run stage:demos",
+    "dev": "vite",
+    "prebuild": "pnpm run stage:demos",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test:browser": "playwright test --config playwright.config.ts",
+    "test:network": "pnpm run test:browser",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/three": "^0.187.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

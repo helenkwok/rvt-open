@@ -1,0 +1,43 @@
+[package]
+name = "rvt-py"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "Python bindings for rvt-open — the pyo3 extension module behind the `rvt-open` wheel on PyPI. Kept in a separate crate so the core library can `#![forbid(unsafe_code)]` unconditionally."
+authors = ["rvt-open contributors"]
+repository = "https://github.com/helenkwok/rvt-open"
+readme = "README.md"
+publish = false  # Distributed via PyPI (as the `rvt-open` wheel), not crates.io.
+
+[lib]
+# Must be `cdylib` for pyo3 to produce the Python extension; `rlib`
+# is not needed for a pyo3-only consumer.
+crate-type = ["cdylib"]
+
+
+[lints]
+workspace = true
+
+[dependencies]
+# Core library — all the real work lives here. Path dependency so the
+# workspace can develop both in lock-step; crates.io publishing (if we
+# ever re-enable `publish = true`) would swap this for a version pin.
+rvt = { package = "rvt-open", path = "..", version = "=0.1.0" }
+
+# Python bindings. `abi3-py38` makes a single wheel compatible with
+# every Python >= 3.8. `extension-module` tells pyo3 this build is
+# the .so/.pyd extension, not a standalone executable.
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py38"] }
+
+# Used by the Python bindings for JSON serialisation at the FFI
+# boundary. Matches the root crate's version so serde derives stay
+# compatible.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[build-dependencies]
+# Adds `-undefined dynamic_lookup` to the cdylib's link on macOS, as maturin
+# does, so a plain `cargo build --workspace` (tools/check-local.sh) links it.
+pyo3-build-config = "0.30"

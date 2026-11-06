@@ -1,0 +1,145 @@
+# ---- Rust build artifacts ----
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+
+# Note: Cargo.lock IS committed. The crate ships its CLIs, and a
+# committed lockfile gives their users reproducible builds, as the
+# Cargo book advises.
+
+# ---- Documentation & benchmark artifacts ----
+/target/doc/
+/criterion/
+/perf.data*
+*.flamegraph
+*.prof
+*.heapdump
+
+
+# ---- Local draft / personal content (NEVER commit) ----
+# Outreach emails, internal decision memos, personal notes,
+# anything that shouldn't be readable by strangers on the
+# internet.
+docs/outreach/
+docs/announcement-draft.md
+docs/drafts/
+docs/_local/
+drafts/
+*.draft.md
+*.private.md
+
+# ---- Log files ----
+*.log
+/logs/
+
+# ---- Environment / local overrides ----
+.env
+.env.*
+!.env.example
+*.local.toml
+*.local.yaml
+config.local.*
+
+# ---- Editor / IDE ----
+.vscode/
+!/.vscode/
+/.vscode/*
+!/.vscode/settings.json
+!/.vscode/tasks.json
+!/.vscode/launch.json
+.idea/
+.nvim/
+.zed/
+*.swp
+*.swo
+*.swn
+*~
+\#*\#
+.\#*
+
+# ---- OS cruft ----
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+ehthumbs_vista.db
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ---- Generated / backup ----
+*.orig
+*.rej
+*.bak
+*.old
+*.tmp
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+# Native extension produced by `maturin develop` (editable install)
+# lands in python/rvt_open/ — it's a build artifact, never committed.
+*.so
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# ---- Node ----
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---- Test-corpus RFA files (if ever vendored locally) ----
+# The phi-ag/rvt LFS corpus lives outside this repo; if someone
+# drops sample files into a local samples/ dir for testing,
+# keep them out of git.
+/samples/
+/test-files/
+*.rvt
+*.rfa
+*.rte
+*.rft
+# Redistributable synthetic fixtures under corpus/ are
+# intentionally committed (Apache-2.0 synthetic test fixtures + license
+# sidecars). Negate the blanket *.rvt ignore for that tree only.
+!corpus/
+!corpus/**
+!corpus/**/*.rvt
+# `!corpus/**` would otherwise re-include Finder metadata.
+corpus/**/.DS_Store
+!docs/**/*.rvt.md
+# Redistributable, license-documented fixtures committed under tests/
+!tests/fixtures/families/
+!tests/fixtures/families/**
+!tests/fixtures/families/**/*.rfa
+!tests/fixtures/families/**/*.license.json
+
+# wasm-pack output (built in CI, not committed)
+pkg/
+viewer/pkg/
+viewer/node_modules/
+viewer/dist/
+viewer/public/demos/*
+!viewer/public/demos/.gitkeep
+
+# The corpora tests and probes read by default (CONTRIBUTING.md): never committed.
+_corpus/
+_corpus_candidates/
+_project_corpus/
+
+
+# Any local cargo target dir (e.g. target-msrv/ used for MSRV checks) — never commit build output.
+/target*/
+
+# Docker build context staged by docker/stage.sh from release archives.
+/docker/context/

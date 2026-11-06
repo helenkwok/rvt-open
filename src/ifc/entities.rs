@@ -1,0 +1,1715 @@
+//! IFC entity types targeted by the exporter.
+//!
+//! Intentionally minimal — only the entity categories the mapping table in
+//! `mod.rs` references. It grows as more Revit classes become
+//! decodable.
+
+use serde::{Deserialize, Serialize};
+
+// `IfcEntity::BuildingElement` is intentionally large (~608 B): it
+// carries every per-element property slot (material indices, layer /
+// profile set indices, extrusion, solid shape, representation map,
+// property set, host element, location, rotation). Boxing it would
+// spill one heap allocation per element — usually tens to hundreds
+// of thousands in a real Revit project — for zero semantic win,
+// since IfcModel owns these for the STEP writer's lifetime.
+// Project / TypeObject are rare; BuildingElement dominates the cache
+// footprint regardless of whether the variants are same-sized.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+#[non_exhaustive]
+pub enum IfcEntity {
+    Project {
+        name: Option<String>,
+        description: Option<String>,
+        long_name: Option<String>,
+    },
+    BuildingElementType {
+        ifc_type: String,
+        name: String,
+        description: Option<String>,
+    },
+    BuildingElement {
+        ifc_type: String,
+        name: String,
+        type_guid: Option<String>,
+        /// IFC4 `PredefinedType` enum token for this element, without
+        /// the STEP dots (`"COLUMN"`, `"FLOOR"`, `"STANDARD"`). Comes
+        /// from [`super::category_map::Mapping::predefined_type`] —
+        /// the Revit class decides it, so two elements that share an
+        /// entity type can still differ (`IfcMember` is `BRACE` for
+        /// `Brace` and `PURLIN` for `Purlin`).
+        ///
+        /// `None` writes `$` into the slot. The slot itself is always
+        /// written when the entity declares the attribute: an IFC4
+        /// instance must carry every attribute its type declares, so
+        /// omitting an unknown optional makes the record
+        /// non-conformant rather than merely incomplete.
+        #[serde(default)]
+        predefined_type: Option<String>,
+        /// Index into `IfcModel.building_storeys` — which storey
+        /// contains this element. `None` means the writer should
+        /// default it to the first storey (common when the element's
+        /// `level_id` wasn't resolved yet).
+        #[serde(default)]
+        storey_index: Option<usize>,
+        /// Index into `IfcModel.materials` — which material this
+        /// element associates with. `None` means the element has no
+        /// material, so no IfcRelAssociatesMaterial gets emitted for
+        /// it (IFC4 treats material as optional for every concrete
+        /// type).
+        #[serde(default)]
+        material_index: Option<usize>,
+        /// Property-set name + list of (name, value) pairs to emit
+        /// as IfcPropertySet → IfcPropertySingleValue → element via
+        /// IfcRelDefinesByProperties. Empty = no property set. The
+        /// property-set name should follow Revit / IFC convention:
+        /// usually "Pset_RevitType_{ClassName}" to match what the
+        /// Autodesk exporter produces.
+        #[serde(default)]
+        property_set: Option<PropertySet>,
+        /// Element origin in feet, expressed in the project's
+        /// coordinate system. When `Some`, the writer emits a
+        /// unique IFCCARTESIANPOINT + IFCAXIS2PLACEMENT3D for this
+        /// element (ft → m conversion at emit time). When `None`,
+        /// the element uses the shared identity placement — fine
+        /// until geometry lands and positions start mattering.
+        #[serde(default)]
+        location_feet: Option<[f64; 3]>,
+        /// Element rotation about the Z (up) axis, in radians. Only
+        /// consulted when `location_feet` is `Some` — the placement
+        /// with a non-default X-axis direction needs a unique
+        /// IFCDIRECTION.
+        #[serde(default)]
+        rotation_radians: Option<f64>,
+        /// Optional rectangular extrusion geometry. When `Some`, the
+        /// writer emits the IfcExtrudedAreaSolid chain and wires the
+        /// element's Representation slot to it. When `None`, the
+        /// element stays geometry-free (Representation = $).
+        #[serde(default)]
+        extrusion: Option<Extrusion>,
+        /// Index into `IfcModel.entities` naming a host BuildingElement
+        /// (typically the wall that contains this door/window). When
+        /// set, the writer emits an IfcOpeningElement (same shape as
+        /// this element's extrusion) + IfcRelVoidsElement (host →
+        /// opening) + IfcRelFillsElement (opening → this element).
+        /// The host must already be in `entities` before this element
+        /// and must itself be a BuildingElement with an extrusion
+        /// (otherwise the void subtracts from nothing).
+        #[serde(default)]
+        host_element_index: Option<usize>,
+        /// Index into `IfcModel.material_layer_sets` — the layered
+        /// assembly (gypsum / insulation / sheathing / …) that
+        /// makes up this element. Used for walls, slabs,
+        /// roofs, and ceilings that have a real multi-layer
+        /// composition. When set, the writer emits
+        /// `IfcMaterialLayerSet` + `IfcMaterialLayerSetUsage` + an
+        /// `IfcRelAssociatesMaterial` pointing at the layer-set
+        /// usage — *instead of* the single-material path driven by
+        /// `material_index`. When both are set, the layer set
+        /// wins (single-material falls back to the first layer).
+        #[serde(default)]
+        material_layer_set_index: Option<usize>,
+        /// Index into `IfcModel.material_profile_sets` — the
+        /// profile-based material assignment for structural framing
+        /// (columns / beams) with named cross-sections.
+        /// When set, the writer emits `IfcMaterialProfileSet` +
+        /// `IfcMaterialProfileSetUsage` instead of the single-material
+        /// or layer-set paths. Precedence order for material
+        /// association: profile_set > layer_set > single material.
+        #[serde(default)]
+        material_profile_set_index: Option<usize>,
+        /// Optional richer solid geometry.
+        /// When `Some`, the writer emits the corresponding
+        /// `IfcRevolvedAreaSolid`, `IfcBooleanResult`, or
+        /// `IfcFacetedBrep` chain into the element's Representation
+        /// slot **instead of** the `IfcExtrudedAreaSolid` chain
+        /// driven by `extrusion`. When both `solid_shape` and
+        /// `extrusion` are set, `solid_shape` wins; when both are
+        /// `None`, the element stays geometry-free
+        /// (Representation = $).
+        #[serde(default)]
+        solid_shape: Option<SolidShape>,
+        /// Index into `IfcModel.representation_maps` — when set,
+        /// the element shares a common shape representation with
+        /// other instances pointing at the same map. The
+        /// writer emits an `IfcMappedItem` + `IfcShapeRepresentation`
+        /// with representation-type `'MappedRepresentation'` in
+        /// place of the per-instance extrusion / solid chain.
+        ///
+        /// Precedence (highest wins):
+        /// 1. `representation_map_index`   (mapped item)
+        /// 2. `solid_shape`                (solid)
+        /// 3. `extrusion`                  (extruded area)
+        /// 4. none                         (Representation = $)
+        ///
+        /// Typical Revit → IFC use: every Door or Window sharing
+        /// the same Symbol (type family) references a single
+        /// representation map. The writer emits the shape chain
+        /// once, instances emit a ~4-entity IfcMappedItem wrap.
+        #[serde(default)]
+        representation_map_index: Option<usize>,
+    },
+    TypeObject {
+        name: String,
+        shape_representations: Vec<String>,
+    },
+    /// An `IfcRelAggregates` between building elements: `whole` (a stair)
+    /// decomposes into `parts` (its runs, landings and stringers), as
+    /// in Revit's own export. Both are indices into
+    /// `IfcModel::entities`. A part is reached through its whole instead of
+    /// being contained in a storey itself.
+    Aggregate { whole: usize, parts: Vec<usize> },
+    /// A further property set of the building element at `element` (an
+    /// index into `IfcModel::entities`), beside its own `property_set`:
+    /// a standard set such as `Pset_StairCommon`.
+    ElementPropertySet { element: usize, set: PropertySet },
+    /// A join between two connectors: connector `a_index` of
+    /// the building element at `a` (ElementId `a_id`), a duct or pipe, is
+    /// connected to connector `b_index` of the element at `b` (ElementId
+    /// `b_id`). Both are indices into `IfcModel::entities`. The writer gives
+    /// each connector an `IfcDistributionPort` named after its element and
+    /// index, joins the two with an `IfcRelConnectsPorts`, and nests each in
+    /// its element with an `IfcRelNests`. The ports have no
+    /// flow direction: the file's lists do not carry one.
+    PortConnection {
+        a: usize,
+        a_id: u32,
+        a_index: u32,
+        b: usize,
+        b_id: u32,
+        b_index: u32,
+    },
+    /// Connector `index` of the distribution element at `element` (ElementId
+    /// `id`, an index into `IfcModel::entities`): the writer gives it
+    /// its `IfcDistributionPort`, tied to the element, where no join has.
+    /// Revit's export writes connectors 0 and 1 of every duct and pipe, and
+    /// each connector of a family instance's symbol, whether or not anything
+    /// is connected to them. `predefined_type` is the port's IFC4
+    /// `PredefinedType` (`PIPE`, `DUCT`, `CABLE`), from its connector's
+    /// domain or its duct or pipe, and `flow_direction` its
+    /// `FlowDirection` where the domain gives one.
+    ///
+    /// `location_feet` is the connector's point, model feet, where it is
+    /// read: a pipe's end whose connector entry keys name this
+    /// connector. The writer places the port there, in its element's
+    /// frame; a port without one has no placement. `direction` is the unit
+    /// vector, model axes, its placement's Z axis points along: out of the
+    /// pipe at that end, or into it for a port whose flow is `SINK`, as
+    /// Revit's export writes them.
+    Port {
+        element: usize,
+        id: u32,
+        index: u32,
+        predefined_type: Option<String>,
+        flow_direction: Option<String>,
+        #[serde(default)]
+        location_feet: Option<[f64; 3]>,
+        #[serde(default)]
+        direction: Option<[f64; 3]>,
+    },
+    /// An MEP system: the Revit system element `id`, named
+    /// `name`, grouping the building elements at `members` (indices into
+    /// `IfcModel::entities`). The writer emits an `IfcSystem` with an
+    /// `IfcRelAssignsToGroup` of its members and an `IfcRelServicesBuildings`
+    /// to the building, as Revit's export does.
+    System {
+        id: u32,
+        name: Option<String>,
+        members: Vec<usize>,
+    },
+    /// `name`, grouping the spaces at `members` (indices into
+    /// `IfcModel::entities`). The writer emits an `IfcZone` and an
+    /// `IfcRelAssignsToGroup` from its spaces.
+    Zone {
+        id: u32,
+        name: Option<String>,
+        members: Vec<usize>,
+    },
+    /// `option_id`, named `option_name`, of set `set_id` named `set_name`,
+    /// the set's primary when `primary`, holding the building elements at
+    /// `members` (indices into `IfcModel::entities`). The writer emits an
+    /// `IfcGroup` per option and per set, an `IfcRelAssignsToGroup` from the
+    /// members to the option and from the options to their set, and a
+    /// `Design Option` property set on the option group.
+    DesignOption {
+        set_id: u32,
+        set_name: String,
+        option_id: u32,
+        option_name: Option<String>,
+        primary: bool,
+        members: Vec<usize>,
+    },
+    /// An opening nothing fills: a hole in a floor's sketch,
+    /// voiding the building element at `host` (an index into
+    /// `IfcModel::entities`), as Revit's export writes it. The writer places
+    /// it in its host's frame and extrudes `outline_feet` (feet, in that
+    /// frame, counter-clockwise) up `depth_feet`; it lives through its
+    /// `IfcRelVoidsElement`, not in a storey.
+    VoidOpening {
+        host: usize,
+        tag: String,
+        name: String,
+        outline_feet: Vec<(f64, f64)>,
+        depth_feet: f64,
+    },
+    /// The opening a wall's edited elevation profile cuts: voiding the
+    /// wall at `host` (an index into `IfcModel::entities`), placed in its
+    /// frame. `outline_feet` lies in the wall's vertical plane, along the
+    /// wall's axis and up from the placement's origin, counter-clockwise; the
+    /// axis is turned `axis_turn_radians` from the placement's X, the plane
+    /// lies `plane_offset_feet` to the axis's left of the origin, and the
+    /// outline is extruded `thickness_feet` through the wall, centred on the
+    /// plane, as Revit's export writes it.
+    WallProfileOpening {
+        host: usize,
+        tag: String,
+        name: String,
+        outline_feet: Vec<(f64, f64)>,
+        axis_turn_radians: f64,
+        plane_offset_feet: f64,
+        thickness_feet: f64,
+    },
+    /// The building elements a room's space contains: `elements`
+    /// (indices into `IfcModel::entities`) are contained in the `IfcSpace` at
+    /// `space` instead of their storey, as Revit's export contains a room's
+    /// furniture, fixtures and equipment. They keep their `storey_index`.
+    SpaceContainment { space: usize, elements: Vec<usize> },
+    /// The opening a face-hosted door's or window's symbol cuts in the
+    /// element whose face hosts it, voiding the building
+    /// element at `host` as Revit's export writes it: the `number`th of the
+    /// host's openings, 1 first, named `<host name>:<number>`, tagged with
+    /// the host's ElementId, its `outline_feet` in the host's frame extruded
+    /// up `depth_feet`. Its GlobalId is Revit's: the hash Revit's IFC exporter's
+    /// `OpeningUtil` makes of `IfcOpeningElement:<number>:<host GlobalId>`.
+    HostedCutOpening {
+        host: usize,
+        number: u32,
+        tag: String,
+        name: String,
+        outline_feet: Vec<(f64, f64)>,
+        depth_feet: f64,
+    },
+    /// The opening an element cuts in the wall at `host` (an index into
+    /// `IfcModel::entities`) besides the one a door or window fills: a
+    /// rectangular wall opening's, a fire hose cabinet's, a door's in a
+    /// second wall and a curtain wall's, voiding the wall with no filling
+    /// element, as Revit's export writes it. `tag` is the
+    /// cutting element's ElementId and `name` the wall's. Placed as a
+    /// [`IfcEntity::WallProfileOpening`] is: `outline_feet` in the wall's
+    /// vertical plane, extruded `thickness_feet` centred on the plane
+    /// `plane_offset_feet` to the axis's left of the placement's origin. It
+    /// is the `number`th opening of its wall, and `cutter_global_id` is the
+    /// GlobalId of the cutting element, which Revit hashes with that number
+    /// and the wall's GlobalId into the opening's own (Revit's IFC exporter's
+    /// `OpeningUtil`). Its `Pset_OpeningElementCommon.Reference` is the type
+    /// name of the entity at `reference_from`; `recess` says it does not pass
+    /// through the wall; `quantities` says its `Qto_OpeningElementBaseQuantities`
+    /// are written.
+    WallCutOpening {
+        host: usize,
+        number: u32,
+        tag: String,
+        name: String,
+        cutter_global_id: Option<String>,
+        reference_from: usize,
+        outline_feet: Vec<(f64, f64)>,
+        axis_turn_radians: f64,
+        plane_offset_feet: f64,
+        thickness_feet: f64,
+        recess: bool,
+        quantities: bool,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Classification {
+    pub source: ClassificationSource,
+    pub edition: Option<String>,
+    pub items: Vec<ClassificationItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ClassificationSource {
+    OmniClass,
+    Uniformat,
+    Other(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassificationItem {
+    pub code: String,
+    pub name: Option<String>,
+}
+
+/// Swept-area-solid geometry descriptor for a BuildingElement. The
+/// writer turns this into an `IfcProfileDef` subclass +
+/// `IfcExtrudedAreaSolid` + `IfcShapeRepresentation` +
+/// `IfcProductDefinitionShape` chain and points the element's
+/// Representation slot at the chain.
+///
+/// All values in feet; the writer converts to metres at emit
+/// boundary (ft × 0.3048). The profile is centred on the element
+/// origin and the extrusion runs +Z.
+///
+/// Backward-compat: the primary shape is still a rectangle defined
+/// by [`width_feet`] × [`depth_feet`]. Callers that need a richer
+/// cross-section (circle, I-beam, T, L, U, hollow rectangle, hollow
+/// circle, arbitrary closed polyline) set [`profile_override`] to a
+/// [`ProfileDef`] — when `Some`, the writer emits the matching
+/// `IfcProfileDef` subclass and ignores `width_feet` /
+/// `depth_feet`. `height_feet` is always honoured as the extrusion
+/// depth.
+///
+/// [`width_feet`]: Extrusion::width_feet
+/// [`depth_feet`]: Extrusion::depth_feet
+/// [`profile_override`]: Extrusion::profile_override
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Extrusion {
+    /// Profile width (local X, in feet) when `profile_override` is
+    /// `None`. For a wall = length along its location line. For a
+    /// slab = plan dimension in X. Ignored when `profile_override`
+    /// is `Some`.
+    pub width_feet: f64,
+    /// Profile depth (local Y, in feet) when `profile_override` is
+    /// `None`. For a wall = thickness. For a slab = plan dimension
+    /// in Y. Ignored when `profile_override` is `Some`.
+    pub depth_feet: f64,
+    /// Extrusion depth (local Z, in feet). For a wall = height;
+    /// for a slab = slab thickness; for a column = height; for a
+    /// beam = length along its structural axis.
+    pub height_feet: f64,
+    /// Optional non-rectangular profile. When `Some`, the
+    /// writer emits the corresponding `IfcProfileDef` subclass
+    /// (`IFCCIRCLEPROFILEDEF`, `IFCIShapeProfileDef`,
+    /// `IFCTShapeProfileDef`, `IFCLShapeProfileDef`,
+    /// `IFCUShapeProfileDef`, `IFCRectangleHollowProfileDef`,
+    /// `IFCCircleHollowProfileDef`, or `IFCArbitraryClosedProfileDef`)
+    /// instead of the default `IFCRectangleProfileDef`. Use
+    /// `Extrusion::circle`, `Extrusion::i_shape`, etc. constructors
+    /// for ergonomics.
+    #[serde(default)]
+    pub profile_override: Option<ProfileDef>,
+}
+
+impl Extrusion {
+    /// Rectangular profile — the default / backward-compatible
+    /// shape. Equivalent to leaving `profile_override` at `None`.
+    pub fn rectangle(width_feet: f64, depth_feet: f64, height_feet: f64) -> Self {
+        Self {
+            width_feet,
+            depth_feet,
+            height_feet,
+            profile_override: None,
+        }
+    }
+
+    /// Solid circular profile (e.g. round column, round pier).
+    /// Emits `IFCCIRCLEPROFILEDEF`.
+    pub fn circle(radius_feet: f64, height_feet: f64) -> Self {
+        let diameter = radius_feet * 2.0;
+        Self {
+            width_feet: diameter,
+            depth_feet: diameter,
+            height_feet,
+            profile_override: Some(ProfileDef::Circle { radius_feet }),
+        }
+    }
+
+    /// I-shape profile (wide-flange, W/S/HP shapes in AISC). Emits
+    /// `IFCIShapeProfileDef`. `overall_width_feet` is the flange
+    /// width; `overall_depth_feet` is the beam depth between outer
+    /// flange faces.
+    pub fn i_shape(
+        overall_width_feet: f64,
+        overall_depth_feet: f64,
+        web_thickness_feet: f64,
+        flange_thickness_feet: f64,
+        height_feet: f64,
+    ) -> Self {
+        Self {
+            width_feet: overall_width_feet,
+            depth_feet: overall_depth_feet,
+            height_feet,
+            profile_override: Some(ProfileDef::IShape {
+                overall_width_feet,
+                overall_depth_feet,
+                web_thickness_feet,
+                flange_thickness_feet,
+            }),
+        }
+    }
+
+    /// Arbitrary closed polyline profile (e.g. curtain-mullion
+    /// cross-section, custom sketched shape). Emits
+    /// `IFCArbitraryClosedProfileDef` + an `IFCPOLYLINE` as the
+    /// outer curve. The writer auto-closes the polyline if the
+    /// last point doesn't equal the first.
+    pub fn arbitrary_closed(points: Vec<(f64, f64)>, height_feet: f64) -> Self {
+        let (min_x, max_x, min_y, max_y) = points.iter().fold(
+            (
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+            ),
+            |(mn_x, mx_x, mn_y, mx_y), (x, y)| {
+                (mn_x.min(*x), mx_x.max(*x), mn_y.min(*y), mx_y.max(*y))
+            },
+        );
+        let width = (max_x - min_x).max(0.0);
+        let depth = (max_y - min_y).max(0.0);
+        Self {
+            width_feet: width,
+            depth_feet: depth,
+            height_feet,
+            profile_override: Some(ProfileDef::ArbitraryClosed { points }),
+        }
+    }
+}
+
+/// Boolean operation between two solids.
+/// Maps to the IFC4 `IfcBooleanOperator` enum values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum IfcBooleanOp {
+    /// `.UNION.` — operand_a ∪ operand_b.
+    Union,
+    /// `.DIFFERENCE.` — operand_a − operand_b (the more common
+    /// Revit case: wall minus opening void).
+    Difference,
+    /// `.INTERSECTION.` — operand_a ∩ operand_b.
+    Intersection,
+}
+
+impl IfcBooleanOp {
+    /// STEP-encoded keyword for the enum value (includes the
+    /// surrounding dots, e.g. `".DIFFERENCE."`).
+    pub fn as_step_keyword(self) -> &'static str {
+        match self {
+            IfcBooleanOp::Union => ".UNION.",
+            IfcBooleanOp::Difference => ".DIFFERENCE.",
+            IfcBooleanOp::Intersection => ".INTERSECTION.",
+        }
+    }
+}
+
+/// One triangular face of an `IfcFacetedBrep`. The three
+/// `u32` values are indices into the `vertices` array on the
+/// enclosing shell (range-checked at emit time; out-of-range
+/// indices cause a panic in debug, are silently clamped to 0 in
+/// release — invalid mesh topology is a caller bug).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrepTriangle(pub u32, pub u32, pub u32);
+
+/// A rich solid geometry for a `BuildingElement`. Covers three IFC4
+/// solid-body paths that the
+/// rectangular [`Extrusion`] can't express:
+///
+/// | Variant | IFC4 entity chain emitted |
+/// |---|---|
+/// | `RevolvedArea` | `IfcProfileDef subclass` + `IfcRevolvedAreaSolid` |
+/// | `BooleanResult` | `IfcBooleanResult(op, a, b)` with recursive operand emission |
+/// | `FacetedBrep` | `IfcCartesianPoint` × N + `IfcPolyLoop` × F + `IfcFaceBound` × F + `IfcFace` × F + `IfcClosedShell` + `IfcFacetedBrep` |
+///
+/// The `RevolvedArea` variant is the right fit for axi-symmetric
+/// elements — lathe-turned columns, bell curves, domes. The
+/// `BooleanResult` variant is for elements whose body is a
+/// *constructive-solid-geometry* result of simpler shapes
+/// (typical Revit: wall minus opening void, when modelled as a
+/// body solid rather than via `IfcRelVoidsElement`). The
+/// `FacetedBrep` variant is the catch-all fallback for any
+/// arbitrary mesh Revit produces (free-form roofs, imported
+/// terrain, scanned point clouds meshed into polygons).
+///
+/// See the writer in `step_writer.rs::emit_solid_shape` for the
+/// exact entity layout and the `emit_solid_shape_*` helper
+/// methods.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum SolidShape {
+    /// Profile rotated about an axis through a specified angle.
+    /// Emits `IfcRevolvedAreaSolid`. The profile is the
+    /// same `ProfileDef` vocabulary used by
+    /// [`Extrusion::profile_override`], so a pear-shaped turned
+    /// pier column is `RevolvedArea { profile: ArbitraryClosed
+    /// { points: <half-silhouette> }, axis_..., angle_radians:
+    /// 2π }`.
+    RevolvedArea {
+        /// 2D cross-section to rotate.
+        profile: ProfileDef,
+        /// Axis origin in element-local coordinates (feet).
+        axis_origin_feet: [f64; 3],
+        /// Axis direction unit vector. Writer normalises at emit.
+        axis_direction: [f64; 3],
+        /// Sweep angle in radians. 2π = full rotation (dome /
+        /// turned column / sphere-of-revolution).
+        angle_radians: f64,
+    },
+    /// CSG combination of two nested solids. Emits
+    /// `IfcBooleanResult(op, a, b)` with operand_a / operand_b
+    /// recursively emitted by the same dispatcher. Use `Difference`
+    /// for Revit "subtract void from body" patterns when the void
+    /// can't be expressed as an `IfcOpeningElement` link (e.g. a
+    /// coffered ceiling, a pier with a carved niche).
+    BooleanResult {
+        op: IfcBooleanOp,
+        operand_a: Box<SolidShape>,
+        operand_b: Box<SolidShape>,
+    },
+    /// Closed polyhedral surface as a faceted brep.
+    /// Emits `IFCFACETEDBREP` with one `IfcClosedShell` wrapping
+    /// `IfcFace` / `IfcFaceBound` / `IfcPolyLoop` entities and
+    /// one `IfcCartesianPoint` per unique vertex. Used for any
+    /// Revit element whose body is a mesh rather than a swept
+    /// profile — imported terrain, free-form roofs, conceptual
+    /// massing brep output, DirectShape IfcOpenShell triangulation.
+    FacetedBrep {
+        /// Vertex coordinates in element-local space (feet). The
+        /// writer converts to metres at emit time.
+        vertices_feet: Vec<[f64; 3]>,
+        /// Triangular faces. Each triple indexes into
+        /// `vertices_feet`. Non-triangular faces should be
+        /// pre-tessellated by the caller — the writer emits a
+        /// 3-vertex `IfcPolyLoop` per triangle.
+        triangles: Vec<BrepTriangle>,
+    },
+    /// A triangle mesh written as an IFC4 `IfcTriangulatedFaceSet`: one
+    /// point list and one index list, a few entities per element where a
+    /// [`SolidShape::FacetedBrep`] writes several per triangle. Used for the
+    /// meshes Revit saves for display, which need not be closed.
+    TriangulatedFaceSet {
+        /// Vertex coordinates in element-local space (feet).
+        vertices_feet: Vec<[f64; 3]>,
+        /// Triangles indexing `vertices_feet`.
+        triangles: Vec<BrepTriangle>,
+        /// per triangle, the index in the model's materials of
+        /// the material Revit draws that face in (`usize::MAX`: the
+        /// element's own). Empty, or one per triangle.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        face_materials: Vec<usize>,
+    },
+    /// Simple extruded-area solid via the [`Extrusion`] struct.
+    /// Emitted when a caller wants to keep `extrusion` set to
+    /// `None` but route through `SolidShape` for uniform geometry
+    /// handling. Most callers should leave this variant unused
+    /// and just set `extrusion` directly — it exists for symmetry
+    /// with the other CSG operands.
+    ExtrudedArea(Extrusion),
+    /// Profile swept along an arbitrary polyline directrix with a
+    /// fixed up-reference direction. Emits IFC4
+    /// `IfcFixedReferenceSweptAreaSolid`. Use for cable trays,
+    /// pipes, duct runs, curtain-wall mullions along a curve,
+    /// sloped handrails — anything where the profile stays
+    /// orthogonal to the directrix at every sample.
+    ///
+    /// The directrix is a polyline through the supplied
+    /// `directrix_points` (in feet, element-local coordinates).
+    /// `fixed_reference` is a unit vector that together with the
+    /// directrix tangent defines the profile orientation — it's
+    /// the "up" direction the swept profile preserves as the
+    /// directrix changes heading.
+    ///
+    /// IFC4 reserves start / end parameters for trimming the
+    /// directrix; we always sweep the full polyline (0 → 1
+    /// normalised) which is the correct default for Revit data.
+    SweptPath {
+        /// 2D cross-section (see [`ProfileDef`]).
+        profile: ProfileDef,
+        /// Polyline vertices of the directrix path, in feet,
+        /// element-local coordinates.
+        directrix_points_feet: Vec<[f64; 3]>,
+        /// Fixed-reference direction (usually world +Z). Writer
+        /// normalises to a unit vector at emit.
+        fixed_reference: [f64; 3],
+    },
+    /// Profile extruded along the Z axis of its own placement. Emits
+    /// `IfcExtrudedAreaSolid` whose `Position` is an
+    /// `IfcAxis2Placement3D` with this origin, axis and reference
+    /// direction, so the profile can stand in any plane: a stair run's
+    /// side view extruded across the run. The profile's X axis is
+    /// `ref_direction` projected onto the plane normal to `axis`, and its
+    /// Y axis is `axis` crossed with X, as IFC builds the placement.
+    PlacedExtrusion {
+        /// 2D cross-section (see [`ProfileDef`]), in the placement's XY
+        /// plane.
+        profile: ProfileDef,
+        /// Placement origin, feet, element-local.
+        origin_feet: [f64; 3],
+        /// Placement Z axis: the extrusion direction.
+        axis: [f64; 3],
+        /// Placement reference direction: the profile's X axis.
+        ref_direction: [f64; 3],
+        /// Extrusion depth along `axis`, feet.
+        depth_feet: f64,
+    },
+    /// Several solids written as the items of one body representation, each
+    /// placed in the element's frame: a spiral run's treads, one extrusion
+    /// each at its own height.
+    Compound(Vec<SolidShape>),
+}
+
+/// Named cross-sections for an extrusion. Feeds one of
+/// eight IFC4 `IfcProfileDef` subclasses. All values in feet
+/// (writer converts to metres at emit time). Profiles are centred
+/// on the element origin in the local XY frame; positive X is the
+/// profile width direction, positive Y is the profile depth
+/// direction.
+///
+/// Profile selection cheat-sheet:
+///
+/// | Revit class | Typical profile |
+/// |---|---|
+/// | Structural column (round) | `Circle` |
+/// | Structural column (wide-flange) | `IShape` |
+/// | Structural column (HSS square) | `RectangleHollow` |
+/// | Structural column (round HSS) | `CircleHollow` |
+/// | Beam (wide-flange W-shape) | `IShape` |
+/// | Beam (channel) | `UShape` |
+/// | Beam (angle) | `LShape` |
+/// | Beam (tee) | `TShape` |
+/// | Curtain mullion | `ArbitraryClosed` |
+/// | Wall / slab / roof / ceiling | `Rectangle` (default, no override) |
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum ProfileDef {
+    /// `IFCRectangleProfileDef` — the default if `profile_override`
+    /// is `None`. Kept as an explicit variant so callers can round-
+    /// trip through `profile_override` without losing shape info.
+    Rectangle { width_feet: f64, depth_feet: f64 },
+    /// `IFCCIRCLEPROFILEDEF` — solid circular cross-section.
+    Circle { radius_feet: f64 },
+    /// `IFCIShapeProfileDef` — wide-flange steel shape.
+    ///
+    /// - `overall_width_feet` is the flange width (local X span).
+    /// - `overall_depth_feet` is the distance between outer flange
+    ///   faces (local Y span).
+    /// - `web_thickness_feet` is the web's thickness.
+    /// - `flange_thickness_feet` is the (constant) flange thickness.
+    ///
+    /// All four values map directly onto the IFC4 attribute names
+    /// `OverallWidth`, `OverallDepth`, `WebThickness`,
+    /// `FlangeThickness`.
+    IShape {
+        overall_width_feet: f64,
+        overall_depth_feet: f64,
+        web_thickness_feet: f64,
+        flange_thickness_feet: f64,
+    },
+    /// `IFCTShapeProfileDef` — structural tee.
+    TShape {
+        overall_depth_feet: f64,
+        flange_width_feet: f64,
+        web_thickness_feet: f64,
+        flange_thickness_feet: f64,
+    },
+    /// `IFCLShapeProfileDef` — structural angle. `overall_depth` is
+    /// the longer leg; `overall_width` the shorter leg (they can be
+    /// equal for equal-leg angles).
+    LShape {
+        overall_depth_feet: f64,
+        overall_width_feet: f64,
+        thickness_feet: f64,
+    },
+    /// `IFCUShapeProfileDef` — structural channel (C-shape).
+    UShape {
+        overall_depth_feet: f64,
+        flange_width_feet: f64,
+        web_thickness_feet: f64,
+        flange_thickness_feet: f64,
+    },
+    /// `IFCRectangleHollowProfileDef` — rectangular HSS tube.
+    /// `wall_thickness` is the uniform wall thickness.
+    RectangleHollow {
+        overall_width_feet: f64,
+        overall_depth_feet: f64,
+        wall_thickness_feet: f64,
+    },
+    /// `IFCCircleHollowProfileDef` — round HSS pipe.
+    CircleHollow {
+        radius_feet: f64,
+        wall_thickness_feet: f64,
+    },
+    /// `IFCArbitraryClosedProfileDef` with an `IFCPOLYLINE` outer
+    /// curve. Points are in local 2D coordinates (feet); writer
+    /// auto-closes the polyline if the last point isn't equal to
+    /// the first. No self-intersection check is performed — callers
+    /// supplying degenerate polygons will emit degenerate IFC.
+    ArbitraryClosed { points: Vec<(f64, f64)> },
+    /// `IFCArbitraryProfileDefWithVoids` — an `ArbitraryClosed`
+    /// outer curve with one `IFCPOLYLINE` per hole. Points are in
+    /// local 2D coordinates (feet); the writer auto-closes every
+    /// polyline. Use it when the recovered boundary genuinely has
+    /// voids: emitting only the outer loop would fill them, which
+    /// states more solid than the source carries. IFC4 expects the
+    /// outer curve counter-clockwise and each inner curve
+    /// clockwise; the writer emits the point order it is given.
+    ArbitraryWithVoids {
+        points: Vec<(f64, f64)>,
+        voids: Vec<Vec<(f64, f64)>>,
+    },
+    /// `IFCArbitraryClosedProfileDef` whose outer curve is an
+    /// `IFCIndexedPolyCurve` over `points` (local 2D feet): straight lines
+    /// and three-point circular arcs, which close the curve in turn, as
+    /// Revit's export writes a spiral stair's treads.
+    IndexedPolyCurve {
+        points: Vec<(f64, f64)>,
+        segments: Vec<CurveSegment>,
+    },
+    /// `IFCArbitraryProfileDefWithVoids` whose outer and inner curves are
+    /// `IFCIndexedPolyCurve`s of lines and three-point arcs, as Revit's
+    /// export writes a hollow structural section with rounded corners.
+    /// IFC4 expects the outer curve counter-clockwise and each inner curve
+    /// clockwise; the writer emits the point order it is given.
+    IndexedPolyCurveWithVoids {
+        outer: IndexedCurve,
+        voids: Vec<IndexedCurve>,
+    },
+}
+
+/// One closed `IFCIndexedPolyCurve`: its points (local 2D feet) and the
+/// lines and arcs that join them in turn
+/// ([`ProfileDef::IndexedPolyCurveWithVoids`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct IndexedCurve {
+    pub points: Vec<(f64, f64)>,
+    pub segments: Vec<CurveSegment>,
+}
+
+/// One segment of a [`ProfileDef::IndexedPolyCurve`], by 0-based indices
+/// into its points.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CurveSegment {
+    /// `IFCLINEINDEX`: a straight line from the first point to the second.
+    Line([usize; 2]),
+    /// `IFCARCINDEX`: a circular arc from the first point through the
+    /// second to the third.
+    Arc([usize; 3]),
+}
+
+/// One layer of a compound building-element material assembly.
+/// `thickness_feet` is the physical thickness (writer
+/// converts to metres at emit time). `material_index` points into
+/// `IfcModel.materials` — the material filling this layer, or `None` for a
+/// layer whose material is not known (IFC4 makes it optional).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialLayer {
+    pub material_index: Option<usize>,
+    pub thickness_feet: f64,
+    /// Optional per-layer name. When `Some`, emitted as the
+    /// `IfcMaterialLayer.Name` attribute. Revit's convention is
+    /// layer names like "Finish - Face Layer", "Structure", "Air
+    /// Gap", "Insulation" — useful for downstream BIM tools that
+    /// surface them in schedules.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// An ordered set of [`MaterialLayer`]s representing the compound
+/// composition of a wall / floor / roof / ceiling. Maps
+/// to IFC4 `IfcMaterialLayerSet` + (via
+/// `IfcEntity::BuildingElement::material_layer_set_index`)
+/// `IfcMaterialLayerSetUsage`.
+///
+/// `name` is the set-level label ("Generic - 6\" Wall", "Ext - CMU").
+/// Revit's exterior wall types often carry 3-5 layers; interior
+/// partitions are usually 2-3. The ordering matters: IFC4
+/// interprets index `0` as the outermost layer (exterior or top side)
+/// with subsequent layers stacked inward.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialLayerSet {
+    pub name: String,
+    pub layers: Vec<MaterialLayer>,
+    /// Optional description; emitted as `IfcMaterialLayerSet.Description`.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Which axis of an element's placement a material layer set runs along
+/// (IFC4 `IfcLayerSetDirectionEnum`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum LayerSetDirection {
+    Axis1,
+    Axis2,
+    Axis3,
+}
+
+/// The opening a door or window cuts in its host wall, in the
+/// filling element's own frame: its body's rectangle with the axis across
+/// the wall set to the wall's thickness band. The writer emits it in place
+/// of a copy of the filling element's body, which reaches past the wall by
+/// the door's swing.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OpeningCut {
+    /// Rectangle size along the element's local X and Y, feet.
+    pub x_dim_feet: f64,
+    pub y_dim_feet: f64,
+    /// Rectangle centre in the element's local frame, feet.
+    pub centre_feet: [f64; 2],
+    /// Where the opening starts above the element's placement and how high
+    /// it is, feet. `None` takes the element body's height.
+    #[serde(default)]
+    pub z_range_feet: Option<[f64; 2]>,
+}
+
+/// A door's or window's `OverallWidth` and `OverallHeight`, feet.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FillerSize {
+    pub width_feet: f64,
+    pub height_feet: f64,
+    /// Whether its symbol cuts an outline in its host: Revit's export
+    /// draws its opening as an extrusion of it and gives that opening a
+    /// `Depth`. A size read any other way leaves this unset.
+    #[serde(default)]
+    pub cut_loop: bool,
+}
+
+/// A family instance's materials: IFC4 `IfcMaterialConstituentSet`,
+/// unnamed, with one `IfcMaterialConstituent` per material, named after it
+/// and in the category "Materials", as Revit's export writes them. A wall
+/// whose body is not a layer set has one per layer instead.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MaterialConstituentSet {
+    /// Indices into `IfcModel.materials`, one per constituent, in the order
+    /// written: a family instance's in name order, a wall's layers exterior
+    /// first.
+    pub material_indices: Vec<usize>,
+    /// Each constituent's name, where it is not its material's;
+    /// empty names every constituent after its material.
+    #[serde(default)]
+    pub names: Vec<String>,
+    /// Indices into `IfcModel.entities` of the elements it is associated with.
+    pub elements: Vec<usize>,
+}
+
+/// How a [`MaterialLayerSet`] lies on one element (IFC4
+/// `IfcMaterialLayerSetUsage`): the axis its layers stack along, whether
+/// they stack towards its positive or negative end, and where the first
+/// layer starts on it, feet from the placement.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct MaterialLayerSetUsage {
+    pub direction: LayerSetDirection,
+    pub positive: bool,
+    pub offset_feet: f64,
+}
+
+/// One material assigned to a structural profile in a
+/// [`MaterialProfileSet`]. `material_index` references
+/// `IfcModel.materials`; `profile_name` identifies the profile
+/// (I-beam, HSS tube, circular column) defined elsewhere in the
+/// model via `IfcProfileDef`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialProfile {
+    pub material_index: usize,
+    /// Profile identifier — emitted as `IfcMaterialProfile.Name`
+    /// and matched against the corresponding `IfcProfileDef`.
+    /// Revit convention: profile family name like
+    /// "W12x26" / "HSS4x4x1/4" / "ROUND-6in".
+    pub profile_name: String,
+    /// Optional per-profile descriptive text.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The cross-section itself, written as the material profile's
+    /// `IfcProfileDef`. `None` writes a 1 × 1 m rectangle stand-in.
+    #[serde(default)]
+    pub profile: Option<ProfileDef>,
+}
+
+/// An ordered set of [`MaterialProfile`]s for a structural
+/// framing element. Analog of [`MaterialLayerSet`] but
+/// for columns and beams rather than compound walls. Most
+/// structural elements have exactly one profile; composite
+/// sections (steel + concrete encasement) use multiple.
+///
+/// Maps to IFC4 `IfcMaterialProfileSet` + (via
+/// `IfcEntity::BuildingElement::material_profile_set_index`)
+/// `IfcMaterialProfileSetUsage`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialProfileSet {
+    pub name: String,
+    pub profiles: Vec<MaterialProfile>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Shared geometry for a family / type / symbol.
+/// Any number of `BuildingElement` instances can reference the
+/// same `RepresentationMap` via `representation_map_index` —
+/// the writer emits the underlying shape chain once and each
+/// instance gets a ~4-entity `IfcMappedItem` wrap instead of a
+/// full re-emission. Mirrors Revit's Symbol → FamilyInstance
+/// relationship (a single door `Symbol` used by 20 `Door`
+/// instances = 1 shape emission + 20 mapped items, not 20
+/// shape chains).
+///
+/// Maps to IFC4 `IfcRepresentationMap` + (through the writer's
+/// dispatch) `IfcMappedItem` per referencing instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepresentationMap {
+    /// Human-readable name for the family / type. Emitted as
+    /// a comment-only field today (the IFC4
+    /// `IfcRepresentationMap` entity itself doesn't carry a
+    /// name slot — names live on the referencing type object
+    /// when one exists). Kept here so downstream tooling (e.g.
+    /// glTF export, schedule generation) can surface it.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The shared geometry. Any `SolidShape` variant is valid:
+    /// an extruded rectangle for simple doors, a revolved
+    /// profile for lathe-turned piers, an arbitrary faceted-brep
+    /// for imported free-form content. See [`SolidShape`] docs
+    /// for the variant vocabulary.
+    pub shape: SolidShape,
+    /// Mapping origin in local coordinates (feet). Usually
+    /// `[0.0, 0.0, 0.0]` — the identity origin. Non-zero origins
+    /// are emitted as the mapping-origin's `IfcAxis2Placement3D`.
+    #[serde(default)]
+    pub origin_feet: [f64; 3],
+    /// The 2D maps a type holds beside this Body map: Revit's
+    /// export gives a family type a `FootPrint` (its plan symbol, or a
+    /// plate's extrusion base) or an `Axis` (a beam's location line).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan: Vec<PlanShape>,
+}
+
+/// A 2D representation held by a type next to its Body map.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanShape {
+    /// `FootPrint` or `Axis`.
+    pub identifier: String,
+    /// Where Revit's export puts it: `Annotation` (a family's plan symbol,
+    /// in the `Plan` context), `FootPrint` (an extrusion base) or `Axis`.
+    pub context: String,
+    /// Each curve's points in the map's frame, feet: two or more points
+    /// joined by straight segments, or (when `arc`) three points on an arc.
+    pub curves: Vec<PlanPolyline>,
+}
+
+/// One curve of a [`PlanShape`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanPolyline {
+    pub points_feet: Vec<[f64; 3]>,
+    /// Start, a point on the arc and end.
+    #[serde(default)]
+    pub arc: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnitAssignment {
+    /// e.g. "autodesk.unit.unit:millimeters-1.0.1"
+    pub forge_identifier: String,
+    /// IFC base unit name, e.g. "MILLI" + "METRE"
+    pub ifc_mapping: Option<String>,
+}
+
+/// A parsed Forge (Autodesk) unit identifier.
+///
+/// Revit carries its project / family unit preferences as
+/// "Forge-style" identifier strings in the `PartAtom` XML and in
+/// serialized `UnitType` fields, e.g.
+/// `autodesk.unit.unit:millimeters-1.0.1`,
+/// `autodesk.unit.unit:squareFeet-1.0.1`,
+/// `autodesk.unit.unit:degrees-1.0.1`.
+///
+/// This enum captures every common one that maps cleanly to an
+/// IFC4 `IfcSIUnit` (metric SI) or `IfcConversionBasedUnit` (non-
+/// SI Imperial / mixed). Identifiers that don't match a known
+/// unit fall through to [`ForgeUnit::Other`] carrying the raw
+/// identifier so downstream code can still introspect it.
+///
+/// Invariant: every non-`Other` variant has a defined
+/// [`ForgeUnit::ifc_emission`] mapping — callers can always emit
+/// a valid IFC unit for a matched identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ForgeUnit {
+    // ---- Length ----
+    Millimeters,
+    Centimeters,
+    Decimeters,
+    Meters,
+    Kilometers,
+    Inches,
+    Feet,
+    Yards,
+    Miles,
+
+    // ---- Area ----
+    SquareMillimeters,
+    SquareCentimeters,
+    SquareMeters,
+    SquareFeet,
+    SquareInches,
+    SquareYards,
+    Acres,
+    Hectares,
+
+    // ---- Volume ----
+    CubicMillimeters,
+    CubicCentimeters,
+    CubicMeters,
+    CubicFeet,
+    CubicInches,
+    CubicYards,
+    Liters,
+    UsGallons,
+
+    // ---- Angle ----
+    Radians,
+    Degrees,
+    Grads,
+
+    // ---- Mass ----
+    Kilograms,
+    Grams,
+    Pounds,
+
+    // ---- Time ----
+    Seconds,
+    Minutes,
+    Hours,
+
+    /// Unrecognised Forge identifier — carries the raw string
+    /// so callers can still round-trip it through serialization
+    /// without losing data.
+    Other(String),
+}
+
+/// IFC4 dimensional category (`LENGTHUNIT`, `AREAUNIT`, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum IfcUnitType {
+    Length,
+    Area,
+    Volume,
+    PlaneAngle,
+    Mass,
+    Time,
+}
+
+impl IfcUnitType {
+    /// STEP keyword (no surrounding dots — caller wraps).
+    pub fn as_step_token(self) -> &'static str {
+        match self {
+            IfcUnitType::Length => "LENGTHUNIT",
+            IfcUnitType::Area => "AREAUNIT",
+            IfcUnitType::Volume => "VOLUMEUNIT",
+            IfcUnitType::PlaneAngle => "PLANEANGLEUNIT",
+            IfcUnitType::Mass => "MASSUNIT",
+            IfcUnitType::Time => "TIMEUNIT",
+        }
+    }
+}
+
+/// How an IFC unit should be emitted.
+///
+/// - `SI { prefix, name }`: emits a single `IFCSIUNIT(*, <type>,
+///   <prefix>, <name>)`. Prefix is `None` for ambient (e.g. metres,
+///   square metres) or `Some("MILLI")` / `"CENTI")` / `"DECI")` /
+///   `"KILO")` for multiples.
+/// - `ConversionBased { base_name, conversion_factor_to_si_base }`
+///   emits a pair `IFCMEASUREWITHUNIT(<measure>(<factor>), <si_base>)`
+///   + `IFCCONVERSIONBASEDUNIT(<dim>, <type>, <name>, <measure_ref>)`.
+///
+/// Example conversion factors: one foot equals `0.3048 m`; one inch
+/// equals `0.0254 m`; one degree equals `π / 180 rad`; one pound
+/// equals `0.453592 kg`; one US gallon equals `0.00378541 m^3`.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum IfcUnitEmission {
+    /// Pure SI unit.
+    Si {
+        unit_type: IfcUnitType,
+        /// `None` for base unit, or `"MILLI"` / `"CENTI"` / `"DECI"`
+        /// / `"KILO"` / `"HECTO"` for the standard IFC SI prefix
+        /// vocabulary.
+        prefix: Option<&'static str>,
+        /// `"METRE"` / `"SQUARE_METRE"` / `"CUBIC_METRE"` /
+        /// `"RADIAN"` / `"GRAM"` / `"SECOND"` — the unprefixed
+        /// SI base name.
+        name: &'static str,
+    },
+    /// Conversion-based unit derived from an SI base.
+    ConversionBased {
+        unit_type: IfcUnitType,
+        /// Human / IFC name for the derived unit (`"FOOT"`,
+        /// `"INCH"`, `"DEGREE"`, `"POUND"`, `"GALLON"`).
+        derived_name: &'static str,
+        /// Multiplier: `<derived_unit> = <this> × <si_base_unit>`.
+        /// Example: foot = 0.3048 × metre; inch = 0.0254 × metre;
+        /// degree = π/180 × radian.
+        factor_to_si: f64,
+        /// The SI base emission to attach the factor to (always
+        /// `IfcUnitEmission::Si` conceptually, but inlined here
+        /// as the bare IFC unit name to keep the data flat).
+        si_base_name: &'static str,
+    },
+}
+
+impl ForgeUnit {
+    /// Parse an Autodesk Forge unit identifier. Returns
+    /// `ForgeUnit::Other(raw)` for any string that doesn't match
+    /// a known pattern.
+    ///
+    /// Accepted shapes:
+    /// - `autodesk.unit.unit:millimeters-1.0.1` (canonical)
+    /// - `autodesk.unit.unit:millimeters` (without version)
+    /// - `millimeters` (bare — lenient)
+    ///
+    /// Case-insensitive on the unit token; versions are
+    /// ignored (there's no meaningful difference between
+    /// `-1.0.0` and `-1.0.1` for the unit vocabulary as of
+    /// Revit 2026).
+    pub fn from_forge_identifier(id: &str) -> Self {
+        // Strip "autodesk.unit.unit:" prefix if present, then any
+        // "-X.Y.Z" version suffix.
+        let trimmed = id.trim().to_ascii_lowercase();
+        let stripped = trimmed
+            .strip_prefix("autodesk.unit.unit:")
+            .unwrap_or(&trimmed);
+        let bare = stripped.split('-').next().unwrap_or(stripped);
+        match bare {
+            "millimeters" | "mm" => ForgeUnit::Millimeters,
+            "centimeters" | "cm" => ForgeUnit::Centimeters,
+            "decimeters" | "dm" => ForgeUnit::Decimeters,
+            "meters" | "m" => ForgeUnit::Meters,
+            "kilometers" | "km" => ForgeUnit::Kilometers,
+            "inches" | "in" => ForgeUnit::Inches,
+            "feet" | "ft" | "fractionalinches" | "feetandfractionalinches" => ForgeUnit::Feet,
+            "yards" | "yd" => ForgeUnit::Yards,
+            "miles" | "mi" => ForgeUnit::Miles,
+            "squaremillimeters" => ForgeUnit::SquareMillimeters,
+            "squarecentimeters" => ForgeUnit::SquareCentimeters,
+            "squaremeters" => ForgeUnit::SquareMeters,
+            "squarefeet" => ForgeUnit::SquareFeet,
+            "squareinches" => ForgeUnit::SquareInches,
+            "squareyards" => ForgeUnit::SquareYards,
+            "acres" => ForgeUnit::Acres,
+            "hectares" => ForgeUnit::Hectares,
+            "cubicmillimeters" => ForgeUnit::CubicMillimeters,
+            "cubiccentimeters" => ForgeUnit::CubicCentimeters,
+            "cubicmeters" => ForgeUnit::CubicMeters,
+            "cubicfeet" => ForgeUnit::CubicFeet,
+            "cubicinches" => ForgeUnit::CubicInches,
+            "cubicyards" => ForgeUnit::CubicYards,
+            "liters" | "litres" => ForgeUnit::Liters,
+            "usgallons" | "gallons" => ForgeUnit::UsGallons,
+            "radians" | "rad" => ForgeUnit::Radians,
+            "degrees" | "deg" => ForgeUnit::Degrees,
+            "grads" | "gradians" => ForgeUnit::Grads,
+            "kilograms" | "kg" => ForgeUnit::Kilograms,
+            "grams" | "g" => ForgeUnit::Grams,
+            "pounds" | "lb" | "lbs" | "poundsmass" => ForgeUnit::Pounds,
+            "seconds" | "s" => ForgeUnit::Seconds,
+            "minutes" | "min" => ForgeUnit::Minutes,
+            "hours" | "hr" | "h" => ForgeUnit::Hours,
+            _ => ForgeUnit::Other(id.to_string()),
+        }
+    }
+
+    /// Map a `ForgeUnit` to its IFC4 emission plan. Returns
+    /// `None` for `Other(_)` — the caller should either fall back
+    /// to a sensible default (usually metres) or surface a
+    /// diagnostic.
+    pub fn ifc_emission(&self) -> Option<IfcUnitEmission> {
+        use IfcUnitType::*;
+        match self {
+            // Length — SI prefixes
+            ForgeUnit::Millimeters => Some(IfcUnitEmission::Si {
+                unit_type: Length,
+                prefix: Some("MILLI"),
+                name: "METRE",
+            }),
+            ForgeUnit::Centimeters => Some(IfcUnitEmission::Si {
+                unit_type: Length,
+                prefix: Some("CENTI"),
+                name: "METRE",
+            }),
+            ForgeUnit::Decimeters => Some(IfcUnitEmission::Si {
+                unit_type: Length,
+                prefix: Some("DECI"),
+                name: "METRE",
+            }),
+            ForgeUnit::Meters => Some(IfcUnitEmission::Si {
+                unit_type: Length,
+                prefix: None,
+                name: "METRE",
+            }),
+            ForgeUnit::Kilometers => Some(IfcUnitEmission::Si {
+                unit_type: Length,
+                prefix: Some("KILO"),
+                name: "METRE",
+            }),
+            // Length — conversion-based (Imperial)
+            ForgeUnit::Inches => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Length,
+                derived_name: "INCH",
+                factor_to_si: 0.0254,
+                si_base_name: "METRE",
+            }),
+            ForgeUnit::Feet => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Length,
+                derived_name: "FOOT",
+                factor_to_si: 0.3048,
+                si_base_name: "METRE",
+            }),
+            ForgeUnit::Yards => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Length,
+                derived_name: "YARD",
+                factor_to_si: 0.9144,
+                si_base_name: "METRE",
+            }),
+            ForgeUnit::Miles => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Length,
+                derived_name: "MILE",
+                factor_to_si: 1609.344,
+                si_base_name: "METRE",
+            }),
+            // Area
+            ForgeUnit::SquareMillimeters => Some(IfcUnitEmission::Si {
+                unit_type: Area,
+                prefix: Some("MILLI"),
+                name: "SQUARE_METRE",
+            }),
+            ForgeUnit::SquareCentimeters => Some(IfcUnitEmission::Si {
+                unit_type: Area,
+                prefix: Some("CENTI"),
+                name: "SQUARE_METRE",
+            }),
+            ForgeUnit::SquareMeters => Some(IfcUnitEmission::Si {
+                unit_type: Area,
+                prefix: None,
+                name: "SQUARE_METRE",
+            }),
+            ForgeUnit::SquareFeet => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Area,
+                derived_name: "SQUARE_FOOT",
+                factor_to_si: 0.092_903_04,
+                si_base_name: "SQUARE_METRE",
+            }),
+            ForgeUnit::SquareInches => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Area,
+                derived_name: "SQUARE_INCH",
+                factor_to_si: 0.000_645_16,
+                si_base_name: "SQUARE_METRE",
+            }),
+            ForgeUnit::SquareYards => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Area,
+                derived_name: "SQUARE_YARD",
+                factor_to_si: 0.836_127_36,
+                si_base_name: "SQUARE_METRE",
+            }),
+            ForgeUnit::Acres => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Area,
+                derived_name: "ACRE",
+                factor_to_si: 4_046.856_422_4,
+                si_base_name: "SQUARE_METRE",
+            }),
+            ForgeUnit::Hectares => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Area,
+                derived_name: "HECTARE",
+                factor_to_si: 10_000.0,
+                si_base_name: "SQUARE_METRE",
+            }),
+            // Volume
+            ForgeUnit::CubicMillimeters => Some(IfcUnitEmission::Si {
+                unit_type: Volume,
+                prefix: Some("MILLI"),
+                name: "CUBIC_METRE",
+            }),
+            ForgeUnit::CubicCentimeters => Some(IfcUnitEmission::Si {
+                unit_type: Volume,
+                prefix: Some("CENTI"),
+                name: "CUBIC_METRE",
+            }),
+            ForgeUnit::CubicMeters => Some(IfcUnitEmission::Si {
+                unit_type: Volume,
+                prefix: None,
+                name: "CUBIC_METRE",
+            }),
+            ForgeUnit::CubicFeet => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Volume,
+                derived_name: "CUBIC_FOOT",
+                factor_to_si: 0.028_316_846_592,
+                si_base_name: "CUBIC_METRE",
+            }),
+            ForgeUnit::CubicInches => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Volume,
+                derived_name: "CUBIC_INCH",
+                factor_to_si: 0.000_016_387_064,
+                si_base_name: "CUBIC_METRE",
+            }),
+            ForgeUnit::CubicYards => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Volume,
+                derived_name: "CUBIC_YARD",
+                factor_to_si: 0.764_554_857_984,
+                si_base_name: "CUBIC_METRE",
+            }),
+            ForgeUnit::Liters => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Volume,
+                derived_name: "LITRE",
+                factor_to_si: 0.001,
+                si_base_name: "CUBIC_METRE",
+            }),
+            ForgeUnit::UsGallons => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Volume,
+                derived_name: "US_GALLON",
+                factor_to_si: 0.003_785_411_784,
+                si_base_name: "CUBIC_METRE",
+            }),
+            // Plane angle
+            ForgeUnit::Radians => Some(IfcUnitEmission::Si {
+                unit_type: PlaneAngle,
+                prefix: None,
+                name: "RADIAN",
+            }),
+            ForgeUnit::Degrees => Some(IfcUnitEmission::ConversionBased {
+                unit_type: PlaneAngle,
+                derived_name: "DEGREE",
+                factor_to_si: std::f64::consts::PI / 180.0,
+                si_base_name: "RADIAN",
+            }),
+            ForgeUnit::Grads => Some(IfcUnitEmission::ConversionBased {
+                unit_type: PlaneAngle,
+                derived_name: "GRAD",
+                factor_to_si: std::f64::consts::PI / 200.0,
+                si_base_name: "RADIAN",
+            }),
+            // Mass
+            ForgeUnit::Kilograms => Some(IfcUnitEmission::Si {
+                unit_type: Mass,
+                prefix: None,
+                name: "GRAM",
+            }),
+            ForgeUnit::Grams => Some(IfcUnitEmission::Si {
+                unit_type: Mass,
+                prefix: Some("MILLI"),
+                name: "GRAM",
+            }),
+            ForgeUnit::Pounds => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Mass,
+                derived_name: "POUND",
+                factor_to_si: 0.453_592_37,
+                si_base_name: "GRAM",
+            }),
+            // Time
+            ForgeUnit::Seconds => Some(IfcUnitEmission::Si {
+                unit_type: Time,
+                prefix: None,
+                name: "SECOND",
+            }),
+            ForgeUnit::Minutes => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Time,
+                derived_name: "MINUTE",
+                factor_to_si: 60.0,
+                si_base_name: "SECOND",
+            }),
+            ForgeUnit::Hours => Some(IfcUnitEmission::ConversionBased {
+                unit_type: Time,
+                derived_name: "HOUR",
+                factor_to_si: 3600.0,
+                si_base_name: "SECOND",
+            }),
+            ForgeUnit::Other(_) => None,
+        }
+    }
+}
+
+/// A named collection of typed property values attached to a
+/// BuildingElement. Emits as IfcPropertySet → IfcPropertySingleValue
+/// → IfcRelDefinesByProperties in the STEP writer; a set named `Qto_` as
+/// an IfcElementQuantity of [`PropertyValue::quantity`]s.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropertySet {
+    /// Property-set name. Convention: "Pset_WallCommon",
+    /// "Pset_DoorCommon", or "Pset_RevitType_{ClassName}".
+    pub name: String,
+    pub properties: Vec<Property>,
+}
+
+impl PropertySet {
+    /// The set Revit's export gives a storey: `Pset_BuildingStoreyCommon`
+    /// with `AboveGround` unknown. Its IFC2X3 export of the RE1 models also
+    /// gives each storey and space `Pset_AirSideSystemInformation` and
+    /// `Pset_ProductRequirements` holding its name; its IFC4 export of the
+    /// BIM4LCA office gives neither, IFC4 has no `Pset_ProductRequirements`,
+    /// and it applies `Pset_AirSideSystemInformation` to spaces and zones
+    /// only, its `Name` that of the air-side system.
+    pub fn storey_sets() -> Vec<PropertySet> {
+        Self::storey_sets_for(None)
+    }
+
+    /// [`Self::storey_sets`] with what the storey's Level gives
+    /// (`properties`, W7): the name of its type as `Reference`, and
+    /// the value of its yes/no parameter `EntranceLevel`.
+    pub fn storey_sets_for(properties: Option<&StoreyProperties>) -> Vec<PropertySet> {
+        let mut set = vec![Property {
+            name: "AboveGround".into(),
+            value: PropertyValue::Logical(None),
+        }];
+        if let Some(reference) = properties.and_then(|properties| properties.reference.as_ref()) {
+            set.push(Property {
+                name: "Reference".into(),
+                value: PropertyValue::Identifier(reference.clone()),
+            });
+        }
+        if let Some(entrance) = properties.and_then(|properties| properties.entrance_level) {
+            set.push(Property {
+                name: "EntranceLevel".into(),
+                value: PropertyValue::Boolean(entrance),
+            });
+        }
+        vec![PropertySet {
+            name: "Pset_BuildingStoreyCommon".into(),
+            properties: set,
+        }]
+    }
+
+    /// `Pset_BuildingCommon` as Revit's export gives the building on the RE1
+    /// models: its storey count and `IsLandmarked` unknown.
+    pub fn building_set(storeys: usize) -> PropertySet {
+        PropertySet {
+            name: "Pset_BuildingCommon".into(),
+            properties: vec![
+                Property {
+                    name: "NumberOfStoreys".into(),
+                    value: PropertyValue::Integer(storeys as i64),
+                },
+                Property {
+                    name: "IsLandmarked".into(),
+                    value: PropertyValue::Logical(None),
+                },
+            ],
+        }
+    }
+}
+
+/// What a storey's Level gives beyond its name and elevation (W7).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct StoreyProperties {
+    /// The name of the Level's type, which Revit's export writes as
+    /// `Pset_BuildingStoreyCommon.Reference`.
+    pub reference: Option<String>,
+    /// The Level's yes/no parameter `Pset_BuildingStoreyCommon.EntranceLevel`
+    /// (or `EntranceLevel`), where it holds a value.
+    pub entrance_level: Option<bool>,
+}
+
+/// A single property inside a [`PropertySet`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Property {
+    pub name: String,
+    pub value: PropertyValue,
+}
+
+/// IFC4 IfcValue subtypes we surface from Revit decoded fields.
+/// Maps directly to the `NominalValue` slot of IfcPropertySingleValue.
+///
+/// Quantity variants (`AreaSquareFeet`, `VolumeCubicFeet`, `CountValue`,
+/// `TimeSeconds`, `MassPounds`) are the measurement-flavoured siblings
+/// of the primitive variants. They emit as the matching
+/// `IfcAreaMeasure` / `IfcVolumeMeasure` / `IfcCountMeasure` / etc.
+/// constructors — semantically they correspond to the IFC4 `IfcQuantity*`
+/// family, but we route them through the existing
+/// `IfcPropertySingleValue` carrier so the writer doesn't need a
+/// parallel `IfcElementQuantity` path yet (tracked separately).
+/// Feet / cubic-feet / pounds inputs are converted to metres /
+/// cubic-metres / kilograms at emit time so the STEP output is
+/// unit-consistent with the project-level `IfcUnitAssignment`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value")]
+#[non_exhaustive]
+pub enum PropertyValue {
+    /// Free-form text — `IfcText`.
+    Text(String),
+    /// A name — `IfcLabel`, as standard property sets declare for values
+    /// such as `Pset_SpaceCoveringRequirements.FloorCovering`.
+    Label(String),
+    /// An identifier — `IfcIdentifier`, as standard property sets declare
+    /// for `Reference`.
+    Identifier(String),
+    /// Integer count — `IfcInteger`.
+    Integer(i64),
+    /// Floating-point real — `IfcReal`.
+    Real(f64),
+    /// Boolean — `IfcBoolean`.
+    Boolean(bool),
+    /// A three-valued logical — `IfcLogical`, `None` for unknown, as
+    /// `Pset_BuildingStoreyCommon.AboveGround` declares.
+    Logical(Option<bool>),
+    /// Length measurement in feet (writer converts to metres).
+    /// Maps to `IfcLengthMeasure` with project length unit.
+    LengthFeet(f64),
+    /// A length that must be greater than zero, in feet (writer converts
+    /// to metres). Maps to `IfcPositiveLengthMeasure`, the type standard
+    /// property sets such as `Pset_StairCommon` declare.
+    PositiveLengthFeet(f64),
+    /// Angle in radians. Maps to `IfcPlaneAngleMeasure`.
+    AngleRadians(f64),
+    /// Area in square feet (writer converts to square metres).
+    /// Maps to `IfcAreaMeasure`.
+    AreaSquareFeet(f64),
+    /// Volume in cubic feet (writer converts to cubic metres).
+    /// Maps to `IfcVolumeMeasure`.
+    VolumeCubicFeet(f64),
+    /// Unitless discrete count — occupancy, rebar count, fixture count.
+    /// Maps to `IfcCountMeasure`.
+    CountValue(i64),
+    /// Time measurement in seconds. Maps to `IfcTimeMeasure`.
+    TimeSeconds(f64),
+    /// Mass in pounds (writer converts to kilograms).
+    /// Maps to `IfcMassMeasure`.
+    MassPounds(f64),
+    /// A thermal transmittance in W/(m²·K), as Revit stores it. Maps to
+    /// `IfcThermalTransmittanceMeasure`, which standard property sets such
+    /// as `Pset_WallCommon` declare.
+    ThermalTransmittance(f64),
+    /// A volumetric flow rate in m³/s. Maps to
+    /// `IfcVolumetricFlowRateMeasure`, as Revit's export writes an air flow
+    /// parameter.
+    VolumetricFlowRate(f64),
+    /// A pressure in pascals. Maps to `IfcPressureMeasure`.
+    Pressure(f64),
+    /// A power in watts. Maps to `IfcPowerMeasure`, as Revit's export writes
+    /// an apparent or electrical power parameter.
+    Power(f64),
+    /// An electric voltage in volts. Maps to `IfcElectricVoltageMeasure`.
+    ElectricVoltage(f64),
+    /// An electric current in amperes. Maps to `IfcElectricCurrentMeasure`.
+    ElectricCurrent(f64),
+    /// A list of values: the writer emits an `IfcPropertyListValue`, as
+    /// standard property sets declare for some properties.
+    List(Vec<PropertyValue>),
+    /// Values of an enumeration, as labels: the writer emits an
+    /// `IfcPropertyEnumeratedValue`, as Revit's export writes
+    /// `Pset_DuctSegmentTypeCommon.Shape`.
+    Enumerated(Vec<String>),
+    /// an IFC4 `IfcPhysicalComplexQuantity` in a quantity set:
+    /// its parts (simple quantities) and its `Discrimination`, as Revit's
+    /// export writes one per material layer ('Layer', named after the
+    /// layer's material). Outside a `Qto_` set it is written as nothing.
+    PhysicalComplex {
+        discrimination: String,
+        quantities: Vec<Property>,
+    },
+}
+
+impl PropertyValue {
+    /// Emit the STEP-level IfcValue constructor for this value.
+    /// Used by the writer; exposed for testing.
+    pub fn to_step(&self) -> String {
+        match self {
+            PropertyValue::Text(s) => format!("IFCTEXT('{}')", escape_step_string(s)),
+            PropertyValue::Label(s) => format!("IFCLABEL('{}')", escape_step_string(s)),
+            PropertyValue::Identifier(s) => format!("IFCIDENTIFIER('{}')", escape_step_string(s)),
+            PropertyValue::Integer(n) => format!("IFCINTEGER({n})"),
+            PropertyValue::Real(v) => format!("IFCREAL({v:.6})"),
+            PropertyValue::Boolean(b) => {
+                format!("IFCBOOLEAN(.{}.)", if *b { "T" } else { "F" })
+            }
+            PropertyValue::Logical(b) => format!(
+                "IFCLOGICAL(.{}.)",
+                match b {
+                    Some(true) => "T",
+                    Some(false) => "F",
+                    None => "U",
+                }
+            ),
+            PropertyValue::LengthFeet(ft) => {
+                // Convert to metres at emit time (project length unit).
+                let metres = ft * 0.3048;
+                format!("IFCLENGTHMEASURE({metres:.6})")
+            }
+            PropertyValue::PositiveLengthFeet(ft) => {
+                let metres = ft * 0.3048;
+                format!("IFCPOSITIVELENGTHMEASURE({metres:.6})")
+            }
+            PropertyValue::AngleRadians(r) => format!("IFCPLANEANGLEMEASURE({r:.6})"),
+            PropertyValue::AreaSquareFeet(sqft) => {
+                // 1 ft² = 0.09290304 m² (exact, from international foot).
+                let sqm = sqft * 0.09290304;
+                format!("IFCAREAMEASURE({sqm:.6})")
+            }
+            PropertyValue::VolumeCubicFeet(cuft) => {
+                // 1 ft³ = 0.028316846592 m³ (exact).
+                let cum = cuft * 0.028316846592;
+                format!("IFCVOLUMEMEASURE({cum:.6})")
+            }
+            PropertyValue::CountValue(n) => format!("IFCCOUNTMEASURE({n})"),
+            PropertyValue::TimeSeconds(s) => format!("IFCTIMEMEASURE({s:.6})"),
+            PropertyValue::MassPounds(lb) => {
+                // 1 lb = 0.45359237 kg (exact, international avoirdupois pound).
+                let kg = lb * 0.45359237;
+                format!("IFCMASSMEASURE({kg:.6})")
+            }
+            PropertyValue::ThermalTransmittance(u) => {
+                format!("IFCTHERMALTRANSMITTANCEMEASURE({u:.6})")
+            }
+            PropertyValue::VolumetricFlowRate(q) => format!("IFCVOLUMETRICFLOWRATEMEASURE({q:.6})"),
+            PropertyValue::Pressure(p) => format!("IFCPRESSUREMEASURE({p:.6})"),
+            PropertyValue::Power(w) => format!("IFCPOWERMEASURE({w:.6})"),
+            PropertyValue::ElectricVoltage(v) => format!("IFCELECTRICVOLTAGEMEASURE({v:.6})"),
+            PropertyValue::ElectricCurrent(i) => format!("IFCELECTRICCURRENTMEASURE({i:.6})"),
+            PropertyValue::List(items) => format!(
+                "({})",
+                items
+                    .iter()
+                    .map(PropertyValue::to_step)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            PropertyValue::Enumerated(labels) => format!(
+                "({})",
+                labels
+                    .iter()
+                    .map(|label| format!("IFCLABEL('{}')", escape_step_string(label)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            PropertyValue::PhysicalComplex { .. } => "$".into(),
+        }
+    }
+
+    /// The IFC4 simple quantity this value is written as in a quantity set
+    /// (a [`PropertySet`] named `Qto_`) and its value as written:
+    /// lengths as `IfcQuantityLength` in metres, areas, volumes, counts,
+    /// masses and times likewise. `None` for a value that is not a quantity.
+    pub fn quantity(&self) -> Option<(&'static str, String)> {
+        Some(match self {
+            PropertyValue::LengthFeet(ft) | PropertyValue::PositiveLengthFeet(ft) => {
+                ("IFCQUANTITYLENGTH", format!("{:.6}", ft * 0.3048))
+            }
+            PropertyValue::AreaSquareFeet(sqft) => {
+                ("IFCQUANTITYAREA", format!("{:.6}", sqft * 0.09290304))
+            }
+            PropertyValue::VolumeCubicFeet(cuft) => {
+                ("IFCQUANTITYVOLUME", format!("{:.6}", cuft * 0.028316846592))
+            }
+            PropertyValue::CountValue(n) => ("IFCQUANTITYCOUNT", format!("{n}")),
+            PropertyValue::MassPounds(lb) => {
+                ("IFCQUANTITYWEIGHT", format!("{:.6}", lb * 0.45359237))
+            }
+            PropertyValue::TimeSeconds(seconds) => ("IFCQUANTITYTIME", format!("{seconds:.6}")),
+            _ => return None,
+        })
+    }
+}
+
+/// Minimal STEP string escape — apostrophes doubled, backslashes
+/// doubled. Non-ASCII escape isn't needed here because the writer's
+/// full `escape()` is used for BuildingElement names; property
+/// values are typically numeric or short ASCII. Keeping the escape
+/// local to entities.rs avoids a cross-module dependency.
+/// A property's text written as an ISO 10303-21 string: the same
+/// encoding every other string in the file gets
+/// ([`super::step_writer::escape`]), so a non-ASCII character is a
+/// `\X2\…\X0\` escape rather than a raw UTF-8 byte.
+fn escape_step_string(s: &str) -> String {
+    super::step_writer::escape(s)
+}

@@ -1,0 +1,479 @@
+# Extending Layer 5b — adding a new element decoder
+
+This guide walks through adding a decoder for a Revit element class
+(Wall, Floor, Door, Window, Column, etc.) to `rvt-open`. Layer 5a is the `ADocument` walker; Layer 5b is the
+per-class decoders that produce typed element values from the object
+graph.
+
+Every registered class already decodes through `SimpleDecoder`: it
+refuses a schema entry for any other class, then walks the class's
+fields in the order `Formats/Latest` declares them. What a class adds
+on top is a typed view (a struct and a `from_decoded` constructor), and,
+only for a class that must fail closed on a malformed instance, a
+decoder of its own.
+
+**Time required per class**: 30–90 minutes for an experienced Rust
+programmer plus access to the `phi-ag/rvt` sample corpus via `_corpus/`
+(fetched by CI with LFS; can be cloned locally the same way).
+
+**Prerequisites**:
+
+- Read `src/walker.rs` to understand `InstanceField` + `decode_instance`
+- Read `src/elements/level.rs` — it's the reference typed view this
+  guide walks through, and `src/elements/simple_decoder.rs`, the
+  decoder every registered class uses
+- Clone the corpus: `git clone --recurse-submodules
+  https://github.com/phi-ag/rvt _corpus` in the repo root
+- `cargo test --release --test integration -- field_type_coverage::` passes (sanity
+  check that your corpus is good)
+
+---
+
+## The files a new decoder touches
+
+Adding a decoder for `MyClass` touches these files:
+
+```
+src/elements/my_class.rs                    # typed view (and a decoder, if it must fail closed)
+src/elements/mod.rs                         # register the decoder, and route production through it
+src/elements/typed_json.rs                  # its typed JSON for the CLI and Python
+tests/python/test_decoded_api.py            # the MVP class list it pins
+docs/schemas/decoded-elements.schema.json   # the typed projection's class list
+tests/myclass_corpus.rs                     # the corpus check (Step 5), with its line in
+tests/integration/main.rs                   #   the one test binary
+tools/ci/test-targets.txt                   #   and its class in the CI manifest
+```
+
+### Step 1 — Check the schema
+
+Before writing any code, confirm the class exists in Revit's
+schema and inspect its fields:
+
+```bash
+cargo run --release --bin rvt-schema -- _corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa \
+    | grep -A 20 "class MyClass"
+```
+
+Output lists the fields in schema order with their decoded
+`FieldType`. Record the field list: the typed view and the corpus check
+both work from it.
+
+If `MyClass` doesn't appear, that's useful: it means the class is
+out of scope for family files and you may need a project `.rvt` in
+the corpus.
+
+### Step 2 — Create the typed view
+
+Copy `src/elements/level.rs` as the starting template (the `cargo
+generate` template in `templates/element-decoder/` writes the same
+shape). Rename `Level` → `MyClass`. The typed view is a struct and a
+`from_decoded` constructor, and it needs no decoder of its own:
+
+```rust
+//! MyClass — one-line description of the Revit class.
+//!
+//! | Field | Type | Semantics |
+//! |---|---|---|
+//! | m_name | String | display name |
+//! | m_foo  | Primitive u32 | some value |
+//! | ... | ... | ... |
+
+use super::level::normalise_field_name;
+use crate::walker::{DecodedElement, InstanceField};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MyClass {
+    pub name: Option<String>,
+    pub foo: Option<i64>,
+    // ... typed fields you want to expose
+}
+
+impl MyClass {
+    pub fn from_decoded(decoded: &DecodedElement) -> Self {
+        let mut out = Self { name: None, foo: None };
+        for (field_name, value) in &decoded.fields {
+            let n = normalise_field_name(field_name);
+            match (n.as_str(), value) {
+                ("name", InstanceField::String(s)) => out.name = Some(s.clone()),
+                ("foo",  InstanceField::Integer { value, .. }) => out.foo = Some(*value),
+                _ => {}
+            }
+        }
+        out
+    }
+}
+```
+
+#### A decoder of its own
+
+A class that production decodes through `MVP_TYPED_CLASSES` (Step 3)
+must fail closed, which `SimpleDecoder` does not do beyond the schema
+name. Give such a class its own `ElementDecoder`, in the same file:
+
+```rust
+use crate::formats;
+use crate::walker::{ElementDecoder, HandleIndex};
+use crate::{Error, Result};
+
+pub struct MyClassDecoder;
+
+impl ElementDecoder for MyClassDecoder {
+    fn class_name(&self) -> &'static str { "MyClass" }
+
+    fn decode(
+        &self,
+        bytes: &[u8],
+        schema: &formats::ClassEntry,
+        index: &HandleIndex,
+    ) -> Result<DecodedElement> {
+        self.decode_with_limits(bytes, schema, index, crate::walker::WalkerLimits::default())
+    }
+
+    // The caller's caps, passed on so a raised one applies too.
+    fn decode_with_limits(
+        &self,
+        bytes: &[u8],
+        schema: &formats::ClassEntry,
+        _index: &HandleIndex,
+        limits: crate::walker::WalkerLimits,
+    ) -> Result<DecodedElement> {
+        if schema.name != "MyClass" {
+            return Err(Error::SchemaMismatch {
+                decoder: "MyClass",
+                schema: schema.name.clone(),
+            });
+        }
+        let decoded = crate::walker::decode_instance_with_limits(bytes, 0, schema, limits);
+        // The walk never fails: a short or unsupported read leaves a
+        // field as Bytes. Reject an instance without the fields MyClass needs.
+        // Normalised as from_decoded normalises it, so each release's
+        // spelling of the field (m_name, m_Name, ...) counts.
+        let has_name = decoded.fields.iter().any(|(n, v)| {
+            crate::elements::level::normalise_field_name(n) == "name"
+                && matches!(v, crate::walker::InstanceField::String(_))
+        });
+        if !has_name {
+            return Err(Error::Malformed {
+                what: "MyClass instance",
+                detail: "no name string".into(),
+            });
+        }
+        Ok(decoded)
+    }
+}
+```
+
+`decode` is where failing closed happens: production skips an instance
+the decoder rejects, and `decode_instance` itself rejects nothing, so a
+decoder that only checks the schema name (which is all `SimpleDecoder`
+does) marks every same-class candidate typed, a truncated one or a false
+hit included. Before registering a class of your own, make `decode`
+return an `Error` for an instance missing a field `MyClass` needs, or
+holding one as `Bytes` or in a type the schema does not give it, and for
+any other check Step 4 lists.
+
+### Step 3 — Register in the dispatch table
+
+```rust
+// src/elements/mod.rs
+pub mod level;
+pub mod my_class;     // <-- add this
+
+pub fn all_decoders() -> Vec<Box<dyn ElementDecoder>> {
+    vec![
+        Box::new(SimpleDecoder::new("Level")),
+        Box::new(SimpleDecoder::new("MyClass")),   // <-- and this
+    ]
+}
+```
+
+Most classes already have their `SimpleDecoder` line; a class that
+needs its own decoder (the section above) replaces it with
+`Box::new(my_class::MyClassDecoder)`. `decoder_for_class` takes the
+first decoder registered for a class name, so check which entry
+`MyClass` has (`grep -rn '"MyClass"' src/elements/`) and never leave
+two.
+
+Production decoding (`walker::iter_elements`) uses a typed decoder only
+for a class listed in `elements::MVP_TYPED_CLASSES`, so add `MyClass`
+there too. Production then decodes with your decoder each `Global/Latest`
+candidate of the class that `scan_candidates` scores at
+`walker::PRODUCTION_ELEMENT_MIN_SCORE` (80) or above, marked
+`provenance.decoder == "MyClassDecoder"`, and skips one the decoder
+rejects rather than decoding it generically (fail closed). It also
+skips one with a declared field that did not read as its schema type
+(the walk returns `InstanceField::Bytes` for that) and one from which
+`typed_json::mvp_typed_view` reads nothing. An instance scored
+below 80 never reaches your decoder: `iter_elements`'s doc notes that
+the threshold suits the `ADocument` entry point and that most simple
+classes score below it. On the family corpus, the reference models and
+Autodesk's sample projects of 2015 to 2027, no candidate of the listed
+classes scores 80. Step 5's check shows both as missing
+ElementIds; when the cause is the score, the fix is candidate discovery
+or framing for the class, which is format work (see
+[CONTRIBUTING.md](../CONTRIBUTING.md#reverse-engineering-findings)), not the decoder. A class in that
+list is also advertised as typed, so the same change:
+
+- adds its arm to `typed_json::mvp_typed_view`, or the CLI and Python
+  give it `typed: null`;
+- adds it wherever the typed classes are listed: the module doc of
+  `src/elements/mod.rs`, the doc comment in `rvt-py/src/lib.rs`, the
+  stub `python/rvt_open/__init__.pyi`, `docs/python.md`, the description in
+  `docs/schemas/decoded-elements.schema.json`, the list
+  `tests/python/test_decoded_api.py` pins, and the counts of them in
+  `docs/evidence.md` and `docs/library.md`. `git grep -n -E 'Level.{1,6}Wall.{1,6}Floor' -- . ':!CHANGELOG.md'`
+  finds them, and any later copy.
+
+### Step 4 — Write down how it can fail
+
+Unit tests are banned in this repository, synthesized-byte tests
+included. Before writing the decoder, list the ways it could go wrong
+on real files: a field that is absent on one release, a record of
+another class that happens to parse, a length that runs past the
+stream, a value that is plausible but wrong. Each one becomes a check
+in the corpus step below, against a real file and Revit's own export
+of it, and the decoder returns an `Error` or nothing (fail closed) in
+each case.
+
+### Step 5 — Corpus integration test
+
+Corpus tests check the decoder on bytes Revit actually writes.
+
+Every `tests/*.rs` file is a module of one test binary, `integration`,
+and CI runs only the files `tools/ci/test-targets.txt` classes as
+real-file, CLI, contract or hardening checks. So a new check takes three
+steps:
+
+1. Write `tests/myclass_corpus.rs`. Use the files whose oracle holds
+   `MyClass`: the family corpus (`tests/common`, `RVT_SAMPLES_DIR`), or
+   project files from `RVT_PROJECT_CORPUS_DIR` with Revit's export of
+   each beside them, never a hard-coded path. Skip a missing file, but
+   fail on one when `RVT_REQUIRE_CORPUS` is set, as CI sets it. Require
+   an instance only where the oracle has one, and every instance it has:
+   compare the ElementIds of every `MyClass` element `iter_elements`
+   returns with the oracle's, since production skips an instance the
+   decoder rejects or never scores. `iter_elements` also returns
+   partition records of some classes, which other decoders read, so
+   check only the instances decoded from the schema (`record_kind`
+   `schema_instance`) for your decoder, not the generic one, and that
+   the corpus holds some: partition rows alone can make up a release's
+   id set. Then check the typed view the CLI and Python expose,
+   `typed_json::mvp_typed_view`, for every row of either carrier, field
+   by field against the oracle's value for the same element: the wire
+   fields alone do not show a wrong mapping in `MyClass::from_decoded`.
+
+   The example covers a class every family release holds:
+
+   ```rust
+   mod common;
+
+   use common::{ALL_YEARS, sample_for_year};
+
+   fn require_family_corpus() -> bool {
+       std::env::var("RVT_REQUIRE_CORPUS").is_ok_and(|v| v == "1" || v == "true")
+   }
+
+   #[test]
+   fn myclass_decodes_on_every_release() {
+       let mut missing = Vec::new();
+       let mut schema_rows = 0;
+       for year in ALL_YEARS {
+           let path = sample_for_year(year);
+           if !path.exists() {
+               missing.push(year);
+               continue;
+           }
+           let mut rf = rvt::RevitFile::open(&path).unwrap();
+           let elements: Vec<_> = rvt::walker::iter_elements(&mut rf)
+               .unwrap()
+               .filter(|e| e.class == "MyClass")
+               .collect();
+           // Every instance the oracle holds, from either carrier: production
+           // skips an instance the decoder rejects or never scores, so a
+           // missing id is a dropped row. Production also yields a candidate
+           // whose ElementId it cannot resolve, so a row without one fails.
+           let ids: std::collections::BTreeSet<u32> = elements
+               .iter()
+               .map(|e| e.id.unwrap_or_else(|| panic!("{year}: a MyClass row without an ElementId")))
+               .collect();
+           assert_eq!(ids, oracle_myclass_ids(year), "{year}: MyClass ElementIds");
+           for e in &elements {
+               if e.provenance.record_kind.as_deref() == Some("schema_instance") {
+                   assert_eq!(e.provenance.decoder.as_deref(), Some("MyClassDecoder"), "{year}");
+                   schema_rows += 1;
+               }
+               // Every carrier's row: the CLI and Python show this view of each.
+               let typed = rvt::elements::typed_json::mvp_typed_view(e)
+                   .unwrap_or_else(|| panic!("{year}: MyClass has no typed view"));
+               // Each field of `typed`, against the oracle's value for this
+               // element (by its ElementId, `e.id`). `oracle_myclass_ids` and the
+               // field values come from Revit's export of the same file.
+               let _ = typed;
+           }
+       }
+       assert!(
+           missing.is_empty() || !require_family_corpus(),
+           "RVT_REQUIRE_CORPUS is set and releases {missing:?} are missing"
+       );
+       // Partition rows alone can make up a release's id set: across the
+       // corpus the decoder must have read some, or its checks passed on none.
+       assert!(
+           schema_rows > 0 || missing.len() == ALL_YEARS.len(),
+           "no MyClass instance came from the schema"
+       );
+   }
+   ```
+
+   For a class only project files hold, loop over those files instead,
+   resolving each as `tests/elem_table_corpus.rs`'s `project_file`
+   does: it skips an absent file, and fails when `RVT_PROJECT_CORPUS_DIR`
+   is set but the file is not there.
+
+2. Add it to `tests/integration/main.rs`, in name order:
+
+   ```rust
+   #[path = "../myclass_corpus.rs"]
+   mod myclass_corpus;
+   ```
+
+3. Class it `real` in `tools/ci/test-targets.txt`. A file the manifest
+   does not class fails `tools/ci/verify-real-files.sh`, so a new check
+   cannot go unrun.
+
+CI fetches the family corpus and sets `RVT_REQUIRE_CORPUS=1`, so the
+check above fails there on a missing release. Locally,
+`RVT_SAMPLES_DIR=<corpus>/examples/Autodesk cargo test --profile ci --test integration myclass_corpus`
+runs it.
+
+### Step 6 — Document in `CHANGELOG.md`
+
+Add to the `[Unreleased]` section:
+
+```markdown
+### Added
+- **`elements::my_class::MyClass`** — Layer 5b typed view of
+  Revit's `MyClass` (description): `MyClass { name, foo, ... }`
+  over what `SimpleDecoder` decodes. Covers N fields, measured on <files> against <oracle>
+  (<counts>); `tests/myclass_corpus.rs` checks it.
+```
+
+### Step 7 — Commit + PR
+
+- `cargo fmt --all`
+- `cargo clippy --all-targets -- -D warnings`
+- `tools/check-local.sh` (fmt, clippy, rustdoc, build, real-file checks)
+- Commit message: `feat(elements): a MyClass decoder (#NNN)`, naming
+  the GitHub issue it closes
+- Open PR referencing the issue
+
+---
+
+## Field-name normalisation
+
+Revit uses `m_` prefixes + varies between camelCase / snake_case /
+UPPERCASE across versions. `src/elements/level.rs` exposes a
+helper (`normalise_field_name`) you should reuse:
+
+```
+m_LevelTypeId        → leveltypeid
+m_level_type_id      → leveltypeid
+levelTypeId          → leveltypeid
+LEVEL_TYPE_ID        → leveltypeid
+```
+
+Match against the normalised form in `from_decoded`. This is one
+of the few places where "be generous in what you accept" is the
+right posture.
+
+---
+
+## Type-dispatch cheat sheet
+
+Field schema types → `InstanceField` variants:
+
+| Schema field | Wire bytes | `InstanceField` variant |
+|---|---|---|
+| `Primitive { kind: 0x01, size: 1 }` | 1-byte padded bool | `Bool(bool)` |
+| `Primitive { kind: 0x02, size: 1 }` | 1-byte `char` | `Integer { signed: false, size: 1,. }` |
+| `Primitive { kind: 0x03, size: 2 }` | i16 LE, the C++ `short` | `Integer { signed: true, size: 2,. }` |
+| `Primitive { kind: 0x04/0x05, size: 4 }` | u32/i32 LE | `Integer { signed: ?, size: 4, .. }` |
+| `Primitive { kind: 0x06, size: 4 }` | f32 LE | `Float { size: 4, .. }` |
+| `Primitive { kind: 0x07, size: 8 }` | f64 LE | `Float { size: 8, .. }` |
+| `Primitive { kind: 0x0b, size: 8 }` | i64 LE | `Integer { signed: true, size: 8, .. }` |
+| `String` | u32 count + UTF-16LE chars | `String(String)` |
+| `Guid` | 16 raw bytes | `Guid([u8; 16])` |
+| `ElementId` / `ElementIdRef` | u32 tag + u32 id | `ElementId { tag, id }` |
+| `Pointer { .. }` | u32 + u32 pointer pair | `Pointer { raw: [u32; 2] }` |
+| `Vector { .. }` / `Container { .. }` | u32 count + elements | `Vector(..)` or `Bytes(..)` |
+
+---
+
+## When the decoder doesn't fit the generic pattern
+
+Some classes need custom handling beyond `decode_instance`'s
+field-by-field walk. Examples:
+
+- **CurtainWall + CurtainGrid**: entity is a graph — the generic
+  walker can decode the root but following the grid-mullion-panel
+  references needs `HandleIndex` lookups.
+- **FamilyInstance**: the field layout varies by the referenced
+  Symbol's family. Requires type-aware dispatch.
+- **View subtypes** (FloorPlan, Section, etc.): polymorphic — one
+  base class with several concrete subclasses.
+
+For these, override `decode` and call into `decode_instance` for
+the common fields, then manually walk the `fields` vec + do
+handle resolution for the specific relationships.
+
+---
+
+## Questions / unknowns
+
+Document them explicitly in the decoder's module docstring, not
+buried in comments. Example:
+
+```rust
+//! **Known open questions:**
+//!
+//! - `m_phaseCreated` semantics on R2026 — appears to be a
+//!   PhaseRef but the ID space is different.
+//! - `m_designOption` is `0xFFFFFFFF` on all files in the sample
+//!   corpus; unclear what non-default value looks like. Need a
+//!   project `.rvt` with multiple design options for validation.
+```
+
+Contributors can then see what is uncertain from the module docs alone.
+
+---
+
+## Priority classes for initial adoption
+
+If you're picking which class to tackle, the value-ordered list. Every
+class in it is already registered through `SimpleDecoder`; what is left
+is its typed view, as for `Level`:
+
+1. **Level** — the reference typed view (Wall, Floor, Door, Window, Room and Material have views too)
+2. **Grid** + **ReferencePlane** — similar shape, small surface
+3. **Material** + **FillPattern** + **LinePattern** — used by every visible element
+4. **Category** + **Subcategory** — foundation for IFC category mapping
+5. **View** subtypes (FloorPlan, Section, etc.) — required for sheet rendering
+6. **Wall** + **WallType** — first "real geometry" class; unlocks IFC emission
+7. **Floor** + **Roof** + **Ceiling** — boundary-sketch-based elements
+8. **FamilyInstance** — parent of Door, Window, Furniture, Equipment
+9. **Door** / **Window** — host-void semantics, essential for IFC
+10. **Column** + **StructuralFraming** — beam/column IFC
+11. **Dimension** + **Tag** + **TextNote** — annotation layer
+
+Each unblocks downstream work. The first 6 give you a barebones
+exporter + basic viewer; the rest fill in per-category coverage.
+
+---
+
+## Getting help
+
+- Open a GitHub Discussion for "how do I…" questions
+- File an Issue with the `class-decoder` label if you hit a
+  blocker that looks like a bug in the scaffold
+- `ROADMAP.md` and the GitHub issues carry the tracked decoder work
+- Read `CONTRIBUTING.md` and `CLEANROOM.md` for the source-
+  provenance rules before contributing

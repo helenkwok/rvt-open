@@ -1,0 +1,200 @@
+/* rvt-open design tokens: the "blueprint workbench" look.
+ *
+ * Navy and teal on a drawing grid. Light is the default; the dark scheme
+ * follows prefers-color-scheme or [data-theme="dark"], and
+ * [data-theme="light"] pins light.
+ *
+ * The two faces are self-hosted (src/fonts, SIL OFL 1.1): the viewer makes
+ * no network requests, so no font service is used.
+ *
+ * Every text/background pair below meets WCAG AA (4.5:1) in both schemes.
+ */
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 700;
+  src: url('./fonts/space-grotesk-latin-wght.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url('./fonts/jetbrains-mono-latin-wght.woff2') format('woff2');
+}
+
+:root {
+  color-scheme: light;
+
+  /* Type */
+  --rv-font-sans: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --rv-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --rv-fs-xs: 12px;
+  --rv-fs-sm: 13px;
+  --rv-fs-md: 14px;
+  --rv-fs-lg: 16px;
+  --rv-fs-xl: 22px;
+  --rv-fs-2xl: 30px;
+  --rv-lh-tight: 1.25;
+  --rv-lh: 1.5;
+  --rv-fw-regular: 400;
+  --rv-fw-medium: 500;
+  --rv-fw-semibold: 600;
+  --rv-fw-bold: 700;
+
+  /* Space, shape, depth */
+  --rv-space-1: 4px;
+  --rv-space-2: 8px;
+  --rv-space-3: 12px;
+  --rv-space-4: 16px;
+  --rv-space-5: 20px;
+  --rv-space-6: 24px;
+  --rv-space-8: 32px;
+  --rv-radius-sm: 6px;
+  --rv-radius-md: 10px;
+  --rv-radius-lg: 14px;
+  --rv-radius-full: 999px;
+  --rv-gap: 14px; /* between the floating panels and the window edge */
+  --rv-rail-width: 56px;
+  --rv-bar-height: 56px;
+  --rv-left-width: 288px;
+  --rv-right-width: 340px;
+  --rv-z-panel: 20;
+  --rv-z-menu: 40;
+  --rv-z-max: 100;
+
+  /* Motion */
+  --rv-ease: cubic-bezier(0.2, 0, 0, 1);
+  --rv-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --rv-fast: 120ms;
+  --rv-base: 200ms;
+  --rv-enter: 260ms;
+
+  /* Colour: light */
+  --rv-bg: #eef3f6;
+  --rv-grid: #d6e1e8;
+  --rv-grid-strong: #b3c6d2;
+  --rv-panel: #ffffff;
+  --rv-panel-2: #f5f8fa;
+  --rv-line: #c9d6de;
+  --rv-line-soft: #e1e8ed;
+  --rv-text: #0d1b2a;
+  --rv-text-2: #46596a;
+  --rv-text-3: #5a6d7d;
+  --rv-accent: #0f766e;
+  --rv-accent-hover: #0b5f58;
+  --rv-accent-ink: #ffffff;
+  --rv-accent-soft: #d5efe9;
+  --rv-accent-softer: #e9f6f3;
+  --rv-ok: #15803d;
+  --rv-ok-soft: #dcfce7;
+  --rv-warn: #a15c07;
+  --rv-warn-soft: #fef3c7;
+  --rv-bad: #b91c1c;
+  --rv-bad-soft: #fee2e2;
+  --rv-disabled: #e3e9ed;
+  --rv-disabled-text: #6b7c8a;
+  --rv-shadow: 0 8px 28px rgba(13, 27, 42, 0.12);
+  --rv-shadow-lg: 0 14px 40px rgba(13, 27, 42, 0.18);
+  --rv-veil: rgba(238, 243, 246, 0.72);
+  --rv-focus: 2px solid #0f766e;
+
+  /* Scene roles read by main.ts for the 3-D view. */
+  --viewer-canvas: #eef3f6;
+  /* DWG/DXF sheet: paper stays white in both schemes, as the renderer draws
+     colour 7 black (rvt-dwg svg.rs). */
+  --drawing-sheet: #ffffff;
+  --viewer-grid: #b3c6d2;
+  --viewer-grid-soft: #d6e1e8;
+  --viewer-highlight: #d97706;
+  --viewer-light-sky: #ffffff;
+  --viewer-light-ground: #b8c6cf;
+  --viewer-axis-x: #dc2626;
+  --viewer-axis-y: #16a34a;
+  --viewer-axis-z: #2563eb;
+}
+
+/* Colour: dark. Written twice so it applies both to the OS setting and to
+   an explicit data-theme. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --rv-bg: #08131f;
+    --rv-grid: #10263b;
+    --rv-grid-strong: #1d3a55;
+    --rv-panel: #102236;
+    --rv-panel-2: #0c1b2b;
+    --rv-line: #1f3a54;
+    --rv-line-soft: #183049;
+    --rv-text: #e3eef6;
+    --rv-text-2: #a3b8c9;
+    --rv-text-3: #93a9bc;
+    --rv-accent: #5eead4;
+    --rv-accent-hover: #99f6e4;
+    --rv-accent-ink: #04201c;
+    --rv-accent-soft: #0f3b3a;
+    --rv-accent-softer: #0d2e30;
+    --rv-ok: #4ade80;
+    --rv-ok-soft: #12321f;
+    --rv-warn: #fbbf24;
+    --rv-warn-soft: #3a2a0a;
+    --rv-bad: #f87171;
+    --rv-bad-soft: #3b1414;
+    --rv-disabled: #15293d;
+    --rv-disabled-text: #7d93a6;
+    --rv-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --rv-shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.55);
+    --rv-veil: rgba(8, 19, 31, 0.72);
+    --rv-focus: 2px solid #5eead4;
+    --viewer-canvas: #08131f;
+    --viewer-grid: #1d3a55;
+    --viewer-grid-soft: #10263b;
+    --viewer-highlight: #fbbf24;
+    --viewer-light-sky: #e3eef6;
+    --viewer-light-ground: #10263b;
+    --viewer-axis-x: #f87171;
+    --viewer-axis-y: #4ade80;
+    --viewer-axis-z: #60a5fa;
+  }
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --rv-bg: #08131f;
+  --rv-grid: #10263b;
+  --rv-grid-strong: #1d3a55;
+  --rv-panel: #102236;
+  --rv-panel-2: #0c1b2b;
+  --rv-line: #1f3a54;
+  --rv-line-soft: #183049;
+  --rv-text: #e3eef6;
+  --rv-text-2: #a3b8c9;
+  --rv-text-3: #93a9bc;
+  --rv-accent: #5eead4;
+  --rv-accent-hover: #99f6e4;
+  --rv-accent-ink: #04201c;
+  --rv-accent-soft: #0f3b3a;
+  --rv-accent-softer: #0d2e30;
+  --rv-ok: #4ade80;
+  --rv-ok-soft: #12321f;
+  --rv-warn: #fbbf24;
+  --rv-warn-soft: #3a2a0a;
+  --rv-bad: #f87171;
+  --rv-bad-soft: #3b1414;
+  --rv-disabled: #15293d;
+  --rv-disabled-text: #7d93a6;
+  --rv-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --rv-shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.55);
+  --rv-veil: rgba(8, 19, 31, 0.72);
+  --rv-focus: 2px solid #5eead4;
+  --viewer-canvas: #08131f;
+  --viewer-grid: #1d3a55;
+  --viewer-grid-soft: #10263b;
+  --viewer-highlight: #fbbf24;
+  --viewer-light-sky: #e3eef6;
+  --viewer-light-ground: #10263b;
+  --viewer-axis-x: #f87171;
+  --viewer-axis-y: #4ade80;
+  --viewer-axis-z: #60a5fa;
+}

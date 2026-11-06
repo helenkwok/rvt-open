@@ -1,0 +1,86 @@
+name: Pages
+# Builds the project site: the landing page in site/ plus the browser viewer at /viewer/.
+# Pull requests build only; pushes to main and manual runs also deploy. Every action is pinned to a full commit SHA.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "site/**"
+      - "viewer/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.98.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown
+          rustup default "$RUST_VERSION"
+          echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with: { tool: "wasm-bindgen@${{ env.WB }}" }
+      - name: Build the wasm package into viewer/pkg
+        run: |
+          cargo build -p rvt-wasm --release --target wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir viewer/pkg --out-name rvt target/wasm32-unknown-unknown/release/rvt_wasm.wasm
+      - name: Real sample projects for the demo gallery (MIT)
+        uses: ./.github/actions/fetch-corpus
+        with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }
+      - name: Family samples for the demo gallery
+        uses: ./.github/actions/fetch-corpus
+        with: { repository: phi-ag/rvt, path: _corpus }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24.22.1" }
+      - name: Build the viewer and check the no-network invariant
+        working-directory: viewer
+        run: |
+          npm install -g pnpm@12.6.0
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+          pnpm run build
+          for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt; do
+            test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
+          done
+          pnpm exec playwright test tests/no-network.spec.ts tests/wasm-no-network-imports.spec.ts
+          pnpm exec playwright test tests/viewer-regression.spec.ts -g 'real-project demo card'
+      - name: Rebuild the viewer for its Pages path
+        working-directory: viewer
+        env:
+          RVT_VIEWER_BASE: /rvt-open/viewer/
+        run: pnpm exec vite build
+      - name: Assemble the site
+        run: |
+          mkdir _site
+          cp -R site/. _site/
+          cp -R viewer/dist _site/viewer
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with: { path: _site }
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

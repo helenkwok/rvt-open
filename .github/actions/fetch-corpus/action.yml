@@ -1,0 +1,62 @@
+name: Fetch LFS corpus (pinned, cached)
+description: >-
+  Check out an external corpus repository with Git LFS at the commit this
+  repository pins for it, restored from the Actions cache when that commit was
+  fetched before, and check that the tree is that commit.
+# Each corpus is pinned to a commit below, so CI cannot change colour when a
+# corpus repository moves on; moving one is an edit of its commit in this file,
+# and the pull request that does it runs CI on the new corpus.
+inputs:
+  repository:
+    description: owner/name of the corpus repository
+    required: true
+  path:
+    description: checkout path relative to the workspace
+    required: true
+  cache:
+    description: Restore and save the corpus with the Actions cache (the release workflow passes false)
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Resolve the pinned commit
+      id: pin
+      shell: bash
+      env:
+        REPO: ${{ inputs.repository }}
+      run: |
+        case "$REPO" in
+          phi-ag/rvt) sha=bec25470413fbe659c3ab30d4cfd029b73d63fc3 ;;
+          magnetar-io/revit-test-datasets) sha=fd755e18cec40ed016d06b082f420d796571fef1 ;;
+          *) echo "::error::no pinned commit for ${REPO} in .github/actions/fetch-corpus"; exit 1 ;;
+        esac
+        echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+    - name: Restore corpus from cache
+      id: cache
+      if: inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.path }}
+        key: corpus-${{ inputs.repository }}-${{ steps.pin.outputs.sha }}
+    - name: Check out corpus (cache miss)
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ inputs.repository }}
+        ref: ${{ steps.pin.outputs.sha }}
+        path: ${{ inputs.path }}
+        lfs: true
+        persist-credentials: false
+    - name: Check the corpus is the pinned commit
+      shell: bash
+      env:
+        DIR: ${{ inputs.path }}
+        SHA: ${{ steps.pin.outputs.sha }}
+      run: |
+        got=$(git -C "$DIR" rev-parse HEAD)
+        if [ "$got" != "$SHA" ]; then
+          echo "::error::${DIR} is at ${got}, not the pinned ${SHA}"
+          exit 1
+        fi
+        echo "${DIR}: ${SHA}"

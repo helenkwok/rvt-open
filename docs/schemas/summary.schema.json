@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://helenkwok.github.io/rvt-open/schemas/summary.schema.json",
+  "title": "rvt summary JSON",
+  "description": "Stable file summary emitted by rvt-info -f json (single file) and exposed by reader summaries. `document` carries worksharing, save history and document identity (file-metadata.schema.json).",
+  "type": "object",
+  "required": [
+    "file_size",
+    "streams",
+    "version",
+    "class_name_count",
+    "class_name_sample"
+  ],
+  "properties": {
+    "file_size": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "streams": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "build": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "original_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "guid": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "locale": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "partition_stream": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "partatom": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "taxonomies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "term",
+              "label"
+            ],
+            "properties": {
+              "term": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "term",
+              "scheme"
+            ],
+            "properties": {
+              "term": {
+                "type": "string"
+              },
+              "scheme": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "omniclass": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw_xml": {
+          "type": "string"
+        },
+        "entry_title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "class_name_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "class_name_sample": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "document": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/file_metadata"
+        }
+      ]
+    },
+    "family_types": {
+      "description": "A family's types and type parameters from its PartAtom type table (PartAtom::family_types); absent when the file has none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "parameters"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "value"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "display_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type_of_parameter": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "units": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "file_metadata": {
+      "description": "Document identity from BasicFileInfo and the document Atom entry (rvt::metadata::FileMetadata): release, worksharing, last save, document GUID. Emitted as `document` by rvt-info -f json on one file.",
+      "type": "object",
+      "required": [
+        "revit_version",
+        "properties"
+      ],
+      "properties": {
+        "revit_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_saved": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worksharing": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workshared": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "username": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "central_model_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_save_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "document_guid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "document_increments": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "locale": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "single_user_cloud_model": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "properties": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

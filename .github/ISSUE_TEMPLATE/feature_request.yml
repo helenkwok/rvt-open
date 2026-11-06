@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a new capability, decoder, CLI flag, or API surface.
+title: "Feature: "
+labels: ["type:feature", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening, check whether the request is already tracked in [`CHANGELOG.md`](../blob/main/CHANGELOG.md), [`ROADMAP.md`](../blob/main/ROADMAP.md) or the open issues. For Layer 5 work in particular, a comment on an existing question is often more productive than a new issue.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete problem does this solve, and for whom?
+      placeholder: "BIM tool authors need to read Revit family parameters without running Revit, and today rvt-open does not expose X."
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed solution
+      description: Sketch of the API, CLI flag, decoder, or investigation plan.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives_considered
+    attributes:
+      label: Alternatives considered
+      description: Existing workarounds, other crates, or approaches you ruled out — and why.
+  - type: dropdown
+    id: affected_subsystem
+    attributes:
+      label: Affected subsystem
+      options:
+        - "File reader"
+        - "Element decoders"
+        - "IFC exporter"
+        - "CLI"
+        - "Docs"
+        - "Other"
+    validations:
+      required: true
+  - type: dropdown
+    id: breaking_change
+    attributes:
+      label: Breaking change
+      description: Would this change break existing rvt-open API or CLI behavior?
+      options:
+        - "No"
+        - "Yes"
+        - "Not sure"
+    validations:
+      required: true

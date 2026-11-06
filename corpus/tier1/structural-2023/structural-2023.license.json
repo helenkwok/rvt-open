@@ -1,0 +1,12 @@
+{
+  "source_url": "https://github.com/helenkwok/rvt-open/tree/main/corpus/tier1/structural-2023",
+  "source_repo": "helenkwok/rvt-open",
+  "source_path": "corpus/tier1/structural-2023/structural-2023.rvt",
+  "license": "Apache-2.0",
+  "sha256": "13768b8a002f641e16a020ecc34357d731c73b10fd68600829f9f109362d5e2c",
+  "bytes": 20480,
+  "revit_release": "2023",
+  "file_type": ".rvt",
+  "redistribution": "public",
+  "notes": "Synthetic CFB test fixture. Not Autodesk-authored. Known counts: 4 levels, 4 walls, 4 floors, 0 doors, 0 windows, 4 columns, 4 beams."
+}

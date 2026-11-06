@@ -1,0 +1,689 @@
+//! The export every front end runs: [`run_export`], with its limits
+//! ([`run_export_with_limits`]) and its control
+//! ([`run_export_with_limits_and_control`]).
+//!
+//! It runs [`crate::convert`], the pipeline `rvt-ifc` runs, so the Python
+//! package and `rvt-open-mcp` build the model `rvt-ifc` writes for the same
+//! switches: the exporter, the phase, the bodies drawn from saved graphics
+//! and family documents, Revit's own property sets and their placement, the
+//! base-quantity switch, and the record of streams a resource limit kept
+//! unread. What each front end adds on top (writing the file, refusing an
+//! incomplete export, checking the quality mode) stays with it.
+
+use super::saved_meshes::SavedMeshScope;
+use super::{
+    ExportDiagnostics, ExportQualityMode, IfcModel, leave_out_base_quantities,
+    record_unread_streams, recount_exported,
+};
+use crate::control::WalkerControl;
+use crate::reader::UnreadStream;
+use crate::walker::WalkerLimits;
+use crate::{Result, RevitFile};
+use std::fmt;
+
+/// Which exporter builds the model.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ExportKind {
+    /// [`RvtDocExporter`](super::RvtDocExporter): the export `rvt-ifc` runs with no switch.
+    #[default]
+    Document,
+    /// [`DiagnosticRvtDocExporter`](super::DiagnosticRvtDocExporter): also the low-confidence schema-scan hits,
+    /// as proxies with diagnostic provenance (`rvt-ifc --diagnostic-proxies`).
+    /// The quality mode does not apply.
+    DiagnosticProxies,
+    /// [`PlaceholderExporter`](super::PlaceholderExporter): the project alone, no storeys or elements
+    /// (`rvt-ifc --placeholder`). No bodies are drawn from saved graphics.
+    Placeholder,
+}
+
+/// Which bodies are drawn from the mesh Revit saved for display.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SavedMeshChoice {
+    /// Doors and windows of Revit 2023 to 2027, the releases whose saved
+    /// graphics are read ([`default_scope`](super::saved_meshes::default_scope)), and the walls that embed a
+    /// curtain wall where Revit raised their base, on Revit 2024 to 2027, the
+    /// releases whose wall records name what embeds in them: `rvt-ifc`
+    /// with no switch.
+    #[default]
+    Default,
+    /// Every element whose body would be its record's bounding box
+    /// (`rvt-ifc --saved-meshes`). Slower.
+    All,
+    /// None: doors and windows keep their record's box, and walls that embed
+    /// a curtain wall their record's body (`rvt-ifc --no-saved-meshes`).
+    Off,
+}
+
+/// The `rvt-ifc` switches that change the model. [`Default`] is `rvt-ifc` with
+/// no switch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ExportOptions {
+    /// Which exporter builds the model.
+    pub kind: ExportKind,
+    /// The quality mode's *content* policy (`--mode`). The mode's validation
+    /// ([`ExportQualityMode::validate`]) is left to the caller, so the
+    /// diagnostics can still be written when a stronger mode rejects the
+    /// result.
+    pub mode: ExportQualityMode,
+    /// Which bodies are drawn from saved graphics.
+    pub saved_meshes: SavedMeshChoice,
+    /// Draw a family instance from its family's own extrusions where they
+    /// reproduce its saved mesh (`--family-extrusions`): implies the saved
+    /// graphics of every boxed element.
+    pub family_extrusions: bool,
+    /// Also write Revit's own parameter sets (`--revit-property-sets`).
+    pub revit_property_sets: bool,
+    /// Also place properties where Revit's exporter does
+    /// (`--revit-set-placement`). This option places properties only, in the
+    /// model it builds.
+    ///
+    /// The other half of `rvt-ifc --revit-set-placement` is not a setting of
+    /// the model but of the writer: keeping the material Revit's export
+    /// associates with an `IfcSpace`, which IFC4's
+    /// `IfcRelAssociatesMaterial.AllowedElements` does not allow. It
+    /// is the entry points
+    /// [`write_step_with_space_materials`](super::step_writer::write_step_with_space_materials)
+    /// and
+    /// [`write_step_to_with_space_materials`](super::step_writer::write_step_to_with_space_materials),
+    /// which `rvt-ifc` and the MCP server pick by this option. A caller of
+    /// the library, Python or the wasm bindings that writes the IFC with
+    /// `write_step` or `write_step_to` gets the default: no material on a
+    /// space. The two are not one setting because a setting both read would
+    /// be a field of [`StepOptions`](super::step_writer::StepOptions), a
+    /// struct the crate's callers construct by literal (so a new field is a
+    /// semver break), or of the model, which would also take the material
+    /// from the glTF and the viewer, where a colour on a space's mesh is a
+    /// drawing choice and not an association.
+    pub revit_set_placement: bool,
+    /// Leave out the base quantities (`--no-base-quantities`).
+    pub no_base_quantities: bool,
+    /// Export this project phase, by its name (exactly) or its ElementId,
+    /// instead of the project's last (`--phase`,
+    /// [`RevitFile::set_export_phase`]). An unknown phase is
+    /// [`Error::InvalidInput`](crate::Error::InvalidInput) listing the file's
+    /// phases. A phase named is exact, the last included; with none named, a
+    /// project whose last phase holds no room writes the rooms of the latest
+    /// phase that holds any ([`ExportDiagnostics::room_phase_fallback`]).
+    pub phase: Option<String>,
+    /// Also list where each decoded element was read from in the diagnostics
+    /// (`decoded.element_provenance`, `rvt-ifc --element-provenance`).
+    /// Off by default: the table is large (`docs/export-diagnostics.md`,
+    /// "Provenance table size") and never goes into the IFC. While it is
+    /// on, the readers also note the copy they take each value from.
+    pub element_provenance: bool,
+    /// Also list each fail-closed decision per element in the diagnostics
+    /// (`export_decisions`, `rvt-ifc --export-decisions`): why an
+    /// element, body, opening or outline was left out, bounded per reason. Off
+    /// by default; the diagnostics are then the bytes they were. It is a
+    /// switch of its own, not part of `element_provenance`, because the log
+    /// is bounded (at most 5,000 entries a reason) where the table grows with
+    /// the model (`docs/export-diagnostics.md`, "Provenance table size"), and it
+    /// needs no table in the diagnostics: where an entry's evidence is an
+    /// element the walk decoded, its stream and offset are read from a table
+    /// built for the purpose and dropped.
+    pub export_decisions: bool,
+}
+
+impl Default for ExportOptions {
+    fn default() -> Self {
+        Self {
+            kind: ExportKind::Document,
+            mode: ExportQualityMode::Scaffold,
+            saved_meshes: SavedMeshChoice::Default,
+            family_extrusions: false,
+            revit_property_sets: false,
+            revit_set_placement: false,
+            no_base_quantities: false,
+            phase: None,
+            element_provenance: false,
+            export_decisions: false,
+        }
+    }
+}
+
+impl ExportOptions {
+    /// Which exporter builds the model.
+    #[must_use]
+    pub fn with_kind(mut self, kind: ExportKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// The quality mode's content policy.
+    #[must_use]
+    pub fn with_mode(mut self, mode: ExportQualityMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Which bodies are drawn from saved graphics.
+    #[must_use]
+    pub fn with_saved_meshes(mut self, saved_meshes: SavedMeshChoice) -> Self {
+        self.saved_meshes = saved_meshes;
+        self
+    }
+
+    /// Whether a family instance is drawn from its family's own extrusions
+    /// where they reproduce its saved mesh. Off by default; implies the saved
+    /// graphics of every boxed element.
+    #[must_use]
+    pub fn with_family_extrusions(mut self, family_extrusions: bool) -> Self {
+        self.family_extrusions = family_extrusions;
+        self
+    }
+
+    /// Whether Revit's own parameter sets are written.
+    #[must_use]
+    pub fn with_revit_property_sets(mut self, revit_property_sets: bool) -> Self {
+        self.revit_property_sets = revit_property_sets;
+        self
+    }
+
+    /// Whether properties are placed where Revit's exporter places them.
+    #[must_use]
+    pub fn with_revit_set_placement(mut self, revit_set_placement: bool) -> Self {
+        self.revit_set_placement = revit_set_placement;
+        self
+    }
+
+    /// Whether the base quantities are left out.
+    #[must_use]
+    pub fn with_no_base_quantities(mut self, no_base_quantities: bool) -> Self {
+        self.no_base_quantities = no_base_quantities;
+        self
+    }
+
+    /// The phase to export, by name or ElementId; `None` is the project's
+    /// last.
+    #[must_use]
+    pub fn with_phase(mut self, phase: Option<String>) -> Self {
+        self.phase = phase;
+        self
+    }
+
+    /// Whether the diagnostics list where each decoded element was read from
+    /// ([`ElementProvenanceTable`](super::element_provenance::ElementProvenanceTable)).
+    /// Off by default; the diagnostics are then the bytes they were before
+    /// the option existed.
+    #[must_use]
+    pub fn with_element_provenance(mut self, element_provenance: bool) -> Self {
+        self.element_provenance = element_provenance;
+        self
+    }
+
+    /// Whether the diagnostics list each fail-closed decision per element
+    /// ([`ExportDecisionLog`](super::export_decisions::ExportDecisionLog)). Off
+    /// by default; independent of
+    /// [`with_element_provenance`](Self::with_element_provenance).
+    #[must_use]
+    pub fn with_export_decisions(mut self, export_decisions: bool) -> Self {
+        self.export_decisions = export_decisions;
+        self
+    }
+}
+
+/// One thing a step reports, which `rvt-ifc` prints on stderr as
+/// `rvt-ifc: <note>` (the [`Display`](fmt::Display) of the note). The numbers
+/// are those of the step's own report. A `...Skipped` note says the step could
+/// not run, and why: the export went ahead without what the step adds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ExportNote {
+    /// Bodies drawn from the saved graphics of `candidates` boxed elements.
+    #[non_exhaustive]
+    SavedMeshes {
+        /// Which bodies the step looked at.
+        scope: SavedMeshScope,
+        /// Elements whose body was the record's bounding box.
+        candidates: usize,
+        /// Of those, elements now drawn from their saved mesh.
+        replaced: usize,
+        /// Of those, elements keeping their box because part of their saved
+        /// graphics did not decode.
+        partial: usize,
+        /// Triangles written in all.
+        triangles: usize,
+    },
+    /// The saved graphics could not be read; the bodies are unchanged.
+    #[non_exhaustive]
+    SavedMeshesSkipped {
+        /// The reason.
+        error: String,
+    },
+    /// Revit's own parameter sets, written.
+    #[non_exhaustive]
+    RevitPropertySets {
+        /// Elements given at least one property.
+        elements: usize,
+        /// Type objects' types given at least one property.
+        types: usize,
+        /// Elements given their type's sets, their type having no type
+        /// object.
+        untyped_elements: usize,
+        /// Properties written, on elements and types.
+        properties: usize,
+        /// Named parameters left out.
+        left_out: usize,
+    },
+    /// Revit's parameter sets could not be read; none were written.
+    #[non_exhaustive]
+    RevitPropertySetsSkipped {
+        /// The reason.
+        error: String,
+    },
+    /// Properties placed where Revit's exporter places them.
+    #[non_exhaustive]
+    RevitSetPlacement {
+        /// Elements given at least one property.
+        elements: usize,
+        /// Properties written.
+        properties: usize,
+        /// Parameters of a kind not written, left out.
+        left_out: usize,
+    },
+    /// The parameters could not be read; no property was placed.
+    #[non_exhaustive]
+    RevitSetPlacementSkipped {
+        /// The reason.
+        error: String,
+    },
+    /// The base quantities left out.
+    #[non_exhaustive]
+    BaseQuantities {
+        /// How many quantities were left out.
+        left_out: usize,
+    },
+    /// Bodies drawn from their family's own extrusions.
+    #[non_exhaustive]
+    FamilyExtrusions {
+        /// Instances drawn from a saved mesh, alone in their Tag.
+        candidates: usize,
+        /// Of those, instances now drawn from their family's extrusions.
+        replaced: usize,
+        /// The families of the candidates whose document was found.
+        families: usize,
+        /// Of those, families all of whose extrusions rebuilt.
+        families_rebuilt: usize,
+        /// Candidates whose family was not found or not rebuilt.
+        not_rebuilt: usize,
+        /// Candidates with no instance transform that reads.
+        unplaced: usize,
+        /// Candidates whose mesh is too large to compare.
+        unchecked: usize,
+        /// Candidates whose mesh the extrusions do not reproduce, by volume.
+        volume_differs: usize,
+        /// By a vertex of the mesh off the extrusions' surface.
+        vertices_differ: usize,
+        /// By a sampled point of the extrusions' surface off the mesh.
+        surface_differs: usize,
+        /// Reproduced, but their profile cannot be written.
+        unwritable: usize,
+        /// Of the replaced, instances with an arc written in a profile (an
+        /// arc too flat to survive the writer's rounding is written as a line
+        /// and not counted).
+        with_arcs: usize,
+        /// Instances left alone for sharing a Tag with another entity.
+        ambiguous: usize,
+    },
+    /// The family extrusions could not be read; the bodies are unchanged.
+    #[non_exhaustive]
+    FamilyExtrusionsSkipped {
+        /// The reason.
+        error: String,
+    },
+    /// Walls that embed a curtain wall, drawn from their saved graphics where
+    /// Revit raised their base, on Revit 2024 to 2027.
+    #[non_exhaustive]
+    EmbedHostBodies {
+        /// Walls that embed a curtain wall, drawn as plain or stepped extrusions with
+        /// nothing hosted in them.
+        hosts: usize,
+        /// Of those, walls now drawn from their saved mesh.
+        raised: usize,
+        /// Of those, walls keeping their body because part of their saved
+        /// graphics did not decode.
+        partial: usize,
+    },
+    /// The records of the walls that may embed a curtain wall could not be
+    /// read; their bodies are unchanged.
+    #[non_exhaustive]
+    EmbedHostBodiesSkipped {
+        /// The reason.
+        error: String,
+    },
+    /// The project's last phase holds no room and no phase was named, so the
+    /// rooms of the latest phase that holds any are written. Every
+    /// other element is of the last phase.
+    #[non_exhaustive]
+    RoomPhaseFallback {
+        /// The phase the rooms are written from: its name, or `ElementId <n>`.
+        phase: String,
+        /// The placed rooms of that phase.
+        rooms: usize,
+    },
+    /// A note of the conversion pipeline ([`crate::convert::Exported::notes`]),
+    /// as `rvt-ifc` prints it.
+    Text {
+        /// The note.
+        text: String,
+    },
+}
+
+impl ExportNote {
+    /// The note with the project's own text replaced, as
+    /// [`ExportDiagnostics::anonymize`] replaces it in the diagnostics: the
+    /// phase a room fallback is written from. Every other note carries none.
+    #[must_use]
+    pub fn anonymized(&self) -> Self {
+        match self {
+            Self::RoomPhaseFallback { rooms, .. } => Self::RoomPhaseFallback {
+                phase: crate::redact::ANONYMIZED.to_string(),
+                rooms: *rooms,
+            },
+            other => other.clone(),
+        }
+    }
+
+    /// Whether this is the room fallback.
+    pub fn is_room_phase_fallback(&self) -> bool {
+        matches!(self, Self::RoomPhaseFallback { .. })
+    }
+
+    /// Why the step did not run, for the `...Skipped` notes; `None` for a
+    /// step that ran.
+    pub fn skipped(&self) -> Option<&str> {
+        match self {
+            Self::SavedMeshesSkipped { error }
+            | Self::FamilyExtrusionsSkipped { error }
+            | Self::RevitPropertySetsSkipped { error }
+            | Self::RevitSetPlacementSkipped { error }
+            | Self::EmbedHostBodiesSkipped { error } => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for ExportNote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SavedMeshes {
+                scope,
+                candidates,
+                replaced,
+                partial,
+                triangles,
+            } => {
+                let what = if *scope == SavedMeshScope::All {
+                    "bounding-box bodies"
+                } else {
+                    "door and window bounding-box bodies"
+                };
+                write!(
+                    f,
+                    "{replaced} of {candidates} {what} drawn from their saved graphics ({triangles} triangles); {partial} kept their box, their saved graphics not decoding whole"
+                )
+            }
+            Self::SavedMeshesSkipped { error } => {
+                write!(f, "saved graphics not read, bodies unchanged: {error}")
+            }
+            Self::RevitPropertySets {
+                elements,
+                types,
+                untyped_elements,
+                properties,
+                left_out,
+            } => write!(
+                f,
+                "Revit property sets on {elements} elements and {types} types, and type sets on {untyped_elements} elements of types with no type object ({properties} properties, {left_out} named parameters left out)"
+            ),
+            Self::RevitPropertySetsSkipped { error } => {
+                write!(f, "Revit property sets not written: {error}")
+            }
+            Self::RevitSetPlacement {
+                elements,
+                properties,
+                left_out,
+            } => write!(
+                f,
+                "{properties} properties on {elements} elements written where Revit's exporter writes them ({left_out} parameters of a kind not written left out)"
+            ),
+            Self::RevitSetPlacementSkipped { error } => write!(
+                f,
+                "properties not placed as Revit's exporter places them: {error}"
+            ),
+            Self::BaseQuantities { left_out } => {
+                write!(f, "{left_out} base quantities left out")
+            }
+            Self::FamilyExtrusions {
+                candidates,
+                replaced,
+                families,
+                families_rebuilt,
+                not_rebuilt,
+                unplaced,
+                unchecked,
+                volume_differs,
+                vertices_differ,
+                surface_differs,
+                unwritable,
+                with_arcs,
+                ambiguous,
+            } => write!(
+                f,
+                "{replaced} of {candidates} saved-mesh bodies drawn from their family's extrusions ({families} families found, {families_rebuilt} rebuilt; {not_rebuilt} had no rebuilt family, {unplaced} no instance transform, {unchecked} a mesh too large to compare; the extrusions did not reproduce the mesh of {volume_differs} by volume, {vertices_differ} by vertices and {surface_differs} by surface; {unwritable} reproduced but not writable; {with_arcs} of the drawn ones have an arc written in a profile; {ambiguous} left alone for sharing a Tag)"
+            ),
+            Self::FamilyExtrusionsSkipped { error } => {
+                write!(f, "family extrusions not read, bodies unchanged: {error}")
+            }
+            Self::EmbedHostBodies {
+                hosts,
+                raised,
+                partial,
+            } => write!(
+                f,
+                "{raised} of {hosts} walls that embed a curtain wall drawn from their saved graphics, Revit having raised their base; {partial} kept their body, their saved graphics not decoding whole"
+            ),
+            Self::EmbedHostBodiesSkipped { error } => write!(
+                f,
+                "walls that embed a curtain wall not read, bodies unchanged: {error}"
+            ),
+            Self::RoomPhaseFallback { phase, rooms } => write!(
+                f,
+                "the project's last phase holds no room, so the {rooms} room(s) of {phase:?}, the latest phase that holds any, are written; every other element is of the last phase. Naming the export phase (rvt-ifc --phase, Python's phase=, the MCP phase argument) is exact: naming the last writes no room"
+            ),
+            Self::Text { text } => f.write_str(text),
+        }
+    }
+}
+
+/// The model of an export, its diagnostics and what the run noted.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct ExportRun {
+    /// The model to write the IFC (or glTF) from.
+    pub model: IfcModel,
+    /// What was read, approximated and left out, as `rvt-ifc --diagnostics`
+    /// writes it. It already counts the saved meshes, the property
+    /// placement, the base quantities and the unread streams.
+    pub diagnostics: ExportDiagnostics,
+    /// Streams a resource limit kept from being read whole
+    /// ([`RevitFile::unread_streams`]), after every step: the model is
+    /// missing what they hold. The caller decides whether to write it.
+    pub unread: Vec<UnreadStream>,
+    /// What the steps reported, in step order.
+    pub notes: Vec<ExportNote>,
+}
+
+/// The model `rvt-ifc` writes the IFC from, built as `rvt-ifc` builds it, under
+/// the default walker limits and with no control. See
+/// [`run_export_with_limits_and_control`] for the steps.
+///
+/// # Errors
+///
+/// As [`run_export_with_limits_and_control`].
+///
+/// # Examples
+///
+/// ```
+/// use rvt::RevitFile;
+/// use rvt::ifc::{ExportOptions, run_export};
+///
+/// let mut rf = RevitFile::open("corpus/tier1/architectural-2024/architectural-2024.rvt")?;
+/// let run = run_export(&mut rf, &ExportOptions::default())?;
+/// println!("{} entities", run.model.entities.len());
+/// for note in &run.notes {
+///     println!("{note}");
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn run_export(rf: &mut RevitFile, options: &ExportOptions) -> Result<ExportRun> {
+    run_export_with_limits(rf, options, WalkerLimits::default())
+}
+
+/// [`run_export`] under the resource limits of `limits`, with no control.
+///
+/// # Errors
+///
+/// As [`run_export_with_limits_and_control`].
+pub fn run_export_with_limits(
+    rf: &mut RevitFile,
+    options: &ExportOptions,
+    limits: WalkerLimits,
+) -> Result<ExportRun> {
+    run_export_with_limits_and_control(rf, options, limits, &WalkerControl::default())
+}
+
+/// The model `rvt-ifc` writes the IFC from, built as `rvt-ifc` builds it:
+///
+/// 1. the phase, when `options.phase` names one (before anything is read);
+/// 2. the exporter `options.kind` names, under `limits`;
+/// 3. the element provenance table in the diagnostics, when asked, from the
+///    walk step 2 made;
+/// 4. the bodies drawn from saved graphics, for the Document and
+///    DiagnosticProxies kinds;
+/// 5. Revit's parameter sets and their placement, when asked;
+/// 6. the base quantities left out, when asked;
+/// 7. the log of per-element decisions in the diagnostics, when asked, from the
+///    decisions step 2 made and the final model;
+/// 8. the unread streams recorded in the diagnostics, which steps 4 and 5 may
+///    have added to.
+///
+/// The saved graphics, the parameter sets and the placement only add to the
+/// export: when one cannot be read, the export goes ahead without it and the
+/// note says so. A cancelled `control` ends the run with
+/// [`Error::Cancelled`](crate::Error::Cancelled) and nothing is kept;
+/// `control` also receives the walk's progress. The document exporter and the
+/// steps after it use it; the diagnostic-proxies and placeholder exporters
+/// take none, as before.
+///
+/// A handle may be exported at one phase and then at another: choosing a
+/// different phase drops the memoised walk that holds what the phase leaves
+/// out ([`RevitFile::set_export_phase`]), so each export is the one a handle
+/// opened for that phase gives, and giving the phase the handle already has
+/// keeps what it read. `options.phase` of `None` leaves the handle's phase as
+/// it is; [`RevitFile::clear_export_phase`] goes back to the default, the
+/// project's last with the rooms' fallback where the last holds no room
+/// ([`RevitFile::room_phase_fallback`]), which a phase named, the last
+/// included, does not have.
+///
+/// # Errors
+///
+/// The errors of reading the file, as
+/// [`RvtDocExporter::export_with_diagnostics`](super::RvtDocExporter::export_with_diagnostics) lists them; a phase the file
+/// does not have as [`Error::InvalidInput`](crate::Error::InvalidInput);
+/// [`Error::Cancelled`](crate::Error::Cancelled) once `control` is cancelled.
+pub fn run_export_with_limits_and_control(
+    rf: &mut RevitFile,
+    options: &ExportOptions,
+    limits: WalkerLimits,
+    control: &WalkerControl,
+) -> Result<ExportRun> {
+    if let Some(phase) = &options.phase {
+        rf.set_export_phase(phase)?;
+    }
+    let placeholder = options.kind == ExportKind::Placeholder;
+    let mut opts = crate::convert::ConvertOptions::rvt_ifc_defaults();
+    opts.placeholder = placeholder;
+    opts.diagnostic_proxies = options.kind == ExportKind::DiagnosticProxies;
+    opts.quality = options.mode;
+    opts.walker_limits = limits;
+    opts.family_geometry = !placeholder;
+    opts.saved_meshes = !placeholder && options.saved_meshes != SavedMeshChoice::Off;
+    opts.no_saved_meshes = options.saved_meshes == SavedMeshChoice::Off;
+    opts.saved_materials = !placeholder;
+    opts.proxy_shapes = !placeholder;
+    // Revit's own property sets are on in `rvt-ifc` by default; the switch
+    // can only ask for them.
+    opts.revit_property_sets = !placeholder;
+    opts.element_provenance = options.element_provenance && !placeholder;
+    opts.export_decisions = options.export_decisions && !placeholder;
+    opts.family_extrusions = options.family_extrusions && !placeholder;
+    // The GlobalId namespace `rvt-ifc` takes from the environment.
+    opts.guid_namespace = std::env::var("RVT_OPEN_GUID_NAMESPACE")
+        .ok()
+        .filter(|ns| super::validate_guid_namespace(ns).is_ok());
+    let exported =
+        crate::convert::export_with_control(rf, &opts, control).map_err(|error| match error
+            .downcast::<crate::Error>(
+        ) {
+            Ok(error) => error,
+            Err(error) => crate::Error::InvalidInput(format!("{error:#}")),
+        })?;
+    let crate::convert::Exported {
+        mut model,
+        mut diagnostics,
+        notes: texts,
+        ..
+    } = exported;
+    let mut notes = Vec::new();
+    if let Some(fallback) = &diagnostics.room_phase_fallback {
+        notes.push(ExportNote::RoomPhaseFallback {
+            phase: fallback.phase.clone(),
+            rooms: fallback.rooms,
+        });
+    }
+    notes.extend(
+        texts
+            .into_iter()
+            .filter(|text| !text.starts_with("the project's last phase holds no room"))
+            .map(|text| ExportNote::Text { text }),
+    );
+
+    if options.revit_set_placement && !placeholder {
+        match super::revit_set_placement::attach(rf, &mut model) {
+            Ok(report) => {
+                recount_exported(&mut diagnostics, &model);
+                notes.push(ExportNote::RevitSetPlacement {
+                    elements: report.elements,
+                    properties: report.properties,
+                    left_out: report.left_out,
+                });
+            }
+            Err(error) => {
+                control.check()?;
+                notes.push(ExportNote::RevitSetPlacementSkipped {
+                    error: format!("{error:#}"),
+                });
+            }
+        }
+    }
+
+    if options.no_base_quantities {
+        let left_out = leave_out_base_quantities(&mut model);
+        recount_exported(&mut diagnostics, &model);
+        notes.push(ExportNote::BaseQuantities { left_out });
+    }
+
+    // The steps above may have read more streams than the export did.
+    record_unread_streams(&mut diagnostics, rf.unread_streams());
+    let unread = rf.unread_streams().to_vec();
+    Ok(ExportRun {
+        model,
+        diagnostics,
+        unread,
+        notes,
+    })
+}

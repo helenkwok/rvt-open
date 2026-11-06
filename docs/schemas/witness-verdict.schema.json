@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://helenkwok.github.io/rvt-open/schemas/witness-verdict.schema.json",
+  "title": "Cross-witness verdict",
+  "description": "The gate's decision for one golden artifact: which witnesses were compared, which inputs they read, which fields were inside the claimed semantic surface, which were excluded first-class and why, any disagreements, whether the independence set was satisfied, and whether the replay matched. Producer: tools/ci/witness-verdict.py. Committed instances live at research/witness/<artifact_id>/verdict.json. Fail-closed: only PASS means agreement.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_id",
+    "status",
+    "witnesses_compared",
+    "inputs",
+    "semantic_surface",
+    "excluded",
+    "diffs",
+    "insufficient_witnesses",
+    "verdict_hash_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "The witness-protocol version this verdict conforms to.",
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "artifact_id": {
+      "description": "The golden artifact's manifest `id`.",
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "description": "Failure semantics. PASS alone exits zero. NON_DETERMINISTIC and WITNESS_ERROR require the cross-platform attestation harness and container supervision, which this repository does not run; the in-repo gate collapses a failed determinism flag into REJECTED_INPUT.",
+      "type": "string",
+      "enum": [
+        "PASS",
+        "DISAGREE",
+        "INSUFFICIENT_WITNESSES",
+        "INSUFFICIENT_INDEPENDENT_WITNESSES",
+        "REJECTED_INPUT",
+        "REPLAY_DRIFT",
+        "NON_DETERMINISTIC",
+        "WITNESS_ERROR",
+        "MANIFEST_ERROR"
+      ]
+    },
+    "witnesses_compared": {
+      "description": "Sorted witness ids remaining in the gate after commercial witnesses are dropped.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+$" }
+    },
+    "inputs": {
+      "description": "Per witness: the bytes it read, the role that hash resolved to against the manifest, and its version. A null role is REJECTED_INPUT.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["input_hash_sha256", "role", "witness_version"],
+        "properties": {
+          "input_hash_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+          "role": { "type": ["string", "null"], "enum": ["source", "bridge", null] },
+          "witness_version": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "semantic_surface": {
+      "description": "The fields actually compared — `entity_counts.<TYPE>` from the manifest `counts` categories whose status is `known`, `relations.<RELATION_TYPE>` from the `relations` categories whose status is `known`, and `storeys.<STOREY_TYPE>` from the `storeys` categories whose status is `known`.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "excluded": {
+      "description": "Fields removed from the surface first-class: manifest categories whose status is `known_gap` or `unsupported`. Listed with their tracking label, never diffed.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "category", "reason"],
+        "properties": {
+          "field": { "type": "string" },
+          "category": { "type": "string" },
+          "reason": { "type": "string" },
+          "tracking": { "type": ["string", "null"] },
+          "unsupported_feature": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "diffs": {
+      "description": "Pairwise disagreements inside the claimed surface. A non-empty array means DISAGREE.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "witness_a", "value_a", "witness_b", "value_b", "tolerance_applied"],
+        "properties": {
+          "field": { "type": "string" },
+          "witness_a": { "type": "string" },
+          "value_a": { "type": ["number", "string"] },
+          "witness_b": { "type": "string" },
+          "value_b": { "type": ["number", "string"] },
+          "tolerance_applied": {
+            "description": "The tolerance the comparison actually used: the manifest category's integer tolerance for counts, 0 for an exact field, or false for a field class with no tolerance concept.",
+            "type": ["number", "boolean"]
+          },
+          "only_in_a": {
+            "description": "Set-valued field classes only — relation pair sets and storey sets: the pairs witness A holds and witness B does not. `value_a` / `value_b` carry the set sizes.",
+            "type": "array",
+            "items": { "type": "array", "items": { "type": "string" } }
+          },
+          "only_in_b": {
+            "description": "Set-valued field classes only: the pairs witness B holds and witness A does not.",
+            "type": "array",
+            "items": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "insufficient_witnesses": {
+      "description": "True when fewer than two observations were present.",
+      "type": "boolean"
+    },
+    "independence": {
+      "description": "The independence evaluation. Present when the gate ran with a registry.",
+      "type": "object",
+      "required": ["lineages", "roles", "commercial_dropped", "strong_copyleft", "satisfied"],
+      "properties": {
+        "lineages": {
+          "description": "Distinct implementation lineages among the compared witnesses; a witness declaring `lineage` collapses into its parent. At least two are required.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "roles": {
+          "description": "Edge sides covered. Both `source` and `bridge` are required.",
+          "type": "array",
+          "items": { "type": "string", "enum": ["source", "bridge"] }
+        },
+        "commercial_dropped": {
+          "description": "Commercial witnesses removed from the gate entirely.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "strong_copyleft": {
+          "description": "GPL/AGPL witnesses in the compared set; they may never be the whole agreeing set.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "satisfied": { "type": "boolean" }
+      }
+    },
+    "replay": {
+      "description": "Replay outcome per witness: `match`, `missing`, or a drift description naming the committed and fresh hashes. Anything but `match` sets REPLAY_DRIFT.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "rejected": {
+      "description": "Witnesses whose input hash matched no manifest hash, or whose determinism flag was not true.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "manifest_errors": {
+      "description": "Why the manifest and the observations do not fit together — an undeclared surface, or a witness absent from the registry.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "verdict_hash_sha256": {
+      "description": "SHA-256 over the canonicalized verdict excluding `timestamp`, so the verdict is byte-reproducible.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "description": "ISO-8601. Omitted by default; excluded from the verdict hash when present.",
+      "type": "string"
+    }
+  }
+}

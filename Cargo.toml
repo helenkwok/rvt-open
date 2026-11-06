@@ -1,0 +1,318 @@
+[package]
+name = "rvt-open"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "Clean-room reader and exporter for Autodesk Revit files (.rvt, .rfa, .rte, .rft) without Revit: IFCX-first, exporting IFCX, IFC4, ThatOpen Fragments, OpenUSD, glTF, plan SVG and CSV schedules."
+authors = ["rvt-open contributors"]
+repository = "https://github.com/helenkwok/rvt-open"
+readme = "README.md"
+keywords = ["revit", "bim", "autodesk", "ifc", "rfa"]
+categories = ["parser-implementations", "compression", "command-line-utilities"]
+# What the published crate needs: the source, the file it embeds with
+# include_str! (docs/support-matrix.json in src/capability.rs), the README
+# crates.io shows, and the licence files. Examples, tests, benches, reports
+# and tooling stay in the repository, and cargo drops the targets whose files
+# are left out. CI's `crate package` step builds the packaged crate.
+include = [
+    "/src/**/*.rs",
+    "/docs/support-matrix.json",
+    "/README.md",
+    "/LICENSE",
+    "/NOTICE",
+]
+# Every tests/*.rs file is a module of tests/integration/main.rs, one test
+# binary rather than one per file.
+autotests = false
+
+# The SPDX identifier `Apache-2.0` is set above. The full license text
+# is in LICENSE at the crate root.
+
+[workspace]
+# Pyo3 bindings moved to their own member crate
+# (`rvt-py/`) so this core library can `#![forbid(unsafe_code)]`
+# unconditionally — no feature-gated escape hatch. The `rvt-open` wheel
+# is built via `maturin build --manifest-path rvt-py/Cargo.toml`.
+# `rvt-open-mcp` is the MCP server, a crate of its own (rmcp and tokio stay
+# out of the core library) with its own `rust-version`.
+members = [".", "rvt-dwg", "rvt-open-mcp", "rvt-py", "rvt-wasm", "tools/stream_evidence", "vendor/craft-atomic"]
+
+# Lints beyond rustc's and clippy's defaults that the workspace keeps, so an
+# editor shows what CI enforces: CI denies every warning (`-D warnings`).
+[workspace.lints.rust]
+unused_qualifications = "warn"
+
+# Raising the MSRV to 1.89 (rusqlite, for the `sqlite` feature) turned on two
+# lints for code written before let-chains and `as_chunks` were stable: 154
+# sites, rewritten in their own change rather than in a feature's.
+[workspace.lints.clippy]
+collapsible_if = "allow"
+chunks_exact_to_as_chunks = "allow"
+
+[lints]
+workspace = true
+
+[features]
+# Heap-profiling mode. When enabled, binaries built from
+# `examples/dhat_*.rs` install the `dhat` global allocator and
+# emit a `dhat-heap.json` trace that `dhat-viewer` (web viewer at
+# https://nnethercote.github.io/dh_view/dh_view.html) renders as
+# a flamegraph of allocations by call-site.
+#
+# Build:
+#   cargo run --release --features dhat-heap --example dhat_schema -- \
+#     tests/fixtures/sample.rfa
+#
+# Then open the produced `dhat-heap.json` in dhat-viewer.
+dhat-heap = ["dep:dhat"]
+# The research modules under `rvt::research`: the partition, native and
+# element-record readers. Their API
+# changes with each finding, so they sit outside the semver promise
+# (RELEASE.md, "What 1.0 keeps stable"). The examples, tests and benches get
+# this feature through the self dev-dependency below.
+unstable-research = []
+# The element table as an SQLite database (`rvt-schedule --format sqlite`,
+# `rvt-batch --formats sqlite`): the bundled SQLite C library, compiled by the
+# build (a C compiler is needed; for the browser build, clang with the wasm32
+# target).
+sqlite = ["dep:rusqlite"]
+# DWG and DXF: `rvt-sheet --format dxf|dwg` and the `rvt::ifc::sheet` drawing model, through the
+# `rvt-dwg` workspace crate. On by default; the WebAssembly build turns it on without the engine's
+# native-only parallel decoding.
+dwg = ["dep:rvt-dwg"]
+default = ["dwg"]
+
+[dependencies]
+# Microsoft Compound File Binary (OLE) container — reads the outer
+# wrapper Revit uses for every on-disk file.
+cfb = "0.16"
+# DEFLATE / raw inflate — for the truncated-gzip streams Revit ships.
+flate2 = "1.0"
+# UTF-16LE decoder — replaces Revit's malformed surrogate pairs with U+FFFD,
+# where std's String::from_utf16 rejects the whole string.
+encoding_rs = "0.8"
+# Vectorised substring search. The partition element-record sweep scans
+# every inflated `Partitions/*` byte once per BuiltInCategory — ~1 GiB
+# per project-file export — and the hand-rolled first-byte loop it
+# replaces was the second-largest cost in a geometry export. Adds no
+# crate to the build graph: `memchr` is already a normal (non-dev)
+# transitive dependency through both quick-xml and serde_json.
+memchr = "2"
+# SIMD Adler-32 for the data-object scan: a partition stream
+# holds headers that look like objects claiming megabytes, and each is
+# summed before it is rejected (8.4 GB per scan of Autodesk's 2025 MEP
+# sample). Adds no crate to the build graph: miniz_oxide, under flate2,
+# already depends on it.
+simd-adler32 = "0.3.9"
+# Triangulates the planar faces of saved family graphics.
+# MIT OR Apache-2.0. From 0.4.10 it calls `is_multiple_of`, which needs Rust
+# 1.87, and it declares no rust-version, so the MSRV-aware resolver cannot
+# tell: keep `rust-version` at 1.87 or above while this allows 0.4.10+.
+earcut = "0.4.5"
+# PartAtom XML parser. 0.42 needs Rust 1.86.
+quick-xml = { version = "0.42", features = ["serialize"] }
+# Serialisation for JSON output + test fixtures.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Witness mode (docs/verification-protocol.md): `rvt-ifc --observation`
+# records the SHA-256 of the input it observed so a replay can prove the
+# same bytes were read. Also used by tests/corpus_health for sidecars.
+sha2 = "0.11"
+# CLI argument parsing for every shipped binary.
+clap = { version = "4", features = ["derive"] }
+# Error ergonomics.
+anyhow = "1"
+thiserror = "2"
+# Optional heap profiler. Only pulled in when the `dhat-heap`
+# feature is enabled — default builds have zero cost. Pinned to 0.3
+# (current stable API).
+dhat = { version = "0.3", optional = true }
+md-5 = "0.11"
+# The element table as an XLSX workbook (MIT OR Apache-2.0). Pure Rust, in
+# both browser builds.
+rust_xlsxwriter = { version = "=0.102.0", default-features = false }
+# The element table as an SQLite database, behind the `sqlite` feature (MIT):
+# the bundled SQLite natively, `sqlite-wasm-rs` (SQLite compiled for
+# wasm32-unknown-unknown) in the browser; `serialize` returns the database's
+# bytes.
+rusqlite = { version = "=0.41.1", default-features = false, features = ["bundled", "serialize", "ffi-sqlite-wasm-rs"], optional = true }
+
+# The element table as a Parquet file (Apache-2.0, `arrow` only: no
+# compression codecs, no async). Pure Rust, in both browser builds.
+parquet = { version = "=60.1.0", default-features = false, features = ["arrow"] }
+arrow-array = { version = "=60.1.0", default-features = false }
+arrow-buffer = { version = "=60.1.0", default-features = false }
+arrow-schema = { version = "=60.1.0", default-features = false }
+# DWG/DXF reading and writing (feature `dwg`).
+rvt-dwg = { path = "rvt-dwg", version = "=0.1.0", default-features = false, optional = true }
+
+# The browser's clock for the IFC header's timestamp: `std::time::SystemTime`
+# panics on wasm32-unknown-unknown and wasm64-unknown-unknown, which the viewer
+# (rvt-wasm) builds for.
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+js-sys = "0.3"
+
+# Crash-safe output files (`rvt::cli::write_output`): craft-atomic, vendored
+# whole from craft-libs (MIT OR Apache-2.0, vendor/craft-atomic/SOURCE.md).
+# Not in the browser build, which writes nothing to disk itself.
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+craft-atomic = { path = "vendor/craft-atomic", version = "=0.1.0" }
+
+[dev-dependencies]
+# stream-evidence harness. Only
+# `examples/stream_evidence.rs` uses it, so it is a dev-dependency, and it is
+# path-only on purpose: Cargo strips path-only dev-dependencies at
+# `cargo publish`, which keeps `rvt` publishable while `tools/stream_evidence`
+# stays `publish = false` (a regular dependency made `cargo publish -p rvt`
+# fail with "no matching package named `stream-evidence`").
+stream-evidence = { path = "tools/stream_evidence" }
+# Turns on `unstable-research` for every dev target (the examples,
+# the integration tests, the benches) without turning it on for `cargo build`,
+# `cargo install` or the published crate. Path-only, so `cargo publish`
+# strips it.
+rvt = { package = "rvt-open", path = ".", features = ["unstable-research", "sqlite"] }
+# Statistical benchmarking harness — drives `benches/*` and
+# powers the criterion-based cells in `docs/benchmarks.md`.
+# `html_reports` renders per-run HTML + SVG so CI artefacts are
+# browsable. Version 0.7 builds on the MSRV.
+criterion ={ version = "0.8", features = ["html_reports"] }
+# Tier-one corpus health: hex-encode license-sidecar SHA256 checks of
+# committed synthetic fixtures under corpus/tier1/ (`sha2` itself is a
+# regular dependency — `rvt-ifc --observation` hashes its input).
+hex = "0.4"
+# Shipped binaries. All depend on the `rvt` library crate; tests/binary_inventory.rs
+# pins this list against the README's CLI sentence so the two cannot drift.
+
+[[bin]]
+name = "rvt-analyze"
+path = "src/bin/rvt_analyze.rs"
+
+[[bin]]
+name = "rvt-info"
+path = "src/bin/rvt_info.rs"
+
+[[bin]]
+name = "rvt-inspect"
+path = "src/bin/rvt_inspect.rs"
+
+[[bin]]
+name = "rvt-schema"
+path = "src/bin/rvt_schema.rs"
+
+[[bin]]
+name = "rvt-history"
+path = "src/bin/rvt_history.rs"
+
+[[bin]]
+name = "rvt-diff"
+path = "src/bin/rvt_diff.rs"
+
+[[bin]]
+name = "rvt-corpus"
+path = "src/bin/rvt_corpus.rs"
+
+[[bin]]
+name = "rvt-dump"
+path = "src/bin/rvt_dump.rs"
+
+[[bin]]
+name = "rvt-doc"
+path = "src/bin/rvt_doc.rs"
+
+[[bin]]
+name = "rvt-ifc"
+path = "src/bin/rvt_ifc.rs"
+
+[[bin]]
+name = "rvt-ifc-compare"
+path = "src/bin/rvt_ifc_compare.rs"
+
+[[bin]]
+name = "rvt-gltf"
+path = "src/bin/rvt_gltf.rs"
+
+[[bin]]
+name = "rvt-sheet"
+path = "src/bin/rvt_sheet.rs"
+
+[[bin]]
+name = "rvt-elem-table"
+path = "src/bin/rvt_elem_table.rs"
+
+[[bin]]
+name = "rvt-elements"
+path = "src/bin/rvt_elements.rs"
+
+[[bin]]
+name = "rvt-capabilities"
+path = "src/bin/rvt_capabilities.rs"
+
+[[bin]]
+name = "rvt-schedule"
+path = "src/bin/rvt_schedule.rs"
+
+[[bin]]
+name = "rvt-batch"
+path = "src/bin/rvt_batch.rs"
+
+# Criterion benchmark suite. Run with `cargo bench` or
+# `cargo bench --bench compression`. See `docs/benchmarks.md`.
+[[bench]]
+name = "basic_file_info"
+harness = false
+
+[[bench]]
+name = "project_file"
+harness = false
+
+[lib]
+name = "rvt"
+path = "src/lib.rs"
+# A plain `rlib`. The wasm bindings are their own `cdylib` crate,
+# `rvt-wasm`, as the pyo3 bindings are `rvt-py`: a
+# `cdylib` crate type here linked a shared library on every native
+# build, test run and `cargo install`.
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# CI-only profile: release optimisation without the parts sccache cannot
+# cache. `cargo build --release --all-targets` links 57 targets (18 bins,
+# 35 test binaries, 4 benches) through fat LTO at codegen-units = 1, which
+# was 781 s of the 848 s Windows test job while every rustc
+# invocation was already a cache hit. Tests do not need LTO; shipped
+# binaries (publish.yml) keep `release`.
+[profile.ci]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+strip = false
+debug = 0
+incremental = false
+
+# Docs.rs build configuration — see https://docs.rs/about/metadata
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[test]]
+name = "integration"
+path = "tests/integration/main.rs"
+
+# Arrow 60.1.0 does not compile for the 64-bit browser build: arrow-buffer has
+# no buffer alignment for wasm64, and arrow-array and parquet ask for runtime
+# hash seeds there, which getrandom 0.3 cannot give on wasm64. Until the fix is
+# released, take 60.1.0 plus those changes (wasm64 treated as wasm32) from
+# this commit.
+[patch.crates-io]
+arrow-array = { git = "https://github.com/helenkwok/arrow-rs", rev = "fa03ba60d29e3822d3870a5e042e8dec09d3b486" }
+arrow-buffer = { git = "https://github.com/helenkwok/arrow-rs", rev = "fa03ba60d29e3822d3870a5e042e8dec09d3b486" }
+arrow-cmp = { git = "https://github.com/helenkwok/arrow-rs", rev = "fa03ba60d29e3822d3870a5e042e8dec09d3b486" }
+arrow-data = { git = "https://github.com/helenkwok/arrow-rs", rev = "fa03ba60d29e3822d3870a5e042e8dec09d3b486" }
+arrow-ipc = { git = "https://github.com/helenkwok/arrow-rs", rev = "fa03ba60d29e3822d3870a5e042e8dec09d3b486" }
+arrow-schema = { git = "https://github.com/helenkwok/arrow-rs", rev = "fa03ba60d29e3822d3870a5e042e8dec09d3b486" }
+arrow-select = { git = "https://github.com/helenkwok/arrow-rs", rev = "fa03ba60d29e3822d3870a5e042e8dec09d3b486" }
+parquet = { git = "https://github.com/helenkwok/arrow-rs", rev = "fa03ba60d29e3822d3870a5e042e8dec09d3b486" }

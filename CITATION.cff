@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use rvt-open in academic or archival work, please cite it using this metadata."
+title: "rvt-open: Clean-room reader and exporter for Autodesk Revit files"
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/helenkwok/rvt-open"
+abstract: >-
+  rvt-open is an Apache-2.0 toolkit for reading and exporting Autodesk
+  Revit project, family and template files (.rvt, .rfa, .rte, .rft)
+  without Autodesk's software. It exports IFCX, IFC4, ThatOpen
+  Fragments, OpenUSD, glTF, plan SVG and CSV schedules, as command-line
+  tools, a Rust library, Python bindings and a WebAssembly package. It
+  is built from public observations of the file format and is not
+  affiliated with Autodesk.
+keywords:
+  - revit
+  - rvt
+  - rfa
+  - bim
+  - autodesk
+  - ifc
+  - ifcx
+  - file-format
+  - parser
+  - rust
+  - interoperability
+authors:
+  - name: "rvt-open contributors"

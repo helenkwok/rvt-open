@@ -1,0 +1,185 @@
+# Supported profile
+
+What rvt-open can be trusted with today, in the terms a BIM user would check.
+The evidence behind every line is in [`support-matrix.json`](support-matrix.json)
+(`rvt-capabilities --matrix -f text` prints it) and in the measured tables of the
+[evidence page](evidence.md#what-rvt-open-reads-from-real-projects). This page
+describes `main`; the latest release is v0.1.0, and what has landed since
+is in the fragments under [`changelog.d/`](../changelog.d/README.md).
+
+## Four levels of "it works"
+
+A Revit file can succeed at one level and not the next, so rvt-open keeps them
+apart:
+
+1. **Opened.** The OLE container, its streams, metadata, previews and schema
+   read: every Revit release from 2016 to 2027, across the family corpus.
+   Revit 2015 files open too, on Autodesk's sample projects, where previews
+   and PartAtom are not measured.
+2. **Elements identified.** Each element is found with its Revit ElementId and
+   category, and the set equals the one Revit's own IFC export holds. Revit
+   2024 and 2025 project files, and Revit 2023 ones with their bounding boxes
+   only. Experimentally, Revit 2026 ones, measured so on one project, and Revit 2015 to 2022 and 2027 ones, which have no measured
+   Revit export of their own release (except one 2015
+   project and one 2018 project) and are measured against the same sample projects saved by
+   Revit 2019 (for 2015 to 2018), 2023 (for 2019 to 2022) and 2026 (for 2027)
+   instead: a 2027 project's ElementIds and classes are its 2026 copy's, and
+   on 2015 to 2022 every ElementId shared with the copy keeps its class, with
+   the copy's building elements class for class where Autodesk did not edit
+   the model between releases (the table below).
+3. **Geometry.** An element's body. Exact where the element's data is decoded
+   (the table below), otherwise its bounding box, and the export diagnostics
+   say which.
+4. **Properties.** Names, types, storey, materials, layers and GlobalIds are
+   read; most other parameters are not.
+
+## By input
+
+| Input | Opened | Elements identified | Geometry | Properties |
+|---|---|---|---|---|
+| Revit 2024 and 2025 project (`.rvt`) | yes | yes, measured on Core Interior, the four RE1 models, Snowdon Towers (local only), Projeto1 and `teste_export_2025` (both local only; RE1's exports are by Revit 26.2; one plumbing fixture on RE1 Plumbing and 23 elements on Snowdon Towers are not in Revit's export) | see below | see below |
+| Revit 2026 project | yes | experimental: measured on flowbim's `AA-SingleDwellingHouse` (local only), a 2026 project, against Revit's own IFC4X3 export, 113 of its 115 elements and none outside it | the element's bounding box, walls cut back at their joins; rooms their outline, read as on 2025; beams along their axes, stair runs and landings, and floors, ceilings and slabs from their sketch lines (shaft openings are not cut there since the floors, ceilings and roofs they pass through stay whole, and the export counts the shafts), none scored against a Revit export, but held to the same project's 2024 and 2025 saves (which cannot catch an error those saves share) and, for one stair flight, to Revit's own export; tread landings only, a monolithic landing stays its box; a roof keeps the record-box solve as on `main`, without its slope, so a sloped roof can still be a level block | Revit's GlobalIds, storeys, rooms with Revit's numbers and names, doors and windows in their hosts, family and type names, layer sets |
+| Revit 2023 project | yes | yes, measured on Exemplo_data and modelo_bim (both local only) against Revit's IFC4 exports; components nested in doors and windows are left out | the element's bounding box; rooms their outline | ElementId, category, door and window host walls, Levels as storeys with each element on the one its record names, and family instances' family and type names |
+| Revit 2027 project | partial: opens on Autodesk's sample projects; previews and PartAtom not measured | experimental: the same ElementIds and classes as the 2026 copies of Autodesk's five sample projects; no Revit 2027 export is measured | as on 2026 | as on 2026 |
+| Revit 2019 to 2022 project | yes | experimental: 2023's records and readers with each release's schema tags; every ElementId shared with the 2023 copies of Autodesk's sample projects keeps its class, and the `rac_basic`, `rst_basic` and 2021 and 2022 `rac_advanced` exports have the 2023 copies' building elements, class for class; no Revit export of a 2019 to 2022 file is measured | as on 2023 | as on 2023 |
+| Revit 2015 to 2018 project | yes on 2016 to 2018; 2015 partial: opens on Autodesk's sample projects; previews and PartAtom not measured | experimental: 2019's records and readers with each release's schema tags; every ElementId shared with the 2019 copies of Autodesk's 2016 to 2018 sample projects keeps its class, and their exports have the 2019 copies' building elements, class for class; on five of the six 2015 samples every shared ElementId keeps its class, and the sixth, `rst_basic`, is another model; Revit's own export is measured on one 2015 project and one 2018 project, Vitoria's `ALD26 Before`, where 1,314 of its 1,321 elements are written by ElementId (1,136 before conduits, conduit fittings and gutters), 1,305 of them in Revit's class or IFC4's (9 curtain walls come out as walls), none that the export leaves out, 1,251 on Revit's storey | as on 2019 | as on 2019 |
+| Revit 2011 to 2014 project | yes, on local closed-source files only, outside the 1.0 range (2015 to 2027); 2011 to 2013 open | experimental: 2015's records and readers with each release's schema tags; on a local copy of Autodesk's 2013 `rac_advanced` sample (local only) every ElementId shared with its 2015 copy keeps its class, and its export has the 2015 copy's building elements, class for class, but for a re-divided curtain wall; no Revit export of a file before 2015 is measured | as on 2015 | as on 2015 |
+| Revit 2008 to 2010 project | yes, on local closed-source files only, outside the 1.0 range (2015 to 2027) | experimental: 2011's records and readers with each release's schema tags, 2008's envelope 4 bytes shorter in the local closed-source files (local only); checked only for consistency within each file, with no Revit export and no same-model copy | as on 2015 | storeys and named materials |
+| Family (`.rfa`) | yes | family metadata and OmniClass only | none | a family's types and type parameters as its `PartAtom` stream lists them: Revit's text at save, not read from the family's own records |
+| Template (`.rte`, `.rft`) | the same container code; no template file is in any corpus, so not measured | not measured | none | none |
+
+A file that is corrupt, encrypted, a zero-byte Git LFS placeholder, or not an
+OLE/CFB Revit container is refused with an error. A stream larger than
+rvt-open's resource limits (by default 2 GiB for the file, 256 MiB for one
+stream and for one inflated member, and 1 GiB inflated per partition) is not
+read, so the elements it holds are not exported. `rvt-ifc` and `rvt-gltf` then
+name each such stream, write no model and exit with status 3<!-- w10: the exit status the CLIs return, not a measurement --> unless
+`--allow-partial`, and the diagnostics list them; `--large-model` raises the
+per-stream cap to the file's own 2 GiB and, on a 64-bit machine, the inflate cap to 8 GiB<!-- w10: the presets of src/cli.rs, not measurements -->.
+The readers of native records (types, materials, stairs, phases, saved
+parameters and others) follow the same limits and skip only the stream they could
+not read. The browser viewer opens a file at the default limits and, when a
+stream is not read, reports "Part of the file not read" and offers "Retry
+with large-model limits" (streams up to 2 GiB<!-- w10: the limit the viewer's retry sets, not a measurement -->); it stays under wasm32's 4 GiB<!-- w10: wasm32's address space, not a measurement -->
+memory ceiling, so a very large model can still fail to open there. This is
+measured by lowering the limits below the reference files' streams (Core
+Interior's 17 MB partition against an 8 MiB limit). On the field report behind
+the 438 MB client model (not shared, reported 2026-11-02 on 0.12.0),
+whose largest partition is 403 MiB stored, exits with status 3 at the
+defaults and reads with `--large-model` as 9,958 elements on 35 storeys at a
+10.3 GB peak; the 1.13 GB client model, with a 1,057 MiB partition, was stopped
+at its machine's 16 GB memory limit, so a model that size is not yet read.
+
+A project saved by Revit 2024 to 2027 can keep the schema of the release it
+passed through, and with it that release's element-record layout. Such a
+file is read as the release its schema belongs to, and the diagnostics say
+so ("Saved by Revit X but keeps Revit Y's schema"). A schema that matches no
+measured release still reads no element records. None of the reference or sample files keeps an
+older schema, so the reading is not yet measured on an affected file.
+
+## Geometry on Revit 2024 and 2025 projects
+
+| Element | What you get | How close |
+|---|---|---|
+| Walls | a body from the wall's centreline and its type's thickness, drawn as its layers in the viewer and glTF, ending as its joins say, along its arc when curved, leaning on its exterior face when tapered, its top cut at the underside of the floor, roof or footing its top join or a cut pair names, over the part of its plan the element covers (the wall drawn stepped where that is part) | faces exactly Revit's on 1,030 of Snowdon's 1,078 walls; both ends on 724; all 360 of Core Interior's; both ends on 510 of the BIM4LCA office's 607 as built and 430 of 589 at building permit, a corner of three or more walls read from the order the record joins them in, a layered corner of two walls and a corner a column cuts not yet; wall tops Revit's on 64 of the 65 the office cuts whole as built and 70 of 70 at building permit, and Revit's over the whole plan on 583 of 607 walls as built and 571 of 589 at building permit with the walls a floor covers in part stepped |
+| Floors, building pads | the sketched plan outline, holes included, at the measured thickness | Core Interior 80 of 80 outlines; the BIM4LCA office's slabs with Revit's outline within 0.01 ft, 63 of 63 on each file |
+| Roofs | the sketched outline; a shed, gable or hip roof, or one sloped by one or several arrows, as its planes; a Revit 2025 roof by extrusion as its sketch's section | 11 of 13 outlined Snowdon roofs with Revit's area; on the R2025 sample models, 21 of 22 roofs with Revit's body, every vertex within 0.001 ft of it, the 22nd a U-shaped roof sloped by six slope arrows that stays its record box; hips over T and U footprints are level blocks |
+| Columns | the column prism minus what walls cut from it | Core Interior 256 of 256, exact |
+| Beams | along their location line with their section; a steel beam whose type stores an I section as that I; an unrotated level beam whose record box is longer than its line as that box along the line, its length the box's, so it can run past the beam at its ends (`BodySource` `partition_beam_box_along_axis`) | 923 of 942 beams of the Snowdon Towers samples drawn along their location line; 377 of Snowdon's (local only) drawn as their I, Revit's own shape and place on all 271 that Snowdon's VIM export scores; channels and angles are not drawn yet. 34 more beams on Autodesk's 2024 sample projects (17 of the Snowdon Towers samples', 9 of rst_basic's, 8 of rac_advanced's) are drawn as their box along the line; on the 25 of those beams whose saved mesh decodes whole the section across the line is the mesh's on 25, the mesh's ends are the body's on 16 and end inside it on 9 of Autodesk's sample projects' beams; the 9 of those sample projects' beams without a decodable mesh are on a model axis, where the body is their record box. Revit 2025: the 391 beams of Autodesk's `rac_advanced` and `rst_basic` saved by 2025 are their 2024 saves'; no Revit export checks a 2025 beam, since none of the 28 Revit 2025 models read (the 24 R2025 sample models and RE1's four) holds one, and the check against the 2024 save cannot catch an error that save shares |
+| Steel columns | a structural column whose type stores an I section as that I, turned to the column's own X axis; a column whose type is a square hollow section as it, rounded corners and all, from its family's parameters | all 40 of Snowdon's steel columns (local only); Revit's own shape and turn on all 24 that Snowdon's VIM export scores. Revit's own body on all 79 hollow-section columns of the BIM4LCA office as built and 55 at building permit; rectangular and turned tubes and other sections keep their box. Every I-section member carries its I as an `IfcMaterialProfileSet` of its type's material |
+| Pipes | a cylinder along its two ends with its outside radius, where the ends and the record box prove one | all 69 pipes on RE1 Mechanical and Plumbing (Revit 2025) and the BIM4LCA office's 12 (Revit 2024), Revit's own radius, ends and length to 0.00001 ft; sloped pipes are not measured, ducts and fittings keep their box |
+| Conduits, conduit fittings, gutters | the element's record box; no cable tray or cable tray fitting is exported | Vitoria's `ALD26 Before` (Revit 2018) only, the one file with a Revit export that holds any: all 102 conduits, 74 fittings and 2 gutters are Revit's elements by `Tag` on Revit's storey, the boxes of 102 of the 104 conduits and gutters within 0.01 ft of Revit's; Autodesk's MEP samples (2015 to 2027) and Snowdon Towers Electrical export them too, counted and not scored |
+| Stairs | aggregates of flights, landings and supports, each stair's and flight's `PredefinedType` from its runs and landings; straight flights as their steps, monolithic ones included; riserless flights as their treads, spiral ones as their sector-shaped treads; a monolithic landing as its slab, and a landing that is one tread as that tread | Snowdon Towers (local only) 33 of 38 drawn flights equal to Revit's; on the BIM4LCA office (Revit 2024) all 35 flights have Revit's volume, its 34 straight ones and its spiral one, its 21 monolithic landings Revit's top and outline, and its tread landing Revit's body; on the R2025 sample stair models every flight of models 13 to 16 has Revit's volume. A monolithic landing's underside is drawn flat where Revit's follows a flight's soffit, 100.4% to 104.7% of Revit's volume on the BIM4LCA office's 21 landings, and its `BodySource` says so; monolithic spiral runs and riserless runs with a nosing keep their box. A tread landing (not monolithic) is drawn as its tread on 2024 to 2027; on 2025 `rac_advanced`'s 5 are its 2024 save's, and no Revit export holds a tread landing on 2025 (none of the 28 Revit 2025 models read, the 24 R2025 sample models and RE1's four, does); a monolithic landing stays its box on 2025 to 2027 |
+| Curtain walls | aggregates of panels and mullions placed by their grids; a mullion or panel turned or tilted off the model's axes as the box along its own axes | every Snowdon panel and mullion relation Revit's (local only); 1,019 of Snowdon's turned or tilted mullions and panels with Revit's extents along their axes |
+| Doors, windows, openings | the element's box, turned with the instance where it is turned; its opening is as deep as the host wall | host is Revit's on 138 of 138 (Core Interior) and 192 of 194 (Snowdon, local only, the other 2 in another wall Revit cuts), and on Revit 2024 and 2025 the wall its native record names, Revit's on all 463 of the BIM4LCA office's as built; on Revit 2024 and 2025 the opening is the outline the symbol that draws it cuts, through the instance's transform: 138 of 138 on Core Interior and 4 of 4 on RE1 within 0.001 ft of Revit's; a window whose type stores Width, Height and Default Sill Height takes Revit's opening exactly (56 of 68 on Snowdon), and a door whose body is its type's Rough Height tall its rough opening (57 of 126 on Snowdon); any other door whose type stores Width and Height carries them as its overall size (137 of 137 on Core Interior and RE1); on Revit 2024 and 2025 a door's or window's overall size is the outline the symbol that draws it cuts, Revit's on every one with such an outline (138 of 138 on Core Interior, 4 of 5 on RE1); a door or window whose symbol cuts no outline takes its own extents as its overall size, Revit's on all 269 windows and 266 of 269 doors of the BIM4LCA office; otherwise not Revit's opening profile |
+| Rooms | `IfcSpace` with number, name and the outline of the room's stored solid, or the record's bounding box, which the space's `SpaceOutlineSource` says; [docs/rooms.md](rooms.md) | Revit's own area and outline on all 116 Core Interior and 11 RE1 Architecture rooms, scored by Measure's `space_profiles_vs_ifc` and gated in CI; all 220 of the BIM4LCA office's scored rooms read from their stored solid by the exact walk as built (221 of 222 at building permit) at Revit's area and outline; the BIM4LCA office's rooms the walk did not close take a resolved outline, `stored_solid_faces` (9 of 9 as built at Revit's area) or `stored_solid_approximate` (10 of 15 room scores at Revit's floor area, the 5 others 0.45% to 0.68% under it), and the BIM4LCA office's 1 room (permit) that keeps its box and 44 family-instance spaces drawn as boxes almost never are Revit's; 45 of 54 Snowdon Towers (local only) rooms at the area Snowdon's VIM export gives, the other 7 whose solids do not close keeping their box; on Revit 2023, all 9 of Exemplo_data's (local only) |
+| Areas | `IfcSpace` with number, name and storey, and the region its area boundary lines enclose around its point, or the region Revit's plan topology keeps for it, up to the Level above it, where its boundary lines and both Levels are proven (`SpaceOutlineSource` `area_plan_topology` where the plan topology gives the region, `area_plan_topology_unchecked` on Revit 2025 to 2027 and on an Area drawn from lines whose partition copies disagree, whose Areas nothing outside the file checks, else `area_boundary`, or `area_boundary_joined` where a boundary line was carried on to the line it joins; none otherwise) | all 30 of Revit's area spaces on the BIM4LCA office, as built and at building permit, and their bodies, 30 of 30 on each file within 0.1% in area and 0.01 ft in outline, base and top; Revit 2015 to 2023 on the same rules, written only where the body is proven, and measured against the same project's 2024 save on Autodesk's samples and, for `rac_advanced`, against an IFC2X3 export from the three.js repository, by a build of Revit 2021's exporter whose string ends "IU alternativa 21.0.0.383" (publisher not established), showing the 2015 to 2020 state. Revit 2025 to 2027 and the recorded Autodesk Snowdon Towers 2024 samples are written against no Revit export, labelled (the maintainer, 2026-11-05, "Ship, labelled", then "Same-project gate"): the loop drawn for each equals the area Revit saves in the file for that loop (`PlanCircuit m_area`, to 1e-6) and holds the Area's point and, on 2025 to 2027, the same project's 2024 save gives the same Areas. They stay written only while the Areas of rac_advanced on its 2025, 2026 and 2027 saves equal its 2024 save's, Area by Area, in GlobalId, number, name, storey, outline source, body area, top surface, height and lowest vertex (the maintainer, 2026-11-05, "Same-project gate"). Every Measure run of the samples that holds the four saves checks it with `tools/re/areas_across_saves.py` and fails on a difference, a missing or extra Area, other than `rac_advanced`'s 25 Areas or 25 bodies on a save, an Area with no storey, or a missing save; a run with fewer than the four saves (a narrower `sample_years`) checks nothing and prints a notice. Measure is not a required check: a failure blocks landing by the landing rule, read before merging. It compares rvt-open with itself and cannot catch an error the 2024 read shares with the later reads. The seven held-out Revit 2025 to 2027 models write no Area and their exports are byte-identical to main's, so they test nothing here. The plan topology's counts and vertex-level figures are from runs |
+| Furniture, fixtures, equipment, MEP devices, site | the element's bounding box, turned with the instance where it is turned | placement and extent only; no family geometry. MEP devices and equipment are measured on RE1 Electrical and Mechanical only |
+| Family instances from their saved meshes (doors and windows by default on Revit 2023 to 2027, every other family with `--saved-meshes`) | the mesh Revit saved for the element's display | within 0.01 ft of Revit's box, every saved-mesh body drawn: Core Interior 138 of 138 doors and windows and RE1 228 of 228; Snowdon Towers (local only) 3,332 of 3,736 (a local run not re-run since). Revit's own shape, every vertex within 0.001 ft of the other's surface (`mesh_bodies_vs_ifc`, the same run): Core Interior 138 of 138 doors and windows, the BIM4LCA office 1,554 of 1,650 scored as built, 265 of its 269 doors and all 269 windows among them, and 1,638 of 1,738 at building permit, RE1 148 of 228 (Architecture 45 of 53, Electrical 31 of 47, Mechanical 65 of 68, Plumbing 7 of 60), all in IfcOpenShell's default tessellation, the bar for a saved mesh; a mesh that is not exact is part of the body. The default export draws only doors and windows from saved meshes, and scores the BIM4LCA office's 265 of 269 doors and 269 of 269 windows the same. A mesh some face of which did not decode keeps its box, and all 269 of the BIM4LCA office's doors are drawn from their saved meshes |
+| Family instances from their family's own extrusions (`rvt-ifc --family-extrusions`, opt-in, implies `--saved-meshes`; Revit 2024 to 2027, measured on 2024 and 2025) | `IfcExtrudedAreaSolid`s over `IfcIndexedPolyCurve` profiles, rebuilt from the sketch lines, arcs and offsets of the extrusions in the family's own document, where they reproduce the instance's saved mesh (an arc is written as the arc, whatever its radius, an arc too flat to survive the writer's micrometre rounding is a line); every other instance keeps its mesh | the extrusions of a family rebuilt from their sketches match the mesh Revit saved for each form: 24 of 24 in the family corpus (12 releases) and 6,172 of 6,172 with a complete mesh (79 of them with the normal reversed) in Autodesk's 58 sample projects; the export is measured against Revit's own on Core Interior, RE1 and the BIM4LCA office files: 335 bodies are replaced (Core Interior 37, each office file 129, each terrain file 11, RE1 Architecture 8, Electrical 8, Mechanical 1, Plumbing 1), where the 0.12 ft rule replaced 66 and kept 269; 251 of them are scored by `mesh_bodies_vs_ifc` (the 42 per BIM4LCA office file written as `IfcSpace` are scored by `space_profiles_vs_ifc`), and all 251 hold "ref on ours", both directions within 0.001 ft and the volume within 0.01%: 187 are decided by the fine tessellation, the bar for a body both files write as true curves (the arcs: 78 in each office file, 11 in each terrain file, 6 in RE1 Electrical and 1 in RE1 Architecture, and 2 circles of 0.12 ft or less), and 64 by IfcOpenShell's default one; 6 of the 53 exports move against `main`'s (the office files, the terrain files, RE1 Architecture and Electrical), each only by the bodies the rule kept, none held-out, and no row that passed on `main` fails. Before the flat-arc rule, the first arc run had 250 of the 251 bodies scored on Core Interior, RE1 and the BIM4LCA office files within the default tessellation's bar, the one that did not (on RE1 Architecture) being a count mismatch between its default tessellation of Revit 26.2's IFC2X3 circle profile (27 chords) and of two half arcs of it (28); the default export (no flag) is byte-identical to `main`'s on 34 of 34 models (Core Interior, Einhoven, RE1, the BIM4LCA files and the 24 R2025 sample models; 111 of 111 models of the unfiltered runs at the earlier heads, which add Autodesk's sample projects and the held-out models) |
+
+## Properties on Revit 2024 and 2025 projects
+
+Read: ElementId, category, `Family:Type:ElementId` name, type name, storey,
+material names and layer thicknesses, family instances' materials, the IFC type
+object of each element's type, Revit's GlobalId (other entities get one
+derived from the document and their own identity, stable between exports),
+stair riser and tread dimensions, each flight's
+number of treads and nosing length, a stair's `TreadLengthAtInnerSide` and, with `--revit-set-placement`, its `Pset_StairFlightCommon` summed or shared from its flights, on Revit 2024 its run type as its `Reference`
+and each landing's type as its `Reference`, each element's `IsExternal` as Revit's
+exporter sets it (a parameter named for its property set, its type's
+Function, else its class's rule; on curtain mullions and panels their curtain wall's; on Revit 2015 to 2023 a wall's, from its type's Function or a parameter named for it, experimentally), each type object's common set (`FireRating`, `LoadBearing`, a stair type's and flight type's dimensions; no `IsExternal`, which Revit's newer exporters write on no type object),
+each curtain mullion's `Span`, its length along its own axis, which is also its `Qto_MemberBaseQuantities.Length`, and its `NetVolume`, its section times that length, where Revit's export draws it as an extrusion of its section: a mullion whose type has its own rectangular or square section, told by the class of its type's section object in whatever language the model is in, on a straight curtain wall whose profile is not edited,
+each door's and window's `Width`, `Height` and `Area` base quantities, its type's size where the symbol that draws it has the same,
+each curtain wall's type, named as its type's native record names it,
+each wall's `Qto_WallBaseQuantities.Width`, its type's thickness, also on a wall not drawn from its centreline, its `Length` where its curve cut back where its body meets the walls joined at its ends is as long as the curve, so either length Revit's export may write is that one, and its `Height`, its body's depth, where its native record names no roof or floor joined to it, no element cutting it and no instance's cutout, and on a wall joined to roofs or floors that lie clear of it that gets the four quantities below, and its `GrossSideArea`, `NetSideArea`, `GrossVolume` and `NetVolume` where no step of the record cuts, embeds or sweeps it and its body is the record's box cut back at its joins, a rectangle, or it is joined to roofs or floors that lie clear of it and its record confirms its length or its centreline cut back at its joins is as long as its body, and, on a wall no roof, floor or other element joins or cuts, its `GrossFootprintArea`, its length times its width, where it is more than three times as long as thick, each beam's `Qto_BeamBaseQuantities.Length` where it is drawn along its location line, its line's length, and none for a beam drawn as its box along a line shorter than the box (its `BodySource` is `partition_beam_box_along_axis`, its `AxisLength` is the line's and its `BodyLength` the box's, and Revit's own mesh ends inside its body on 9 of the 25 beams of Autodesk's sample projects measured), each curtain wall's `Qto_CurtainWallQuantities.Length`, its curve's, and the `Qto_OpeningElementBaseQuantities.Depth` of each opening a door or window whose symbol cuts an outline makes in it, that thickness; the openings' `Width` and `Height`, which Revit's export swaps, are left out,
+each pipe's `GrossCrossSectionArea` and `OuterSurfaceArea` from its cylinder, each stair flight's `Length`, the span of its riser lines, and `NetVolume`, its side views' area times its width, and the `Length` of each column whose record holds no `CleanPairGStep` join and, where such a column is drawn as its type's hollow section, its `CrossSectionArea`, `OuterSurfaceArea` and `GrossVolume`, and the `CrossSectionArea`, `OuterSurfaceArea`, `GrossVolume` and `NetVolume` of a column drawn as its record's box whose type is a plain rectangle (its length parameters are exactly `b` and `h`, the box's sides), where every slab its pairs, clean or cut, name lies wholly above or below it and no wall or covering cuts it (measured on Revit 2024), which Revit's export draws as an extrusion, with that column's `Length`, the box's height, where a clean pair joins it; a curtain panel's `Width` is left out,
+each floor's `Qto_SlabBaseQuantities.GrossArea` where it is drawn as one extrusion, its profile's area less its holes, and, where its type has one layer as deep as that extrusion, its `Depth` and `GrossVolume`, the `GrossArea`, `Depth` (the layers' total) and `GrossVolume` of each flat roof Revit's export writes as a slab and its `NetVolume` where nothing cuts it, its `NetVolume`, that area times its type's layers' total thickness, where its native record holds no step that cuts it, and each ceiling's `Qto_CoveringBaseQuantities.GrossArea`, the area of the sketch's outline less its holes, where the ceiling is drawn as one extrusion of it and its native record holds no join that cuts it; a floor's `Width` and a covering's `Width` (a ceiling's, or a wall written as a covering's) are left out, because Revit 2024's exporter writes them and later exporters' do not, each space's `Qto_SpaceBaseQuantities.Height`, its room's, where the room's record holds its solid's faces, its `NetVolume`, its outline's area less its holes times the height of its box, where every vertical face of that solid runs from the floor to the ceiling and no face is slanted, on Revit 2024 and 2025, each stair railing's `Qto_RailingBaseQuantities.Length` where its path is one line along its stair's runs,
+each of these base quantities left out by `rvt-ifc --no-base-quantities`, as Revit's exporter leaves them out with "Export base quantities" off; Revit's built-in IFC4 setups turn it on, so rvt-ifc does by default,
+the type of each pipe, wall sweep and ramp that neither its stored layout nor its reference list types, the one its own native record names,
+each wall's `ExtendToStructure`, whether its top is joined to a roof or floor (on Revit 2015 to 2023 too, experimentally), each structural column's and framing element's `LoadBearing` from its category unless a parameter named for it says otherwise, and on Revit 2015 to 2023, experimentally, its `IsExternal`, not external,
+each railing's `Height`, its type's top rail height,
+a slab's `PitchAngle` 0<!-- w10: a value rvt-open writes and, further on in this sentence, buildingSMART's count of its property sets, neither a measurement --> where its top is known to be level,
+the project and shared parameters named for a property of one of IFC4's
+property sets (`Pset_WallCommon.FireRating`, or `FireExit` alone where no
+qualified one gives it), from buildingSMART's
+definitions of the 278 sets that apply to an entity, written in that set
+where IFC4 applies it to the entity written or one of its supertypes, with
+the predefined type a scoped set needs (booleans, text, counts and integers,
+lengths and thermal transmittance), and Revit's "Export to IFC As"
+override, applied where it names `IfcShadingDevice`, `IfcSlab`, `IfcCovering`,
+`IfcWasteTerminal`, `IfcFireSuppressionTerminal`, `IfcSanitaryTerminal`,
+`IfcAirTerminal`, `IfcElectricAppliance`, `IfcStair` or `IfcDoor` 
+and Revit's exporter acts on it (not on a 2024 file's curtain walls or its wall sweeps),
+with the values not applied listed in the diagnostics. With `--revit-property-sets`, each element's
+named saved parameters in Revit's own property sets, one per parameter group (the set
+names, grouping and values measured on Autodesk's Snowdon Towers HVAC, Site and Architectural, locally, and on the R2025 sample models, in CI). With
+`--revit-set-placement`, also the properties Revit's own exporter writes where IFC4's definitions do not:
+a text parameter named `<set>.<property>` for a property the set's IFC4 definition lacks
+(`Pset_SpaceCommon.FloorCovering`), and the `Reference` of a set whose entity's name begins with the
+element's (`Pset_SpaceHeaterTypeCommon` on a space); without it every property is in the set IFC4 gives
+. The same flag keeps the material Revit's export associates with an `IfcSpace` (the family
+instances written as spaces): IFC4's `IfcRelAssociatesMaterial.AllowedElements` takes no `IfcSpace`, so with the flag
+the output breaks that rule, as Revit's own export does, and without it a space has no material (
+the maintainer, 2026-11-05: valid IFC4 by default, Revit's behind the flag). A value Revit's export writes that is known to be wrong is left out either way: a stair's or
+flight's `WalkingLineOffset`, half the run's width in feet read as millimetres, a curtain mullion's `Qto_MemberBaseQuantities.CrossSectionArea`, which grows with its length and is never its section's area, and a curtain mullion's or panel's `IsExternal` in the office's exports and its mullion type's, which the exporter that made them sets from its own cache of element types, not from the model (rvt-open writes the member's by its curtain wall's value). Not read: most instance and type parameters. Elements in a
+design-option set's non-primary options are left out, as Revit leaves them out,
+and so are elements that do not exist in the project's last phase (the order is read on Revit 2015 to 2027),
+and so are rooms whose own phase is not the export phase: Revit's
+exporter skips a room by its own phase (`RoomElem.m_phaseId`, not its created
+phase), and rvt-open counts it in `skipped` as `room_not_in_export_phase`. The
+export phase is the last unless `rvt-ifc --phase` names another, which is exact.
+Where no phase is named and the last holds no room, the rooms written are those
+of the latest phase that holds any (`room_phase_fallback`, a choice and not
+a measurement of Revit's default). A room whose phase is unset or unread, an
+Area and an MEP space are written.
+
+## What approximations look like in the output
+
+- A body that is the element's bounding box is a correctly placed, correctly
+  sized box. It is never a guess at a shape.
+- A file of a release read experimentally (Revit 2015 to 2022, 2026 and
+  2027) says so: the export diagnostics' `input.release_support`, a warning,
+  `rvt-inspect`'s `experimental_release` and the viewer's file status.
+- Where rvt-open cannot tell something, it leaves it out rather than guess: an
+  element whose storey is unknown sits in the building, not on a storey; a
+  missing value is absent, not zero.
+- `rvt-ifc --diagnostics out.json` and the viewer's diagnostics download list
+  what was exported, approximated and skipped, and why, including every
+  stream a resource limit kept from being read (`stream_not_read_resource_limit`). `--mode
+  typed-no-geometry`, `geometry` and `strict` refuse a file that does not meet
+  that bar instead of writing a thinner IFC.
+
+## Not supported
+
+- Converting an arbitrary Revit model to IFC with Revit-grade fidelity.
+- Element records of releases other than 2008 to 2027. Of those, 2008 to 2022, 2026 and 2027 are experimental: 2008 to 2014, outside the 1.0 range, with 2008 to 2010 checked only for consistency within each local file and 2011 to 2014 measured on one local 2013 sample against its 2015 copy; 2026 is measured on one project against Revit's export, and 2027 against the 2026 copies of Autodesk's sample projects, 2019 to 2022 against their 2023 copies, and 2015 to 2018 against their 2019 copies, none with a Revit export of its own release except one 2015 project, BIMcollab's structural example, and one 2018 project, Vitoria's `ALD26 Before`. On 2023: geometry beyond each element's box, wall joins and beam cuts, layered or angled joins and IFC export overrides. On 2016 to 2023, elements in a non-primary design option (measured on Autodesk's `rst_basic` samples only, a `Mass` Revit does not export, with no Revit export of them) and outside the export phase (measured on the held-out Vitoria Project's counts only) are left out.
+- Writing or editing Revit files: rvt-open reads and exports only.
+- Door/Window typing from the opening-index rows and Level ElementIds
+  from the Formats schema: both closed negative. Element records supply
+  both instead.
+
+Use `rvt-inspect <file> --json` or the viewer's diagnostics download when a
+file falls outside this profile. Those reports can be attached to a GitHub
+issue without sharing the model; [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+describes how to send a diagnostic instead of a building file.

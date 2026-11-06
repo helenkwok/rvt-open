@@ -1,0 +1,183 @@
+# Which tests/*.rs targets CI and tools/check-local.sh run, and why.
+#
+# Unit tests are not used in this repository: no new ones, and none run in CI or the local gate.
+# What runs is verification against real Revit files, end-to-end runs of the
+# built CLIs, and contract checks that keep published claims honest. Every
+# tests/*.rs target must appear here exactly once, so a new target cannot
+# silently run or silently skip; tools/ci/verify-real-files.sh fails when one
+# is missing.
+# Each target is a module of tests/integration/main.rs, one test binary,
+# so its tests are named <target>::<test>.
+#
+# Format: <class> <target> [skip=<test name substring>,...]
+#   real      reads real Revit files from the corpora and checks what the
+#             reader or exporter gives against the file or Revit's own export
+#   cli       runs the built binaries end to end
+#   contract  checks a published claim (support matrix, binary inventory,
+#             witness verdicts, JSON schemas, field-type coverage, the
+#             committed synthetic IFC fixtures) against the code and artifacts
+#   hardening replays inputs that crashed or overran a parser of untrusted
+#             files (fuzz findings) through the public API: run, as a
+#             parser of hostile input must keep surviving them
+#
+# `skip=` leaves out the synthetic-fixture tests inside a real-file target.
+#
+# One end-to-end test is not a target of that binary: the MCP server's, in its
+# crate, rvt-open-mcp/tests/mcp_stdio.rs. Its class is
+#
+#   cli       mcp_stdio     (rvt-open-mcp: the built server over real stdio)
+#
+# but it is not listed below, because this manifest names the tests/*.rs
+# targets of the root crate and the script above fails on one that is not
+# there. ci.yml runs it in its own step ("MCP server end to end", in the test
+# matrix on every OS, and again in Corpus health on Einhoven), and
+# tools/check-local.sh runs `cargo test -p rvt-open-mcp`.
+
+#
+# Public CI skips (rvt-open-public-export): these tests need files with no public source.
+#   beam_storeys::ifc_beam_storeys_match_revit_export: needs Revit's own IFC export of the 2024 samples, which has no public source
+#   beam_system_params::beam_system_values_equal_revits: needs Revit's own IFC export of the 2024 samples, which has no public source
+#   export_conventions::framing_class_follows_the_convention: needs Revit's own IFC export of the 2024 samples, which has no public source
+#   export_conventions::no_rule_beam_storey_follows_the_convention: needs Revit's own IFC export of the 2024 samples, which has no public source
+#   export_conventions::model_without_storeys_follows_the_convention: needs Revit's own IFC export of the 2024 samples, which has no public source
+#   witness_registry::ifc_lite_gate_is_wired_and_version_pinned: checks a step of the private CI workflow that the public CI does not have
+#   witness_registry::ifcopenshell_gate_script_is_wired: checks a step of the private CI workflow that the public CI does not have
+
+hardening fuzz_regressions
+hardening skipped_members
+hardening stream_size_guards
+real      arc_wall_corpus
+real      boxless_room
+real      category_type_phase
+real      common_reference
+real      corpus_tier2_health
+real      column_cut_body
+real      column_node_z
+real      covering_finish
+real      curtain_part_materials
+real      curtain_wall_doors
+real      curtain_walls
+real      decoder_diffs
+real      design_options
+real      door_overall_sizes
+real      door_type_global_ids
+real      duct_and_pipe_ports
+real      duct_fields
+real      duct_names
+real      duct_segment_shape
+real      duct_segment_type_common
+real      elem_table_corpus
+real      elem_table_frame
+real      element_materials
+real      element_names
+real      element_parameters
+real      element_provenance_offsets
+real      element_record_stages
+real      element_records_2025
+real      family_blend_transitions
+real      export_decisions_counts
+real      family_instance_ports
+real      fitting_nominal_diameter
+real      frag_writer
+real      georeference
+real      export_as_2018_2023
+real      schema_objects
+real      streamed_partition
+real      ifc_export_overrides
+real      ifc_roundtrip
+real      ifcx_writer               skip=synthetic_
+real      usd_writer
+real      invert_elevation
+real      is_external
+real      iter_elements_typed       skip=production_iter_elements_tier1,decode_instance_prefer_typed_fails_closed
+real      large_partition_file
+real      level_names
+real      level_parameters
+real      level_shared_elevation
+real      constraint_levels
+real      assoc_levels_2027
+real      beam_reference_levels
+real      beam_storeys skip=ifc_beam_storeys_match_revit_export
+real      export_conventions skip=framing_class_follows_the_convention,no_rule_beam_storey_follows_the_convention,model_without_storeys_follows_the_convention
+real      beam_system_params skip=beam_system_values_equal_revits
+real      truss_framing
+real      rvt_open_hints
+real      design_options_open
+real      assoc_levels_2022
+real      mep_categories
+real      mep_connections
+real      mep_phase_created
+real      mep_curve_types
+real      mep_curtain_type_links
+real      mep_systems
+real      native_current_records
+real      native_partitions_walk
+real      native_phases
+real      partition_record_chain
+real      partition_scanner         skip=tier1_,fixture_path_helper_exists
+real      phase_filter
+real      port_nesting
+real      regression_fixes
+real      project_corpus_smoke
+real      proxy_ports
+real      railing_type
+real      geometry_invariants
+real      door_window_wall_negative
+real      reference_values
+real      release_coverage
+real      revit_2016
+real      revit_global_ids
+real      revit_maps_and_types
+real      plan_maps_and_spaces
+real      rooms_floors_from_records_only
+real      samples
+real      saved_mesh_budget
+real      scan_limits
+real      revit_property_sets
+real      schema_bbox_marker
+real      schema_registry_catalogs
+real      segment_length
+real      serial_number
+real      space_common
+real      space_containment
+real      space_types
+real      spatial_property_sets
+real      resave_stable_ids
+real      shared_shapes
+real      stable_exports
+real      tapered_walls_2025
+real      type_global_ids
+real      typed_no_geometry_types
+real      unfilled_openings
+real      untyped_elements
+real      value_sources_offsets
+real      walker_to_ifc_integration
+real      wall_profile_openings
+
+cli       cli_ergonomics
+cli       cli_real_files
+cli       data_outputs
+cli       parameter_diagnostics
+cli       guid_namespace
+cli       reproducible_outputs
+cli       resource_limits_cli
+cli       rvt_dump_cli
+cli       gltf_normals
+cli       pdf3d_export
+cli       rvt_gltf_progress_cli
+cli       rvt_ifc_diagnostics_cli
+cli       rvt_info_cli
+cli       rvt_inspect_cli
+cli       rvt_schedule_cli
+
+contract  binary_inventory
+contract  field_type_coverage
+contract  ifc_synthetic_project
+contract  ifc_synthetic_structural
+contract  json_schema_contracts
+real      memory_staging
+contract  project_count_fixtures
+contract  support_matrix
+contract  witness_registry skip=ifc_lite_gate_is_wired_and_version_pinned,ifcopenshell_gate_script_is_wired
+contract  witness_verdict
+

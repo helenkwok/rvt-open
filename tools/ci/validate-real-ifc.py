@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""Validate a generated real-project IFC with IfcOpenShell.
+
+This script is intentionally stricter than a smoke parse. It cross-checks
+IfcOpenShell's view of the STEP file against rvt-ifc's diagnostics so CI
+failures name the IFC entity class that drifted.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import ifcopenshell
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ifc_schema_arity import (  # noqa: E402 - path set above
+    check_arity,
+    check_predefined_types,
+)
+
+
+STEP_TO_IFCOPENSHELL = {
+    "IFCBEAM": "IfcBeam",
+    "IFCBUILDINGELEMENTPROXY": "IfcBuildingElementProxy",
+    "IFCCOLUMN": "IfcColumn",
+    "IFCCOVERING": "IfcCovering",
+    "IFCCURTAINWALL": "IfcCurtainWall",
+    "IFCDOOR": "IfcDoor",
+    "IFCELECTRICAPPLIANCE": "IfcElectricAppliance",
+    "IFCFLOWCONTROLLER": "IfcFlowController",
+    "IFCFOOTING": "IfcFooting",
+    "IFCFURNITURE": "IfcFurniture",
+    "IFCGRID": "IfcGrid",
+    "IFCLIGHTFIXTURE": "IfcLightFixture",
+    "IFCMEMBER": "IfcMember",
+    "IFCRAILING": "IfcRailing",
+    "IFCRAMP": "IfcRamp",
+    "IFCREINFORCINGBAR": "IfcReinforcingBar",
+    "IFCROOF": "IfcRoof",
+    "IFCSANITARYTERMINAL": "IfcSanitaryTerminal",
+    "IFCSLAB": "IfcSlab",
+    "IFCSPACE": "IfcSpace",
+    "IFCSTAIR": "IfcStair",
+    "IFCWALL": "IfcWall",
+    "IFCWINDOW": "IfcWindow",
+}
+
+
+def schema_entity_name(schema: str, step_type: str):
+    """The schema's own spelling of a STEP entity name, or None when the
+    schema declares no such entity. A class the table above does not list
+    (a newly exported one) is still checked, not refused."""
+    try:
+        declaration = ifcopenshell.ifcopenshell_wrapper.schema_by_name(schema).declaration_by_name(
+            step_type
+        )
+    except (RuntimeError, IndexError):
+        return None
+    return declaration.name()
+
+
+def fail(message: str) -> None:
+    raise AssertionError(f"real-project IFC validation failed: {message}")
+
+
+def count(model: object, ifc_class: str) -> int:
+    return len(model.by_type(ifc_class))
+
+
+def assert_exact(model: object, ifc_class: str, expected: int) -> None:
+    got = count(model, ifc_class)
+    if got != expected:
+        fail(f"{ifc_class} count regressed: got {got}, expected {expected}")
+
+
+def assert_at_least(model: object, ifc_class: str, minimum: int) -> None:
+    got = count(model, ifc_class)
+    if got < minimum:
+        fail(f"{ifc_class} count regressed: got {got}, expected at least {minimum}")
+
+
+def require_unsupported(diagnostics: dict, feature: str) -> None:
+    unsupported = set(diagnostics.get("unsupported_features", []))
+    if feature not in unsupported:
+        fail(f"expected unsupported feature marker {feature!r}; got {sorted(unsupported)!r}")
+
+
+def load_inputs(argv: list[str]) -> tuple[Path, dict]:
+    if len(argv) != 3:
+        print(
+            "usage: validate-real-ifc.py <generated.ifc> <diagnostics.json>",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    ifc_path = Path(argv[1])
+    diagnostics_path = Path(argv[2])
+    if not ifc_path.is_file():
+        fail(f"IFC file is missing: {ifc_path}")
+    if not diagnostics_path.is_file():
+        fail(f"diagnostics JSON is missing: {diagnostics_path}")
+    return ifc_path, json.loads(diagnostics_path.read_text(encoding="utf-8"))
+
+
+def validate(ifc_path: Path, diagnostics: dict) -> None:
+    model = ifcopenshell.open(str(ifc_path))
+    if model.schema != "IFC4":
+        fail(f"schema regressed: got {model.schema}, expected IFC4")
+
+    # IfcOpenShell parses a record that lists fewer attributes
+    # than its type declares, so a count check alone never notices a
+    # truncated instance. Re-derive every entity's declared attribute
+    # count from the EXPRESS schema and compare it with the STEP text.
+    instances_checked = check_arity(ifc_path, model.schema)
+    predefined_populated = check_predefined_types(ifc_path)
+
+    assert_exact(model, "IfcProject", 1)
+    assert_exact(model, "IfcSite", 1)
+    assert_exact(model, "IfcBuilding", 1)
+    assert_at_least(model, "IfcBuildingStorey", 1)
+    assert_exact(model, "IfcUnitAssignment", 1)
+    assert_at_least(model, "IfcSIUnit", 1)
+
+    exported = diagnostics.get("exported", {})
+    by_ifc_type = exported.get("by_ifc_type", {})
+    if not by_ifc_type:
+        fail("diagnostics exported.by_ifc_type is empty for the real project")
+
+    for step_type, expected in sorted(by_ifc_type.items()):
+        ifc_class = STEP_TO_IFCOPENSHELL.get(step_type) or schema_entity_name(
+            model.schema, step_type
+        )
+        if ifc_class is None:
+            fail(f"diagnostics entity class {step_type} is not an IFC4 entity")
+        got = count(model, ifc_class)
+        if ifc_class == "IfcOpeningElement":
+            # The diagnostics list openings that stand for an element whose
+            # type draws no geometry. The writer adds one more opening
+            # for each door or window it fills, which the diagnostics count
+            # as that door or window.
+            got -= len(
+                {rel.RelatingOpeningElement.id() for rel in model.by_type("IfcRelFillsElement")}
+            )
+        if got != expected:
+            fail(f"{ifc_class} count regressed: IfcOpenShell saw {got}, diagnostics saw {expected}")
+
+    # Current real-project coverage comes from the 2023 Einhoven ArcWall
+    # decoder. This threshold catches silent walker/decoder regressions while
+    # allowing future improvements to add more recovered element classes.
+    assert_at_least(model, "IfcWall", 10)
+
+    # One IfcRelContainedInSpatialStructure per non-empty storey is correct
+    # IFC4 practice (see docs/launch/buildingsmart-forum.md). Elevation-derived
+    # ArcWall storeys may produce several; the previous exact-1 check was a
+    # single-fallback-storey baseline, not a hard contract. Elements with no
+    # storey evidence are contained in the IfcBuilding itself
+    # instead of being placed in a storey they were never bound to, so at
+    # most one further relation may relate to the building.
+    storey_count = count(model, "IfcBuildingStorey")
+    contained = model.by_type("IfcRelContainedInSpatialStructure")
+    storey_rels = [
+        rel for rel in contained if rel.RelatingStructure.is_a("IfcBuildingStorey")
+    ]
+    building_rels = [
+        rel for rel in contained if rel.RelatingStructure.is_a("IfcBuilding")
+    ]
+    if len(storey_rels) + len(building_rels) != len(contained):
+        fail(
+            "IfcRelContainedInSpatialStructure relates to something other than "
+            "an IfcBuildingStorey or the IfcBuilding"
+        )
+    if len(storey_rels) < 1 or len(storey_rels) > storey_count:
+        fail(
+            "IfcRelContainedInSpatialStructure storey count regressed: "
+            f"got {len(storey_rels)}, expected between 1 and {storey_count} "
+            f"(one per non-empty storey)"
+        )
+    if len(building_rels) > 1:
+        fail(
+            "IfcRelContainedInSpatialStructure building count regressed: "
+            f"got {len(building_rels)}, expected at most 1 (unbound elements)"
+        )
+    # Parts of an aggregate whose whole is an element reach the spatial
+    # structure through that whole and are not contained themselves.
+    related_count = sum(len(rel.RelatedElements) for rel in contained) + sum(
+        len(rel.RelatedObjects)
+        for rel in model.by_type("IfcRelAggregates")
+        if rel.RelatingObject.is_a("IfcElement")
+    )
+    building_elements = int(exported.get("building_elements", 0))
+    if related_count < building_elements:
+        fail(
+            "spatial containment regressed: "
+            f"related elements {related_count}, diagnostics building_elements {building_elements}"
+        )
+
+    with_geometry = int(exported.get("building_elements_with_geometry", 0))
+    shapes = count(model, "IfcProductDefinitionShape")
+    if with_geometry < 1:
+        fail("expected at least one geometry-bearing real-project building element")
+    if with_geometry > 0 and shapes < with_geometry:
+        fail(
+            "IfcProductDefinitionShape count regressed: "
+            f"got {shapes}, expected at least {with_geometry}"
+        )
+
+    material_count = int(exported.get("material_count", 0))
+    if material_count > 0:
+        assert_at_least(model, "IfcMaterial", material_count)
+    else:
+        require_unsupported(diagnostics, "revit_material_display_names")
+
+    unit_count = int(exported.get("unit_assignment_count", 0))
+    if unit_count < 1:
+        fail(f"unit assignment regressed: diagnostics unit_assignment_count={unit_count}")
+
+    print("Real-project IfcOpenShell validation passed:")
+    print(f"  file: {ifc_path}")
+    print(f"  schema: {model.schema}")
+    print(f"  entities: {len(list(model))}")
+    print(
+        f"  schema arity: {sum(instances_checked.values())} instance(s) across "
+        f"{len(instances_checked)} entity type(s) match their declared attribute count"
+    )
+    print(
+        "  PredefinedType populated: "
+        + (
+            ", ".join(f"{k}={v}" for k, v in sorted(predefined_populated.items()))
+            or "no required type present"
+        )
+    )
+    print(f"  exported.by_ifc_type: {by_ifc_type}")
+    print(
+        f"  spatial containment: {len(storey_rels)} storey rel(s) + "
+        f"{len(building_rels)} building rel(s), {related_count} related "
+        f"element(s) across {storey_count} storey(s)"
+    )
+    print(f"  geometry-backed elements: {with_geometry}")
+    print(f"  material count: {material_count}")
+    print(f"  unit assignments: {unit_count}")
+
+
+def main(argv: list[str]) -> None:
+    ifc_path, diagnostics = load_inputs(argv)
+    validate(ifc_path, diagnostics)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

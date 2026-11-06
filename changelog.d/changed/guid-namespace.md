@@ -1,0 +1,1 @@
+- **The GlobalId namespace is a user option, and its default is now `rvt-open ifc GlobalId v1`.** Set it with `--guid-namespace`, `RVT_OPEN_GUID_NAMESPACE`, wasm `guid_namespace`, Python `guid_namespace=`, `ConvertOptions::guid_namespace` in Rust). The generated ids of earlier exports change. Revit's own GlobalIds are unaffected.

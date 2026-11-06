@@ -1,0 +1,1042 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://helenkwok.github.io/rvt-open/schemas/export-diagnostics.schema.json",
+  "title": "rvt IFC export diagnostics JSON",
+  "description": "Stable diagnostics sidecar emitted by rvt-ifc --diagnostics and Python export diagnostics helpers.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "mode",
+    "input",
+    "decoded",
+    "exported",
+    "skipped",
+    "unsupported_features",
+    "warnings",
+    "confidence"
+  ],
+  "$defs": {
+    "element_record_stage_counts": {
+      "type": "object",
+      "description": "What became of the frames at the element-record markers of one partition stream, or of the whole file. markers = frame_outside_stream + category_out_of_range + box_not_valid + no_declared_id + records; records = not_placed_instances + placed_instances; placed_instances = without_volume + with_volume; with_volume = superseded + nested_components + selected; selected = in_non_primary_design_option + not_in_export_phase + nested_in_door_or_window + category_not_exported + handed_to_export. declared_id and id_from_enclosing_record are counted beside the steps and do not enter them.",
+      "required": [
+        "markers",
+        "records",
+        "placed_instances",
+        "with_volume",
+        "selected",
+        "handed_to_export"
+      ],
+      "properties": {
+        "markers": { "type": "integer", "minimum": 0, "description": "Places that hold the file's element-record marker: the tags of Outline, four ff bytes and the tag of ElementParents." },
+        "declared_id": { "type": "integer", "minimum": 0, "description": "Of the markers, those with a u32 ElementId that Global/ElemTable declares 52 bytes before them (48 on Revit 2008) and the tag of ElementHeader 8 bytes after it. A marker without one can still give a record through the record around it." },
+        "frame_outside_stream": { "type": "integer", "minimum": 0, "description": "Markers stopped because a field of their frame lies outside the stream." },
+        "category_out_of_range": { "type": "integer", "minimum": 0, "description": "Markers stopped because their BuiltInCategory is outside the range of Revit's categories." },
+        "box_not_valid": { "type": "integer", "minimum": 0, "description": "Markers stopped because their bounding box is not finite or ends before it starts." },
+        "no_declared_id": { "type": "integer", "minimum": 0, "description": "Markers stopped because the frame has no declared ElementId of its own and none from a record around it. It can include frames inside the documents of loaded families, whose ids no ElemTable record declares: a count here is not a count of lost elements." },
+        "records": { "type": "integer", "minimum": 0, "description": "Markers that gave a record." },
+        "id_from_enclosing_record": { "type": "integer", "minimum": 0, "description": "Of the records, those whose ElementId is the one of the record around the frame (the second prologue)." },
+        "not_placed_instances": { "type": "integer", "minimum": 0, "description": "Records that are not placed instances: container members and type symbols." },
+        "placed_instances": { "type": "integer", "minimum": 0, "description": "Records that are placed instances (no container reference, the placed-instance kind)." },
+        "without_volume": { "type": "integer", "minimum": 0, "description": "Placed instances whose bounding box has no volume; Revit's export leaves them out." },
+        "with_volume": { "type": "integer", "minimum": 0, "description": "Placed instances whose bounding box has volume." },
+        "superseded": { "type": "integer", "minimum": 0, "description": "Frames with volume that a newer frame of the same ElementId replaces." },
+        "nested_components": { "type": "integer", "minimum": 0, "description": "Frames with volume that are nested MEP components, left out of the export." },
+        "selected": { "type": "integer", "minimum": 0, "description": "The newest frame of each ElementId, without the nested components." },
+        "in_non_primary_design_option": { "type": "integer", "minimum": 0, "description": "Selected frames in a design option other than the primary one." },
+        "not_in_export_phase": { "type": "integer", "minimum": 0, "description": "Selected frames of an element that does not exist in the export phase." },
+        "nested_in_door_or_window": { "type": "integer", "minimum": 0, "description": "Selected frames of a component nested in a door or window." },
+        "category_not_exported": { "type": "integer", "minimum": 0, "description": "Selected frames whose category no class of the export has." },
+        "handed_to_export": { "type": "integer", "minimum": 0, "description": "Selected frames that became elements handed to the export." },
+        "stream_not_read": { "type": "integer", "minimum": 0, "description": "Partition streams that did not inflate, so that their markers are not counted: 1 on the entry of such a stream. It enters no step." }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "placeholder",
+        "default",
+        "diagnostic_proxies"
+      ]
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "revit_version",
+        "build",
+        "original_path",
+        "project_name",
+        "stream_count",
+        "has_basic_file_info",
+        "has_part_atom",
+        "has_formats_latest",
+        "has_global_latest",
+        "release_support"
+      ],
+      "properties": {
+        "revit_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "original_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stream_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "has_basic_file_info": {
+          "type": "boolean"
+        },
+        "has_part_atom": {
+          "type": "boolean"
+        },
+        "has_formats_latest": {
+          "type": "boolean"
+        },
+        "has_global_latest": {
+          "type": "boolean"
+        },
+        "release_support": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "How the file's release is read: the docs/support-matrix.json row of its element records and that row's status. Null when the file has no BasicFileInfo to give its release.",
+          "required": [
+            "status",
+            "capability"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "verified",
+                "partial",
+                "experimental",
+                "unsupported"
+              ]
+            },
+            "capability": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "decoded": {
+      "type": "object",
+      "required": [
+        "production_walker_elements",
+        "diagnostic_proxy_candidates",
+        "arcwall_records",
+        "class_counts"
+      ],
+      "properties": {
+        "production_walker_elements": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "diagnostic_proxy_candidates": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "arcwall_records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "class_counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "mean_element_confidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Mean provenance confidence across production iter_elements."
+        },
+        "elements_below_min_confidence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of production elements below min_element_confidence."
+        },
+        "min_element_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Floor used for below-min count and default IFC hide (0.55)."
+        },
+        "recovered_unit_identifiers": {
+          "type": "array",
+          "description": "Best-effort project unit identifiers selected from Revit autodesk.unit.* records and threaded into IfcUnitAssignment.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unknown_unit_identifiers": {
+          "type": "array",
+          "description": "Observed autodesk.unit.* identifiers that did not map to a known IFC unit emission.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wall_curve_lengths_feet": {
+          "type": "object",
+          "description": "The length of each exported wall's native curve in feet, keyed by ElementId: one of the two lengths Revit's export may write as the wall's Qto_WallBaseQuantities.Length. Not written in the IFC file; absent when no wall has one.",
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
+          },
+          "additionalProperties": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "walls_type_confirmed": {
+          "type": "array",
+          "description": "The ElementIds of the exported walls whose native record names the type the export gives them. Not written in the IFC file; absent when there is none.",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uniqueItems": true
+        },
+        "element_record_stages": {
+          "type": "object",
+          "description": "Where the element records of a Revit 2008 to 2023 file stop, stage by stage, per partition stream and in total: the markers found, those with a declared ElementId, those that gave a record, the placed instances, those with volume, the frames kept, the elements handed to the export and the elements written. Each count is exactly what the one before it passed on and left, so a stream's counts add up. Present for a file that takes that record layout, even when every count is zero, and absent for Revit 2024 and later, whose rejected frames are in skipped (element_record_without_element_id and the reasons after it), and for a placeholder export. A family file reads its elements from Global/Latest, so its zero records mean nothing. Not written in the IFC file.",
+          "required": ["layout_release", "total", "streams", "written_to_model"],
+          "properties": {
+            "layout_release": {
+              "type": "integer",
+              "minimum": 2008,
+              "maximum": 2023,
+              "description": "The release whose record layout the file takes."
+            },
+            "total": { "$ref": "#/$defs/element_record_stage_counts" },
+            "streams": {
+              "type": "object",
+              "description": "The counts of each Partitions/NN stream the scan read, by name.",
+              "additionalProperties": { "$ref": "#/$defs/element_record_stage_counts" }
+            },
+            "written_to_model": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of total.handed_to_export, the elements the IFC model holds, one for each ElementId, counted from the model."
+            },
+            "id_already_held": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of total.handed_to_export, the elements the walk dropped because an element of an earlier reader (an ArcWall, a Global/Latest instance) already held the ElementId."
+            },
+            "below_min_confidence": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of total.handed_to_export, the elements below the minimum confidence, which the default export hides."
+            },
+            "not_written_by_class": {
+              "type": "object",
+              "description": "The rest of total.handed_to_export, by the Revit class they were handed as: elements the exporter writes nothing for. Counted by class and not attributed to a cause beyond it. Absent when there is none. total.handed_to_export is written_to_model + id_already_held + below_min_confidence + the sum of these.",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            },
+            "stopped_at": {
+              "type": "string",
+              "description": "Present only when written_to_model is 0: the stage the records stopped at. One of elem_table_not_read, schema_has_no_element_marker, stream_not_read, no_markers, the stage the markers stopped at most often (frame_outside_stream, category_out_of_range, box_not_valid, no_declared_id), no_placed_instances, without_volume, nested_components, the way the selected frames were left out most often (in_non_primary_design_option, not_in_export_phase, nested_in_door_or_window, category_not_exported), or, of the elements handed to the export, the cause that set aside most (id_already_held, below_min_confidence, class_not_exported)."
+            }
+          }
+        },
+        "element_provenance": {
+          "type": "object",
+          "description": "Where each decoded element was read from, by ElementId: the carrier of its record, the stream and byte offset in that stream inflated (the bytes rvt-dump writes as Partitions_NN.decomp), where its ElementId is stored, its class tag and the class that names in the file's own schema, and its native record. Not written in the IFC file. Present only when asked for (rvt-ifc --element-provenance): it is large, and its size is in docs/export-diagnostics.md, Provenance table size. Absent for a placeholder export. An element whose offset cannot be given is listed without one and counted in by_carrier.",
+          "properties": {
+            "layout_release": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The release whose record layout the file takes."
+            },
+            "partition_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many Partitions/NN streams the file has."
+            },
+            "record_id_bytes": {
+              "type": "integer",
+              "enum": [4, 8],
+              "description": "The width of the ElementId stored at a partition record's first bytes: 8 from Revit 2024, 4 on 2008 to 2023."
+            },
+            "native_record_index": {
+              "type": "boolean",
+              "description": "Whether the export's native passes built the index of native records; an element's native record is given only where they did."
+            },
+            "unkeyed_elements": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Decoded elements with no ElementId, which have no entry."
+            },
+            "by_carrier": {
+              "type": "object",
+              "description": "Every element with an ElementId, counted by carrier, whatever the cap on the listed entries: how many have their stream and offset given and how many do not.",
+              "additionalProperties": {
+                "type": "object",
+                "required": ["elements", "located", "unlocated"],
+                "properties": {
+                  "elements": { "type": "integer", "minimum": 0 },
+                  "located": { "type": "integer", "minimum": 0 },
+                  "unlocated": { "type": "integer", "minimum": 0 }
+                }
+              }
+            },
+            "native": {
+              "type": "object",
+              "description": "The native records of every element with an ElementId, the omitted ones included: how many there are, how many have their partition and offset given, how many elements have a copy in several partitions and how many of those have no copy named current.",
+              "properties": {
+                "with_record": { "type": "integer", "minimum": 0 },
+                "located": { "type": "integer", "minimum": 0 },
+                "unlocated": { "type": "integer", "minimum": 0 },
+                "several_copies": { "type": "integer", "minimum": 0 },
+                "copy_unresolved": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "omitted_entries": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Elements left out of elements by the cap on the listed entries, the highest ElementIds; they are counted in by_carrier."
+            },
+            "elements": {
+              "type": "object",
+              "description": "Each element's provenance, keyed by ElementId.",
+              "propertyNames": {
+                "pattern": "^[0-9]+$"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "required": ["carrier"],
+                "properties": {
+                  "carrier": {
+                    "type": "string",
+                    "enum": [
+                      "partition_element_record_first_prologue",
+                      "partition_element_record_second_prologue",
+                      "global_latest_schema_walk",
+                      "partition_arc_wall",
+                      "partition_area_record",
+                      "partition_derived",
+                      "other"
+                    ],
+                    "description": "The kind of record the element was read from."
+                  },
+                  "stream": {
+                    "type": "string",
+                    "description": "The stream the record is in: Partitions/NN or Global/Latest."
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Where the record or frame starts in that stream inflated: the frame the exporter selected among the element's frames (Revit 2024 and later: the greatest vertical extent, then the greater stream and offset; 2008 to 2023: the newest), which a body reader may not have taken: value_sources names the copy a reader took a value from. It and native.stream can name different partitions. For the global_latest_schema_walk carrier it indexes Global/Latest as the walk inflates it; that carrier is unmeasured."
+                  },
+                  "record_offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Where the ElementId is stored: the partition record header whose first bytes are the id (the frame's own start for a first-prologue frame, the enclosing record's start for a second-prologue one)."
+                  },
+                  "enclosing_record_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "For a second-prologue frame, the ElementId of the partition record that encloses it."
+                  },
+                  "class_tag": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535,
+                    "description": "The class tag the record names."
+                  },
+                  "class_name": {
+                    "type": "string",
+                    "description": "The class that tag resolves to in the file's own Formats/Latest."
+                  },
+                  "builtin_category": {
+                    "type": "integer",
+                    "description": "The element record's BuiltInCategory (a negative OST_* id)."
+                  },
+                  "native": {
+                    "type": "object",
+                    "required": ["copies", "copy"],
+                    "description": "The element's native record, where the export's native passes indexed one.",
+                    "properties": {
+                      "copies": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "In how many partitions the element has a native record."
+                      },
+                      "copy": {
+                        "type": "string",
+                        "enum": ["only", "current", "unresolved"],
+                        "description": "Which copy stream and offset name: the only one, the current one of several, or none because none could be named current."
+                      },
+                      "stream": {
+                        "type": "string",
+                        "description": "The partition of that copy. It can differ from the element's stream; the record a reader decoded is a value source with the rule native, where that reader notes it."
+                      },
+                      "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Where the record's header starts in the partition inflated; the ElementId is the first bytes there. Absent when the record's group is not a span of the inflated stream."
+                      },
+                      "class_tag": { "type": "integer", "minimum": 0, "maximum": 65535 },
+                      "class_name": { "type": "string" }
+                    }
+                  },
+                  "value_sources": {
+                    "type": "array",
+                    "description": "The copy each reader took a value of the element's body from, one per reader, where the reader notes its choice and the final BodySource is drawn from it. Present only with rvt-ifc --element-provenance, and only for the bodies docs/export-diagnostics.md lists.",
+                    "items": {
+                      "type": "object",
+                      "required": ["reader", "rule", "copies"],
+                      "properties": {
+                        "reader": {
+                          "type": "string",
+                          "description": "The name of the reader that took the value. The readers and the bodies they belong to are listed in docs/export-diagnostics.md, Value sources."
+                        },
+                        "rule": {
+                          "type": "string",
+                          "enum": ["selected", "agreeing", "current", "native", "frame"],
+                          "description": "How the copy was chosen: the selected frame; every copy holds the same value (the lowest-numbered partition's is named); the copies disagree and the current partition's is taken; a native record by member name, its current copy; one frame or partition of a record, as the reader's scan kept it, without its other copies being compared. For a source made of parts the rule is how each record's copy was chosen."
+                        },
+                        "copies": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "In how many partitions the element's data named it, so how many copies there were to choose from; for a source made of several parts, how many records it is made of; for one record, in how many partitions that record was held."
+                        },
+                        "stream": {
+                          "type": "string",
+                          "description": "The partition of the copy, such as Partitions/46."
+                        },
+                        "offset": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "Where the copy starts in that partition inflated: the element-data header whose element id follows it, for the readers of element data; the record's header, for a native record; the frame, for a body read from the frame."
+                        },
+                        "partitions": {
+                          "type": "array",
+                          "items": { "type": "integer", "minimum": 0 },
+                          "description": "Where every copy holds the same value, the numbers of the partitions that hold a copy; the copy named is the lowest-numbered partition's."
+                        },
+                        "parts": {
+                          "type": "array",
+                          "maxItems": 64,
+                          "description": "The records the value is made of, where it is made of several or of another element's, at most 64. Such a source has no stream or offset of its own.",
+                          "items": {
+                            "type": "object",
+                            "required": ["element_id", "stream", "offset"],
+                            "properties": {
+                              "element_id": { "type": "integer", "minimum": 0 },
+                              "stream": { "type": "string" },
+                              "offset": { "type": "integer", "minimum": 0 }
+                            }
+                          }
+                        },
+                        "parts_left_out": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "description": "How many more records than the 64 listed in parts the value is made of."
+                        },
+                        "differs_from_frame": {
+                          "type": "boolean",
+                          "description": "Whether the value is held in another partition than the element's frame: the copy named is in another and, where every copy holds the same value, so is every copy; for a source made of parts, none of them is in the frame's partition (docs/export-diagnostics.md says where a profile's records count as held there)."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "value_source_counts": {
+              "type": "object",
+              "description": "The value sources of the listed elements, counted by reader: how many elements have one, and how many of those are in another partition than their frame.",
+              "additionalProperties": {
+                "type": "object",
+                "required": ["elements", "differ_from_frame"],
+                "properties": {
+                  "elements": { "type": "integer", "minimum": 0 },
+                  "differ_from_frame": { "type": "integer", "minimum": 0 },
+                  "current": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "exported": {
+      "type": "object",
+      "required": [
+        "total_entities",
+        "building_elements",
+        "building_elements_with_geometry",
+        "by_ifc_type",
+        "classification_count",
+        "unit_assignment_count",
+        "material_count",
+        "storey_count"
+      ],
+      "properties": {
+        "total_entities": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "building_elements": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The building elements the IFC file holds as elements: not an IFCOPENINGELEMENT building element, which by_ifc_type lists, and not a piece folded into another element's body (body_pieces_folded). Before it counted the folded pieces too."
+        },
+        "building_elements_with_geometry": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "building_elements_carried_by_parts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Building elements with no body of their own because their aggregated parts carry it (stairs, curtain walls); not counted in building_elements_with_geometry."
+        },
+        "by_ifc_type": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "The exported building elements by STEP entity type, as the IFC file holds them: the entities of building_elements and the IFCOPENINGELEMENT building elements. A piece folded into another element's body is not in it (body_pieces_folded)."
+        },
+        "classification_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unit_assignment_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "material_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "storey_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "storey_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Recovered IfcBuildingStorey display names in elevation/name order."
+        },
+        "material_names_sample": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Capped sample of recovered IfcMaterial display names for File Status."
+        },
+        "layered_element_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Elements whose compound layers and layer colours were decoded; the glTF export draws each in its layers where they add up to its body's thickness."
+        },
+        "body_sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Exported bodies by how they were derived: each record-backed element's BodySource."
+        },
+        "bounding_box_bodies": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bodies that are only the element record's bounding box, with no recovered plan profile: placed and sized correctly, not the element's shape."
+        },
+        "bounding_box_spaces": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Exported IfcSpaces drawn as their record's bounding box (SpaceOutlineSource record_box): a room whose outline was not read from its stored solid, or a family instance written as a space and drawn as its box. Their body's plan area is the box's, not the space's. Each is also in bounding_box_bodies, except a family instance turned or tilted off the model's axes."
+        },
+        "area_body_refusals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Of the exported Areas that have no body, why, by reason (RvtElementRecordGeometry.AreaBodyRefusal): levels_not_recovered, boundary_line_not_read, no_boundary_lines, point_not_read, level_or_scheme_not_named, named_lines_not_in_scheme_and_level, next_storey_not_proven, boundary_lines_not_readable, point_in_no_single_region, named_lines_not_on_region, two_areas_one_region, area_not_in_one_plan_topology, area_circuit_not_found, area_circuit_side_not_read, area_circuit_area_differs, area_arc_not_finite, area_point_outside_circuit, area_circuit_too_large, area_regions_disagree. Empty when every Area is drawn or the export has no geometry."
+        },
+        "slab_shape_refusals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Of the exported floors, roofs and ceilings whose corner vertices are shape-edited and that keep their record's box, why, by reason (RvtElementRecordGeometry.SlabShapeRefusal): interior_edge_vertices_or_creases, corners_not_in_one_plane, first_three_corners_collinear, fewer_than_three_corner_vertices, shape_edit_dormant_or_unmarked, shape_edit_steps_disagree, shape_edit_fields_not_read, corner_vertex_not_finite, record_copies_disagree, record_copy_not_read, roof_or_ceiling_edit_not_drawn, plan_outline_not_read, plan_outline_in_pieces, corners_not_the_outline_vertices, plane_does_not_reproduce_record_box. Empty when no such element is kept as its box."
+        },
+        "wall_base_refusals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Of the exported walls whose base join names a floor, roof or ceiling with shape-edited corners and that keep their base, why, by reason (RvtElementRecordGeometry.BaseCoverRefusal): slab_shape_not_read, wall_not_one_plain_extrusion, named_element_body_not_read, partly_covered_plan_not_read, no_element_covers_the_wall_plan, several_elements_cover_the_wall, top_crosses_the_wall_base_or_top, top_at_or_below_the_wall_base, top_at_or_above_the_wall_top, base_cut_solid_not_made."
+        },
+        "wall_end_refusals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Of the exported walls with an edited elevation profile that stop short of the walls their record joins at an end and keep the end their record gives, why, by reason (RvtElementRecordGeometry.BodyEndRefusal): joined_wall_not_read, joined_wall_top_not_read, joined_wall_does_not_meet_the_end, joined_walls_do_not_reach_the_wall_height, joined_wall_face_inside_the_wall, joined_wall_faces_overhang_the_lower_end, base_cut_lost_on_extended_plan, base_not_cut_over_the_extended_plan, base_solid_not_made_over_the_extended_plan, wall_stands_in_the_added_end. A wall carries one only where the faces of the joined walls read before the refusal show its end short of or past them; any other end that could not be read is counted in wall_end_reads_unmarked. Empty when no such wall keeps its end."
+        },
+        "wall_end_sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Of the exported walls, how many have an end drawn to the walls their record joins there, by the RvtElementRecordGeometry.BodyEndSource of each: wall_end_stepped_to_joined_walls. Empty when no wall does."
+        },
+        "wall_base_sources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "Of the exported walls, how many have their base cut at an element their base join names, by the RvtElementRecordGeometry.BodyBaseSource of each: wall_base_sloped_at_covering_floor, wall_base_cut_at_covering_floor, wall_base_sloped_at_floor_covering_in_part and wall_base_cut_at_floor_covering_in_part. Empty when no wall does."
+        },
+        "wall_end_reads_unmarked": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "The ends of exported walls with an edited elevation profile whose record joins walls there and that the end rule did not read, by why, where the faces of the joined walls read do not show the end short of or past them: the wall carries no marker, so the reason is counted here alone. The reasons are those of wall_end_refusals that no face evidence backs, and end_join_curve_not_at_the_box_end and end_join_list_not_read, which are never marked. Empty when no end is skipped so."
+        },
+        "wall_ends_order_dependent": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The ends of wall_end_sources that depend on the order of the walls the record lists (RvtElementRecordGeometry.EndOrderDependent): at some height two of them stand with faces that differ, so another order would draw another end. The rest would be the same in any order."
+        },
+        "resolved_outline_spaces": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Exported IfcSpaces that are rooms whose outline was read from the faces their stored solid lists, up to the solid's own end, where the exact walk did not close them (SpaceOutlineSource stored_solid_faces): equal to Revit's area on every such room measured, bounded by the solid's list of objects and a gap, so a closed loop of another element's faces inside the room's box would be read as the room's."
+        },
+        "approximate_outline_spaces": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Exported IfcSpaces that are rooms whose resolved outline is the boundary of a region, a column overlapping a wall having been taken off it or an end of one wall edge lying on another, or falls up to 0.02 ft short of their record box on a side (SpaceOutlineSource stored_solid_approximate): their area is approximate, up to 0.68% under Revit's floor area where Revit's export does not take the column off."
+        },
+        "space_kinds": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "The exported IfcSpaces by what they are (RvtElementRecordGeometry.SpaceKind): room, area, mep_space (a Revit Space) or family_instance (any other element, a family instance or a mass in the files measured, that its Export to IFC As writes as a space), from the Revit class of the record the space was read from, not from where its outline came from. With spaces_without_kind it adds up to by_ifc_type.IFCSPACE. Empty when the export has no space."
+        },
+        "spaces_without_kind": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The exported IfcSpaces that carry no SpaceKind: a space whose property set is not RvtElementRecordGeometry (in principle a wall or floor read through the schema walker, with an Export to IFC As that names IfcSpace), which the export leaves without the property rather than guess. Zero on every model measured."
+        },
+        "wall_cut_openings_left_out": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "The steps of the walls' native records that name a rectangular wall opening, a fire hose cabinet, a door in a second wall or a curtain wall, and write no opening for it, by reason: rectangular_opening_not_read, rectangular_opening_not_in_wall, curtain_wall_box_not_read, curtain_wall_not_in_wall, curtain_wall_within_half_foot_of_wall_end, curtain_wall_box_beside_another_wall, cabinet_cut_solid_not_read, cabinet_not_reaching_wall, door_cut_flag_not_read, door_opening_box_not_read, door_wall_axis_not_read, door_second_wall_parallel_to_door_wall, door_opening_not_in_second_wall, opening_extent_not_positive, wall_body_not_an_axis_aligned_prism, shadow_cutout_step_not_read, door_cuts_a_wall_it_is_not_hosted_in_as_its_own, cabinet_cut_flag_not_set, opening_outside_wall_height, curtain_wall_record_copies_disagree. Revit's export writes an opening for most of these; they are left out because the box Revit cuts is not proven. Empty when every step is written or the export has no geometry."
+        },
+        "body_pieces_folded": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "The further pieces of an element of separate loops that the writer folds into the body of the element that owns them, as items of its representation and not as elements of their own, by STEP entity type. They are in none of building_elements, by_ifc_type, building_elements_with_geometry, body_sources, bounding_box_bodies and the other counts of the elements the IFC file holds, so each of those counts what the file holds. Empty where the export folds none."
+        }
+      }
+    },
+    "skipped": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "reason",
+          "count",
+          "classes",
+          "sample_names"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Machine-readable reason, including unsupported_geometry_* buckets for incomplete element geometry and element_record_without_element_id for element records with no attributable ElementId, element_record_without_volume for placed instances with no 3D body, left out as Revit's export leaves them out, and element_record_in_non_primary_design_option for placed instances in a design option other than their set's primary one, also left out as Revit's export leaves them out, element_record_not_in_export_phase for placed instances that do not exist in the export phase, the project's last or the one `rvt-ifc --phase` names, also left out as Revit's export leaves them out, room_not_in_export_phase for placed rooms whose own phase is not the export phase (where no phase was named, the last holds no room, the phase in room_phase_fallback), left out as Revit's export leaves them out and counted, one item for each phase, by the phase they sit in (`phase`), and element_record_empty_curtain_panel for curtain panels of the Empty System Panel family, left out as Revit's export leaves them out, and area_without_proven_body for the Areas of a Revit 2015 to 2023 file that are not written because their region and body are not proven, counted by the reason their body has none in classes, and element_record_frame_stopped for the frames of a Revit 2008 to 2023 file's markers that did not become an element, counted by the stage they stopped at in classes: frame_outside_stream, category_out_of_range, box_not_valid, no_declared_id, and without_volume for placed instances with no 3D body, which Revit's export leaves out. They are frames of every category, not lost elements (decoded.element_record_stages). shaft_opening_not_cut counts the shaft openings of a Revit 2025, 2026 or 2027 file, whose cut from the floors, ceilings and roofs they pass through is read on Revit 2024 only, so those stay whole: Revit's export does cut them."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "classes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "sample_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "phase": {
+            "type": "string",
+            "description": "The phase the left-out elements sit in, for room_not_in_export_phase: the phase's name, or `ElementId <n>` where the file names none. Absent for every other reason. `--anonymize` replaces it."
+          }
+        }
+      }
+    },
+    "unsupported_features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence": {
+      "type": "object",
+      "required": [
+        "level",
+        "score",
+        "has_project_metadata",
+        "has_typed_elements",
+        "has_geometry",
+        "has_diagnostic_proxies",
+        "warning_count"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "scaffold",
+            "typed_no_geometry",
+            "geometry",
+            "diagnostic_partial",
+            "proxy_only"
+          ]
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "has_project_metadata": {
+          "type": "boolean"
+        },
+        "has_typed_elements": {
+          "type": "boolean"
+        },
+        "has_geometry": {
+          "type": "boolean"
+        },
+        "has_diagnostic_proxies": {
+          "type": "boolean"
+        },
+        "warning_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unexported_element_records": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Element records of a recovered category found but not exported because no ElementId is attributable (element_record_without_element_id). Non-zero means the model is incomplete and score is scaled by the exported share; zero is not a completeness claim."
+        },
+        "resource_limit_hits": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resource limits (walker scan caps, inflate caps, stream size caps) that stopped or truncated a read during the export, each also a `resource-limit:` warning. Non-zero means the IFC may be missing what lies past the limit."
+        },
+        "skipped_members": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Streams whose gzip member(s) did not inflate (corrupt or truncated DEFLATE) and were skipped, plus streams present in the file that could not be opened or read, each also a `skipped-member:` warning. Non-zero means the IFC may be missing what those bytes hold."
+        }
+      }
+    },
+    "source_coverage": {
+      "description": "Measured export source-coverage. status=measured when at least one fraction has a trustworthy denominator; status=unset when none can be computed. Fractions stay null when unknown — never invent ratios.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "unset",
+            "unknown",
+            "measured"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        },
+        "decoded_element_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "production_walker_elements / the distinct non-zero ElementIds Global/ElemTable declares, when 0 < walker <= that count; null when the table is missing, empty, or exceeded."
+        },
+        "exported_element_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "building_elements / production_walker_elements when walker > 0; null otherwise. Includes non-building production classes (Level/Material) in the denominator."
+        },
+        "geometry_element_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "building_elements_with_geometry / building_elements when building_elements > 0; null otherwise."
+        }
+      }
+    },
+    "formats_latest_integrity": {
+      "description": "Formats/Latest page-boundary integrity under the narrow gate (the page strip stays disabled).",
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "stream",
+        "stored_bytes",
+        "page_boundary_detected",
+        "checksum_tail_stripping",
+        "integrity_status"
+      ],
+      "properties": {
+        "stream": {
+          "type": "string",
+          "const": "Formats/Latest"
+        },
+        "stored_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inflated_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "page_boundary_detected": {
+          "type": "boolean"
+        },
+        "checksum_tail_stripping": {
+          "type": "string",
+          "enum": [
+            "disabled",
+            "enabled"
+          ]
+        },
+        "integrity_status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "uncertain",
+            "incomplete"
+          ]
+        },
+        "diagnostic_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "RVT_FORMATS_MULTIPAGE_UNVERIFIED when multipage completeness is unverified."
+        },
+        "schema_scan_truncated": {
+          "type": "boolean",
+          "description": "true when the inflated stream exceeds the 65536-byte schema scan limit, so schema parsing stopped before the end of the stream. A \"we stopped looking\" signal; it does not claim the unscanned tail is parseable schema."
+        },
+        "schema_scanned_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Bytes schema parsing would scan: min(inflated_bytes, 65536), or null when inflate failed."
+        }
+      }
+    },
+    "room_phase_fallback": {
+      "type": "object",
+      "description": "Present only where no phase was named and the project's last phase holds no room, so the export writes the rooms of the latest phase that holds any (a choice by the maintainer, 2026-11-05): rooms all in one phase cannot overlap. It names that phase and counts the placed rooms of it, which the phase rule would otherwise have left out. Every other element still follows the last phase, and a phase named (rvt-ifc --phase, Python phase=), the last included, is exact and writes none of these rooms. Absent in every other export, so those diagnostics are the bytes they were.",
+      "required": ["phase", "rooms"],
+      "properties": {
+        "phase": {
+          "type": "string",
+          "description": "The phase the rooms are written from: its name, or `ElementId <n>` where the file names none. `--anonymize` replaces it."
+        },
+        "rooms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The placed rooms of that phase, each counted once. Each is then written or left out for its own reasons, such as having no body."
+        }
+      }
+    },
+    "export_decisions": {
+      "type": "object",
+      "description": "Each fail-closed decision behind skipped and the exported body and outline counts, one entry per element: why an element was left out, a body is only its record's box, an opening was not cut, an outline was not read. Present only when asked for (rvt-ifc --export-decisions); without it the diagnostics are the bytes they were. Bounded: at most cap_per_reason entries a reason, the rest counted as dropped. Not written in the IFC file. The skipped items are counted from the same decisions: for every reason of skipped (the stream_not_read_resource_limit item apart, which counts streams) reasons[reason].total is the sum of the items' counts; body_is_record_box, space_outline_is_record_box, area_body_refused, slab_shape_refused, wall_base_cut_refused and wall_end_extension_refused total exported.bounding_box_bodies, bounding_box_spaces, area_body_refusals, slab_shape_refusals, wall_base_refusals and wall_end_refusals.",
+      "required": ["cap_per_reason", "dropped", "reasons", "entries"],
+      "properties": {
+        "cap_per_reason": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The most entries kept of one reason."
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Decisions left out by the cap, over all reasons."
+        },
+        "reasons": {
+          "type": "object",
+          "description": "Each reason with decisions, by reason code.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["stage", "total", "recorded", "dropped"],
+            "properties": {
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "element_skipped",
+                  "body_not_drawn",
+                  "body_left_as_box",
+                  "opening_not_cut",
+                  "outline_not_read",
+                  "storey_not_bound",
+                  "value_left_out_exporters_disagree"
+                ],
+                "description": "The stage of every decision of the reason. value_left_out_exporters_disagree records nothing yet, so no reason has it."
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Every decision of the reason, kept or not."
+              },
+              "recorded": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many are in entries."
+              },
+              "dropped": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "total less recorded."
+              }
+            }
+          }
+        },
+        "entries": {
+          "type": "array",
+          "description": "The kept decisions, by reason and then ElementId, partition number, stream and offset.",
+          "items": {
+            "type": "object",
+            "required": ["stage", "reason"],
+            "properties": {
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "element_skipped",
+                  "body_not_drawn",
+                  "body_left_as_box",
+                  "opening_not_cut",
+                  "outline_not_read",
+                  "storey_not_bound",
+                  "value_left_out_exporters_disagree"
+                ],
+                "description": "The step that made the decision. value_left_out_exporters_disagree records nothing yet."
+              },
+              "reason": {
+                "type": "string",
+                "description": "The reason of the skipped item the decision is counted in, or body_is_record_box, space_outline_is_record_box, area_body_refused, slab_shape_refused, wall_base_cut_refused or wall_end_extension_refused."
+              },
+              "element_id": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "The Revit ElementId. Absent for a frame that carries none (element_record_without_element_id)."
+              },
+              "class": {
+                "type": "string",
+                "description": "The class the aggregate counts it under: a Revit class for the element-record reasons, an IFC entity such as IFCDOOR for the geometry gaps and the exported counts, and the stage the frame stopped at for element_record_frame_stopped (frame_outside_stream, category_out_of_range, box_not_valid, no_declared_id or without_volume)."
+              },
+              "stream": {
+                "type": "string",
+                "description": "The stream the evidence was read from, where known."
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "The byte offset of the record in that stream inflated (the bytes rvt-dump writes as Partitions_NN.decomp), where known. For the element-record reasons it is the element's last frame in scan order (partition number, then offset), which can differ from the frame decoded.element_provenance names for it. Only the offsets of those frames on Revit 2024 and later have been re-read from the bytes."
+              },
+              "detail": {
+                "type": "string",
+                "description": "What tells the reason apart: the phase's name for room_not_in_export_phase (replaced by <redacted> under --anonymize), why an Area's body is not proven for area_without_proven_body and area_body_refused, the BodySource for body_is_record_box."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

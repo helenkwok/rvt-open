@@ -1,0 +1,1659 @@
+//! Production `iter_elements` typed MVP + partition schema MVP wiring.
+//!
+//! - Tier1 synthetics: fail-closed honesty (no invented ArcWalls /
+//!   Levels / Materials / Floors / openings; HostObjAttr never on
+//!   production path).
+//! - Optional magnetar project corpus: ArcWalls, Levels, Materials, and
+//!   (2024) ArcWallRectOpening rows when `RVT_PROJECT_CORPUS_DIR` is set.
+//!   Floors and rooms come from element records only, so a 2023 file
+//!   yields none.
+
+use std::path::{Path, PathBuf};
+
+use rvt::elements::MVP_TYPED_CLASSES;
+use rvt::elements::typed_json::is_mvp_typed_class;
+use rvt::geometry::{recover_level_elevation, recover_wall_location_curve_from_arc_wall};
+use rvt::walker::{self, PRODUCTION_ELEMENT_MIN_SCORE};
+use rvt::{RevitFile, elements};
+
+fn tier1_dir() -> PathBuf {
+    std::env::var("RVT_CORPUS_TIER1_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("corpus/tier1"))
+}
+
+fn project_dir() -> Option<PathBuf> {
+    std::env::var("RVT_PROJECT_CORPUS_DIR")
+        .ok()
+        .map(PathBuf::from)
+}
+
+fn discover_fixture_dirs(root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut dirs = Vec::new();
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if p.join(format!("{name}.rvt")).exists() {
+                dirs.push(p);
+            }
+        }
+    }
+    dirs.sort();
+    dirs
+}
+
+#[test]
+fn production_iter_elements_tier1_no_hostobjattr_no_fake_partition_mvp() {
+    let root = tier1_dir();
+    assert!(root.is_dir(), "missing {}", root.display());
+    for dir in discover_fixture_dirs(&root) {
+        let name = dir.file_name().unwrap().to_string_lossy().to_string();
+        let path = dir.join(format!("{name}.rvt"));
+        let mut rf = RevitFile::open(&path).expect("open tier1");
+        let elements: Vec<_> = walker::iter_elements(&mut rf)
+            .expect("iter_elements")
+            .collect();
+        assert!(
+            elements.iter().all(|e| e.class != "HostObjAttr"),
+            "{name}: production must not yield HostObjAttr"
+        );
+        assert!(
+            elements.iter().all(|e| e.class != "ArcWall"),
+            "{name}: tier1 must not invent ArcWall typed hits"
+        );
+        assert!(
+            elements.iter().all(|e| e.class != "ArcWallRectOpening"),
+            "{name}: tier1 must not invent opening-index hits"
+        );
+        // Partition MVP name/geometry recovers must not invent on
+        // scaffold CFBs (empty / unsupported partitions).
+        for class in ["Level", "Material", "Room", "Floor", "Door", "Window"] {
+            let count = elements.iter().filter(|e| e.class == class).count();
+            assert_eq!(
+                count, 0,
+                "{name}: tier1 must not invent partition {class} hits, got {count}"
+            );
+        }
+        for el in &elements {
+            if is_mvp_typed_class(&el.class) {
+                let _ = elements::typed_json::mvp_typed_view(el);
+            }
+        }
+        eprintln!("iter_elements tier1 ok · {name} · count={}", elements.len());
+    }
+}
+
+#[test]
+fn decode_instance_prefer_typed_fails_closed_for_mvp_wrong_schema() {
+    let floor_schema = rvt::formats::ClassEntry {
+        name: "Floor".into(),
+        offset: 0,
+        fields: vec![],
+        tag: None,
+        parent: None,
+        declared_field_count: None,
+        was_parent_only: false,
+        ancestor_tag: None,
+    };
+    let wall = elements::decoder_for_class("Wall").unwrap();
+    assert!(
+        wall.decode(&[], &floor_schema, &walker::HandleIndex::new())
+            .is_err(),
+        "WallDecoder must reject Floor schema"
+    );
+    let bogus = rvt::formats::ClassEntry {
+        name: "NoSuchClass".into(),
+        ..floor_schema
+    };
+    assert!(elements::decode_typed(&[], &bogus, &walker::HandleIndex::new()).is_err());
+    assert!(MVP_TYPED_CLASSES.contains(&"Wall"));
+}
+
+#[test]
+fn einhoven_iter_elements_yields_revits_curtain_wall_not_panel_arcwalls() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("Revit_IFC5_Einhoven.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+
+    let mut rf = RevitFile::open(&path).expect("open Einhoven");
+    let elements: Vec<_> = walker::iter_elements(&mut rf)
+        .expect("iter_elements")
+        .collect();
+
+    assert!(
+        elements.iter().all(|e| e.class != "HostObjAttr"),
+        "production must filter HostObjAttr: {:?}",
+        elements.iter().map(|e| &e.class).collect::<Vec<_>>()
+    );
+
+    // Its 24 ArcWall records are the curtain panels' own (typed by the
+    // Family1 panel symbol 8570), not walls: production yields none of
+    // them, and yields the 24 panels Revit lists from their records, in
+    // curtain wall 7187, beside Wall 2808 (Revit 2023.1).
+    // The location curves the records decode are checked on the scan in
+    // `einhoven_partition_schema_mvp_levels_materials_floors`.
+    let ids = |class: &str| -> Vec<u32> {
+        let mut ids: Vec<u32> = elements
+            .iter()
+            .filter(|e| e.class == class)
+            .filter_map(|e| e.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(ids("ArcWall"), Vec::<u32>::new(), "no panel is a wall");
+    assert_eq!(ids("Wall"), [2808]);
+    assert_eq!(ids("CurtainWall"), [7187]);
+    let panels: Vec<u32> = [
+        7197, 7290, 7292, 7294, 7300, 7301, 7302, 7303, 8574, 8575, 8579, 8580, 8638, 8639, 8640,
+        8641, 8642, 8643, 8681, 8682, 8683, 8684, 8685, 8686,
+    ]
+    .into();
+    assert_eq!(ids("CurtainWallPanel"), panels, "Revit's 24 panels");
+
+    let mut diag_rf = RevitFile::open(&path).unwrap();
+    let diagnostic: Vec<_> =
+        walker::iter_elements_with_options(&mut diag_rf, walker::DIAGNOSTIC_ELEMENT_MIN_SCORE)
+            .unwrap()
+            .collect();
+    assert!(
+        diagnostic.iter().any(|e| e.class == "HostObjAttr"),
+        "diagnostic scan should still find HostObjAttr"
+    );
+}
+
+#[test]
+fn einhoven_partition_schema_mvp_levels_materials_floors() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("Revit_IFC5_Einhoven.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+
+    let mut rf = RevitFile::open(&path).expect("open");
+    let version = rf.basic_file_info().unwrap().version;
+    assert_eq!(version, 2023);
+
+    let scan =
+        rvt::research::partition_arc_walls::scan_partition_arc_walls(&mut rf, version).unwrap();
+    assert!(scan.walls.len() >= 20);
+    let mut recovered_curves = 0usize;
+    let mut with_elevation = 0usize;
+    for wall in &scan.walls {
+        let typed = elements::arc_wall::from_partition_arc_wall(wall);
+        let loc = recover_wall_location_curve_from_arc_wall(&typed);
+        assert!(loc.line_length_feet().unwrap_or(0.0) > 0.0);
+        recovered_curves += 1;
+        if typed.base_elevation_feet.is_some() {
+            with_elevation += 1;
+        }
+    }
+    assert_eq!(recovered_curves, scan.walls.len());
+    assert!(
+        with_elevation >= 15,
+        "expected most ArcWall trailers to carry base elevation, got {with_elevation}"
+    );
+
+    let mut rf2 = RevitFile::open(&path).unwrap();
+    let decoded: Vec<_> = walker::iter_elements(&mut rf2).unwrap().collect();
+    let floors: Vec<_> = decoded.iter().filter(|e| e.class == "Floor").collect();
+    let doors: Vec<_> = decoded.iter().filter(|e| e.class == "Door").collect();
+    let windows: Vec<_> = decoded.iter().filter(|e| e.class == "Window").collect();
+    let levels: Vec<_> = decoded.iter().filter(|e| e.class == "Level").collect();
+    let materials: Vec<_> = decoded.iter().filter(|e| e.class == "Material").collect();
+    let rooms: Vec<_> = decoded.iter().filter(|e| e.class == "Room").collect();
+    let openings: Vec<_> = decoded
+        .iter()
+        .filter(|e| e.class == "ArcWallRectOpening")
+        .collect();
+
+    // Levels: elevation-derived storeys merge into production iter_elements.
+    assert!(
+        levels.len() >= 2,
+        "expected ≥2 Level DecodedElements from partition storeys, got {}",
+        levels.len()
+    );
+    let mut level_elevations = 0usize;
+    for level in &levels {
+        let l = elements::level::Level::from_decoded(level);
+        assert!(l.name.is_some(), "Level must carry a name");
+        let outcome = recover_level_elevation(&l);
+        if outcome.is_recovered() {
+            assert!(outcome.as_recovered().unwrap().elevation_feet.is_finite());
+            level_elevations += 1;
+        }
+    }
+    assert!(
+        level_elevations >= 2,
+        "expected ≥2 Levels with recovered elevations, got {level_elevations}"
+    );
+
+    // Materials: strict partition display names.
+    assert!(
+        materials.len() >= 5,
+        "expected ≥5 Material DecodedElements from partition names, got {}",
+        materials.len()
+    );
+    for mat in &materials {
+        let m = elements::styling::Material::from_decoded(mat);
+        assert!(m.name.is_some());
+    }
+
+    // Floors and rooms: element records only, and 2023 has none that
+    // decode. The plan-loop floors and name-only rooms this file used to
+    // get matched nothing in Revit's own exports of other files.
+    assert_eq!(floors.len(), 0, "must not invent Floor on Einhoven 2023");
+    assert_eq!(rooms.len(), 0, "must not invent Room on Einhoven 2023");
+
+    // Doors and windows come only from 2023 element records, whose
+    // OST_Windows instances are exactly Revit's windows on two 2023
+    // projects with Revit exports: Einhoven's records hold no door and two
+    // windows. Nothing comes from the opening index, which 2023 lacks.
+    assert_eq!(doors.len(), 0, "Einhoven 2023 has no door records");
+    assert_eq!(windows.len(), 2, "Einhoven 2023's two window records");
+    assert_eq!(
+        openings.len(),
+        0,
+        "2023 must not emit 2024-only ArcWallRectOpening rows"
+    );
+
+    eprintln!(
+        "partition MVP Einhoven ok · arcwalls={} · curves={} · elev={} · levels={} · level_elev={} · materials={} · doors={} · windows={}",
+        scan.walls.len(),
+        recovered_curves,
+        with_elevation,
+        levels.len(),
+        level_elevations,
+        materials.len(),
+        doors.len(),
+        windows.len()
+    );
+}
+
+#[test]
+fn core_interior_2024_rect_openings_not_fake_doors() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    assert_eq!(version, 2024);
+
+    // Cap candidates so the large 2024 partition scan stays tractable.
+    let limits = walker::WalkerLimits {
+        max_candidates: 2_000,
+        ..walker::WalkerLimits::default()
+    };
+    let mvp =
+        rvt::research::partition_schema_mvp::recover_partition_schema_mvp(&mut rf, version, limits)
+            .expect("mvp");
+    assert!(
+        mvp.rect_openings.len() >= 50,
+        "expected ≥50 ArcWallRectOpening index rows on 2024 Core Interior, got {}",
+        mvp.rect_openings.len()
+    );
+    assert!(
+        mvp.rect_openings
+            .iter()
+            .all(|e| e.class == "ArcWallRectOpening"),
+        "opening index must not be relabeled as Door/Window"
+    );
+    // Typed Wall / Door / Window come from the partition element-record
+    // carrier, never from the opening index or a schema-field
+    // decode — the negative stands and is asserted by provenance
+    // below. The counts are the exact ElementId sets Revit's own full
+    // export tags: 360 IFCWALL, 132 IFCDOOR, 6 IFCWINDOW.
+    let decoded: Vec<_> =
+        walker::iter_elements_with_limits(&mut rf, PRODUCTION_ELEMENT_MIN_SCORE, limits)
+            .expect("iter_elements")
+            .collect();
+    for (class, expected) in [("Wall", 360usize), ("Door", 132), ("Window", 6)] {
+        let hits: Vec<_> = decoded.iter().filter(|e| e.class == class).collect();
+        assert_eq!(
+            hits.len(),
+            expected,
+            "{class}: expected the exported instance count on 2024 Core Interior"
+        );
+        for hit in &hits {
+            assert_eq!(
+                hit.provenance.decoder.as_deref(),
+                Some("partition_schema_mvp::element_category_record"),
+                "{class} must come from the partition element record, not a \
+                 schema-field or opening-index decode"
+            );
+        }
+    }
+    assert!(
+        decoded
+            .iter()
+            .filter(|e| e.class == "ArcWallRectOpening")
+            .count()
+            >= 50,
+        "Openings must remain class ArcWallRectOpening in production iter_elements"
+    );
+    let mut elem_confirmed = 0usize;
+    for opening in &mvp.rect_openings {
+        let a_ok = opening.fields.iter().any(|(n, v)| {
+            matches!(
+                (n.as_str(), v),
+                (
+                    "m_related_id_a_in_elem_table",
+                    walker::InstanceField::Bool(true)
+                )
+            )
+        });
+        let b_ok = opening.fields.iter().any(|(n, v)| {
+            matches!(
+                (n.as_str(), v),
+                (
+                    "m_related_id_b_in_elem_table",
+                    walker::InstanceField::Bool(true)
+                )
+            )
+        });
+        if a_ok && b_ok {
+            elem_confirmed += 1;
+        }
+    }
+    assert!(
+        elem_confirmed >= 50,
+        "expected ≥50 openings with both related ids in ElemTable, got {elem_confirmed}"
+    );
+    // Materials still surface from strings even when ArcWall standard
+    // decode is version-gated off.
+    assert!(
+        mvp.materials.len() >= 5,
+        "expected material name recovers on 2024, got {}",
+        mvp.materials.len()
+    );
+
+    eprintln!(
+        "2024 Core Interior MVP ok · openings={} · elem_confirmed={} · materials={} · levels={} · slabs={} · rooms={}",
+        mvp.rect_openings.len(),
+        elem_confirmed,
+        mvp.materials.len(),
+        mvp.levels.len(),
+        mvp.slabs.len(),
+        mvp.rooms.len()
+    );
+}
+
+/// Slabs come from `OST_Floors` + `OST_BuildingPad`
+/// element records under the instance rule, and the twenty
+/// per-element "IFC Export As" overrides are exactly the ids Revit's own
+/// export emits as `IfcShadingDevice`.
+#[test]
+fn core_interior_2024_slab_instances_and_export_overrides() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+
+    // The twenty `IFCSHADINGDEVICE` `Tag` values in
+    // `IFC Exports/2024_Core_Interior_slim.ifc`.
+    const SHADING_DEVICE_IDS: &[u32] = &[
+        20953, 64160, 64227, 64292, 64358, 64423, 64488, 64553, 64618, 64683, 70366, 71171, 71231,
+        71291, 71351, 71411, 71471, 71531, 71591, 71651,
+    ];
+    // `Pad:Site Pad:21975` — the one exported slab that is an
+    // `OST_BuildingPad`, not an `OST_Floors`.
+    const SITE_PAD_ID: u32 = 21975;
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    assert_eq!(version, 2024);
+    let limits = walker::WalkerLimits {
+        max_candidates: 2_000,
+        ..walker::WalkerLimits::default()
+    };
+    let mvp =
+        rvt::research::partition_schema_mvp::recover_partition_schema_mvp(&mut rf, version, limits)
+            .expect("mvp");
+
+    assert_eq!(
+        mvp.slabs.len(),
+        100,
+        "expected the 100 exported OST_Floors / OST_BuildingPad instances"
+    );
+
+    let pads: Vec<_> = mvp
+        .slabs
+        .iter()
+        .filter(|e| e.class == "BuildingPad")
+        .collect();
+    assert_eq!(pads.len(), 1, "one OST_BuildingPad instance");
+    assert_eq!(pads[0].id, Some(SITE_PAD_ID));
+
+    let mut overridden: Vec<u32> = mvp
+        .slabs
+        .iter()
+        .filter(|e| {
+            e.fields.iter().any(|(name, value)| {
+                matches!(
+                    (name.as_str(), value),
+                    ("m_ifc_export_as", walker::InstanceField::String(text))
+                        if text == "IfcShadingDevice"
+                )
+            })
+        })
+        .filter_map(|e| e.id)
+        .collect();
+    overridden.sort_unstable();
+    assert_eq!(
+        overridden, SHADING_DEVICE_IDS,
+        "the IfcShadingDevice overrides must be exactly the export's IFCSHADINGDEVICE Tag set"
+    );
+
+    for slab in &mvp.slabs {
+        assert_eq!(
+            slab.provenance.decoder.as_deref(),
+            Some("partition_schema_mvp::element_category_record"),
+            "slabs come from the element-record carrier, not a plan-loop scan"
+        );
+        assert!(slab.id.is_some(), "every record-backed slab carries an id");
+    }
+}
+
+/// Every emitted building element that the file gives
+/// storey evidence for is contained in a specific `IfcBuildingStorey`,
+/// and the ones it gives none for are contained in the `IfcBuilding`
+/// rather than dropped into whichever storey happens to be first.
+///
+/// Measured on `2024_Core_Interior.rvt`: all 970 elements reach a
+/// storey through the `Level` their own partition element record names —
+/// 488 name one Level, and 482 name two, their base and top constraint,
+/// and take the base.
+#[test]
+fn core_interior_2024_storey_containment_is_evidence_backed() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let result = rvt::ifc::RvtDocExporter
+        .export_with_diagnostics_mode_and_limits(
+            &mut rf,
+            rvt::ifc::ExportQualityMode::Geometry,
+            walker::WalkerLimits::default(),
+        )
+        .expect("geometry export");
+
+    assert_eq!(result.diagnostics.exported.building_elements, 970);
+    assert_eq!(
+        result.diagnostics.exported.storey_bound_elements, 970,
+        "storey containment regressed; re-measure before moving this number"
+    );
+
+    let mut by_source: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut unbound_types: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
+    for entity in &result.model.entities {
+        let rvt::ifc::entities::IfcEntity::BuildingElement {
+            ifc_type,
+            storey_index,
+            property_set,
+            ..
+        } = entity
+        else {
+            continue;
+        };
+        if storey_index.is_none() {
+            *unbound_types.entry(ifc_type.as_str()).or_default() += 1;
+            continue;
+        }
+        let source = property_set
+            .as_ref()
+            .and_then(|set| {
+                set.properties
+                    .iter()
+                    .find(|p| p.name == "StoreyBindSource")
+                    .and_then(|p| match &p.value {
+                        rvt::ifc::entities::PropertyValue::Text(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+            })
+            .expect("a bound element records how it reached its storey");
+        *by_source.entry(source).or_default() += 1;
+    }
+    assert_eq!(by_source.get("record_level_reference").copied(), Some(970));
+    assert_eq!(by_source.values().sum::<usize>(), 970);
+    assert!(unbound_types.is_empty(), "unbound: {unbound_types:?}");
+
+    // An unbound element would be contained in the IfcBuilding, never in
+    // a named storey; none is left.
+    let step = rvt::ifc::write_step(&result.model);
+    let building_id = step
+        .lines()
+        .find_map(|line| {
+            line.split_once("=IFCBUILDING(")
+                .map(|(id, _)| id.trim_start_matches('#').to_string())
+        })
+        .expect("an IfcBuilding is emitted");
+    let on_building = step
+        .lines()
+        .filter(|line| line.contains("IFCRELCONTAINEDINSPATIALSTRUCTURE("))
+        .filter(|line| line.ends_with(&format!(",#{building_id});")))
+        .count();
+    assert_eq!(
+        on_building, 0,
+        "no containment relation holds unbound elements"
+    );
+}
+
+/// Every recovered slab carries the plan profile its
+/// `OST_SketchLines` records close.
+///
+/// The join is by ElementId only — the last slot of the second
+/// counted reference list at `+0x88` — so this asserts all 100
+/// record-backed plates: the 80 the reference export writes as `IfcSlab`
+/// resolve a profile from their boxes, and the 20 it writes as
+/// `IfcShadingDevice` (whose sketch-line boxes are axis-aligned envelopes
+/// of diagonal segments) from their lines' recorded ends, once the one
+/// zero-length sketch line each carries is left out.
+#[test]
+fn core_interior_2024_slab_plan_profiles() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+    // The twenty `IFCSHADINGDEVICE` `Tag` values — the plates whose
+    // sketch closes only from its lines' recorded ends.
+    const SHADING_DEVICE_IDS: &[u32] = &[
+        20953, 64160, 64227, 64292, 64358, 64423, 64488, 64553, 64618, 64683, 70366, 71171, 71231,
+        71291, 71351, 71411, 71471, 71531, 71591, 71651,
+    ];
+    const SITE_PAD_ID: u32 = 21975;
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    let limits = walker::WalkerLimits {
+        max_candidates: 2_000,
+        ..walker::WalkerLimits::default()
+    };
+    let mvp =
+        rvt::research::partition_schema_mvp::recover_partition_schema_mvp(&mut rf, version, limits)
+            .expect("mvp");
+    assert_eq!(mvp.slabs.len(), 100);
+
+    let mut without: Vec<u32> = Vec::new();
+    let mut zigzag = Vec::new();
+    let mut ring = 0usize;
+    let mut rectangle = 0usize;
+    for slab in &mvp.slabs {
+        let id = slab.id.expect("record-backed slab carries an id");
+        let Some(profile) =
+            rvt::research::element_record_plan_profiles::plan_profile_from_fields(&slab.fields)
+        else {
+            without.push(id);
+            continue;
+        };
+        // The profile's plan bounds are the record's own plan box:
+        // every vertex is a corner of a recorded bounding box.
+        let bounds = profile.plan_bounds_feet().expect("bounds");
+        let mut record_box = [f64::NAN; 4];
+        for (name, value) in &slab.fields {
+            if let walker::InstanceField::Float { value, .. } = value {
+                match name.as_str() {
+                    "m_locationX" => record_box[0] = *value,
+                    "m_locationY" => record_box[1] = *value,
+                    "m_bboxWidth" => record_box[2] = *value,
+                    "m_bboxDepth" => record_box[3] = *value,
+                    _ => {}
+                }
+            }
+        }
+        let width = bounds[2] - bounds[0];
+        let depth = bounds[3] - bounds[1];
+        assert!(
+            (width - record_box[2]).abs() < 1e-6 && (depth - record_box[3]).abs() < 1e-6,
+            "slab {id}: profile bounds {width} x {depth} disagree with the record box"
+        );
+        match (profile.outer_xy.len(), profile.inner_xy.len()) {
+            (26, 1) => ring += 1,
+            (28, 1) => zigzag.push(id),
+            (4, 0) => rectangle += 1,
+            other => panic!("slab {id}: unexpected profile shape {other:?}"),
+        }
+        if id == SITE_PAD_ID {
+            let mut xs: Vec<f64> = profile.outer_xy.iter().map(|p| p.0).collect();
+            let mut ys: Vec<f64> = profile.outer_xy.iter().map(|p| p.1).collect();
+            xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            for (got, want) in xs.iter().zip([20.0, 20.0, 167.0, 167.0]) {
+                assert!((got - want).abs() < 1e-6, "Site Pad x {got} != {want}");
+            }
+            for (got, want) in ys.iter().zip([25.0, 25.0, 114.0, 114.0]) {
+                assert!((got - want).abs() < 1e-6, "Site Pad y {got} != {want}");
+            }
+        }
+    }
+    assert!(
+        without.is_empty(),
+        "plates without a closed sketch: {without:?}"
+    );
+    zigzag.sort_unstable();
+    assert_eq!(
+        zigzag, SHADING_DEVICE_IDS,
+        "the 28-vertex plates with a void must be exactly the export's \
+         IFCSHADINGDEVICE Tag set"
+    );
+    assert_eq!(
+        ring, 42,
+        "42 perimeter plates: 26-vertex outer loop + 1 void"
+    );
+    assert_eq!(rectangle, 38, "38 rectangular plates: 4-vertex outer loop");
+}
+
+/// Split a STEP attribute list on top-level commas (quotes and nested
+/// lists shield their contents).
+fn step_attributes(args: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut start = 0usize;
+    for (index, ch) in args.char_indices() {
+        match ch {
+            '\'' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth = depth.saturating_sub(1),
+            ',' if !in_string && depth == 0 => {
+                out.push(args[start..index].trim());
+                start = index + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    out.push(args[start..].trim());
+    out
+}
+
+/// `(host Tag, filling Tag)` pairs read out of a Revit-authored IFC by
+/// following `IfcRelVoidsElement` into `IfcRelFillsElement`.
+///
+/// The reference side of the gate: the set the decoder
+/// must reproduce exactly.
+fn reference_fill_pairs(step: &str) -> Vec<(String, String)> {
+    use std::collections::BTreeMap;
+    let mut instances: BTreeMap<u32, (String, Vec<String>)> = BTreeMap::new();
+    for line in step.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix('#') else {
+            continue;
+        };
+        let Some((id_text, after_eq)) = rest.split_once('=') else {
+            continue;
+        };
+        let Ok(id) = id_text.trim().parse::<u32>() else {
+            continue;
+        };
+        let Some((ifc_type, args)) = after_eq.trim_start().split_once('(') else {
+            continue;
+        };
+        let Some(args) = args
+            .trim_end()
+            .strip_suffix(';')
+            .map(str::trim_end)
+            .and_then(|a| a.strip_suffix(')'))
+        else {
+            continue;
+        };
+        instances.insert(
+            id,
+            (
+                ifc_type.trim().to_ascii_uppercase(),
+                step_attributes(args)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            ),
+        );
+    }
+    let entity_ref = |attribute: &str| -> Option<u32> {
+        attribute.trim().strip_prefix('#')?.trim().parse().ok()
+    };
+    // `Tag` is IfcElement's one attribute past IfcProduct's seven.
+    let tag_of = |id: Option<u32>| -> String {
+        id.and_then(|id| instances.get(&id))
+            .and_then(|(_, attributes)| attributes.get(7))
+            .and_then(|attribute| {
+                attribute
+                    .trim()
+                    .strip_prefix('\'')
+                    .and_then(|t| t.strip_suffix('\''))
+            })
+            .unwrap_or_default()
+            .to_string()
+    };
+    let mut voided_by: BTreeMap<u32, u32> = BTreeMap::new();
+    for (ifc_type, attributes) in instances.values() {
+        if ifc_type != "IFCRELVOIDSELEMENT" {
+            continue;
+        }
+        if let (Some(host), Some(opening)) = (
+            attributes.get(4).and_then(|a| entity_ref(a)),
+            attributes.get(5).and_then(|a| entity_ref(a)),
+        ) {
+            voided_by.insert(opening, host);
+        }
+    }
+    let mut pairs = Vec::new();
+    for (ifc_type, attributes) in instances.values() {
+        if ifc_type != "IFCRELFILLSELEMENT" {
+            continue;
+        }
+        let opening = attributes.get(4).and_then(|a| entity_ref(a));
+        let filling = attributes.get(5).and_then(|a| entity_ref(a));
+        let host = opening.and_then(|id| voided_by.get(&id).copied());
+        pairs.push((tag_of(host), tag_of(filling)));
+    }
+    pairs.sort();
+    pairs
+}
+
+/// Every recovered door and window binds to the wall
+/// Revit's own exporter voids for it — exact pair set, no tolerance.
+#[test]
+fn core_interior_2024_door_window_host_wall_binding() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    let reference = project_dir.join("../IFC Exports/2024_Core_Interior_slim.ifc");
+    if !path.exists() || !reference.exists() {
+        eprintln!("skipping: {} or the slim export is missing", path.display());
+        return;
+    }
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    assert_eq!(version, 2024);
+    let limits = walker::WalkerLimits {
+        max_candidates: 2_000,
+        ..walker::WalkerLimits::default()
+    };
+    let mvp =
+        rvt::research::partition_schema_mvp::recover_partition_schema_mvp(&mut rf, version, limits)
+            .expect("mvp");
+
+    let wall_ids: std::collections::BTreeSet<u32> =
+        mvp.walls.iter().filter_map(|wall| wall.id).collect();
+    assert_eq!(wall_ids.len(), 360, "the 360 exported wall instances");
+
+    let mut recovered: Vec<(String, String)> = Vec::new();
+    let mut unbound: Vec<u32> = Vec::new();
+    for opening in mvp.doors.iter().chain(mvp.windows.iter()) {
+        let id = opening.id.expect("record-backed opening carries an id");
+        let host = opening
+            .fields
+            .iter()
+            .find_map(|(name, value)| match (name.as_str(), value) {
+                (
+                    rvt::research::partition_schema_mvp::OPENING_HOST_FIELD,
+                    walker::InstanceField::ElementId { id, .. },
+                ) => Some(*id),
+                _ => None,
+            });
+        match host {
+            Some(host) => {
+                assert!(
+                    wall_ids.contains(&host),
+                    "recovered host {host} for {id} is not an exported wall"
+                );
+                recovered.push((host.to_string(), id.to_string()));
+            }
+            None => unbound.push(id),
+        }
+    }
+    recovered.sort();
+
+    let expected = reference_fill_pairs(&std::fs::read_to_string(&reference).expect("read export"));
+    assert_eq!(
+        expected.len(),
+        138,
+        "the export voids 132 doors and 6 windows out of their host walls"
+    );
+    assert!(unbound.is_empty(), "unbound doors/windows: {unbound:?}");
+    assert_eq!(
+        recovered, expected,
+        "recovered (host wall, opening) pairs must equal Revit's own IfcRelVoidsElement \
+         + IfcRelFillsElement chain exactly"
+    );
+
+    // The binding is what the reference list says, not a proximity
+    // guess: every bound opening records its carrier.
+    for opening in mvp.doors.iter().chain(mvp.windows.iter()) {
+        assert!(
+            opening.fields.iter().any(|(name, value)| matches!(
+                (name.as_str(), value),
+                (
+                    rvt::research::partition_schema_mvp::OPENING_HOST_PROVENANCE_FIELD,
+                    walker::InstanceField::String(text),
+                ) if text == rvt::research::partition_schema_mvp::OPENING_HOST_PROVENANCE
+            )),
+            "opening {:?} lacks host provenance",
+            opening.id
+        );
+    }
+}
+
+/// Every recovered column names its family/type symbol,
+/// and the section that symbol carries is the one the instance
+/// envelope already had.
+///
+/// The join is the last slot before the record's own ElementId in the
+/// counted reference list at `+0x88` that is itself an `OST_Columns`
+/// type-symbol record. On `2024_Core_Interior.rvt` that is `5755`
+/// (`Column_Sqaure : 24" x 24"`) on all 256 exported columns, which
+/// is the `IfcColumnType.Tag` Revit's own export writes for every one
+/// of them.
+#[test]
+fn core_interior_2024_column_type_symbol_join() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+    const COLUMN_TYPE_SYMBOL: u32 = 5755;
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    let level_ids =
+        rvt::research::partition_schema_mvp::level_element_ids(&mut rf, version).expect("levels");
+    let columns = rvt::research::partition_schema_mvp::columns_from_partition_category_records(
+        &mut rf, version, &level_ids,
+    )
+    .expect("columns");
+    assert_eq!(columns.len(), 256, "the instance rule still selects 256");
+
+    let mut joined = 0usize;
+    let mut cut = 0usize;
+    for column in &columns {
+        let mut symbol = None;
+        let mut section = (None, None);
+        let mut width = None;
+        let mut depth = None;
+        let mut cut_source = None;
+        let mut cut_walls = None;
+        for (name, value) in &column.fields {
+            match (name.as_str(), value) {
+                (
+                    rvt::research::partition_schema_mvp::TYPE_SYMBOL_FIELD,
+                    walker::InstanceField::ElementId { id, .. },
+                ) => symbol = Some(*id),
+                (
+                    rvt::research::partition_schema_mvp::TYPE_PROFILE_WIDTH_FIELD,
+                    walker::InstanceField::Float { value, .. },
+                ) => section.0 = Some(*value),
+                (
+                    rvt::research::partition_schema_mvp::TYPE_PROFILE_DEPTH_FIELD,
+                    walker::InstanceField::Float { value, .. },
+                ) => section.1 = Some(*value),
+                ("m_bboxWidth", walker::InstanceField::Float { value, .. }) => {
+                    width = Some(*value);
+                }
+                ("m_bboxDepth", walker::InstanceField::Float { value, .. }) => {
+                    depth = Some(*value);
+                }
+                (
+                    rvt::research::element_record_column_cuts::COLUMN_BODY_SOURCE_FIELD,
+                    walker::InstanceField::String(text),
+                ) => {
+                    cut_source = Some(text.clone());
+                }
+                (
+                    rvt::research::element_record_column_cuts::COLUMN_CUT_WALL_COUNT_FIELD,
+                    walker::InstanceField::Integer { value, .. },
+                ) => {
+                    cut_walls = Some(*value);
+                }
+                _ => {}
+            }
+        }
+        let Some(symbol) = symbol else { continue };
+        assert_eq!(
+            symbol, COLUMN_TYPE_SYMBOL,
+            "column {:?} joined to an unexpected type symbol",
+            column.id
+        );
+        let (section_width, section_depth) = (
+            section.0.expect("width travels with the join"),
+            section.1.expect("depth travels with the join"),
+        );
+        let (width, depth) = (width.expect("bbox width"), depth.expect("bbox depth"));
+        assert!(
+            (section_width - 2.0).abs() < 1e-6 && (section_depth - 2.0).abs() < 1e-6,
+            "the 24\" x 24\" symbol is a 2 ft square"
+        );
+        match cut_source {
+            None => {
+                // The guard the join ships with: the type's section and
+                // the instance's plan envelope must agree, or the join
+                // is dropped.
+                assert!(
+                    (section_width - width).abs() < 1e-6 && (section_depth - depth).abs() < 1e-6,
+                    "column {:?}: section {section_width} x {section_depth} disagrees with its envelope",
+                    column.id
+                );
+                assert_eq!(cut_walls, None, "an uncut column reports no cutters");
+            }
+            Some(source) => {
+                // the walls the record names cut the prism, so
+                // the emitted rectangle is the remainder and is
+                // strictly inside the family section on at least one
+                // plan axis. The section itself still travels with the
+                // element as the type's own fact.
+                assert_eq!(
+                    source,
+                    rvt::research::element_record_column_cuts::COLUMN_BODY_JOIN_CUT
+                );
+                assert!(
+                    width <= section_width + 1e-9 && depth <= section_depth + 1e-9,
+                    "column {:?}: a cut never grows the section",
+                    column.id
+                );
+                assert!(
+                    (section_width - width).abs() > 1e-6 || (section_depth - depth).abs() > 1e-6,
+                    "column {:?}: a recorded cut must change the plan extents",
+                    column.id
+                );
+                assert!(
+                    cut_walls.unwrap_or(0) >= 1,
+                    "column {:?}: a cut names the walls that made it",
+                    column.id
+                );
+                cut += 1;
+            }
+        }
+        joined += 1;
+    }
+    assert_eq!(joined, 256, "every recovered column names its type symbol");
+    assert_eq!(cut, 80, "80 of the 256 are cut back by the walls they join");
+}
+
+/// A wall's record box is the untrimmed prism and the joins cut
+/// it back by half the thickness of the wall each end lands on.
+///
+/// The measured claim on `2024_Core_Interior.rvt`: all 360 walls
+/// resolve (none declines), 329 of them take a trim at one end or
+/// both, and the thin plan extent the solver reads as the thickness is
+/// one of the file's three wall thicknesses everywhere. Wall 20800 is
+/// walked explicitly because it is the arity gate's pinned wall.
+#[test]
+fn core_interior_2024_wall_join_trimmed_bodies() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+    use rvt::research::element_record_wall_joins as joins;
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    let level_ids =
+        rvt::research::partition_schema_mvp::level_element_ids(&mut rf, version).expect("levels");
+    let walls = rvt::research::partition_schema_mvp::walls_from_partition_category_records(
+        &mut rf, version, &level_ids,
+    )
+    .expect("walls");
+    assert_eq!(walls.len(), 360, "the instance rule still selects 360");
+
+    let mut resolved = 0usize;
+    let mut trimmed = 0usize;
+    for wall in &walls {
+        let mut source = None;
+        let mut thickness = None;
+        let mut trim = (None, None);
+        let mut plan = (None, None, None, None);
+        for (name, value) in &wall.fields {
+            match (name.as_str(), value) {
+                (joins::WALL_BODY_SOURCE_FIELD, walker::InstanceField::String(text)) => {
+                    source = Some(text.clone());
+                }
+                (joins::WALL_THICKNESS_FIELD, walker::InstanceField::Float { value, .. }) => {
+                    thickness = Some(*value);
+                }
+                (joins::WALL_TRIM_START_FIELD, walker::InstanceField::Float { value, .. }) => {
+                    trim.0 = Some(*value);
+                }
+                (joins::WALL_TRIM_END_FIELD, walker::InstanceField::Float { value, .. }) => {
+                    trim.1 = Some(*value);
+                }
+                ("m_locationX", walker::InstanceField::Float { value, .. }) => {
+                    plan.0 = Some(*value)
+                }
+                ("m_locationY", walker::InstanceField::Float { value, .. }) => {
+                    plan.1 = Some(*value)
+                }
+                ("m_bboxWidth", walker::InstanceField::Float { value, .. }) => {
+                    plan.2 = Some(*value)
+                }
+                ("m_bboxDepth", walker::InstanceField::Float { value, .. }) => {
+                    plan.3 = Some(*value)
+                }
+                _ => {}
+            }
+        }
+        let Some(source) = source else { continue };
+        assert_eq!(source, joins::WALL_BODY_JOIN_TRIMMED);
+        resolved += 1;
+        let thickness = thickness.expect("thickness travels with the trim");
+        assert!(
+            [0.5, 2.0 / 3.0, 1.5]
+                .iter()
+                .any(|nominal| (thickness - nominal).abs() < 1e-4),
+            "wall {:?}: thickness {thickness} is not a 6\", 8\" or 18\" wall",
+            wall.id
+        );
+        let (start, end) = (trim.0.expect("start"), trim.1.expect("end"));
+        assert!(start >= 0.0 && end >= 0.0, "a join never lengthens a wall");
+        if start > 0.0 || end > 0.0 {
+            trimmed += 1;
+        }
+        if wall.id == Some(20800) {
+            // Record box x 85.5 -> 137.25 ft, both ends cut by half of
+            // an 8" wall. Revit's own export puts this wall's body at
+            // 85.8333 -> 136.9167 ft.
+            assert!((start - 1.0 / 3.0).abs() < 1e-4, "20800 start trim");
+            assert!((end - 1.0 / 3.0).abs() < 1e-4, "20800 end trim");
+            let centre = plan.0.expect("x");
+            let width = plan.2.expect("width");
+            assert!(
+                (centre - width / 2.0 - 85.833_333).abs() < 1e-4
+                    && (centre + width / 2.0 - 136.916_667).abs() < 1e-4,
+                "20800 emits {} +- {}",
+                centre,
+                width / 2.0
+            );
+        }
+    }
+    assert_eq!(resolved, 360, "no wall declines its joins on this file");
+    // 329 before the reference-list membership predicate. The
+    // seven walls that drop out are the ones whose records name no
+    // other wall at all, and Revit leaves every one of them at full
+    // length.
+    assert_eq!(trimmed, 322, "322 walls are cut at one end or both");
+}
+
+/// The walls a column's counted reference list names
+/// cut its prism, and the plan rectangle that is left reproduces the
+/// plan-extent histogram of Revit's own exported column bodies —
+/// 176 × (2.0 × 2.0), 38 × (1.6667 × 1.6667), 20 × (1.75 × 1.6667),
+/// 18 × (1.4167 × 1.6667), 4 × (2.0 × 1.6667) ft.
+#[test]
+fn core_interior_2024_column_join_cut_plan_extents() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    let level_ids =
+        rvt::research::partition_schema_mvp::level_element_ids(&mut rf, version).expect("levels");
+    let columns = rvt::research::partition_schema_mvp::columns_from_partition_category_records(
+        &mut rf, version, &level_ids,
+    )
+    .expect("columns");
+    assert_eq!(columns.len(), 256);
+
+    let mut histogram: std::collections::BTreeMap<(i64, i64), usize> =
+        std::collections::BTreeMap::new();
+    for column in &columns {
+        let mut width = None;
+        let mut depth = None;
+        for (name, value) in &column.fields {
+            match (name.as_str(), value) {
+                ("m_bboxWidth", walker::InstanceField::Float { value, .. }) => {
+                    width = Some(*value);
+                }
+                ("m_bboxDepth", walker::InstanceField::Float { value, .. }) => {
+                    depth = Some(*value);
+                }
+                _ => {}
+            }
+        }
+        let (w, d) = (width.expect("width"), depth.expect("depth"));
+        let key = |v: f64| (v * 10_000.0).round() as i64;
+        histogram
+            .entry((key(w.max(d)), key(w.min(d))))
+            .and_modify(|n| *n += 1)
+            .or_insert(1);
+    }
+    // Revit's own bodies, read from `IFC Exports/2024_Core_Interior_slim.ifc`
+    // with IfcOpenShell 0.8.5 (re-measured).
+    let expected: std::collections::BTreeMap<(i64, i64), usize> = [
+        ((20_000, 20_000), 176usize),
+        ((16_667, 16_667), 38),
+        ((17_500, 16_667), 20),
+        ((16_667, 14_167), 18),
+        ((20_000, 16_667), 4),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        histogram, expected,
+        "the cut plan rectangles are Revit's own column body extents"
+    );
+}
+
+/// The wall records name the walls they join, and
+/// the sixteen that name none are exactly the walls Revit leaves at
+/// full length even though a perpendicular centreline lands on them.
+#[test]
+fn core_interior_2024_wall_joins_are_named_in_the_reference_list() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    let reference = project_dir.join("../IFC Exports/2024_Core_Interior_slim.ifc");
+    if !path.exists() || !reference.exists() {
+        eprintln!("skipping: {} or the slim export is missing", path.display());
+        return;
+    }
+    use rvt::research::element_record_wall_joins as joins;
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    let declared: std::collections::BTreeSet<u32> = rvt::elem_table::parse_records(&mut rf)
+        .expect("elem table")
+        .into_iter()
+        .map(|record| record.id_primary)
+        .collect();
+    let records = rvt::research::partition_element_records::scan_category_records(
+        &mut rf,
+        version,
+        rvt::research::partition_element_records::OST_WALLS,
+        &declared,
+    )
+    .expect("wall records");
+    let instances: Vec<rvt::research::partition_element_records::PartitionElementRecord> = records
+        .into_iter()
+        .filter(|record| record.is_exported_instance())
+        .collect();
+    let wall_ids: std::collections::BTreeSet<u32> = instances
+        .iter()
+        .map(|record| record.element_id)
+        .collect::<std::collections::BTreeSet<u32>>();
+    assert_eq!(wall_ids.len(), 360);
+
+    let mut named_none = std::collections::BTreeSet::new();
+    for record in &instances {
+        if joins::joined_walls(record, &wall_ids).is_empty() {
+            named_none.insert(record.element_id);
+        }
+    }
+    assert_eq!(
+        named_none.len(),
+        16,
+        "16 of the 360 walls name no other wall: {named_none:?}"
+    );
+
+    // Revit's own `Axis` polyline for each of those sixteen is the
+    // full recorded run: the file says they join nothing, and the
+    // export agrees that nothing cut them.
+    let export = std::fs::read_to_string(&reference).expect("read export");
+    let trims = joins::join_trims(&instances);
+    for id in &named_none {
+        let trim = trims.get(id).expect("a wall with no joins still resolves");
+        assert!(
+            !trim.is_trimmed(),
+            "wall {id} names no join partner but the solver cut it"
+        );
+    }
+    assert!(
+        export.contains("IFCWALL("),
+        "the reference export is the one that was measured"
+    );
+}
+
+/// `(ElementId, Name, LongName, world plan bbox, world z range)` for
+/// every `IfcSpace` in a Revit-authored IFC.
+///
+/// The reference side of the gate. The export writes the
+/// room number in `Name`, the room name in `LongName`, and the room's
+/// ElementId only in the `IfcSpaceType` its `IfcRelDefinesByType`
+/// points at — `IfcSpace` is an `IfcSpatialStructureElement` and so
+/// declares no `Tag` — which is why the join runs through the type.
+fn reference_spaces(step: &str) -> std::collections::BTreeMap<u32, (String, String)> {
+    use std::collections::BTreeMap;
+    let mut instances: BTreeMap<u32, (String, Vec<String>)> = BTreeMap::new();
+    for line in step.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix('#') else {
+            continue;
+        };
+        let Some((id_text, after_eq)) = rest.split_once('=') else {
+            continue;
+        };
+        let Ok(id) = id_text.trim().parse::<u32>() else {
+            continue;
+        };
+        let Some((ifc_type, args)) = after_eq.trim_start().split_once('(') else {
+            continue;
+        };
+        let Some(args) = args
+            .trim_end()
+            .strip_suffix(';')
+            .map(str::trim_end)
+            .and_then(|a| a.strip_suffix(')'))
+        else {
+            continue;
+        };
+        instances.insert(
+            id,
+            (
+                ifc_type.trim().to_ascii_uppercase(),
+                step_attributes(args)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            ),
+        );
+    }
+    let unquote = |attribute: Option<&String>| -> String {
+        attribute
+            .map(|a| a.trim())
+            .and_then(|a| a.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')))
+            .unwrap_or_default()
+            .to_string()
+    };
+    let entity_ref = |attribute: &str| -> Option<u32> {
+        attribute.trim().strip_prefix('#')?.trim().parse().ok()
+    };
+
+    let mut type_of: BTreeMap<u32, u32> = BTreeMap::new();
+    for (ifc_type, attributes) in instances.values() {
+        if ifc_type != "IFCRELDEFINESBYTYPE" {
+            continue;
+        }
+        let Some(relating) = attributes.get(5).and_then(|a| entity_ref(a)) else {
+            continue;
+        };
+        let objects = attributes.get(4).map(String::as_str).unwrap_or_default();
+        for part in objects.split(',') {
+            if let Some(id) = entity_ref(part.trim_matches(['(', ')'])) {
+                type_of.insert(id, relating);
+            }
+        }
+    }
+
+    let mut out = BTreeMap::new();
+    for (id, (ifc_type, attributes)) in &instances {
+        if ifc_type != "IFCSPACE" {
+            continue;
+        }
+        // `IfcTypeObject.Tag` is attribute 7, the same slot the door
+        // and window gate reads on `IfcElement`.
+        let Some(element_id) = type_of
+            .get(id)
+            .and_then(|t| instances.get(t))
+            .map(|(_, a)| unquote(a.get(7)))
+            .and_then(|tag| tag.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        out.insert(
+            element_id,
+            (unquote(attributes.get(2)), unquote(attributes.get(7))),
+        );
+    }
+    out
+}
+
+/// Rooms come from `OST_Rooms` partition element
+/// records, and the record family answers their identity, their name,
+/// their number, their storey and their envelope.
+///
+/// Scored against Revit's own full-project export, tolerance 0 on the
+/// id set and the strings, 1e-3 ft on the geometry:
+///
+/// - the instance rule on `OST_Rooms` selects exactly the 116
+///   ElementIds the export tags — no false positive, no miss;
+/// - each room's own parameter block gives the number and the name the
+///   export writes, 116 of 116 on both;
+/// - the record's counted reference list names exactly one `Level` for
+///   every one of the 116, so none falls back to an elevation guess;
+/// - the record bounding box is the export's plan envelope and its
+///   floor-to-ceiling extent, exactly, on 116 of 116.
+///
+/// The boundary *polygon* is deliberately not claimed: it is a measured negative, and `ProfileResolved` stays false.
+#[test]
+fn core_interior_2024_room_instances_names_and_envelopes() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    let reference = project_dir.join("../IFC Exports/2024_Core_Interior_slim.ifc");
+    if !path.exists() || !reference.exists() {
+        eprintln!("skipping: {} or the slim export is missing", path.display());
+        return;
+    }
+
+    let expected = reference_spaces(&std::fs::read_to_string(&reference).expect("read export"));
+    assert_eq!(expected.len(), 116, "the export carries 116 IfcSpace");
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    assert_eq!(version, 2024);
+    let level_ids =
+        rvt::research::partition_schema_mvp::level_element_ids(&mut rf, version).expect("levels");
+    let rooms = rvt::research::partition_schema_mvp::rooms_from_partition_category_records(
+        &mut rf, version, &level_ids,
+    )
+    .expect("rooms");
+
+    let recovered: std::collections::BTreeSet<u32> = rooms.iter().filter_map(|r| r.id).collect();
+    let wanted: std::collections::BTreeSet<u32> = expected.keys().copied().collect();
+    assert_eq!(
+        recovered, wanted,
+        "the OST_Rooms instance rule must select exactly the export's room ElementId set"
+    );
+
+    let mut named = 0usize;
+    let mut numbered = 0usize;
+    let mut level_bound = 0usize;
+    for room in &rooms {
+        let id = room.id.expect("record-backed room carries an id");
+        let (want_number, want_name) = expected.get(&id).expect("scored above");
+        let mut name = None;
+        let mut number = None;
+        let mut box_feet = [f64::NAN; 6];
+        let mut source = None;
+        for (field, value) in &room.fields {
+            match (field.as_str(), value) {
+                ("m_name", walker::InstanceField::String(text)) => name = Some(text.clone()),
+                (
+                    rvt::research::partition_schema_mvp::ROOM_NUMBER_FIELD,
+                    walker::InstanceField::String(text),
+                ) => number = Some(text.clone()),
+                (
+                    rvt::research::partition_schema_mvp::ROOM_PARAMETER_SOURCE_FIELD,
+                    walker::InstanceField::String(text),
+                ) => source = Some(text.clone()),
+                (
+                    rvt::research::element_record_level_refs::LEVEL_REFERENCE_FIELD,
+                    walker::InstanceField::ElementId { id, .. },
+                ) => {
+                    assert!(
+                        level_ids.contains(id),
+                        "room {id} bound to an id outside the recovered Level set"
+                    );
+                    level_bound += 1;
+                }
+                ("m_locationX", walker::InstanceField::Float { value, .. }) => box_feet[0] = *value,
+                ("m_locationY", walker::InstanceField::Float { value, .. }) => box_feet[1] = *value,
+                ("m_locationZ", walker::InstanceField::Float { value, .. }) => box_feet[2] = *value,
+                ("m_bboxWidth", walker::InstanceField::Float { value, .. }) => box_feet[3] = *value,
+                ("m_bboxDepth", walker::InstanceField::Float { value, .. }) => box_feet[4] = *value,
+                ("m_bboxHeight", walker::InstanceField::Float { value, .. }) => {
+                    box_feet[5] = *value
+                }
+                _ => {}
+            }
+        }
+        if name.as_deref() == Some(want_name.as_str()) {
+            named += 1;
+        }
+        if number.as_deref() == Some(want_number.as_str()) {
+            numbered += 1;
+        }
+        assert_eq!(
+            source.as_deref(),
+            Some(rvt::research::partition_room_parameters::ROOM_PARAMETER_SOURCE),
+            "room {id} must record where its number and name came from"
+        );
+        // Every room on this file is 8 ft floor-to-ceiling, and the
+        // box base is its storey elevation — both read off the record,
+        // neither invented.
+        assert!(
+            (box_feet[5] - 8.0).abs() < 1e-3,
+            "room {id}: recorded height {} is not the export's 8 ft",
+            box_feet[5]
+        );
+        assert!(
+            box_feet[3] > 0.0 && box_feet[4] > 0.0,
+            "room {id}: degenerate plan envelope"
+        );
+    }
+    assert_eq!(named, 116, "every room's recovered name is the export's");
+    assert_eq!(
+        numbered, 116,
+        "every room's recovered number is the export's"
+    );
+    assert_eq!(
+        level_bound, 116,
+        "every room names exactly one recovered Level"
+    );
+
+    // The boundary polygon is not recovered: a room carries
+    // no sketch, so nothing may claim a profile for it.
+    for room in &rooms {
+        assert!(
+            rvt::research::element_record_plan_profiles::plan_profile_from_fields(&room.fields)
+                .is_none(),
+            "room {:?} must not claim a plan profile",
+            room.id
+        );
+    }
+}
+
+/// The wall *type* record family, and the join that
+/// gives every exported wall the `IfcWallType` Revit's own export
+/// assigns it.
+///
+/// Measured on `2024_Core_Interior.rvt`: eight `OST_Walls` records
+/// carry the bbox-less type shape with placement kind `0xffff8080`;
+/// Revit exports four of them as `IfcWallType` and never places the
+/// other four. Every one of the 360 exported wall instance records
+/// names **exactly one** of the eight in its `+0x88` reference list,
+/// and the distribution of those names equals the export's own
+/// `IfcRelDefinesByType` distribution — 129 / 127 / 100 / 4. That
+/// includes the four `18" Basement` walls a positional read could not place,
+/// whose `references[1]` is `1851` (a record of a different category)
+/// while the type-record slot in the same list is `3897`.
+#[test]
+fn core_interior_2024_wall_type_record_join() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+    use rvt::research::partition_element_records as per;
+    use rvt::research::partition_type_records as ptr;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    let declared: BTreeSet<u32> = rvt::elem_table::parse_records(&mut rf)
+        .expect("elem table")
+        .iter()
+        .map(|r| r.id_primary)
+        .collect();
+
+    let type_records = ptr::scan_type_records(&mut rf, version, per::OST_WALLS, &declared)
+        .expect("wall type records");
+    let type_ids = ptr::type_definition_ids(&type_records);
+    let expected_types: BTreeSet<u32> = [1710u32, 1711, 3897, 11356, 17328, 17337, 17339, 17341]
+        .into_iter()
+        .collect();
+    assert_eq!(
+        type_ids, expected_types,
+        "the bbox-less OST_Walls type-definition record set"
+    );
+
+    // The newest frame of each exported wall instance, the
+    // tie-break: greatest (stream, offset).
+    let instances = per::scan_category_records(&mut rf, version, per::OST_WALLS, &declared)
+        .expect("wall records");
+    let mut newest: BTreeMap<u32, per::PartitionElementRecord> = BTreeMap::new();
+    for record in instances
+        .into_iter()
+        .filter(per::PartitionElementRecord::is_exported_instance)
+    {
+        let newer = match newest.get(&record.element_id) {
+            Some(held) => {
+                (record.stream.as_str(), record.offset) > (held.stream.as_str(), held.offset)
+            }
+            None => true,
+        };
+        if newer {
+            newest.insert(record.element_id, record);
+        }
+    }
+    assert_eq!(newest.len(), 360, "the instance rule still selects 360");
+
+    let mut histogram: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut unresolved = 0usize;
+    for (element_id, record) in &newest {
+        match ptr::unique_type_reference(&record.references, &type_ids) {
+            Some(type_id) => *histogram.entry(type_id).or_default() += 1,
+            None => {
+                unresolved += 1;
+                eprintln!("wall {element_id} names no single wall-type record");
+            }
+        }
+    }
+    assert_eq!(unresolved, 0, "every wall names exactly one type record");
+    let expected_histogram: BTreeMap<u32, usize> =
+        [(3897u32, 4usize), (17328, 127), (17337, 129), (17341, 100)]
+            .into_iter()
+            .collect();
+    assert_eq!(
+        histogram, expected_histogram,
+        "wall -> IfcWallType distribution matches Revit's own export"
+    );
+
+    // The four `18" Basement` walls: positional references[1] says
+    // 1851, the type-record set says 3897.
+    for basement in [22771u32, 22773, 22775, 22777] {
+        let record = newest.get(&basement).expect("basement wall record");
+        assert_eq!(
+            record.references.get(1).copied(),
+            Some(1851),
+            "wall {basement} still carries 1851 at references[1]"
+        );
+        assert_eq!(
+            ptr::unique_type_reference(&record.references, &type_ids),
+            Some(3897),
+            "wall {basement} joins the 18-inch Basement type"
+        );
+    }
+}
+
+/// The `OST_Materials` record family bounds the material
+/// over-count with a record count instead of a name heuristic.
+///
+/// Measured on `2024_Core_Interior.rvt`: 86 records carry
+/// `OST_Materials`, every one of them naming its own ElementId in its
+/// slot list. Revit's own export of the same file writes 10
+/// `IfcMaterial`; `partition_name_candidates` yielded 102. The records
+/// themselves carry no name; the reader takes 78 names from the materials'
+/// own objects, and the IFC export writes those. This test asserts
+/// nothing about which ten of the 86 Revit exports.
+#[test]
+fn core_interior_2024_material_record_family() {
+    let Some(project_dir) = project_dir() else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR unset");
+        return;
+    };
+    let path = project_dir.join("2024_Core_Interior.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} missing", path.display());
+        return;
+    }
+    use rvt::research::partition_type_records as ptr;
+    use std::collections::BTreeSet;
+
+    let mut rf = RevitFile::open(&path).expect("open 2024");
+    let version = rf.basic_file_info().unwrap().version;
+    let declared: BTreeSet<u32> = rvt::elem_table::parse_records(&mut rf)
+        .expect("elem table")
+        .iter()
+        .map(|r| r.id_primary)
+        .collect();
+
+    let records = ptr::scan_type_records(&mut rf, version, ptr::OST_MATERIALS, &declared)
+        .expect("material records");
+    let ids: BTreeSet<u32> = records.iter().map(|r| r.element_id).collect();
+    assert_eq!(records.len(), 86, "OST_Materials record count");
+    assert_eq!(ids.len(), 86, "one record per material ElementId");
+    assert!(
+        records
+            .iter()
+            .all(|r| r.slots.contains(&u64::from(r.element_id))),
+        "every material record names its own id in its slot list"
+    );
+
+    // The one material slot a wall type carries on this file: the
+    // 18-inch Basement type 3897 names 3652, and the four walls of
+    // that type are the four Revit associates with `Concrete`.
+    assert!(ids.contains(&3652), "3652 is an OST_Materials record");
+    let wall_types = ptr::scan_type_records(
+        &mut rf,
+        version,
+        rvt::research::partition_element_records::OST_WALLS,
+        &declared,
+    )
+    .expect("wall type records");
+    let basement = wall_types
+        .iter()
+        .find(|r| r.element_id == 3897)
+        .expect("18-inch Basement type record");
+    assert_eq!(basement.slots, vec![3652, 3897, 3898]);
+}

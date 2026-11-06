@@ -1,0 +1,162 @@
+# Threat Model
+
+rvt-open is a parser for a complex, proprietary, adversary-reachable
+binary format. This document lists the threats we defend against, the
+mitigations we ship, and the ones we explicitly don't cover so callers
+can make informed deployment decisions.
+
+## Attacker capabilities assumed
+
+An attacker can:
+
+- Hand-craft a malicious `.rvt` / `.rfa` / `.rte` / `.rft` file.
+- Upload that file to a service that uses rvt-open to parse it
+  (SaaS file-scanning, archival ingest, compliance checking,
+  openBIM pipelines, etc.).
+- Submit crafted files to command-line users who run
+  `rvt-analyze file.rfa` without inspecting the input first.
+
+An attacker cannot (outside scope):
+
+- Force rvt-open to execute code it wasn't compiled with. rvt-open is
+  pure parser — no `eval`, no dynamic loading, no plugin API.
+- Tamper with rvt-open's source code or binary artifacts once
+  published (supply-chain attacks are their own threat model; see
+  §Supply chain).
+
+## Threats and mitigations
+
+### T1 — Remote code execution via parser bug
+
+**Threat:** A malformed binary triggers a memory-safety bug in the
+parser, letting the attacker hijack control flow.
+
+**Mitigations:**
+
+- **Pure safe Rust.** The library crate compiles with
+  `#![forbid(unsafe_code)]` on the pure-parser tier (the pyo3
+  bindings live in the separate `rvt-py` workspace member). All parsing logic —
+  CFB opening, gzip decompression, schema parsing, walker — runs
+  with safe-Rust bounds checks.
+- **Panic-safe short inputs.** `FieldType::decode`, `find_chunks`,
+  `gzip_header_len`, `inflate_at`, and the other byte-level
+  primitives handle arbitrarily short / truncated input by
+  returning `None` or `Result::Err`, never by panicking or
+  indexing out of bounds. Property tests + corpus-driven fuzzing
+  enforce this.
+- **No C dependencies.** `flate2` uses `miniz_oxide` (pure Rust) as
+  its default backend. `cfb` is pure Rust. No FFI to C parsers.
+
+**Residual risk:** Pyo3 FFI layer in `src/python.rs` is the one
+place where safe-Rust forbid doesn't apply (pyo3 macros expand to
+unsafe function bodies). We isolate this to `rvt-py` (a separate
+crate) so the core parser stays forbid-unsafe.
+
+### T2 — Denial-of-service via unbounded memory
+
+**Threat:** A small compressed file expands to gigabytes during
+decompression, or a claimed stream size forces a multi-GB
+allocation, starving the host of memory.
+
+**Mitigations:**
+
+- **No fixed size cap on legitimate data.** Revit reads
+  multi-GB models, so the reader does too: file, stream and inflate
+  sizes are uncapped by default and the size fields of
+  `reader::OpenLimits` / `compression::InflateLimits` are opt-in caps
+  for untrusted input.
+- **Decompression-ratio guard.** Every gzip member is refused once it
+  has produced more than 32 MiB at over 100:1 of the compressed bytes it
+  consumed (`Error::DecompressLimitExceeded`); a bomb (1 KB → 1 GB of
+  zeros, ~1000:1) fails, while the corpus's highest member ratio is far
+- **Available-memory check.** Before reading a file or a stream, and
+  before an inflate buffer grows, the reader compares the need with the
+  memory available (Linux `MemAvailable` and the cgroup budget) and fails
+  with `Error::InsufficientMemory` instead of allocating.
+- **Limits are never silent.** Any limit hit is recorded on the file
+  (`RevitFile::limit_events`) and reported by the export diagnostics
+  (`confidence.resource_limit_hits`, `resource-limit:` warnings).
+- **Skips are never silent**. A gzip member that fails to
+  inflate after the end of the last good member (corrupt or truncated
+  DEFLATE), and a stream present in the file that cannot be opened or
+  read, is recorded (`RevitFile::skip_events`) and reported
+  (`confidence.skipped_members`, `skipped-member:` warnings).
+
+**Residual risk:** An attacker inside the 256 MiB/stream limit can
+still legitimately force 256 MiB allocations. Callers expecting
+many small files should compose with their own total-memory cap.
+
+### T3 — Denial-of-service via algorithmic complexity
+
+**Threat:** A crafted file makes the parser iterate an unbounded
+number of times (e.g. walker scans all possible entry offsets).
+
+**Mitigations:**
+
+- **`WalkerLimits` (API-11).** Caps max_scan_bytes +
+  max_trial_offsets on the brute-force ADocument entry-point
+  detector.
+- **`find_chunks` bounded.** The gzip-magic scanner over raw bytes
+  is linear in input length.
+- **`parse_schema` scan cap.** Schema parsing scans at most
+  64 KiB from the start of decompressed `Formats/Latest`. Returns
+  `scan_was_capped: true` diagnostic if it hits the cap (pending
+  API-10).
+
+### T4 — Information disclosure / PII exposure
+
+**Threat:** A user shares a `.rvt` or tool output not realizing it
+contains Windows usernames, Autodesk-internal paths, document
+GUIDs, or other identifying info.
+
+**Mitigations:**
+
+- **`--redact` flag on every CLI.** Scrubs usernames (C:\Users\X
+  → C:\Users\<user>), Autodesk-internal paths (Apollo build
+  servers), and project-ID folder names. Replaces with
+  placeholder tokens while preserving path shape so claims
+  remain verifiable.
+- **PII guard CI job.** Scans the repo's committed files for
+  PII-shaped patterns on every push. Blocks commits that contain
+  them.
+- **No embedded user emails, no account info.** The reader
+  extracts path + GUID from Revit's own metadata streams; it
+  doesn't invent or enrich PII.
+
+### T5 — Supply chain
+
+**Threat:** A transitively-included crate adds a malicious
+dependency that the parser pulls in automatically.
+
+**Mitigations:**
+
+- **`cargo-deny check` on every push.** Enforced in CI (`deny`
+  job). License allowlist (no GPL/proprietary), advisory deny,
+  source allowlist (crates.io only, no arbitrary git).
+- **`cargo-audit` on every push.** Enforced in CI (`audit` job).
+  Fails CI on known RustSec advisories.
+- **`actions/*` SHA-pinned (partial).** Common
+  GitHub Actions pinned by commit hash to prevent
+  tag-retargeting attacks.
+- **OIDC-based PyPI publishing.** No long-lived API token in
+  repo secrets. Token scope is per-release via Trusted Publisher.
+
+## Out of scope
+
+- **Side-channel timing attacks.** rvt-open is not a cryptographic
+  library. Timing variations on file parsing are not in the
+  threat model.
+- **Attacks requiring code modification.** We assume the library
+  binary is what the crate authors published. Binary tampering
+  is a supply-chain problem handled by cargo's own integrity
+  mechanisms (checksums, signatures via `cargo sparse`).
+- **Bypassing rvt-open's validation with a second parser.** If
+  downstream code re-parses the RVT with a different library and
+  that library has bugs, those bugs are out of scope for
+  rvt-open's threat model.
+
+## Reporting vulnerabilities
+
+See [`SECURITY.md`](SECURITY.md) for the private reporting
+channel. Do not file public issues for parser-safety bugs until
+the fix has shipped in a release.

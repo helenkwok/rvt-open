@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://helenkwok.github.io/rvt-open/schemas/witness-observation.schema.json",
+  "title": "Cross-witness observation",
+  "description": "What one witness saw in one golden-artifact input, plus enough provenance to replay it. Producers: `rvt-ifc --observation PATH --artifact-id ID` (source witness) and `tools/ci/witness-ifcopenshell.py --observation PATH` (bridge witness). Committed instances live under research/witness/<artifact_id>/observations/. Emitting an observation is not a capability claim; only a PASS verdict across independent witnesses is.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "witness_id",
+    "witness_version",
+    "artifact_id",
+    "input_role",
+    "input_file",
+    "input_hash_sha256",
+    "deterministic",
+    "semantic_surface_covered",
+    "observation",
+    "observation_hash_sha256",
+    "unsupported_entities",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "The witness-protocol version this observation conforms to. 1.1.0 added the optional `relations` and `storeys` payload keys and their surface terms; the envelope is otherwise unchanged, so 1.0.0 observations stay valid.",
+      "type": "string",
+      "enum": ["1.0.0", "1.1.0"]
+    },
+    "witness_id": {
+      "description": "Registry id (research/witness-registry.json → witnesses[].id). A witness absent from the registry makes the verdict a MANIFEST_ERROR.",
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "witness_version": {
+      "description": "Exact version of the witness that produced this observation.",
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_id": {
+      "description": "The golden artifact's manifest `id`.",
+      "type": "string",
+      "minLength": 1
+    },
+    "input_role": {
+      "description": "Which side of the recorded edge this witness read. Resolved against the manifest hashes by the gate; a mismatch is REJECTED_INPUT.",
+      "type": "string",
+      "enum": ["source", "bridge"]
+    },
+    "input_file": {
+      "description": "File name of the input as read.",
+      "type": "string",
+      "minLength": 1
+    },
+    "input_hash_sha256": {
+      "description": "SHA-256 of the input bytes. Must equal the manifest hash for the declared role.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "deterministic": {
+      "description": "The witness's attestation for this run. Anything but true rejects the witness.",
+      "type": "boolean"
+    },
+    "semantic_surface_covered": {
+      "description": "The controlled vocabulary this witness claims for this run. A witness is compared only on what it declares; `entity_counts` is required by the reference gate.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "entity_counts",
+          "relations",
+          "storeys",
+          "layer_topology",
+          "linework",
+          "bounding_boxes",
+          "xdata_fields",
+          "text_content",
+          "3d_solids",
+          "meshes",
+          "bim_parameters"
+        ]
+      }
+    },
+    "observation": {
+      "description": "The payload — the only part that is canonicalized, hashed, and diffed. `entity_counts`, `relations` and `storeys` are the cross-witness surface; every other key is witness-specific and is not compared.",
+      "type": "object",
+      "required": ["entity_counts"],
+      "properties": {
+        "entity_counts": {
+          "description": "Per-type instance counts. A type absent here counts as zero.",
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "relations": {
+          "description": "Per-relation pair multisets (added in 1.1.0). Each value is the relation's `[a_identity, b_identity]` pairs sorted lexicographically, duplicates kept. An identity the witness cannot read is the empty string, never an omitted pair. A relation absent here is an empty set.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "storeys": {
+          "description": "Per-type storey sets (added in 1.1.0). Each value is the spatial type's `[name, elevation]` pairs sorted lexicographically. The name is the entity's `Name` as the witness decoded it; the elevation is that storey's height in feet, unit-normalized by the witness from its own file's declared LENGTHUNIT and rendered with six decimal places (`-0` normalized to `0`). A string, not a number, so the canonical form stays integer/string only. An unset name or unreadable elevation is the empty string, never an omitted storey. A type absent here is an empty set.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "observation_hash_sha256": {
+      "description": "SHA-256 over the canonicalized `observation` payload. Replay compares a fresh run against this value.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "unsupported_entities": {
+      "description": "What the witness could not read. Recorded, never a disagreement.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "warnings": {
+      "description": "Non-fatal notes from the run.",
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

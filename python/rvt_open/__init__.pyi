@@ -1,0 +1,468 @@
+"""Type stubs for the rvt Python bindings.
+
+Hand-maintained. Source of truth for the runtime API is
+`rvt-py/src/lib.rs` — if you add a method there, add it here too. CI's
+stubtest step fails when the two disagree.
+PEP 561 marker (`py.typed`) accompanies this file so mypy and
+pyright pick it up.
+"""
+from __future__ import annotations
+
+from typing import Any, Final, Optional, Union, final
+
+__version__: Final[str]
+
+FileMetadata = dict[str, Any]
+"""Return shape of `RevitFile.metadata()` and `read_metadata()`.
+
+Keys (``None`` when the file does not record the value):
+``revit_version`` (int), ``build``, ``title``, ``last_saved`` (ISO 8601
+UTC), ``worksharing`` (e.g. ``"Not enabled"``), ``workshared`` (bool),
+``username``, ``central_model_path``, ``last_save_path``,
+``document_guid``, ``document_increments`` (int), ``locale``,
+``single_user_cloud_model`` (bool), and ``properties``: every
+``BasicFileInfo`` ``Key: value`` line as ``{"key": str, "value": str}``.
+See ``docs/schemas/file-metadata.schema.json``.
+"""
+
+TypedSchemaSummary = dict[str, int]
+"""Return shape of `RevitFile.schema_summary()`.
+
+Keys: ``classes``, ``fields``, ``cpp_types`` — all ``int``.
+"""
+
+TypedField = dict[str, Union[str, int, list[int]]]
+"""Return shape of an entry in `RevitFile.read_adocument()["fields"]`.
+
+All entries have ``name`` (str) and ``kind`` (str). Additional keys
+depend on the kind:
+
+- ``kind == "pointer"``: ``slot_a`` (int), ``slot_b`` (int)
+- ``kind == "element_id"``: ``tag`` (int), ``id`` (int)
+- ``kind == "ref_container"``: ``count`` (int), ``col_a`` (list[int]), ``col_b`` (list[int])
+- ``kind == "bytes"``: ``len`` (int)
+"""
+
+TypedADocument = dict[str, Union[int, list[TypedField]]]
+"""Return shape of `RevitFile.read_adocument()`.
+
+Keys:
+- ``entry_offset`` (int): byte offset in decompressed Global/Latest.
+- ``version`` (int): Revit release year.
+- ``fields`` (list[TypedField]): one entry per schema-declared field.
+"""
+
+TypedDecodedElement = dict[str, Any]
+"""Return shape of one entry in `RevitFile.decoded_elements()`.
+
+Keys:
+- ``id`` (int | None): resolved ElementId when available.
+- ``class_name`` (str): schema class name.
+- ``byte_range`` (dict[str, int]): ``start`` and ``end`` offsets in
+  decompressed stream bytes.
+- ``fields`` (list[TypedField]): decoded schema fields.
+- ``parameters`` (list[dict]): AProperty* value carriers, then, on Revit
+  2015 to 2027 files (2015 to 2022 experimentally), the saved parameters of the element and its type,
+  as ``rvt-elements`` lists them: ``name`` (str | None), ``parameter_id``
+  (int), ``kind``, ``storage_type``, ``spec_type_id``, ``group_type_id``,
+  ``value`` (internal units), ``si_value`` / ``si_unit``, ``target_name``,
+  ``target_family``, ``level`` (``"instance"`` or ``"type"``),
+  ``source_element_id`` and ``source_class``.
+- ``typed`` (dict | None): the typed projection for Level / Wall /
+  Floor / Door / Window / Room / Material; ``None`` for other classes.
+"""
+
+TypedElementCounts = dict[str, Union[int, dict[str, int]]]
+"""Return shape of `RevitFile.element_counts()`.
+
+Keys: ``total`` (int) and ``by_class`` (dict[str, int]).
+"""
+
+MVP_TYPED_CLASSES: Final[list[str]]
+"""The classes whose elements carry a ``typed`` projection in ``decoded_elements()``."""
+
+
+@final
+class RevitFile:
+    """Opened Revit file. Entry point for all Python bindings.
+
+    Construct with a filesystem path to a ``.rvt`` / ``.rfa`` /
+    ``.rte`` / ``.rft`` file. Raises ``IOError`` on missing files,
+    non-CFB input, or read failures.
+    """
+
+    def __new__(
+        cls,
+        path: str,
+        max_file_bytes: Optional[int] = None,
+        max_stream_bytes: Optional[int] = None,
+        max_inflate_bytes: Optional[int] = None,
+        max_walker_scan_bytes: Optional[int] = None,
+        max_walker_candidates: Optional[int] = None,
+        max_walker_trial_offsets: Optional[int] = None,
+        max_walker_record_decode_bytes: Optional[int] = None,
+        max_walker_container_records: Optional[int] = None,
+    ) -> RevitFile:
+        """Open a Revit file from a filesystem path, with optional
+        resource limits.
+
+        :param path: path to ``.rvt`` / ``.rfa`` / ``.rte`` / ``.rft`` file.
+        :param max_file_bytes: maximum file size to accept (default 2 GiB).
+            Files exceeding this size are rejected before reading.
+        :param max_stream_bytes: maximum per-stream size for
+            ``read_stream`` calls (default 256 MiB).
+        :param max_inflate_bytes: maximum decompressed output per
+            inflate call (default 256 MiB). Protects against
+            compressed-bomb DoS.
+        :param max_walker_scan_bytes: maximum decompressed
+            ``Global/Latest`` bytes scanned by the walker (default
+            128 MiB).
+        :param max_walker_candidates: maximum schema-scan candidates
+            retained by the walker (default 100,000).
+        :param max_walker_trial_offsets: maximum trial decodes
+            attempted by schema-directed walker scans (default
+            16,000,000).
+        :param max_walker_record_decode_bytes: maximum bytes inspected
+            while decoding one walker candidate (default 1 MiB).
+        :param max_walker_container_records: maximum reference
+            container records accepted by the walker (default 1,000).
+
+        Raises ``IOError`` on missing files, non-CFB input, file-size
+        over ``max_file_bytes``, or other read errors.
+        """
+    def __repr__(self) -> str: ...
+
+    @property
+    def version(self) -> Optional[int]:
+        """Revit release year (e.g. ``2024``), or ``None`` if
+        ``BasicFileInfo`` can't be parsed.
+        """
+
+    @property
+    def original_path(self) -> Optional[str]:
+        """Original file path recorded at save time on the creator's
+        machine (may be a Windows-style path). Use ``--redact`` in
+        the CLI equivalent when surfacing to end users.
+        """
+
+    @property
+    def build(self) -> Optional[str]:
+        """Revit build tag (e.g. ``"20230308_1635(x64)"``), if
+        recorded in ``BasicFileInfo``.
+        """
+
+    @property
+    def guid(self) -> Optional[str]:
+        """Document GUID from ``BasicFileInfo``, if present."""
+
+    @property
+    def part_atom_title(self) -> Optional[str]:
+        """Document title from the ``PartAtom`` XML stream (family
+        files carry one; some project files don't).
+        """
+
+    def stream_names(self) -> list[str]:
+        """All OLE stream paths in the file, sorted, `/`-separated
+        regardless of host OS.
+        """
+
+    def unread_streams(self) -> list[dict[str, Any]]:
+        """The streams a resource limit kept from being read whole so far,
+        each with ``name``, ``stored_bytes``, ``kind``
+        (``"stream_too_large"``, ``"inflated_member_too_large"`` or
+        ``"inflated_total_too_large"``) and ``limit``. Empty when nothing
+        was cut; when not, everything read from this file is missing what
+        those streams hold.
+        """
+
+    def read_stream(self, name: str) -> bytes:
+        """Raw bytes of the named OLE stream. Accepts either
+        ``/Formats/Latest`` or ``Formats/Latest`` (both resolve the
+        same way). Returns compressed bytes on streams that use
+        truncated-gzip framing; most Revit streams use this framing
+        so callers typically want to run the bytes through a
+        ``gzip`` decompressor before parsing.
+
+        Raises ``IOError`` when the stream doesn't exist. Use
+        ``stream_names()`` to enumerate available streams.
+        """
+
+    def missing_required_streams(self) -> list[str]:
+        """List of required Revit stream names the file doesn't
+        contain. Empty list on a valid Revit file. Useful for
+        pre-validating an input before running heavy extractors.
+        """
+
+    def basic_file_info_json(self) -> Optional[str]:
+        """Full ``BasicFileInfo`` as a JSON string (parseable via
+        ``json.loads``). Single-call equivalent of the four individual
+        getters (``version``, ``original_path``, ``build``, ``guid``)
+        plus any future fields added to the Rust ``BasicFileInfo``
+        struct. Returns ``None`` if the ``BasicFileInfo`` stream
+        can't be parsed.
+        """
+
+    def basic_file_info_json_strict(self) -> str:
+        """``basic_file_info_json()``, raising ``ValueError`` where it
+        returns ``None``: the stream is missing or does not parse.
+        """
+
+    def schedule_csv(
+        self,
+        kind: str = "elements",
+        metric: bool = False,
+        excel: bool = False,
+        phase: str | int | None = None,
+    ) -> str:
+        """Spreadsheet schedule of the decoded model as CSV text.
+
+        ``kind="elements"``: every building element the IFC export writes
+        (Revit ElementId, IFC type, level, material, placement, size, host of
+        a door or window), on the storey the export puts it on.
+        ``kind="rooms"``: every space the export writes (number, name, level,
+        area, and ``space_kind``: ``room``, ``area``, ``mep_space`` or
+        ``family_instance``). ``metric=True``
+        writes lengths in metres; ``excel=True`` prefixes a UTF-8 BOM for
+        Excel on Windows. Unknown values are empty cells. ``phase`` is
+        ``write_ifc``'s. Raises ``ValueError`` for another ``kind``.
+        """
+
+    def metadata(self, redact: bool = False) -> FileMetadata:
+        """Document identity: release, worksharing, central model path,
+        last saved (time and user), document GUID and save counter.
+        ``redact=True`` scrubs the user name and user paths.
+        """
+
+    def part_atom_json(self) -> Optional[str]:
+        """Full ``PartAtom`` as a JSON string (parseable via
+        ``json.loads``). Superset of the ``part_atom_title`` getter —
+        also includes ``id``, ``updated``, ``taxonomies``,
+        ``categories``, ``omniclass``, and ``raw_xml``. Returns
+        ``None`` if the file has no PartAtom stream (common on
+        project ``.rvt`` files).
+        """
+
+    def part_atom_json_strict(self) -> str:
+        """Strict ``part_atom_json``: the same JSON, or ``ValueError``
+        naming the cause, ``Stream not found: PartAtom`` or ``Malformed
+        PartAtom XML: ...``, where ``part_atom_json`` returns ``None``.
+        """
+
+    def schema_summary(self) -> TypedSchemaSummary:
+        """Decoded schema counts. Cheap. Returns a dict with keys
+        ``classes``, ``fields``, ``cpp_types``.
+        """
+
+    def schema_diagnostics(self) -> dict[str, int]:
+        """Counts describing the parsed schema: ``class_count``,
+        ``parsed_field_count``, ``declared_field_count_sum``,
+        ``field_count_mismatches``, ``tagged_class_count``,
+        ``parent_only_class_count``, ``ancestor_tag_count``,
+        ``skipped_records``, ``cpp_type_count``. Raises ``ValueError``
+        if the schema can't be parsed.
+        """
+
+    def schema_json(self) -> str:
+        """Full schema as a JSON string (parseable via ``json.loads``).
+
+        Return shape: ``{"classes": [...], "cpp_types": [...],
+        "skipped_records": int}``. Each class has ``name``, ``offset``,
+        ``fields``, ``tag``, ``parent``, ``declared_field_count``,
+        ``was_parent_only``, ``ancestor_tag``. Each field has
+        ``name``, ``cpp_type``, ``field_type`` (a tagged enum).
+
+        The string is on the order of 1-2 MB for a typical Revit
+        family (~395 classes, ~13,570 fields). For just counts, use
+        ``schema_summary()``.
+        """
+
+    def read_adocument(self) -> Optional[TypedADocument]:
+        """Run the Layer-5a walker and return ADocument's instance
+        as a dict, or ``None`` if the entry-point detector can't
+        confidently locate ADocument in the file. Raises ``ValueError``
+        if the file's schema declares no ADocument class, which no Revit
+        file lacks (a synthetic file, or a damaged schema).
+
+        See module docs for the field-kind schema.
+        """
+
+    def read_adocument_strict(self) -> TypedADocument:
+        """``read_adocument()``, raising ``ValueError`` when the record is
+        not located or any of its fields fell back to raw bytes.
+        """
+
+    def read_adocument_lossy(self) -> dict[str, Any]:
+        """``read_adocument()`` with what went wrong: ``value`` (the
+        ADocument dict), ``complete`` (bool), ``partial_fields``,
+        ``failed_streams``, ``warnings`` and ``confidence``.
+        """
+
+    def decoded_elements(self) -> list[TypedDecodedElement]:
+        """Return conservative production decoded elements.
+
+        Each entry has ``id``, ``class_name``, ``byte_range``,
+        ``fields``, and ``typed``. The field dictionaries use the same
+        kind-specific shape as ``read_adocument()["fields"]``.
+        ``typed`` is the typed projection when
+        ``class_name`` is in ``MVP_TYPED_CLASSES``, else ``None``.
+
+        The elements are those of the export at the phase the handle holds:
+        the project's last until an export names another
+        (``write_ifc(phase=...)``). A project whose last phase holds no room
+        has the rooms of the latest phase that holds any, and a
+        ``RuntimeWarning`` says so.
+        """
+
+    def element_counts(self) -> TypedElementCounts:
+        """Return decoded element counts as ``{"total": int,
+        "by_class": dict[str, int]}``. Matches ``rvt-elements
+        --counts`` and ``export_diagnostics()["decoded"]
+        ["production_walker_elements"]`` for ``total``. The phase is
+        ``decoded_elements``'s.
+        """
+
+    def write_ifc(
+        self,
+        mode: str = "scaffold",
+        allow_partial: bool = False,
+        saved_meshes: bool = True,
+        guid_namespace: str | None = None,
+        phase: str | int | None = None,
+    ) -> str:
+        """Produce an IFC4 STEP string for this file via the
+        ``RvtDocExporter``.
+
+        ``mode`` is one of ``"scaffold"``, ``"typed-no-geometry"``,
+        ``"geometry"``, or ``"strict"``. Stronger modes raise
+        ``ValueError`` when the recovered model data is not complete
+        enough for that quality level. On a file with no recovered
+        elements, such as the synthetic fixtures, only ``scaffold``
+        succeeds.
+
+        Raises ``ValueError`` when a resource limit kept part of the
+        file from being read (``unread_streams()`` lists it), unless
+        ``allow_partial=True``; open the file with a larger
+        ``max_stream_bytes`` / ``max_inflate_bytes`` to read it.
+
+        Doors and windows of Revit 2023 to 2027 files are drawn from the
+        meshes Revit saved for them where all of a mesh decodes, as
+        ``guid_namespace`` sets what generated GlobalIds are derived
+        under (default ``"rvt-open ifc GlobalId v1"``); Revit's own GlobalIds never change.
+
+        ``rvt-ifc`` draws them; ``saved_meshes=False`` keeps their
+        bounding boxes (``rvt-ifc --no-saved-meshes``). On Revit 2024 to
+        2027 files a wall that embeds a curtain wall is drawn from its saved
+        mesh too where Revit raised its base, and ``saved_meshes=False`` keeps
+        its record's body. A ``RuntimeWarning`` says when the saved graphics
+        could not be read.
+
+        ``phase`` is a project phase's name (matched exactly first) or its
+        ElementId, as ``rvt-ifc --phase`` takes it, and the export shows that
+        phase: an element that does not exist in it, and a room whose own
+        phase is not it, are left out. ``None``, the default, is the
+        project's last phase, except that a project whose last phase holds
+        no room writes the rooms of the latest phase that holds any, with a
+        ``RuntimeWarning`` naming the phase and the diagnostics'
+        ``room_phase_fallback`` counting them; a phase named, the last
+        included, is exact and writes none of them. A phase the file does not
+        have raises ``ValueError`` listing the phases it does.
+        """
+
+    def export_diagnostics_json(
+        self,
+        saved_meshes: bool = True,
+        phase: str | int | None = None,
+        element_provenance: bool = False,
+        export_decisions: bool = False,
+    ) -> str:
+        """Produce the JSON diagnostics sidecar for the default IFC
+        export. The schema matches ``rvt-ifc --diagnostics`` and
+        ``docs/schemas/export-diagnostics.schema.json``. ``saved_meshes``
+        and ``phase`` are ``write_ifc``'s: the diagnostics describe the
+        export it writes. ``element_provenance=True`` also lists where
+        each decoded element was read from (``decoded.element_provenance``,
+        as ``rvt-ifc --element-provenance``): far larger than the rest of
+        the diagnostics, so it is off unless asked for.
+        ``export_decisions=True`` also lists each fail-closed decision per
+        element (``export_decisions``, as ``rvt-ifc --export-decisions``):
+        why an element was left out, a body is only its record's box, an
+        opening was not cut or an outline was not read, bounded per reason.
+        """
+
+    def export_diagnostics(
+        self,
+        saved_meshes: bool = True,
+        phase: str | int | None = None,
+        element_provenance: bool = False,
+        export_decisions: bool = False,
+    ) -> dict[str, Any]:
+        """Produce the default IFC export diagnostics as a Python
+        dict. Equivalent to
+        ``json.loads(export_diagnostics_json(saved_meshes, phase,
+        element_provenance, export_decisions))``.
+        """
+
+    def elem_table_header(self) -> dict[str, int]:
+        """Parse ``Global/ElemTable`` header. Returns a dict with keys
+        ``element_count``, ``record_count``, ``header_flag``,
+        ``decompressed_bytes``.
+        """
+
+    def elem_table_records(self) -> list[dict[str, int | None]]:
+        """Parse ``Global/ElemTable`` records. Returns a list of dicts
+        each with ``offset``, ``id_primary``, ``id_secondary`` and
+        ``owner_id``: the ElementId the record's element belongs to (a
+        curtain panel's curtain wall, a sketch line's sketch, a grouped
+        element's model group), or ``None``.
+
+        Handles the three observed layout variants automatically:
+        Revit 2016-2023 files, projects and families (28 B, owner ``u32``
+        at ``+0``), and Revit 2024-2026 files (40 B, owner ``u64`` at
+        ``+4``). On a 34 MB project
+        this returns all 26,425 declared records.
+        """
+
+    def declared_element_ids(self) -> list[int]:
+        """Return the sorted, deduplicated list of ``ElementId``
+        values declared by ``Global/ElemTable``. Useful for walker
+        coverage validation — diff against the walker's ``HandleIndex``
+        to find "declared but not located" elements.
+        """
+
+
+def read_metadata(path: str, redact: bool = False) -> FileMetadata:
+    """Document identity for ``path`` without loading the whole file —
+    the fast path for inventories of large projects. Same dict as
+    ``RevitFile(path).metadata()``. Raises ``FileNotFoundError`` /
+    ``OSError`` on I/O failure and ``ValueError`` when the file is not a
+    readable Revit file.
+    """
+
+
+def rvt_to_ifc(
+    path: str,
+    mode: str = "scaffold",
+    allow_partial: bool = False,
+    saved_meshes: bool = True,
+    guid_namespace: str | None = None,
+    phase: str | int | None = None,
+) -> str:
+    """One-shot: open ``path``, run ``RvtDocExporter``, return the
+    IFC4 STEP text. Equivalent to
+    ``RevitFile(path).write_ifc(mode=mode, allow_partial=allow_partial,
+    saved_meshes=saved_meshes, phase=phase)``.
+    """
+
+
+def rvt_to_ifc_diagnostics(
+    path: str,
+    saved_meshes: bool = True,
+    phase: str | int | None = None,
+    element_provenance: bool = False,
+    export_decisions: bool = False,
+) -> str:
+    """One-shot: open ``path``, run ``RvtDocExporter``, return the
+    JSON diagnostics sidecar of the export ``rvt_to_ifc`` writes with the
+    same ``saved_meshes`` and ``phase``. ``element_provenance`` and
+    ``export_decisions`` are ``RevitFile.export_diagnostics_json``'s.
+    """

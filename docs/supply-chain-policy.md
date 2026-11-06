@@ -1,0 +1,89 @@
+# Supply-Chain Policy
+
+This repository treats parser dependencies and release automation as part of
+the trusted computing base. Revit files are untrusted input, so dependency
+review has to stay enforceable in CI.
+
+## Rust Dependencies
+
+Required checks:
+
+- `cargo deny check` enforces `deny.toml`:
+  - permissive license allowlist
+  - yanked crate deny
+  - crates.io-only sources
+  - wildcard dependency deny
+  - advisory policy
+- `cargo audit` fails on RustSec advisories against the current dependency set.
+
+`deny.toml` may ignore an advisory only when the ignore entry has:
+
+- a linked GitHub issue
+- a short rationale
+- an expiry date or explicit re-review date
+
+There are currently no ignored RustSec advisories.
+
+## Viewer JavaScript Dependencies
+
+The viewer has a separate dependency tree, installed with pnpm (the version
+`packageManager` pins in `viewer/package.json`) from `viewer/pnpm-lock.yaml`.
+CI runs:
+
+```bash
+cd viewer
+pnpm install --frozen-lockfile
+pnpm audit --audit-level high
+```
+
+High and critical advisories fail CI. If the audit reports a lower-severity
+advisory that still affects the zero-upload/privacy posture, treat it as
+release-blocking even if `pnpm audit --audit-level high` does not fail.
+
+The registry's advisory endpoint answers 503 during maintenance windows, and
+`pnpm audit` then exits non-zero without having measured
+anything. The `viewer dependency audit` job retries up to four times with
+increasing backoff and, if the endpoint is still unreachable, emits a
+`NOT MEASURED` workflow warning and passes rather than failing on
+infrastructure. The two cases are told apart by the output, not by the
+exit code: a measured run prints JSON whose `metadata` has a `vulnerabilities` key, an
+endpoint failure does not, so a measured high or critical advisory still
+fails the job. A `NOT MEASURED` run is not evidence that the dependencies are
+clean — re-run the job once the registry recovers before cutting a release.
+
+Dependabot checks `/viewer` weekly for updates (its `npm` ecosystem reads `pnpm-lock.yaml`).
+
+## GitHub Actions
+
+Workflow actions must be either:
+
+- pinned to a full commit SHA with a comment naming the human-readable tag, or
+- documented as an exception in the table below.
+
+Pinned action examples:
+
+- `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4`
+- `Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2`
+- `rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0`
+
+Allowed exceptions:
+
+| Action pattern | Rationale | Review trigger |
+|---|---|---|
+| `dtolnay/rust-toolchain@stable` / `@nightly` / `@master` | This action is a toolchain selector; the value is the requested Rust channel, not a release tag for project logic. | Re-review if replacing the action or pinning a fixed Rust toolchain. |
+| `actions/checkout@…` (SHA + `# vN` comment) | Prefer SHA pins with Dependabot-friendly version comments (publish.yml and most CI jobs). Floating `@v4` remains allowed only for explicitly named external corpus checkouts. | Re-review before adding a new external checkout. |
+| `actions/setup-python@…` (SHA + `# vN`) | GitHub-owned setup action; pin to SHA in publish.yml. | Re-review on major-version bump. |
+| `PyO3/maturin-action@…` (SHA + `# vN.N.N`) | Release/build action for Python wheels; publish.yml pins a release commit. | Re-review on major-version bump or publish workflow change. |
+| `actions/upload-artifact@…` / `actions/download-artifact@…` (SHA + `# vN`) | GitHub-owned artifact plumbing; publish.yml pins SHAs. | Re-review on major-version bump. |
+| `pypa/gh-action-pypi-publish@…` (SHA + `# vN.N.N`) | PyPI Trusted Publisher action; publish.yml pins a release commit (Dependabot may still propose `release/v1` branch updates — prefer SHA). | Re-review before changing PyPI publishing mode. |
+
+New third-party actions should not use an exception by default. Pin them to a
+SHA and include the source tag in a comment.
+
+## Dependency Update Flow
+
+- Dependabot opens weekly Cargo, GitHub Actions, and viewer npm update PRs.
+- Dependency PRs must pass CI before merge.
+- Security advisory PRs should mention the advisory ID and affected package.
+- If an advisory cannot be fixed immediately, open or link a tracking issue and
+  document the temporary ignore with rationale and expiry before merging.

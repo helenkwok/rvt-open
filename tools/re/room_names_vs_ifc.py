@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Score rvt-open's room numbers and names against Revit's.
+
+rvt-open writes a room's number as `IfcSpace.Name` and its name as
+`IfcSpace.LongName`, as Revit's own exporter does, and its ElementId as the
+`ElementId` property. The reference is either Revit's own IFC export,
+matched by GlobalId, or a VIM export (`.vim`), matched by that ElementId,
+whose `Vim.Room.Number` is the number and whose element Name is Revit's
+display name, `<name> <number>`. Against an IFC export it also compares the
+storey each space is aggregated in: no other scorer reaches a space,
+which has no `Tag`.
+
+Usage:
+    python3 tools/re/room_names_vs_ifc.py OURS.ifc REVIT.ifc
+    python3 tools/re/room_names_vs_ifc.py OURS.ifc MODEL.vim
+"""
+
+import struct
+import sys
+
+import ifcopenshell
+import ifcopenshell.util.element
+
+
+def ours(model):
+    out = {}
+    for space in model.by_type("IfcSpace"):
+        element_id = None
+        for properties in ifcopenshell.util.element.get_psets(space).values():
+            element_id = properties.get("ElementId", element_id)
+        out[space] = (space.Name, space.LongName, element_id)
+    return out
+
+
+def storey_of(space):
+    parent = ifcopenshell.util.element.get_aggregate(space)
+    while parent is not None and not parent.is_a("IfcBuildingStorey"):
+        parent = ifcopenshell.util.element.get_aggregate(parent)
+    return parent.Name if parent is not None else None
+
+
+def bfast(buf, base=0):
+    _magic, _start, _end, n = struct.unpack_from("<QQQQ", buf, base)
+    ranges = [struct.unpack_from("<QQ", buf, base + 32 + 16 * i) for i in range(n)]
+    names = buf[base + ranges[0][0] : base + ranges[0][1]].split(b"\0")
+    return {names[i - 1].decode(): (base + ranges[i][0], base + ranges[i][1]) for i in range(1, n)}
+
+
+def vim_rooms(path):
+    data = open(path, "rb").read()
+    top = bfast(data)
+    entities = bfast(data, top["entities"][0])
+    start, end = top["strings"]
+    strings = data[start:end].split(b"\0")
+
+    def column(table, name, fmt):
+        a, b = bfast(data, entities[table][0])[name]
+        size = struct.calcsize(fmt)
+        return list(struct.unpack("<%d%s" % ((b - a) // size, fmt), data[a:b]))
+
+    ids = column("Vim.Element", "long:Id", "q")
+    names = column("Vim.Element", "string:Name", "i")
+    elements = column("Vim.Room", "index:Vim.Element:Element", "i")
+    numbers = column("Vim.Room", "string:Number", "i")
+    text = lambda index: strings[index].decode() if index >= 0 else None
+    out = {}
+    for element, number in zip(elements, numbers):
+        if element >= 0:
+            out.setdefault(ids[element], set()).add((text(number), text(names[element])))
+    return out
+
+
+def main():
+    # Each file stays bound while its instances are in use: IfcOpenShell 0.9
+    # frees a file its instances outlive.
+    model = ifcopenshell.open(sys.argv[1])
+    rooms = ours(model)
+    same = differ = absent = 0
+    if sys.argv[2].endswith(".vim"):
+        reference = vim_rooms(sys.argv[2])
+        for space, (number, name, element_id) in rooms.items():
+            candidates = reference.get(element_id)
+            if not candidates:
+                absent += 1
+            elif (number, f"{name} {number}") in candidates:
+                same += 1
+            else:
+                differ += 1
+                print(f"  {space.Name}: ours {(number, name)} VIM {sorted(candidates)}")
+    else:
+        revit = ifcopenshell.open(sys.argv[2])
+        reference = {s.GlobalId: s for s in revit.by_type("IfcSpace")}
+        storeys = {"equal": 0, "different": 0}
+        for space, (number, name, _) in rooms.items():
+            pair = (number, name)
+            theirs = reference.get(space.GlobalId)
+            if theirs is None:
+                absent += 1
+                continue
+            if (theirs.Name, theirs.LongName) == pair:
+                same += 1
+            else:
+                differ += 1
+                print(f"  {space.Name}: ours {pair} Revit {(theirs.Name, theirs.LongName)}")
+            ours_storey, revit_storey = storey_of(space), storey_of(theirs)
+            if ours_storey == revit_storey:
+                storeys["equal"] += 1
+            else:
+                storeys["different"] += 1
+                print(f"  {space.Name}: storey ours {ours_storey} Revit {revit_storey}")
+        print(f"spaces in both: storey equal {storeys['equal']}, different {storeys['different']}")
+    print(f"rooms: {len(rooms)}; Revit's number and name {same}, different {differ}, not in the reference {absent}")
+
+
+if __name__ == "__main__":
+    main()

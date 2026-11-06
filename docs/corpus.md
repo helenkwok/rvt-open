@@ -1,0 +1,113 @@
+# Corpus Guide
+
+rvt-open needs redistributable Revit files to prove support across real-world
+projects. This guide defines what can be accepted and how corpus health is
+checked.
+
+For the three intake lanes (public redistributable / authorized private /
+local probes), license sidecars, and “do not solicit unsure files,” see
+[`docs/corpus-intake.md`](corpus-intake.md).
+
+## Acceptance Rules
+
+A corpus file can be committed or referenced publicly only when all of these are
+true:
+
+- The submitter has the right to share the file publicly.
+- The license is recorded with an SPDX identifier or a clear custom permission
+  statement.
+- The file contains no confidential client data, personal data, credentials, or
+  private project paths that cannot be redistributed.
+- The source URL, original path, SHA256, file size, Revit release, and file type
+  are recorded.
+
+Files that cannot meet those rules may still be useful as private bug
+reproducers, but they do not belong in the public corpus.
+
+## Suggested Metadata
+
+Create a sibling metadata file named `<fixture>.license.json`:
+
+```json
+{
+  "source_url": "https://github.com/example/repo/path/to/model.rvt",
+  "source_repo": "example/repo",
+  "source_path": "path/to/model.rvt",
+  "license": "MIT",
+  "sha256": "lowercase-hex-sha256",
+  "bytes": 123456,
+  "revit_release": "2024",
+  "file_type": ".rvt",
+  "redistribution": "public",
+  "notes": "Small architectural sample with walls, doors, windows, and two levels."
+}
+```
+
+## Known-Count Targets
+
+When a submitter can provide counts, prefer this shape in the issue:
+
+```json
+{
+  "levels": 2,
+  "walls": 24,
+  "floors": 3,
+  "doors": 8,
+  "windows": 14,
+  "rooms": 6
+}
+```
+
+Known counts are not required for submission, but they are the fastest path to a
+regression fixture because they give CI a concrete oracle.
+
+Project count manifests live under
+[`tests/fixtures/project-counts/`](../tests/fixtures/project-counts/). Each
+manifest must mark every target category as `known`, `known_gap`,
+`decoder_baseline`, or `unknown`; unknown counts require a reason so missing
+source data is visible during review.
+
+## Local Health Checks
+
+Inventory an existing corpus directory:
+
+```bash
+tools/corpus-health.sh path/to/corpus
+```
+
+Classify corpus failures into issue-ready buckets:
+
+```bash
+rvt-corpus doctor path/to/corpus -f json
+```
+
+The doctor report groups files as `not_cfb`, `missing_revit_streams`,
+`corrupt_gzip`, `schema_parse_failure`, `unsupported_version`,
+`partial_walker_decode`, or `empty_ifc_export`, and includes suggested GitHub
+labels for each bucket.
+
+Fetch permissive candidate repositories, then inventory them:
+
+```bash
+tools/fetch-corpus.sh _corpus_candidates
+tools/corpus-health.sh _corpus_candidates
+```
+
+Run the smoke test directly:
+
+```bash
+RVT_PROJECT_CORPUS_DIR=path/to/corpus cargo test --test integration -- project_corpus_smoke:: --nocapture
+RVT_PROJECT_CORPUS_DIR=path/to/corpus cargo test --test integration -- project_count_fixtures:: --nocapture
+```
+
+The test suite skips gracefully when corpus paths are absent for Tier two.
+Tier one always runs against the in-repo tree at [`corpus/tier1/`](../corpus/tier1/).
+
+## CI health tiers
+
+| Tier | Job | Corpus | Skip behaviour |
+|------|-----|--------|----------------|
+| 1 | `corpus-tier1` | in-repo `corpus/tier1/` synthetic fixtures | never skips |
+| 2 | `corpus-tier2` | `RVT_PROJECT_CORPUS_DIR` (CI clones magnetar MIT datasets) | local skip when unset |
+
+See [`corpus/README.md`](../corpus/README.md) for fixture layout and known counts.

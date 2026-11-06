@@ -1,0 +1,81 @@
+{
+  "artifact_id": "magnetar-2024-core-interior-slim",
+  "diffs": [],
+  "excluded": [
+    {
+      "category": "materials",
+      "field": "entity_counts.IFCMATERIAL",
+      "reason": "known_gap",
+      "tracking": "revit_compound_assemblies_and_walltype_widths",
+      "unsupported_feature": "revit_compound_assemblies_and_walltype_widths"
+    },
+    {
+      "category": "property_sets",
+      "field": "entity_counts.IFCPROPERTYSET",
+      "reason": "known_gap",
+      "tracking": "partial_revit_element_parameters",
+      "unsupported_feature": "partial_revit_element_parameters"
+    }
+  ],
+  "independence": {
+    "commercial_dropped": [],
+    "lineages": [
+      "ifc-lite",
+      "ifcopenshell",
+      "rvt-open"
+    ],
+    "roles": [
+      "bridge",
+      "source"
+    ],
+    "satisfied": true,
+    "strong_copyleft": []
+  },
+  "inputs": {
+    "ifc-lite": {
+      "input_hash_sha256": "bfdf36ffb0bb768f3409d818403990e64d4c262c6780603be87f8077387ad86d",
+      "role": "bridge",
+      "witness_version": "7.1.1"
+    },
+    "ifcopenshell": {
+      "input_hash_sha256": "bfdf36ffb0bb768f3409d818403990e64d4c262c6780603be87f8077387ad86d",
+      "role": "bridge",
+      "witness_version": "0.9.0.post1"
+    },
+    "rvt-open": {
+      "input_hash_sha256": "c805df445d613b408e37337765572021265e3f5dfdc7d1fa53b22ba1600b8014",
+      "role": "source",
+      "witness_version": "0.1.0"
+    }
+  },
+  "insufficient_witnesses": false,
+  "replay": {
+    "ifc-lite": "match",
+    "ifcopenshell": "match",
+    "rvt-open": "match"
+  },
+  "schema_version": "1.0.0",
+  "semantic_surface": [
+    "entity_counts.IFCBUILDINGSTOREY",
+    "entity_counts.IFCWALL",
+    "entity_counts.IFCSLAB",
+    "entity_counts.IFCROOF",
+    "entity_counts.IFCDOOR",
+    "entity_counts.IFCWINDOW",
+    "entity_counts.IFCSPACE",
+    "entity_counts.IFCCOLUMN",
+    "entity_counts.IFCBEAM",
+    "entity_counts.IFCFLOWTERMINAL",
+    "entity_counts.IFCUNITASSIGNMENT",
+    "entity_counts.IFCSHADINGDEVICE",
+    "relations.IFCRELFILLSELEMENT",
+    "storeys.IFCBUILDINGSTOREY"
+  ],
+  "status": "PASS",
+  "verdict_hash_sha256": "5bbe875c7e40db8afa0eb7d13e1ca237930b80d43287bdb241e208fe7d4441a2",
+  "witnesses_compared": [
+    "ifc-lite",
+    "ifcopenshell",
+    "rvt-open"
+  ]
+}

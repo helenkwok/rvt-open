@@ -1,0 +1,41 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "rvt-open"
+description = "Python bindings for rvt-open, a clean-room reader and exporter for Autodesk Revit files (.rvt, .rfa, .rte, .rft) without Revit: elements, geometry and materials exported as IFC4, IFCX, OpenUSD, glTF, plan SVG or CSV schedules."
+authors = [{ name = "rvt-open contributors" }]
+license = { text = "Apache-2.0" }
+readme = "rvt-py/README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+    "Topic :: File Formats",
+]
+keywords = ["revit", "bim", "autodesk", "ifc", "rfa"]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/helenkwok/rvt-open"
+
+[tool.maturin]
+# The pyo3 bindings live in the `rvt-py/` workspace member
+# crate. The wheel is called `rvt-open` on PyPI (`import rvt_open`), but the Rust
+# sources come from there.
+manifest-path = "rvt-py/Cargo.toml"
+# Version comes from `rvt-py/Cargo.toml`'s [package.version], kept
+# in lock-step with the root crate.
+# `module-name` is "rvt_open._rvt" so the compiled extension becomes a
+# submodule of the pure-Python `rvt_open` package under `python/`. The
+# package's `__init__.py` re-exports everything from `_rvt`, and
+# `__init__.pyi` + `py.typed` give IDEs autocomplete.
+module-name = "rvt_open._rvt"
+python-source = "python"
+# Pyo3's `abi3-py38` feature produces a single wheel compatible
+# with every Python >= 3.8 (one wheel per OS/arch, not per Python
+# minor version).
