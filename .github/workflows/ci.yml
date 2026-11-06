@@ -198,8 +198,16 @@ jobs:
           echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
-        with: { tool: "wasm-bindgen@${{ env.WB }}" }
+        with: { tool: "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9" }
       - run: cargo clippy -p rvt-wasm --all-targets -- -D warnings
+      # The release's SBOMs for both browser targets, so a tag is never the first run of these commands.
+      - name: SBOMs for the wasm package
+        run: |
+          cargo cyclonedx --manifest-path rvt-wasm/Cargo.toml --format json --spec-version 1.5 --all \
+            --target wasm32-unknown-unknown --override-filename sbom32
+          RUSTUP_TOOLCHAIN=nightly-2026-10-30 cargo cyclonedx --manifest-path rvt-wasm/Cargo.toml --format json --spec-version 1.5 --all \
+            --target wasm64-unknown-unknown --override-filename sbom64
+          test -s rvt-wasm/sbom32.json && test -s rvt-wasm/sbom64.json
       # The package the release ships: 32-bit and 64-bit builds and the loader, in one folder.
       - run: tools/ci/wasm-package.sh pkg
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
