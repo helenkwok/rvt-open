@@ -1,0 +1,913 @@
+# Checks rvt-open does not pass yet. tools/ci/tiny_models_check.py reports these without failing, and fails when one passes: remove it then.
+release	recipe	check	reason
+2018	1-hip-roof	types:unused	unused types exported
+2018	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2018	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	1-hip-roof	wall1:end0:partners	join partners not decoded before 2024
+2018	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	1-hip-roof	wall1:end1:partners	join partners not decoded before 2024
+2018	1-hip-roof	wall1:length	wall length not decoded before 2024
+2018	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2018	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	1-hip-roof	wall2:end0:partners	join partners not decoded before 2024
+2018	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	1-hip-roof	wall2:end1:partners	join partners not decoded before 2024
+2018	1-hip-roof	wall2:length	wall length not decoded before 2024
+2018	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2018	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	1-hip-roof	wall3:end0:partners	join partners not decoded before 2024
+2018	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	1-hip-roof	wall3:end1:partners	join partners not decoded before 2024
+2018	1-hip-roof	wall3:length	wall length not decoded before 2024
+2018	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2018	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	1-hip-roof	wall4:end0:partners	join partners not decoded before 2024
+2018	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	1-hip-roof	wall4:end1:partners	join partners not decoded before 2024
+2018	1-hip-roof	wall4:length	wall length not decoded before 2024
+2018	2-gable-roof	types:unused	unused types exported
+2018	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2018	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	2-gable-roof	wall1:end0:partners	join partners not decoded before 2024
+2018	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	2-gable-roof	wall1:end1:partners	join partners not decoded before 2024
+2018	2-gable-roof	wall1:length	wall length not decoded before 2024
+2018	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2018	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	2-gable-roof	wall2:end0:partners	join partners not decoded before 2024
+2018	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	2-gable-roof	wall2:end1:partners	join partners not decoded before 2024
+2018	2-gable-roof	wall2:length	wall length not decoded before 2024
+2018	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2018	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	2-gable-roof	wall3:end0:partners	join partners not decoded before 2024
+2018	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	2-gable-roof	wall3:end1:partners	join partners not decoded before 2024
+2018	2-gable-roof	wall3:length	wall length not decoded before 2024
+2018	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2018	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	2-gable-roof	wall4:end0:partners	join partners not decoded before 2024
+2018	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	2-gable-roof	wall4:end1:partners	join partners not decoded before 2024
+2018	2-gable-roof	wall4:length	wall length not decoded before 2024
+2018	3-wall-joins	types:unused	unused types exported
+2018	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2018	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	3-wall-joins	wall1:end1:partners	join partners not decoded before 2024
+2018	3-wall-joins	wall1:length	wall length not decoded before 2024
+2018	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2018	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	3-wall-joins	wall2:end0:partners	join partners not decoded before 2024
+2018	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	3-wall-joins	wall2:end1:partners	join partners not decoded before 2024
+2018	3-wall-joins	wall2:length	wall length not decoded before 2024
+2018	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2018	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	3-wall-joins	wall3:end0:partners	join partners not decoded before 2024
+2018	3-wall-joins	wall3:length	wall length not decoded before 2024
+2018	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2018	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	3-wall-joins	wall4:end0:partners	join partners not decoded before 2024
+2018	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	3-wall-joins	wall4:length	wall length not decoded before 2024
+2018	4-rooms	types:unused	unused types exported
+2018	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2018	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall1:end0:partners	join partners not decoded before 2024
+2018	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall1:end1:partners	join partners not decoded before 2024
+2018	4-rooms	wall1:length	wall length not decoded before 2024
+2018	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2018	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall2:end0:partners	join partners not decoded before 2024
+2018	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall2:end1:partners	join partners not decoded before 2024
+2018	4-rooms	wall2:length	wall length not decoded before 2024
+2018	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2018	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall3:end0:partners	join partners not decoded before 2024
+2018	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall3:end1:partners	join partners not decoded before 2024
+2018	4-rooms	wall3:length	wall length not decoded before 2024
+2018	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2018	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall4:end0:partners	join partners not decoded before 2024
+2018	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall4:end1:partners	join partners not decoded before 2024
+2018	4-rooms	wall4:length	wall length not decoded before 2024
+2018	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2018	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall5:end0:partners	join partners not decoded before 2024
+2018	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2018	4-rooms	wall5:end1:partners	join partners not decoded before 2024
+2018	4-rooms	wall5:length	wall length not decoded before 2024
+2018	5-opening	door:head	door/window Height parameter missing
+2018	5-opening	types:unused	unused types exported
+2018	5-opening	wall1:axis	no wall Axis representation in the IFC
+2018	5-opening	wall1:length	wall length not decoded before 2024
+2018	5-opening	window:head	door/window Height parameter missing
+2019	1-hip-roof	types:unused	unused types exported
+2019	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2019	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	1-hip-roof	wall1:end0:partners	join partners not decoded before 2024
+2019	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	1-hip-roof	wall1:end1:partners	join partners not decoded before 2024
+2019	1-hip-roof	wall1:length	wall length not decoded before 2024
+2019	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2019	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	1-hip-roof	wall2:end0:partners	join partners not decoded before 2024
+2019	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	1-hip-roof	wall2:end1:partners	join partners not decoded before 2024
+2019	1-hip-roof	wall2:length	wall length not decoded before 2024
+2019	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2019	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	1-hip-roof	wall3:end0:partners	join partners not decoded before 2024
+2019	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	1-hip-roof	wall3:end1:partners	join partners not decoded before 2024
+2019	1-hip-roof	wall3:length	wall length not decoded before 2024
+2019	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2019	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	1-hip-roof	wall4:end0:partners	join partners not decoded before 2024
+2019	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	1-hip-roof	wall4:end1:partners	join partners not decoded before 2024
+2019	1-hip-roof	wall4:length	wall length not decoded before 2024
+2019	2-gable-roof	types:unused	unused types exported
+2019	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2019	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	2-gable-roof	wall1:end0:partners	join partners not decoded before 2024
+2019	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	2-gable-roof	wall1:end1:partners	join partners not decoded before 2024
+2019	2-gable-roof	wall1:length	wall length not decoded before 2024
+2019	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2019	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	2-gable-roof	wall2:end0:partners	join partners not decoded before 2024
+2019	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	2-gable-roof	wall2:end1:partners	join partners not decoded before 2024
+2019	2-gable-roof	wall2:length	wall length not decoded before 2024
+2019	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2019	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	2-gable-roof	wall3:end0:partners	join partners not decoded before 2024
+2019	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	2-gable-roof	wall3:end1:partners	join partners not decoded before 2024
+2019	2-gable-roof	wall3:length	wall length not decoded before 2024
+2019	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2019	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	2-gable-roof	wall4:end0:partners	join partners not decoded before 2024
+2019	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	2-gable-roof	wall4:end1:partners	join partners not decoded before 2024
+2019	2-gable-roof	wall4:length	wall length not decoded before 2024
+2019	3-wall-joins	types:unused	unused types exported
+2019	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2019	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	3-wall-joins	wall1:end1:partners	join partners not decoded before 2024
+2019	3-wall-joins	wall1:length	wall length not decoded before 2024
+2019	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2019	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	3-wall-joins	wall2:end0:partners	join partners not decoded before 2024
+2019	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	3-wall-joins	wall2:end1:partners	join partners not decoded before 2024
+2019	3-wall-joins	wall2:length	wall length not decoded before 2024
+2019	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2019	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	3-wall-joins	wall3:end0:partners	join partners not decoded before 2024
+2019	3-wall-joins	wall3:length	wall length not decoded before 2024
+2019	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2019	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	3-wall-joins	wall4:end0:partners	join partners not decoded before 2024
+2019	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	3-wall-joins	wall4:length	wall length not decoded before 2024
+2019	4-rooms	types:unused	unused types exported
+2019	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2019	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall1:end0:partners	join partners not decoded before 2024
+2019	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall1:end1:partners	join partners not decoded before 2024
+2019	4-rooms	wall1:length	wall length not decoded before 2024
+2019	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2019	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall2:end0:partners	join partners not decoded before 2024
+2019	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall2:end1:partners	join partners not decoded before 2024
+2019	4-rooms	wall2:length	wall length not decoded before 2024
+2019	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2019	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall3:end0:partners	join partners not decoded before 2024
+2019	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall3:end1:partners	join partners not decoded before 2024
+2019	4-rooms	wall3:length	wall length not decoded before 2024
+2019	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2019	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall4:end0:partners	join partners not decoded before 2024
+2019	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall4:end1:partners	join partners not decoded before 2024
+2019	4-rooms	wall4:length	wall length not decoded before 2024
+2019	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2019	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall5:end0:partners	join partners not decoded before 2024
+2019	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2019	4-rooms	wall5:end1:partners	join partners not decoded before 2024
+2019	4-rooms	wall5:length	wall length not decoded before 2024
+2019	5-opening	door:head	door/window Height parameter missing
+2019	5-opening	types:unused	unused types exported
+2019	5-opening	wall1:axis	no wall Axis representation in the IFC
+2019	5-opening	wall1:length	wall length not decoded before 2024
+2019	5-opening	window:head	door/window Height parameter missing
+2020	1-hip-roof	types:unused	unused types exported
+2020	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2020	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	1-hip-roof	wall1:end0:partners	join partners not decoded before 2024
+2020	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	1-hip-roof	wall1:end1:partners	join partners not decoded before 2024
+2020	1-hip-roof	wall1:length	wall length not decoded before 2024
+2020	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2020	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	1-hip-roof	wall2:end0:partners	join partners not decoded before 2024
+2020	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	1-hip-roof	wall2:end1:partners	join partners not decoded before 2024
+2020	1-hip-roof	wall2:length	wall length not decoded before 2024
+2020	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2020	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	1-hip-roof	wall3:end0:partners	join partners not decoded before 2024
+2020	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	1-hip-roof	wall3:end1:partners	join partners not decoded before 2024
+2020	1-hip-roof	wall3:length	wall length not decoded before 2024
+2020	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2020	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	1-hip-roof	wall4:end0:partners	join partners not decoded before 2024
+2020	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	1-hip-roof	wall4:end1:partners	join partners not decoded before 2024
+2020	1-hip-roof	wall4:length	wall length not decoded before 2024
+2020	2-gable-roof	types:unused	unused types exported
+2020	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2020	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	2-gable-roof	wall1:end0:partners	join partners not decoded before 2024
+2020	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	2-gable-roof	wall1:end1:partners	join partners not decoded before 2024
+2020	2-gable-roof	wall1:length	wall length not decoded before 2024
+2020	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2020	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	2-gable-roof	wall2:end0:partners	join partners not decoded before 2024
+2020	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	2-gable-roof	wall2:end1:partners	join partners not decoded before 2024
+2020	2-gable-roof	wall2:length	wall length not decoded before 2024
+2020	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2020	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	2-gable-roof	wall3:end0:partners	join partners not decoded before 2024
+2020	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	2-gable-roof	wall3:end1:partners	join partners not decoded before 2024
+2020	2-gable-roof	wall3:length	wall length not decoded before 2024
+2020	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2020	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	2-gable-roof	wall4:end0:partners	join partners not decoded before 2024
+2020	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	2-gable-roof	wall4:end1:partners	join partners not decoded before 2024
+2020	2-gable-roof	wall4:length	wall length not decoded before 2024
+2020	3-wall-joins	types:unused	unused types exported
+2020	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2020	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	3-wall-joins	wall1:end1:partners	join partners not decoded before 2024
+2020	3-wall-joins	wall1:length	wall length not decoded before 2024
+2020	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2020	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	3-wall-joins	wall2:end0:partners	join partners not decoded before 2024
+2020	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	3-wall-joins	wall2:end1:partners	join partners not decoded before 2024
+2020	3-wall-joins	wall2:length	wall length not decoded before 2024
+2020	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2020	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	3-wall-joins	wall3:end0:partners	join partners not decoded before 2024
+2020	3-wall-joins	wall3:length	wall length not decoded before 2024
+2020	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2020	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	3-wall-joins	wall4:end0:partners	join partners not decoded before 2024
+2020	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	3-wall-joins	wall4:length	wall length not decoded before 2024
+2020	4-rooms	types:unused	unused types exported
+2020	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2020	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall1:end0:partners	join partners not decoded before 2024
+2020	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall1:end1:partners	join partners not decoded before 2024
+2020	4-rooms	wall1:length	wall length not decoded before 2024
+2020	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2020	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall2:end0:partners	join partners not decoded before 2024
+2020	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall2:end1:partners	join partners not decoded before 2024
+2020	4-rooms	wall2:length	wall length not decoded before 2024
+2020	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2020	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall3:end0:partners	join partners not decoded before 2024
+2020	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall3:end1:partners	join partners not decoded before 2024
+2020	4-rooms	wall3:length	wall length not decoded before 2024
+2020	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2020	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall4:end0:partners	join partners not decoded before 2024
+2020	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall4:end1:partners	join partners not decoded before 2024
+2020	4-rooms	wall4:length	wall length not decoded before 2024
+2020	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2020	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall5:end0:partners	join partners not decoded before 2024
+2020	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2020	4-rooms	wall5:end1:partners	join partners not decoded before 2024
+2020	4-rooms	wall5:length	wall length not decoded before 2024
+2020	5-opening	door:head	door/window Height parameter missing
+2020	5-opening	types:unused	unused types exported
+2020	5-opening	wall1:axis	no wall Axis representation in the IFC
+2020	5-opening	wall1:length	wall length not decoded before 2024
+2020	5-opening	window:head	door/window Height parameter missing
+2021	1-hip-roof	types:unused	unused types exported
+2021	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2021	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	1-hip-roof	wall1:end0:partners	join partners not decoded before 2024
+2021	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	1-hip-roof	wall1:end1:partners	join partners not decoded before 2024
+2021	1-hip-roof	wall1:length	wall length not decoded before 2024
+2021	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2021	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	1-hip-roof	wall2:end0:partners	join partners not decoded before 2024
+2021	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	1-hip-roof	wall2:end1:partners	join partners not decoded before 2024
+2021	1-hip-roof	wall2:length	wall length not decoded before 2024
+2021	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2021	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	1-hip-roof	wall3:end0:partners	join partners not decoded before 2024
+2021	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	1-hip-roof	wall3:end1:partners	join partners not decoded before 2024
+2021	1-hip-roof	wall3:length	wall length not decoded before 2024
+2021	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2021	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	1-hip-roof	wall4:end0:partners	join partners not decoded before 2024
+2021	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	1-hip-roof	wall4:end1:partners	join partners not decoded before 2024
+2021	1-hip-roof	wall4:length	wall length not decoded before 2024
+2021	2-gable-roof	types:unused	unused types exported
+2021	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2021	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	2-gable-roof	wall1:end0:partners	join partners not decoded before 2024
+2021	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	2-gable-roof	wall1:end1:partners	join partners not decoded before 2024
+2021	2-gable-roof	wall1:length	wall length not decoded before 2024
+2021	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2021	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	2-gable-roof	wall2:end0:partners	join partners not decoded before 2024
+2021	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	2-gable-roof	wall2:end1:partners	join partners not decoded before 2024
+2021	2-gable-roof	wall2:length	wall length not decoded before 2024
+2021	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2021	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	2-gable-roof	wall3:end0:partners	join partners not decoded before 2024
+2021	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	2-gable-roof	wall3:end1:partners	join partners not decoded before 2024
+2021	2-gable-roof	wall3:length	wall length not decoded before 2024
+2021	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2021	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	2-gable-roof	wall4:end0:partners	join partners not decoded before 2024
+2021	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	2-gable-roof	wall4:end1:partners	join partners not decoded before 2024
+2021	2-gable-roof	wall4:length	wall length not decoded before 2024
+2021	3-wall-joins	types:unused	unused types exported
+2021	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2021	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	3-wall-joins	wall1:end1:partners	join partners not decoded before 2024
+2021	3-wall-joins	wall1:length	wall length not decoded before 2024
+2021	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2021	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	3-wall-joins	wall2:end0:partners	join partners not decoded before 2024
+2021	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	3-wall-joins	wall2:end1:partners	join partners not decoded before 2024
+2021	3-wall-joins	wall2:length	wall length not decoded before 2024
+2021	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2021	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	3-wall-joins	wall3:end0:partners	join partners not decoded before 2024
+2021	3-wall-joins	wall3:length	wall length not decoded before 2024
+2021	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2021	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	3-wall-joins	wall4:end0:partners	join partners not decoded before 2024
+2021	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	3-wall-joins	wall4:length	wall length not decoded before 2024
+2021	4-rooms	types:unused	unused types exported
+2021	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2021	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall1:end0:partners	join partners not decoded before 2024
+2021	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall1:end1:partners	join partners not decoded before 2024
+2021	4-rooms	wall1:length	wall length not decoded before 2024
+2021	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2021	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall2:end0:partners	join partners not decoded before 2024
+2021	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall2:end1:partners	join partners not decoded before 2024
+2021	4-rooms	wall2:length	wall length not decoded before 2024
+2021	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2021	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall3:end0:partners	join partners not decoded before 2024
+2021	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall3:end1:partners	join partners not decoded before 2024
+2021	4-rooms	wall3:length	wall length not decoded before 2024
+2021	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2021	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall4:end0:partners	join partners not decoded before 2024
+2021	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall4:end1:partners	join partners not decoded before 2024
+2021	4-rooms	wall4:length	wall length not decoded before 2024
+2021	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2021	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall5:end0:partners	join partners not decoded before 2024
+2021	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2021	4-rooms	wall5:end1:partners	join partners not decoded before 2024
+2021	4-rooms	wall5:length	wall length not decoded before 2024
+2021	5-opening	door:head	door/window Height parameter missing
+2021	5-opening	types:unused	unused types exported
+2021	5-opening	wall1:axis	no wall Axis representation in the IFC
+2021	5-opening	wall1:length	wall length not decoded before 2024
+2021	5-opening	window:head	door/window Height parameter missing
+2022	1-hip-roof	types:unused	unused types exported
+2022	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2022	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	1-hip-roof	wall1:end0:partners	join partners not decoded before 2024
+2022	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	1-hip-roof	wall1:end1:partners	join partners not decoded before 2024
+2022	1-hip-roof	wall1:length	wall length not decoded before 2024
+2022	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2022	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	1-hip-roof	wall2:end0:partners	join partners not decoded before 2024
+2022	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	1-hip-roof	wall2:end1:partners	join partners not decoded before 2024
+2022	1-hip-roof	wall2:length	wall length not decoded before 2024
+2022	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2022	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	1-hip-roof	wall3:end0:partners	join partners not decoded before 2024
+2022	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	1-hip-roof	wall3:end1:partners	join partners not decoded before 2024
+2022	1-hip-roof	wall3:length	wall length not decoded before 2024
+2022	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2022	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	1-hip-roof	wall4:end0:partners	join partners not decoded before 2024
+2022	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	1-hip-roof	wall4:end1:partners	join partners not decoded before 2024
+2022	1-hip-roof	wall4:length	wall length not decoded before 2024
+2022	2-gable-roof	types:unused	unused types exported
+2022	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2022	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	2-gable-roof	wall1:end0:partners	join partners not decoded before 2024
+2022	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	2-gable-roof	wall1:end1:partners	join partners not decoded before 2024
+2022	2-gable-roof	wall1:length	wall length not decoded before 2024
+2022	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2022	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	2-gable-roof	wall2:end0:partners	join partners not decoded before 2024
+2022	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	2-gable-roof	wall2:end1:partners	join partners not decoded before 2024
+2022	2-gable-roof	wall2:length	wall length not decoded before 2024
+2022	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2022	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	2-gable-roof	wall3:end0:partners	join partners not decoded before 2024
+2022	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	2-gable-roof	wall3:end1:partners	join partners not decoded before 2024
+2022	2-gable-roof	wall3:length	wall length not decoded before 2024
+2022	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2022	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	2-gable-roof	wall4:end0:partners	join partners not decoded before 2024
+2022	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	2-gable-roof	wall4:end1:partners	join partners not decoded before 2024
+2022	2-gable-roof	wall4:length	wall length not decoded before 2024
+2022	3-wall-joins	types:unused	unused types exported
+2022	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2022	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	3-wall-joins	wall1:end1:partners	join partners not decoded before 2024
+2022	3-wall-joins	wall1:length	wall length not decoded before 2024
+2022	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2022	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	3-wall-joins	wall2:end0:partners	join partners not decoded before 2024
+2022	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	3-wall-joins	wall2:end1:partners	join partners not decoded before 2024
+2022	3-wall-joins	wall2:length	wall length not decoded before 2024
+2022	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2022	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	3-wall-joins	wall3:end0:partners	join partners not decoded before 2024
+2022	3-wall-joins	wall3:length	wall length not decoded before 2024
+2022	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2022	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	3-wall-joins	wall4:end0:partners	join partners not decoded before 2024
+2022	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	3-wall-joins	wall4:length	wall length not decoded before 2024
+2022	4-rooms	types:unused	unused types exported
+2022	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2022	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall1:end0:partners	join partners not decoded before 2024
+2022	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall1:end1:partners	join partners not decoded before 2024
+2022	4-rooms	wall1:length	wall length not decoded before 2024
+2022	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2022	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall2:end0:partners	join partners not decoded before 2024
+2022	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall2:end1:partners	join partners not decoded before 2024
+2022	4-rooms	wall2:length	wall length not decoded before 2024
+2022	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2022	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall3:end0:partners	join partners not decoded before 2024
+2022	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall3:end1:partners	join partners not decoded before 2024
+2022	4-rooms	wall3:length	wall length not decoded before 2024
+2022	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2022	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall4:end0:partners	join partners not decoded before 2024
+2022	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall4:end1:partners	join partners not decoded before 2024
+2022	4-rooms	wall4:length	wall length not decoded before 2024
+2022	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2022	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall5:end0:partners	join partners not decoded before 2024
+2022	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2022	4-rooms	wall5:end1:partners	join partners not decoded before 2024
+2022	4-rooms	wall5:length	wall length not decoded before 2024
+2022	5-opening	door:head	door/window Height parameter missing
+2022	5-opening	types:unused	unused types exported
+2022	5-opening	wall1:axis	no wall Axis representation in the IFC
+2022	5-opening	wall1:length	wall length not decoded before 2024
+2022	5-opening	window:head	door/window Height parameter missing
+2023	1-hip-roof	types:unused	unused types exported
+2023	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2023	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	1-hip-roof	wall1:end0:partners	join partners not decoded before 2024
+2023	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	1-hip-roof	wall1:end1:partners	join partners not decoded before 2024
+2023	1-hip-roof	wall1:length	wall length not decoded before 2024
+2023	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2023	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	1-hip-roof	wall2:end0:partners	join partners not decoded before 2024
+2023	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	1-hip-roof	wall2:end1:partners	join partners not decoded before 2024
+2023	1-hip-roof	wall2:length	wall length not decoded before 2024
+2023	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2023	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	1-hip-roof	wall3:end0:partners	join partners not decoded before 2024
+2023	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	1-hip-roof	wall3:end1:partners	join partners not decoded before 2024
+2023	1-hip-roof	wall3:length	wall length not decoded before 2024
+2023	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2023	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	1-hip-roof	wall4:end0:partners	join partners not decoded before 2024
+2023	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	1-hip-roof	wall4:end1:partners	join partners not decoded before 2024
+2023	1-hip-roof	wall4:length	wall length not decoded before 2024
+2023	2-gable-roof	types:unused	unused types exported
+2023	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2023	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	2-gable-roof	wall1:end0:partners	join partners not decoded before 2024
+2023	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	2-gable-roof	wall1:end1:partners	join partners not decoded before 2024
+2023	2-gable-roof	wall1:length	wall length not decoded before 2024
+2023	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2023	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	2-gable-roof	wall2:end0:partners	join partners not decoded before 2024
+2023	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	2-gable-roof	wall2:end1:partners	join partners not decoded before 2024
+2023	2-gable-roof	wall2:length	wall length not decoded before 2024
+2023	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2023	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	2-gable-roof	wall3:end0:partners	join partners not decoded before 2024
+2023	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	2-gable-roof	wall3:end1:partners	join partners not decoded before 2024
+2023	2-gable-roof	wall3:length	wall length not decoded before 2024
+2023	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2023	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	2-gable-roof	wall4:end0:partners	join partners not decoded before 2024
+2023	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	2-gable-roof	wall4:end1:partners	join partners not decoded before 2024
+2023	2-gable-roof	wall4:length	wall length not decoded before 2024
+2023	3-wall-joins	types:unused	unused types exported
+2023	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2023	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	3-wall-joins	wall1:end1:partners	join partners not decoded before 2024
+2023	3-wall-joins	wall1:length	wall length not decoded before 2024
+2023	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2023	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	3-wall-joins	wall2:end0:partners	join partners not decoded before 2024
+2023	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	3-wall-joins	wall2:end1:partners	join partners not decoded before 2024
+2023	3-wall-joins	wall2:length	wall length not decoded before 2024
+2023	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2023	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	3-wall-joins	wall3:end0:partners	join partners not decoded before 2024
+2023	3-wall-joins	wall3:length	wall length not decoded before 2024
+2023	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2023	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	3-wall-joins	wall4:end0:partners	join partners not decoded before 2024
+2023	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	3-wall-joins	wall4:length	wall length not decoded before 2024
+2023	4-rooms	types:unused	unused types exported
+2023	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2023	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall1:end0:partners	join partners not decoded before 2024
+2023	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall1:end1:partners	join partners not decoded before 2024
+2023	4-rooms	wall1:length	wall length not decoded before 2024
+2023	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2023	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall2:end0:partners	join partners not decoded before 2024
+2023	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall2:end1:partners	join partners not decoded before 2024
+2023	4-rooms	wall2:length	wall length not decoded before 2024
+2023	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2023	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall3:end0:partners	join partners not decoded before 2024
+2023	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall3:end1:partners	join partners not decoded before 2024
+2023	4-rooms	wall3:length	wall length not decoded before 2024
+2023	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2023	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall4:end0:partners	join partners not decoded before 2024
+2023	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall4:end1:partners	join partners not decoded before 2024
+2023	4-rooms	wall4:length	wall length not decoded before 2024
+2023	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2023	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall5:end0:partners	join partners not decoded before 2024
+2023	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2023	4-rooms	wall5:end1:partners	join partners not decoded before 2024
+2023	4-rooms	wall5:length	wall length not decoded before 2024
+2023	5-opening	door:head	door/window Height parameter missing
+2023	5-opening	types:unused	unused types exported
+2023	5-opening	wall1:axis	no wall Axis representation in the IFC
+2023	5-opening	wall1:length	wall length not decoded before 2024
+2023	5-opening	window:head	door/window Height parameter missing
+2024	1-hip-roof	roof1:edge0:slope	roof slope not recovered (roof written flat)
+2024	1-hip-roof	roof1:edge1:slope	roof slope not recovered (roof written flat)
+2024	1-hip-roof	roof1:edge2:slope	roof slope not recovered (roof written flat)
+2024	1-hip-roof	roof1:edge3:slope	roof slope not recovered (roof written flat)
+2024	1-hip-roof	types:unused	unused types exported
+2024	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2024	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	1-hip-roof	wall1:length	wall length missing for this wall
+2024	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2024	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2024	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2024	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	1-hip-roof	wall4:length	wall length missing for this wall
+2024	2-gable-roof	roof1:edge1:slope	roof slope not recovered (roof written flat)
+2024	2-gable-roof	roof1:edge3:slope	roof slope not recovered (roof written flat)
+2024	2-gable-roof	types:unused	unused types exported
+2024	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2024	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	2-gable-roof	wall1:length	wall length missing for this wall
+2024	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2024	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2024	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2024	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	2-gable-roof	wall4:length	wall length missing for this wall
+2024	3-wall-joins	types:unused	unused types exported
+2024	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2024	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	3-wall-joins	wall1:length	wall length missing for this wall
+2024	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2024	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	3-wall-joins	wall2:end1:partners	mitred corner: partner not decoded
+2024	3-wall-joins	wall2:length	wall length missing for this wall
+2024	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2024	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	3-wall-joins	wall3:end0:partners	mitred corner: partner not decoded
+2024	3-wall-joins	wall3:length	wall length missing for this wall
+2024	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2024	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	3-wall-joins	wall4:end1:partners	Disallow Join ignored: end reported as joined
+2024	3-wall-joins	wall4:length	wall length missing for this wall
+2024	4-rooms	types:unused	unused types exported
+2024	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2024	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall1:length	wall length missing for this wall
+2024	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2024	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2024	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2024	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall4:length	wall length missing for this wall
+2024	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2024	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2024	4-rooms	wall5:length	wall length missing for this wall
+2024	5-opening	types:unused	unused types exported
+2024	5-opening	wall1:axis	no wall Axis representation in the IFC
+2025	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2025	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	1-hip-roof	wall1:length	wall length missing for this wall
+2025	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2025	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2025	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2025	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	1-hip-roof	wall4:length	wall length missing for this wall
+2025	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2025	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	2-gable-roof	wall1:length	wall length missing for this wall
+2025	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2025	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2025	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2025	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	2-gable-roof	wall4:length	wall length missing for this wall
+2025	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2025	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	3-wall-joins	wall1:length	wall length missing for this wall
+2025	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2025	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	3-wall-joins	wall2:end1:partners	mitred corner: partner not decoded
+2025	3-wall-joins	wall2:length	wall length missing for this wall
+2025	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2025	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	3-wall-joins	wall3:end0:partners	mitred corner: partner not decoded
+2025	3-wall-joins	wall3:length	wall length missing for this wall
+2025	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2025	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	3-wall-joins	wall4:end1:partners	Disallow Join ignored: end reported as joined
+2025	3-wall-joins	wall4:length	wall length missing for this wall
+2025	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2025	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall1:length	wall length missing for this wall
+2025	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2025	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2025	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2025	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall4:length	wall length missing for this wall
+2025	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2025	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2025	4-rooms	wall5:length	wall length missing for this wall
+2025	5-opening	wall1:axis	no wall Axis representation in the IFC
+2026	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2026	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	1-hip-roof	wall1:length	wall length missing for this wall
+2026	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2026	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2026	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2026	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	1-hip-roof	wall4:length	wall length missing for this wall
+2026	2-gable-roof	roof1:edge1:slope	roof slope not recovered (roof written flat)
+2026	2-gable-roof	roof1:edge3:slope	roof slope not recovered (roof written flat)
+2026	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2026	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	2-gable-roof	wall1:length	wall length missing for this wall
+2026	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2026	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2026	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2026	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	2-gable-roof	wall4:length	wall length missing for this wall
+2026	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2026	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	3-wall-joins	wall1:length	wall length missing for this wall
+2026	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2026	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	3-wall-joins	wall2:end1:partners	mitred corner: partner not decoded
+2026	3-wall-joins	wall2:length	wall length missing for this wall
+2026	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2026	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	3-wall-joins	wall3:end0:partners	mitred corner: partner not decoded
+2026	3-wall-joins	wall3:length	wall length missing for this wall
+2026	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2026	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	3-wall-joins	wall4:end1:partners	Disallow Join ignored: end reported as joined
+2026	3-wall-joins	wall4:length	wall length missing for this wall
+2026	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2026	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall1:length	wall length missing for this wall
+2026	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2026	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2026	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2026	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall4:length	wall length missing for this wall
+2026	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2026	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2026	4-rooms	wall5:length	wall length missing for this wall
+2026	5-opening	door:head	door/window Height parameter missing
+2026	5-opening	wall1:axis	no wall Axis representation in the IFC
+2026	5-opening	window:head	door/window Height parameter missing
+2027	1-hip-roof	wall1:axis	no wall Axis representation in the IFC
+2027	1-hip-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	1-hip-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	1-hip-roof	wall1:length	wall length missing for this wall
+2027	1-hip-roof	wall2:axis	no wall Axis representation in the IFC
+2027	1-hip-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	1-hip-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	1-hip-roof	wall3:axis	no wall Axis representation in the IFC
+2027	1-hip-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	1-hip-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	1-hip-roof	wall4:axis	no wall Axis representation in the IFC
+2027	1-hip-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	1-hip-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	1-hip-roof	wall4:length	wall length missing for this wall
+2027	2-gable-roof	roof1:edge1:slope	roof slope not recovered (roof written flat)
+2027	2-gable-roof	roof1:edge3:slope	roof slope not recovered (roof written flat)
+2027	2-gable-roof	wall1:axis	no wall Axis representation in the IFC
+2027	2-gable-roof	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	2-gable-roof	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	2-gable-roof	wall1:length	wall length missing for this wall
+2027	2-gable-roof	wall2:axis	no wall Axis representation in the IFC
+2027	2-gable-roof	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	2-gable-roof	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	2-gable-roof	wall3:axis	no wall Axis representation in the IFC
+2027	2-gable-roof	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	2-gable-roof	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	2-gable-roof	wall4:axis	no wall Axis representation in the IFC
+2027	2-gable-roof	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	2-gable-roof	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	2-gable-roof	wall4:length	wall length missing for this wall
+2027	3-wall-joins	wall1:axis	no wall Axis representation in the IFC
+2027	3-wall-joins	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	3-wall-joins	wall1:length	wall length missing for this wall
+2027	3-wall-joins	wall2:axis	no wall Axis representation in the IFC
+2027	3-wall-joins	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	3-wall-joins	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	3-wall-joins	wall2:end1:partners	mitred corner: partner not decoded
+2027	3-wall-joins	wall2:length	wall length missing for this wall
+2027	3-wall-joins	wall3:axis	no wall Axis representation in the IFC
+2027	3-wall-joins	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	3-wall-joins	wall3:end0:partners	mitred corner: partner not decoded
+2027	3-wall-joins	wall3:length	wall length missing for this wall
+2027	3-wall-joins	wall4:axis	no wall Axis representation in the IFC
+2027	3-wall-joins	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	3-wall-joins	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	3-wall-joins	wall4:end1:partners	Disallow Join ignored: end reported as joined
+2027	3-wall-joins	wall4:length	wall length missing for this wall
+2027	4-rooms	wall1:axis	no wall Axis representation in the IFC
+2027	4-rooms	wall1:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall1:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall1:length	wall length missing for this wall
+2027	4-rooms	wall2:axis	no wall Axis representation in the IFC
+2027	4-rooms	wall2:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall2:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall3:axis	no wall Axis representation in the IFC
+2027	4-rooms	wall3:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall3:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall4:axis	no wall Axis representation in the IFC
+2027	4-rooms	wall4:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall4:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall4:length	wall length missing for this wall
+2027	4-rooms	wall5:axis	no wall Axis representation in the IFC
+2027	4-rooms	wall5:end0:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall5:end1:join-type	join type (Abut, Miter, Disallowed) not exposed
+2027	4-rooms	wall5:length	wall length missing for this wall
+2027	5-opening	door:head	door/window Height parameter missing
+2027	5-opening	wall1:axis	no wall Axis representation in the IFC
+2027	5-opening	window:head	door/window Height parameter missing
