@@ -863,6 +863,76 @@ fn clip_convex(poly: &[Point2], line: PlanPlane, keep_positive: bool) -> Vec<Poi
     out
 }
 
+/// The plan inside `outer` and outside `holes`, cut into convex pieces,
+/// counter-clockwise, along every line where two of the `tops` meet, two of
+/// the `undersides` meet, an underside meets its floor, or a domain ends:
+/// top and underside are flat on each piece. With the section and the lines.
+/// `None` past [`MAX_ENVELOPE_PIECES`] pieces.
+fn envelope_pieces(
+    outer: &[Point2],
+    holes: &[Ring],
+    tops: &[PlanPlane],
+    undersides: &[(PlanPlane, f64)],
+    domains: &[Vec<PlanPlane>],
+    bottom_domains: &[Vec<PlanPlane>],
+) -> Option<(Section, Vec<PlanPlane>, Vec<Vec<Point2>>)> {
+    let section = section(outer, holes)?;
+    let difference = |p: PlanPlane, q: PlanPlane| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    let mut lines: Vec<PlanPlane> = Vec::new();
+    for (i, &p) in tops.iter().enumerate() {
+        lines.extend(tops[i + 1..].iter().map(|&q| difference(p, q)));
+    }
+    for (i, &(p, _)) in undersides.iter().enumerate() {
+        lines.extend(undersides[i + 1..].iter().map(|&(q, _)| difference(p, q)));
+        lines.extend(
+            undersides
+                .iter()
+                .map(|&(_, floor)| difference(p, [0.0, 0.0, floor])),
+        );
+    }
+    lines.extend(domains.iter().flatten().copied());
+    if !std::ptr::eq(bottom_domains, domains) {
+        lines.extend(bottom_domains.iter().flatten().copied());
+    }
+    lines.retain(|l| l[0].hypot(l[1]) > ENVELOPE_SPLIT_EPS);
+    // The cap's triangles, counter-clockwise, cut by every line.
+    let mut pieces: Vec<Vec<Point2>> = section
+        .cap_triangles
+        .iter()
+        .map(|&[a, b, c]| {
+            let tri = [a, b, c].map(|i| section.cap_points[i as usize]);
+            let mut tri = tri.to_vec();
+            if signed_area(&tri) < 0.0 {
+                tri.reverse();
+            }
+            tri
+        })
+        .collect();
+    for &line in &lines {
+        pieces = pieces
+            .into_iter()
+            .flat_map(|poly| {
+                let values: Vec<f64> = poly.iter().map(|&p| plane_at(line, p)).collect();
+                let above = values.iter().any(|&f| f > ENVELOPE_SPLIT_EPS);
+                let below = values.iter().any(|&f| f < -ENVELOPE_SPLIT_EPS);
+                if above && below {
+                    vec![
+                        clip_convex(&poly, line, true),
+                        clip_convex(&poly, line, false),
+                    ]
+                } else {
+                    vec![poly]
+                }
+            })
+            .filter(|poly| poly.len() >= 3 && signed_area(poly).abs() > 1e-12)
+            .collect();
+        if pieces.len() > MAX_ENVELOPE_PIECES {
+            return None;
+        }
+    }
+    Some((section, lines, pieces))
+}
+
 /// A slab over the plan area inside `outer` and outside `holes` whose top
 /// is the lowest of the `tops` planes at each point and whose underside is
 /// the lowest of the `undersides` planes, each never below its own floor
@@ -908,25 +978,8 @@ pub(super) fn envelope_slab_mesh_split(
         return None;
     }
     let bottom_domains = bottom_domains.unwrap_or(domains);
-    let section = section(outer, holes)?;
-    let difference = |p: PlanPlane, q: PlanPlane| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
-    let mut lines: Vec<PlanPlane> = Vec::new();
-    for (i, &p) in tops.iter().enumerate() {
-        lines.extend(tops[i + 1..].iter().map(|&q| difference(p, q)));
-    }
-    for (i, &(p, _)) in undersides.iter().enumerate() {
-        lines.extend(undersides[i + 1..].iter().map(|&(q, _)| difference(p, q)));
-        lines.extend(
-            undersides
-                .iter()
-                .map(|&(_, floor)| difference(p, [0.0, 0.0, floor])),
-        );
-    }
-    lines.extend(domains.iter().flatten().copied());
-    if !std::ptr::eq(bottom_domains, domains) {
-        lines.extend(bottom_domains.iter().flatten().copied());
-    }
-    lines.retain(|l| l[0].hypot(l[1]) > ENVELOPE_SPLIT_EPS);
+    let (section, lines, pieces) =
+        envelope_pieces(outer, holes, tops, undersides, domains, bottom_domains)?;
     let covers_in = |dom: &[Vec<PlanPlane>], i: usize, p: Point2| {
         dom[i].iter().all(|&d| plane_at(d, p) >= -1e-7)
     };
@@ -942,41 +995,6 @@ pub(super) fn envelope_slab_mesh_split(
             .map(|i| plane_at(undersides[i].0, p).max(undersides[i].1))
             .fold(f64::INFINITY, f64::min)
     };
-    // The cap's triangles, counter-clockwise, cut by every line.
-    let mut pieces: Vec<Vec<Point2>> = section
-        .cap_triangles
-        .iter()
-        .map(|&[a, b, c]| {
-            let tri = [a, b, c].map(|i| section.cap_points[i as usize]);
-            let mut tri = tri.to_vec();
-            if signed_area(&tri) < 0.0 {
-                tri.reverse();
-            }
-            tri
-        })
-        .collect();
-    for &line in &lines {
-        pieces = pieces
-            .into_iter()
-            .flat_map(|poly| {
-                let values: Vec<f64> = poly.iter().map(|&p| plane_at(line, p)).collect();
-                let above = values.iter().any(|&f| f > ENVELOPE_SPLIT_EPS);
-                let below = values.iter().any(|&f| f < -ENVELOPE_SPLIT_EPS);
-                if above && below {
-                    vec![
-                        clip_convex(&poly, line, true),
-                        clip_convex(&poly, line, false),
-                    ]
-                } else {
-                    vec![poly]
-                }
-            })
-            .filter(|poly| poly.len() >= 3 && signed_area(poly).abs() > 1e-12)
-            .collect();
-        if pieces.len() > MAX_ENVELOPE_PIECES {
-            return None;
-        }
-    }
     let mut mesh = Mesh::default();
     let push = |mesh: &mut Mesh, points: [[f64; 3]; 3]| {
         let base = mesh.vertices.len() as u32;
@@ -1038,6 +1056,88 @@ pub(super) fn envelope_slab_mesh_split(
         .chain(section.rings.iter().flatten())
         .all(|&p| top(p).is_finite() && top(p) >= bottom(p) - 1e-9);
     (thick_enough && mesh.vertices.iter().flatten().all(|v| v.is_finite())).then_some(mesh)
+}
+
+/// [`envelope_slab_mesh`]'s slab cut into one part per plane: plane `i`'s
+/// part is the plan where its top is the lowest of the planes that count,
+/// with its own top and underside (never below its floor) over it and upright
+/// sides all round, as Revit's export writes a gable or hip roof's slabs. A
+/// plane that is nowhere the lowest gets an empty part. `None` where
+/// [`envelope_slab_mesh`] would be.
+pub fn envelope_part_meshes(
+    outer: &[Point2],
+    holes: &[Ring],
+    tops: &[PlanPlane],
+    undersides: &[(PlanPlane, f64)],
+    domains: &[Vec<PlanPlane>],
+) -> Option<Vec<Mesh>> {
+    if tops.is_empty()
+        || tops.len() != undersides.len()
+        || tops.len() != domains.len()
+        || tops.len() > MAX_ENVELOPE_PLANES
+    {
+        return None;
+    }
+    let (_, _, pieces) = envelope_pieces(outer, holes, tops, undersides, domains, domains)?;
+    let covers = |i: usize, p: Point2| domains[i].iter().all(|&d| plane_at(d, p) >= -1e-7);
+    let mut parts: Vec<Vec<&Vec<Point2>>> = vec![Vec::new(); tops.len()];
+    for poly in &pieces {
+        let n = poly.len() as f64;
+        let centre = poly
+            .iter()
+            .fold((0.0, 0.0), |(x, y), p| (x + p.0 / n, y + p.1 / n));
+        let owner = (0..tops.len())
+            .filter(|&i| covers(i, centre))
+            .min_by(|&i, &j| plane_at(tops[i], centre).total_cmp(&plane_at(tops[j], centre)))?;
+        parts[owner].push(poly);
+    }
+    let key = |p: Point2| (p.0.to_bits(), p.1.to_bits());
+    let mut meshes = Vec::with_capacity(tops.len());
+    for (i, polys) in parts.iter().enumerate() {
+        let top = |p: Point2| plane_at(tops[i], p);
+        let bottom = |p: Point2| plane_at(undersides[i].0, p).max(undersides[i].1);
+        let mut mesh = Mesh::default();
+        let mut push = |points: [[f64; 3]; 3]| {
+            let base = mesh.vertices.len() as u32;
+            mesh.vertices.extend(points);
+            mesh.triangles.push([base, base + 1, base + 2]);
+        };
+        // Edges two of the part's pieces share are inside it; the pieces
+        // were cut along whole lines, so a shared edge has the same ends in
+        // both.
+        let mut edges: std::collections::HashSet<_> = std::collections::HashSet::new();
+        for poly in polys {
+            for k in 0..poly.len() {
+                edges.insert((key(poly[k]), key(poly[(k + 1) % poly.len()])));
+            }
+        }
+        for poly in polys {
+            let lift = |p: Point2, z: f64| [p.0, p.1, z];
+            for k in 1..poly.len() - 1 {
+                let [a, b, c] = [poly[0], poly[k], poly[k + 1]];
+                push([lift(a, top(a)), lift(b, top(b)), lift(c, top(c))]);
+                push([lift(a, bottom(a)), lift(c, bottom(c)), lift(b, bottom(b))]);
+            }
+            for k in 0..poly.len() {
+                let (p, q) = (poly[k], poly[(k + 1) % poly.len()]);
+                if edges.contains(&(key(q), key(p))) {
+                    continue;
+                }
+                push([lift(p, bottom(p)), lift(q, bottom(q)), lift(q, top(q))]);
+                push([lift(p, bottom(p)), lift(q, top(q)), lift(p, top(p))]);
+            }
+        }
+        let sound = polys
+            .iter()
+            .flat_map(|poly| poly.iter())
+            .all(|&p| top(p) >= bottom(p) - 1e-9)
+            && mesh.vertices.iter().flatten().all(|v| v.is_finite());
+        if !sound {
+            return None;
+        }
+        meshes.push(mesh);
+    }
+    Some(meshes)
 }
 
 /// An extruded body cut into layers stacked from its top down: for

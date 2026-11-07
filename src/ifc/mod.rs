@@ -3044,6 +3044,29 @@ fn revit_model_global_ids(
             out.elements.insert(index, global_id.clone());
         }
     }
+    // A roof's slabs are its sub-elements 2, 3, … in order, as Revit's
+    // export numbers them (every slab of the tiny reference hip and gable
+    // roofs, 2018 to 2027, and of `R2025_Models.zip`'s roofs).
+    for entity in entities {
+        let entities::IfcEntity::Aggregate { whole, parts } = entity else {
+            continue;
+        };
+        let is_roof = matches!(
+            entities.get(*whole),
+            Some(entities::IfcEntity::BuildingElement { ifc_type, .. }) if ifc_type == "IFCROOF"
+        );
+        let Some(roof) = out.elements.get(whole).cloned().filter(|_| is_roof) else {
+            continue;
+        };
+        for (k, &part) in parts.iter().enumerate() {
+            let sub = u16::try_from(k + ROOF_FIRST_SLAB)
+                .ok()
+                .and_then(|index| crate::revit_global_ids::sub_element_global_id(&roof, index));
+            if let Some(global_id) = sub {
+                out.elements.insert(part, global_id);
+            }
+        }
+    }
     for type_id in element_type_ids
         .values()
         .chain(file_types.iter().map(|t| &t.id))
@@ -3101,6 +3124,28 @@ fn revit_model_global_ids(
 /// Revit's IFC exporter's sub-element index for a family instance written as its own
 /// type (`IFCFamilyInstanceSubElements.InstanceAsType`).
 const INSTANCE_AS_TYPE: u16 = 2048;
+
+/// Each slab of a roof written as its slabs, by entity index, with its
+/// roof's.
+pub(crate) fn roof_slab_wholes(model: &IfcModel) -> std::collections::HashMap<usize, usize> {
+    let mut out = std::collections::HashMap::new();
+    for entity in &model.entities {
+        let entities::IfcEntity::Aggregate { whole, parts } = entity else {
+            continue;
+        };
+        if matches!(
+            model.entities.get(*whole),
+            Some(entities::IfcEntity::BuildingElement { ifc_type, .. }) if ifc_type == "IFCROOF"
+        ) {
+            out.extend(parts.iter().map(|&part| (part, *whole)));
+        }
+    }
+    out
+}
+
+/// The sub-element index of a roof's first slab in Revit's export; the
+/// next slab is one more.
+const ROOF_FIRST_SLAB: usize = 2;
 
 /// Give each family instance written as a distribution element or a proxy a
 /// port for each of its symbol's connectors that Revit's export writes one

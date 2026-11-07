@@ -587,11 +587,18 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
             }
         }
     }
-    // A body piece's shells count for the element it is part of.
+    // A body piece's shells count for the element it is part of, and a
+    // roof's slabs' for the roof.
+    let roof_slabs = super::roof_slab_wholes(model);
+    let mut slabs_of: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (&slab, &roof) in &roof_slabs {
+        slabs_of.entry(roof).or_default().push(slab);
+    }
     let piece_of: BTreeMap<usize, usize> = model
         .body_pieces
         .iter()
         .flat_map(|(&owner, pieces)| pieces.iter().map(move |&p| (p, owner)))
+        .chain(roof_slabs.iter().map(|(&slab, &roof)| (slab, roof)))
         .collect();
     let mut hosted: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (i, entity) in model.entities.iter().enumerate() {
@@ -627,13 +634,21 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
         else {
             return None;
         };
-        let body = body_geometry::element_body(entity, &model.representation_maps)?;
-        let extruded = matches!(
-            body,
-            Body::Extrusion(_) | Body::Solid(SolidShape::ExtrudedArea(_))
-        );
-        let mut shells = body_shells(body);
-        for &piece in model.body_pieces.get(&index).into_iter().flatten() {
+        let slabs = slabs_of.get(&index);
+        let (extruded, mut shells) =
+            match body_geometry::element_body(entity, &model.representation_maps) {
+                Some(body) => (
+                    matches!(
+                        body,
+                        Body::Extrusion(_) | Body::Solid(SolidShape::ExtrudedArea(_))
+                    ),
+                    body_shells(body),
+                ),
+                None if slabs.is_some() => (false, Some(Vec::new())),
+                None => return None,
+            };
+        let pieces = model.body_pieces.get(&index).into_iter().flatten();
+        for &piece in pieces.chain(slabs.into_iter().flatten()) {
             let more = model
                 .entities
                 .get(piece)
