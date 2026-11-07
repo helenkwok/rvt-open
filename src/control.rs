@@ -180,3 +180,56 @@ pub fn stage(label: &str) {
         }
     });
 }
+
+/// How many threads [`map_in_order`] uses: one in the browser build, else
+/// the machine's available parallelism.
+pub(crate) fn workers() -> usize {
+    if cfg!(all(target_family = "wasm", target_os = "unknown")) {
+        1
+    } else {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    }
+}
+
+/// `items.iter().map(f).collect()`, with the items shared out among
+/// [`workers`] threads as each finishes its last. The results come back in
+/// the items' order, so the output does not depend on the thread count.
+pub(crate) fn map_in_order<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let workers = workers().min(items.len());
+    if workers <= 1 {
+        return items.iter().map(f).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut done: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut out = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(i) else { break };
+                        out.push((i, f(item)));
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    });
+    done.sort_unstable_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, r)| r).collect()
+}
+
+#[cfg(test)]
+mod map_in_order_tests {
+    #[test]
+    fn keeps_the_order() {
+        let items: Vec<u64> = (0..10_000).collect();
+        let got = super::map_in_order(&items, |&x| x * x);
+        assert_eq!(got, items.iter().map(|&x| x * x).collect::<Vec<_>>());
+        assert!(super::map_in_order(&[] as &[u8], |&x| x).is_empty());
+    }
+}

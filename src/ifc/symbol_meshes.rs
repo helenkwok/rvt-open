@@ -203,7 +203,7 @@ pub fn attach(rf: &mut crate::RevitFile, model: &mut IfcModel) -> anyhow::Result
     if candidates.is_empty() {
         return Ok(report);
     }
-    let docs = crate::family_documents::read(rf)?;
+    let docs = crate::family_documents::read_memoised(rf)?;
     let symbol_of = |id: i64| {
         let pose = docs.instances.get(&id)?;
         let symbol = pose.info_symbol.unwrap_or(pose.symbol);
@@ -466,7 +466,7 @@ pub fn add_site_content(
             }
         },
     )?;
-    let docs = crate::family_documents::read(rf)?;
+    let docs = crate::family_documents::read_memoised(rf)?;
     let missing: BTreeMap<u64, &crate::family_documents::InstancePose> = docs
         .instances
         .iter()

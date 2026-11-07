@@ -6,7 +6,7 @@
 #   tools/ci/measure-memory.sh BASE_BIN HEAD_BIN OUT_DIR FILE [heaptrack]
 #
 # Runs these variants on FILE: the base build; the head build as it is; the head build with
-# RVT_SAVED_SCENE_BATCH=256 and =4096 (saved graphics extracted that many elements at a time);
+# RVT_SAVED_SCENE_BATCH=1024 and =4096 (saved graphics extracted that many elements at a time);
 # and the head build with MALLOC_ARENA_MAX=2 (glibc keeps two heaps, so freed memory is
 # reused across threads instead of held per thread). Each variant
 # writes IFC, IFCX and .frag (rvt-ifc, --ifc4-timestamp 1970-01-01T00:00:00Z) and a .glb (rvt-gltf) under GNU
@@ -41,10 +41,10 @@ run() { # variant bin_dir env...
   echo "$name $v: $(date -u +%T) done (rvt-ifc $(cat "$tmp/$v/ifc.time" 2> /dev/null), rvt-gltf $(cat "$tmp/$v/gltf.time" 2> /dev/null); KiB s)"
 }
 
-variants="base head head-batch256 head-batch4096 head-arena2"
+variants="base head head-batch1024 head-batch4096 head-arena2"
 run base "$BASE"
 run head "$HEAD"
-run head-batch256 "$HEAD" RVT_SAVED_SCENE_BATCH=256
+run head-batch1024 "$HEAD" RVT_SAVED_SCENE_BATCH=1024
 run head-batch4096 "$HEAD" RVT_SAVED_SCENE_BATCH=4096
 run head-arena2 "$HEAD" MALLOC_ARENA_MAX=2
 

@@ -10,7 +10,7 @@
 
 use super::IfcModel;
 use super::entities::{BrepTriangle, IfcEntity, PropertyValue, SolidShape};
-use crate::family_documents::{FamilyDocuments, Route};
+use crate::family_documents::Route;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// `BodySource` of a body drawn from the family's embedded document.
@@ -116,7 +116,7 @@ pub fn attach_oriented(
     if candidates.is_empty() {
         return Ok(report);
     }
-    let docs: FamilyDocuments = crate::family_documents::read(rf)?;
+    let docs = crate::family_documents::read_memoised(rf)?;
     let mut resolver = None;
     let mut pending: Vec<(usize, crate::native_saved_materials::RenderMaterial)> = Vec::new();
     let mut rejected_symbols: BTreeSet<i64> = BTreeSet::new();

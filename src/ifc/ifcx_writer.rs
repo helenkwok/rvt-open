@@ -179,12 +179,70 @@ fn write_split(
     diagnostic: &dyn Fn(&str) -> bool,
     timestamp: i64,
 ) -> Result<(String, String, LossLedger), IfcxError> {
+    let mut main = Vec::new();
+    let (diagnostics, ledger) = write_split_to(graph, diagnostic, timestamp, &mut main)?;
+    let main = String::from_utf8(main).expect("serde_json writes UTF-8");
+    Ok((main, diagnostics, ledger))
+}
+
+/// [`write_ifcx_graph_layers_at`] with the main file written to `out` as it
+/// is built, one node at a time, instead of held whole: the same bytes. On
+/// a large model the main file is hundreds of megabytes.
+pub fn write_ifcx_graph_layers_to(
+    graph: &IfcxGraph,
+    timestamp: Option<i64>,
+    out: &mut dyn std::io::Write,
+) -> Result<(String, LossLedger), IfcxError> {
+    write_split_to(
+        graph,
+        &|k| DIAGNOSTIC_KEYS.contains(&k),
+        timestamp.unwrap_or_else(default_timestamp),
+        out,
+    )
+}
+
+/// [`write_split`], the main file written to `out`.
+fn write_split_to(
+    graph: &IfcxGraph,
+    diagnostic: &dyn Fn(&str) -> bool,
+    timestamp: i64,
+    out: &mut dyn std::io::Write,
+) -> Result<(String, LossLedger), IfcxError> {
     if let Some(e) = graph.errors.first() {
         return Err(IfcxError(e.clone()));
     }
-    let mut data = Vec::with_capacity(graph.nodes.len());
+    let io = |e: std::io::Error| IfcxError(format!("writing: {e}"));
     let mut diag_data = Vec::new();
     let mut ledger = graph.ledger.clone();
+    let schemas = |keep: &dyn Fn(&str) -> bool| -> Map<String, Value> {
+        graph
+            .schemas
+            .iter()
+            .filter(|(k, _)| keep(k))
+            .map(|(k, t)| (k.clone(), json!({"value": t.schema()})))
+            .collect()
+    };
+    // The document around an empty `data`, split where the data goes.
+    let doc = |id: String, schemas: Map<String, Value>| -> (String, String) {
+        let doc = json!({
+            "header": {
+                "id": id,
+                "ifcxVersion": "ifcx_alpha",
+                "dataVersion": "1.0.0",
+                "author": "rvt-open",
+                "timestamp": super::step_writer::iso_timestamp_from(timestamp),
+            },
+            "imports": [{"uri": IFC_IMPORT}, {"uri": PROP_IMPORT}, {"uri": USD_IMPORT}],
+            "schemas": schemas,
+            "data": [],
+        });
+        let text = serde_json::to_string(&doc).expect("a JSON value serializes");
+        let at = text.find(r#""data":["#).expect("the document has its data") + 8;
+        (text[..at].to_string(), text[at..].to_string())
+    };
+    let (before, after) = doc(graph.id.clone(), schemas(&|k| !diagnostic(k)));
+    out.write_all(before.as_bytes()).map_err(io)?;
+    let mut first = true;
     for (path, node) in graph.nodes.iter().filter(|(_, n)| n.ifcx) {
         let mut n = Map::new();
         n.insert("path".into(), json!(path));
@@ -210,44 +268,22 @@ fn write_split(
         if !attributes.is_empty() {
             n.insert("attributes".into(), Value::Object(attributes));
         }
-        data.push(Value::Object(n));
+        if !first {
+            out.write_all(b",").map_err(io)?;
+        }
+        first = false;
+        serde_json::to_writer(&mut *out, &Value::Object(n))
+            .map_err(|e| IfcxError(format!("writing: {e}")))?;
         if !diag.is_empty() {
             ledger.exporter_diagnostics += diag.len();
             diag_data.push(json!({"path": path, "attributes": diag}));
         }
     }
-    let schemas = |keep: &dyn Fn(&str) -> bool| -> Map<String, Value> {
-        graph
-            .schemas
-            .iter()
-            .filter(|(k, _)| keep(k))
-            .map(|(k, t)| (k.clone(), json!({"value": t.schema()})))
-            .collect()
-    };
-    let doc = |id: String, schemas: Map<String, Value>, data: Vec<Value>| {
-        let doc = json!({
-            "header": {
-                "id": id,
-                "ifcxVersion": "ifcx_alpha",
-                "dataVersion": "1.0.0",
-                "author": "rvt-open",
-                "timestamp": super::step_writer::iso_timestamp_from(timestamp),
-            },
-            "imports": [{"uri": IFC_IMPORT}, {"uri": PROP_IMPORT}, {"uri": USD_IMPORT}],
-            "schemas": schemas,
-            "data": data,
-        });
-        serde_json::to_string(&doc).expect("a JSON value serializes")
-    };
-    Ok((
-        doc(graph.id.clone(), schemas(&|k| !diagnostic(k)), data),
-        doc(
-            format!("{}/diagnostics", graph.id),
-            schemas(diagnostic),
-            diag_data,
-        ),
-        ledger,
-    ))
+    out.write_all(after.as_bytes()).map_err(io)?;
+    let (before, after) = doc(format!("{}/diagnostics", graph.id), schemas(diagnostic));
+    let data = serde_json::to_string(&diag_data).expect("a JSON value serializes");
+    let diagnostics = format!("{before}{}{after}", &data[1..data.len() - 1]);
+    Ok((diagnostics, ledger))
 }
 
 // ---------------------------------------------------------------- ids

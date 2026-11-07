@@ -142,7 +142,8 @@ pub use from_decoded::{BuilderOptions, ElementInput, build_ifc_model};
 pub use graph::{GraphOptions, IfcxGraph};
 pub use ifcx_writer::{
     DIAGNOSTIC_KEYS, LossLedger, write_ifcx, write_ifcx_graph, write_ifcx_graph_layers,
-    write_ifcx_graph_layers_at, write_ifcx_graph_with_ledger, write_ifcx_with_ledger,
+    write_ifcx_graph_layers_at, write_ifcx_graph_layers_to, write_ifcx_graph_with_ledger,
+    write_ifcx_with_ledger,
 };
 pub use step_writer::{write_step, write_step_graph};
 pub use usd_writer::{write_usda, write_usda_graph, write_usdc, write_usdc_graph};

@@ -335,6 +335,17 @@ pub fn read(rf: &mut RevitFile) -> Result<FamilyDocuments> {
     read_with_host(rf, host_is_family)
 }
 
+/// [`read`], kept on `rf`: the site content, family bodies and symbol mesh
+/// passes of an export each read every partition's family objects again.
+pub(crate) fn read_memoised(rf: &mut RevitFile) -> Result<std::sync::Arc<FamilyDocuments>> {
+    if let Some(docs) = rf.cached_family_documents() {
+        return Ok(docs);
+    }
+    let docs = std::sync::Arc::new(read(rf)?);
+    rf.cache_family_documents(std::sync::Arc::clone(&docs));
+    Ok(docs)
+}
+
 /// [`read`], reading the host document's own forms under [`HOST_DOCUMENT`]
 /// when `host_is_family` (a standalone family file).
 pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<FamilyDocuments> {
