@@ -304,7 +304,7 @@ realProjectDemoTest(
     await expect(page.locator('.tree-node.tree-storey').first()).toBeVisible();
 
     await page.locator('#diagnostics-details summary').click();
-    await expect(page.locator('#diagnostics-json')).toContainText('"storey_count": 4');
+    await expect(page.locator('#diagnostics-json')).toContainText('"storey_count": 1');
     // Geometry decoded, so the scaffold explainer must stay out of the way.
     await expect(page.locator('#scaffold-note')).toBeHidden();
     expect(await viewportScreenshotHasVisibleContent(page)).toBe(true);
@@ -599,8 +599,8 @@ projectSampleTest(
     await expect(page.locator('#download-diagnostics')).toBeEnabled();
     await expect(page.locator('#export-quality')).toContainText(/Geometry|Typed|Scaffold/);
 
-    // Einhoven's Level records do not decode, so its elements carry
-    // no storey and the panel says the decode is partial.
+    // Einhoven's export still carries warnings (Revit 2023's reading note
+    // among them), so the panel says the decode is partial.
     await expect(page.locator('#status-panel')).toContainText('Partial decode');
     await expect(page.locator('#status-panel')).toContainText(/unit|thickness|storey/i);
     // Document identity from the BasicFileInfo text block + Atom entry.
@@ -630,7 +630,7 @@ projectSampleTest(
     );
     await page.locator('#diagnostics-details summary').click();
     await expect(page.locator('#diagnostics-json')).toContainText('"schema_version": 1');
-    await expect(page.locator('#diagnostics-json')).toContainText('"storey_count": 4');
+    await expect(page.locator('#diagnostics-json')).toContainText('"storey_count": 1');
     await expect(page.locator('#diagnostics-json')).toContainText('"storey_names"');
     // Einhoven's material list is its 36 material objects and, since the
     // viewer builds rvt-ifc's model, the one an element takes from its saved
@@ -643,11 +643,10 @@ projectSampleTest(
     await expect(page.locator('#diagnostics-json')).not.toContainText('lack recovered thickness');
     await expect(page.locator('#diagnostics-json')).toContainText('"IFCCURTAINWALL": 1');
     await expect(page.locator('#diagnostics-json')).toContainText('"IFCPLATE": 24');
-    // All 28 elements come from 2023 element records and carry no
-    // storey, because Einhoven's Level records do not decode, and
-    // the diagnostics say so instead of guessing one.
-    await expect(page.locator('#diagnostics-json')).toContainText(
-      'unsupported_geometry_missing_level=28',
+    // All 28 elements come from 2023 element records and reach Level 1,
+    // Einhoven's one Level, through the Level id their records name.
+    await expect(page.locator('#diagnostics-json')).not.toContainText(
+      'unsupported_geometry_missing_level',
     );
     await expect(page.locator('#diagnostics-json')).toContainText(
       'Revit 2023: elements come from their records',
@@ -721,12 +720,13 @@ projectSampleTest(
     // No bare dashes standing in for an absent optional.
     await expect(info.locator('.info-row .v', { hasText: /^—$/ })).toHaveCount(0);
 
-    // The wall hosts Revit's two windows. It has no storey (Einhoven's Level
-    // records do not decode), and the panel says so rather than
-    // offering a storey link; the storey link is checked on Core Interior.
+    // The wall hosts Revit's two windows and stands on Level 1, Einhoven's
+    // one Level, at 0 ft; the storey link's jump is checked on Core Interior.
     await expect(info).toContainText(/Hosts 2 openings/);
-    await expect(info).toContainText('Not recovered: level binding');
-    await expect(info.locator('[data-group="storey"] .info-relation')).toHaveCount(0);
+    await expect(info).not.toContainText('Not recovered: level binding');
+    const storeyRelation = info.locator('[data-group="storey"] .info-relation');
+    await expect(storeyRelation).toHaveCount(1);
+    await expect(storeyRelation).toContainText('Level 1 · 0.000 ft');
 
     // Einhoven's 36 material objects bind none to a wall (only two windows
     // carry a set); the wall takes the material of its saved graphics, as
@@ -808,9 +808,8 @@ projectSampleTest(
       });
     }).toPass();
 
-    // A double-clicked storey frames everything on it. Einhoven's storeys
-    // hold nothing (its Level records do not decode), so it is the
-    // first one that holds elements: its Unassigned group.
+    // A double-clicked storey frames everything on it: the first one that
+    // holds elements, Einhoven's Level 1.
     const storey = page.locator('.tree-node.tree-storey:not(.tree-storey-empty)').first();
     await storey.dblclick();
     await expect(page.locator('#status')).toHaveText(/^Zoomed to /);

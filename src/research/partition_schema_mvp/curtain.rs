@@ -322,7 +322,9 @@ pub(super) fn attach_curtain_axes(
 /// exactly the 42 Revit exports as `IfcCurtainWall` aggregates, and on RE1
 /// Architecture the one; no other wall is named by a mullion. Walls named
 /// only by a panel are basic walls used as a panel's infill, which Revit
-/// exports as `IfcWall`, so a panel alone does not make a curtain wall.
+/// exports as `IfcWall`, so a panel alone does not make a curtain wall,
+/// except a curtain wall's only panel, whose box the wall holds (Revit 2024
+/// and later, [`panel_hosts`]).
 ///
 /// Some parts name no wall at all, only their sibling mullions: on Snowdon,
 /// the mullions of the "Solar Panels" curtain walls. Such a part takes the
@@ -411,6 +413,9 @@ pub(super) fn attach_curtain_walls_by(
         .collect();
     let grids = scan_curtain_grid_walls(rf, revit_version, &unrecorded, &wall_ids);
     curtain_walls.extend(grids.values().copied());
+    if revit_version >= PANEL_HOST_FROM_RELEASE {
+        curtain_walls.extend(panel_hosts(walls, products, &references, &curtain_walls));
+    }
     if curtain_walls.is_empty() {
         return;
     }
@@ -479,6 +484,55 @@ pub(super) fn attach_curtain_walls_by(
             }
         }
     }
+}
+
+/// The first release whose curtain walls a lone panel names (see
+/// [`panel_hosts`]); Revit 2015 to 2023 are read apart.
+const PANEL_HOST_FROM_RELEASE: u32 = 2024;
+
+/// Walls a curtain wall's only panel names: a curtain wall with no grid
+/// line and no mullion has one panel, whose reference list names its wall
+/// and no other, and whose record box lies in the wall's. On the
+/// `rme_advanced_sample_project` sample (2024 to 2027) that gives curtain walls
+/// 573660 and 573664, each holding one system panel, which Revit's export
+/// writes as `Curtain Wall:Standard` aggregates. A wall named by a panel
+/// whose box it does not hold stays a wall: on Snowdon Towers a panel that
+/// is itself a basic wall names basic wall 660424 beside it, which Revit
+/// writes as an `IfcWall`.
+fn panel_hosts(
+    walls: &[DecodedElement],
+    products: &[DecodedElement],
+    references: &[Option<Vec<u64>>],
+    known: &BTreeSet<u32>,
+) -> BTreeSet<u32> {
+    let boxes: BTreeMap<u32, [f64; 6]> = walls
+        .iter()
+        .filter_map(|wall| Some((wall.id?, element_record_bbox(wall)?)))
+        .collect();
+    let mut out = BTreeSet::new();
+    for (product, list) in products.iter().zip(references) {
+        let (Some(list), "CurtainWallPanel") = (list, product.class.as_str()) else {
+            continue;
+        };
+        let named: BTreeSet<u32> = list
+            .iter()
+            .filter_map(|&id| u32::try_from(id).ok())
+            .filter(|id| boxes.contains_key(id) && Some(*id) != product.id)
+            .collect();
+        let (1, Some(&wall)) = (named.len(), named.iter().next()) else {
+            continue;
+        };
+        if known.contains(&wall) {
+            continue;
+        }
+        let inside = element_record_bbox(product).is_some_and(|part| {
+            box_contains(&boxes[&wall], &part, CURTAIN_PART_BOX_TOLERANCE_FEET)
+        });
+        if inside {
+            out.insert(wall);
+        }
+    }
+    out
 }
 
 /// The curtain wall each id in `candidates` names as a curtain grid, by

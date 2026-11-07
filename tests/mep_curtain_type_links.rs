@@ -156,3 +156,55 @@ fn a_pipe_naming_two_types_takes_its_curve_objects(k: usize, n: usize) {
 }
 
 split!(a_pipe_naming_two_types_takes_its_curve_objects, a_pipe_naming_two_types_takes_its_curve_objects, s0 0, s1 1);
+
+/// The `rme_basic_sample_project` sample (Revit 2024) has two curtain walls
+/// with no grid line and no mullion, 573660 and 573664, each holding one
+/// system panel (573661, 573665). Revit 2024's own IFC4 export of the same
+/// project writes each as an `IfcCurtainWall` named `Curtain Wall:Standard`
+/// that aggregates its panel; the panel's reference list names its wall
+/// and no other, and the wall's record box holds the panel's.
+#[test]
+fn rme_basic_lone_panel_curtain_walls_are_curtain_walls() {
+    let Some(dir) = std::env::var_os(SAMPLES).map(PathBuf::from) else {
+        eprintln!("skipping: {SAMPLES} is not set");
+        return;
+    };
+    let path = dir.join("rmebasicsampleproject.rvt");
+    if !path.exists() {
+        eprintln!("skipping: rmebasicsampleproject.rvt absent");
+        return;
+    }
+    let mut rf = RevitFile::open(&path).expect("open");
+    let step = rvt::ifc::write_step(
+        &RvtDocExporter
+            .export_with_diagnostics(&mut rf)
+            .expect("export")
+            .model,
+    );
+    for (wall, panel) in [(573660, 573661), (573664, 573665)] {
+        let tag = format!(",'{wall}',");
+        let line = step
+            .lines()
+            .find(|line| line.contains(&tag) && line.contains("=IFCCURTAINWALL("))
+            .unwrap_or_else(|| panic!("{wall} is not an IfcCurtainWall"));
+        assert!(
+            line.contains(&format!("'Curtain Wall:Standard:{wall}'")),
+            "{line}"
+        );
+        let whole = line.split('=').next().expect("entity");
+        let part = step
+            .lines()
+            .find(|line| line.contains(&format!(",'{panel}',")) && line.contains("=IFCPLATE("))
+            .and_then(|line| line.split('=').next())
+            .unwrap_or_else(|| panic!("panel {panel}"));
+        assert!(
+            step.lines().any(|line| line.contains("=IFCRELAGGREGATES(")
+                && line.contains(&format!(",{whole},("))
+                && (line.contains(&format!("({part})"))
+                    || line.contains(&format!("({part},"))
+                    || line.contains(&format!(",{part},"))
+                    || line.contains(&format!(",{part})")))),
+            "panel {panel} is not a part of curtain wall {wall}"
+        );
+    }
+}

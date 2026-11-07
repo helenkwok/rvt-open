@@ -1259,13 +1259,10 @@ pub fn scan_partition_levels(
     if !recovered_levels_are_a_storey_set(&records, &levels) {
         return Ok(Vec::new());
     }
-    // One Level is the storey set only on 2024 to 2027 and when no other
-    // Level frames anywhere: a second Level the full recovery missed would
-    // otherwise leave its elements on the wrong storey.
-    if levels.len() == 1
-        && (crate::partition_element_records_2023::is_32bit_release(revit_version)
-            || scan_partition_level_ids(rf, revit_version, declared_ids)?.len() != 1)
-    {
+    // One Level is the storey set only when no other Level frames anywhere:
+    // a second Level the full recovery missed would otherwise leave its
+    // elements on the wrong storey.
+    if levels.len() == 1 && scan_partition_level_ids(rf, revit_version, declared_ids)?.len() != 1 {
         return Ok(Vec::new());
     }
     if recording {
