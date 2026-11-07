@@ -206,7 +206,7 @@ pub(crate) fn map_in_order<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + 
                 scope.spawn(|| {
                     let mut out = Vec::new();
                     loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(item) = items.get(i) else { break };
                         out.push((i, f(item)));
                     }

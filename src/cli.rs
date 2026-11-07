@@ -242,3 +242,47 @@ pub fn write_output(
         _ => craft_atomic::atomic_write(path, bytes.as_ref()),
     }
 }
+
+/// [`write_output`] with the bytes written by `fill` as it makes them, through
+/// a buffer, instead of held whole first. Returns what `fill` returned and
+/// the number of bytes written; `fill`'s error leaves no output behind where
+/// [`write_output`] would have replaced the file.
+pub fn write_output_with<T, E: std::error::Error + Send + Sync + 'static>(
+    path: impl AsRef<std::path::Path>,
+    fill: impl FnOnce(&mut dyn std::io::Write) -> Result<T, E>,
+) -> std::io::Result<(u64, T)> {
+    let path = path.as_ref();
+    let mut result = None;
+    let write = |file: &mut std::fs::File| -> std::io::Result<()> {
+        let mut out = Counted {
+            inner: std::io::BufWriter::new(file),
+            written: 0,
+        };
+        let value = fill(&mut out).map_err(std::io::Error::other)?;
+        std::io::Write::flush(&mut out)?;
+        result = Some((out.written, value));
+        Ok(())
+    };
+    match std::fs::metadata(path) {
+        Ok(meta) if !meta.is_file() => write(&mut std::fs::File::create(path)?)?,
+        _ => craft_atomic::atomic_write_with(path, write)?,
+    }
+    Ok(result.expect("written"))
+}
+
+/// A writer that counts the bytes it passes on.
+struct Counted<W> {
+    inner: W,
+    written: u64,
+}
+
+impl<W: std::io::Write> std::io::Write for Counted<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.written += n as u64;
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}

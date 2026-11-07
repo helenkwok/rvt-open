@@ -10,7 +10,7 @@ use clap::{Parser, ValueEnum};
 use rvt::{
     RevitFile,
     ifc::{
-        ExportConvention, ExportDiagnostics, ExportQualityMode, write_ifcx_graph_layers_at,
+        ExportConvention, ExportDiagnostics, ExportQualityMode, write_ifcx_graph_layers_to,
         write_usda_graph, write_usdc_graph,
     },
     walker::WalkerLimits,
@@ -666,22 +666,22 @@ fn run(args: Args) -> anyhow::Result<()> {
     eprintln!("rvt-ifc: wrote {written} bytes to {}", out_path.display());
     if let Some(ifcx_path) = &args.ifcx {
         rvt::control::stage("write ifcx");
-        let (text, diagnostics_layer, ledger) = write_ifcx_graph_layers_at(
-            &graph,
-            // header time: --ifc4-timestamp, SOURCE_DATE_EPOCH, else the input file's own modified time
-            timestamp.or_else(|| {
-                std::fs::metadata(&args.input)
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64)
-            }),
-        )?;
-        rvt::cli::write_output(ifcx_path, text.as_bytes())?;
+        // header time: --ifc4-timestamp, SOURCE_DATE_EPOCH, else the input file's own modified time
+        let ifcx_time = timestamp.or_else(|| {
+            std::fs::metadata(&args.input)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+        });
+        // Written as it is built, not held whole.
+        let (written, (diagnostics_layer, ledger)) =
+            rvt::cli::write_output_with(ifcx_path, |out| {
+                write_ifcx_graph_layers_to(&graph, ifcx_time, out)
+            })?;
         report.output("ifcx", ifcx_path);
         eprintln!(
-            "rvt-ifc: wrote {} IFCX bytes to {}",
-            text.len(),
+            "rvt-ifc: wrote {written} IFCX bytes to {}",
             ifcx_path.display()
         );
         if let Some(p) = &args.ifcx_diagnostics {

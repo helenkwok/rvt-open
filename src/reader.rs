@@ -216,7 +216,16 @@ pub struct RevitFile {
     /// Header offsets of the data objects a full scan of each partition
     /// verified (trailing size and Adler-32), by stream and id width, so the
     /// later scans of the same partition skip the search and the checksums.
-    frame_starts: std::collections::HashMap<(String, crate::schema_objects::IdWidth), Arc<Vec<usize>>>,
+    frame_starts:
+        std::collections::HashMap<(String, crate::schema_objects::IdWidth), Arc<Vec<usize>>>,
+    /// The groups of each partition a native walk found, by stream and group
+    /// budget, where every group is a span of the inflated stream: each
+    /// native extraction (a dozen per export, more with smaller saved-graphics
+    /// batches) read and parsed the stored stream again.
+    partition_walks: std::collections::HashMap<
+        (String, usize),
+        Arc<crate::research::native_segments::PartitionWalk>,
+    >,
     /// Memoised offsets of an element-data header in a partition, by stream
     /// and header: a dozen element-data readers each searched every partition
     /// for the release's header.
@@ -261,6 +270,12 @@ pub struct RevitFile {
     >,
     /// Memoised materials each category's graphics styles name.
     category_style_materials: Option<Arc<BTreeMap<i64, BTreeSet<u32>>>>,
+    /// Memoised saved-graphics material resolver: the saved graphics, the
+    /// openings and the saved materials passes each built it from every
+    /// element.
+    saved_material_resolver: Option<Arc<crate::native_saved_materials::Resolver>>,
+    /// Memoised family documents ([`crate::family_documents::read`]).
+    family_documents: Option<Arc<crate::family_documents::FamilyDocuments>>,
     /// Streams a resource limit kept from being read whole.
     unread_streams: Vec<UnreadStream>,
     /// Doors and windows written as such though their type's record was not
@@ -633,6 +648,7 @@ impl RevitFile {
             data_objects: std::collections::HashMap::new(),
             header_hits: std::collections::HashMap::new(),
             frame_starts: std::collections::HashMap::new(),
+            partition_walks: std::collections::HashMap::new(),
             native_preamble: None,
             limit_events: BTreeSet::new(),
             skip_events: BTreeSet::new(),
@@ -644,6 +660,8 @@ impl RevitFile {
             material_names: std::collections::HashMap::new(),
             material_appearances: std::collections::HashMap::new(),
             category_style_materials: None,
+            saved_material_resolver: None,
+            family_documents: None,
             unread_streams: Vec::new(),
             unread_type_doors_windows: BTreeSet::new(),
             wall_cut_steps_memo: BTreeMap::new(),
@@ -1114,6 +1132,28 @@ impl RevitFile {
         self.frame_starts.get(&(name.to_string(), width)).cloned()
     }
 
+    /// The groups of partition `name` an earlier native walk under `budget` kept.
+    pub(crate) fn partition_walk(
+        &self,
+        name: &str,
+        budget: usize,
+    ) -> Option<Arc<crate::research::native_segments::PartitionWalk>> {
+        self.partition_walks
+            .get(&(name.to_string(), budget))
+            .cloned()
+    }
+
+    /// Keep the groups of partition `name` a native walk under `budget` found.
+    pub(crate) fn keep_partition_walk(
+        &mut self,
+        name: &str,
+        budget: usize,
+        walk: crate::research::native_segments::PartitionWalk,
+    ) {
+        self.partition_walks
+            .insert((name.to_string(), budget), Arc::new(walk));
+    }
+
     /// Keep the verified data-object offsets of partition `name`.
     pub(crate) fn keep_frame_starts(
         &mut self,
@@ -1275,6 +1315,36 @@ impl RevitFile {
         materials: Arc<BTreeMap<i64, BTreeSet<u32>>>,
     ) {
         self.category_style_materials = Some(materials);
+    }
+
+    /// The memoised family documents.
+    pub(crate) fn cached_family_documents(
+        &self,
+    ) -> Option<Arc<crate::family_documents::FamilyDocuments>> {
+        self.family_documents.clone()
+    }
+
+    /// Memoise the family documents.
+    pub(crate) fn cache_family_documents(
+        &mut self,
+        docs: Arc<crate::family_documents::FamilyDocuments>,
+    ) {
+        self.family_documents = Some(docs);
+    }
+
+    /// The memoised saved-graphics material resolver.
+    pub(crate) fn cached_saved_material_resolver(
+        &self,
+    ) -> Option<Arc<crate::native_saved_materials::Resolver>> {
+        self.saved_material_resolver.clone()
+    }
+
+    /// Memoise the saved-graphics material resolver.
+    pub(crate) fn cache_saved_material_resolver(
+        &mut self,
+        resolver: Arc<crate::native_saved_materials::Resolver>,
+    ) {
+        self.saved_material_resolver = Some(resolver);
     }
 
     /// Family and type names from the partition name entries, with each

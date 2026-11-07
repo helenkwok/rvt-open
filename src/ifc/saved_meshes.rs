@@ -264,6 +264,26 @@ const SAVED_SCENE_BATCH: usize = 256;
 #[cfg(not(target_family = "wasm"))]
 const SAVED_SCENE_BATCH: usize = 1024;
 
+/// The saved-graphics material resolver every pass here uses, built from
+/// every element once per file and kept on `rf`.
+fn material_resolver(
+    rf: &mut crate::RevitFile,
+) -> anyhow::Result<std::sync::Arc<crate::native_saved_materials::Resolver>> {
+    if let Some(resolver) = rf.cached_saved_material_resolver() {
+        return Ok(resolver);
+    }
+    let resolver = std::sync::Arc::new(crate::native_saved_scene::saved_material_resolver(
+        rf,
+        &crate::native_document::Options {
+            max_graph_values: 1_000_000,
+            max_graph_objects: 1_000_000,
+            ..Default::default()
+        },
+    )?);
+    rf.cache_saved_material_resolver(std::sync::Arc::clone(&resolver));
+    Ok(resolver)
+}
+
 /// [`SAVED_SCENE_BATCH`], or on native builds `RVT_SAVED_SCENE_BATCH` when it
 /// is set, to measure the memory and time of other batch sizes. The output
 /// is the same for any batch size.
@@ -397,14 +417,7 @@ pub fn attach_scoped_in_batches(
     let poses = pre_2023_instance_poses(rf);
     // The material pass reads every element whatever the batch selects:
     // run it once, not once per batch.
-    let materials = crate::native_saved_scene::saved_material_resolver(
-        rf,
-        &crate::native_document::Options {
-            max_graph_values: 1_000_000,
-            max_graph_objects: 1_000_000,
-            ..Default::default()
-        },
-    )?;
+    let materials = material_resolver(rf)?;
     for batch in ids.chunks(batch_size.max(1)) {
         let mut selected: BTreeSet<u64> = batch.iter().copied().collect();
         for id in batch {
@@ -425,7 +438,7 @@ pub fn attach_scoped_in_batches(
             3,
             control,
             true,
-            Some(&materials),
+            Some(&*materials),
         )?;
         crate::control::stage("saved graphics: attach");
         // A railing's continuous rails, set aside to join its body.
@@ -807,8 +820,8 @@ fn pre_2023_instance_poses(
     if release >= 2023 {
         return BTreeMap::new();
     }
-    crate::family_documents::read(rf)
-        .map(|d| d.instances)
+    crate::family_documents::read_memoised(rf)
+        .map(|d| d.instances.clone())
         .unwrap_or_default()
 }
 
@@ -930,14 +943,7 @@ pub fn attach_display_bodies_for(
     let materials = if ids.is_empty() {
         Default::default()
     } else {
-        crate::native_saved_scene::saved_material_resolver(
-            rf,
-            &crate::native_document::Options {
-                max_graph_values: 1_000_000,
-                max_graph_objects: 1_000_000,
-                ..Default::default()
-            },
-        )?
+        material_resolver(rf)?
     };
     for batch in ids.chunks(batch_size.max(1)) {
         let options = crate::native_document::Options {
@@ -952,7 +958,7 @@ pub fn attach_display_bodies_for(
             3,
             control,
             false,
-            Some(&materials),
+            Some(&*materials),
         )?;
         crate::control::stage("saved graphics: openings");
         for element in scene.elements {
@@ -1341,14 +1347,7 @@ pub fn attach_materials_in_batches(
     let mut set = 0;
     // The material pass reads every element whatever the batch selects:
     // run it once, not once per batch.
-    let materials = crate::native_saved_scene::saved_material_resolver(
-        rf,
-        &crate::native_document::Options {
-            max_graph_values: 1_000_000,
-            max_graph_objects: 1_000_000,
-            ..Default::default()
-        },
-    )?;
+    let materials = material_resolver(rf)?;
     for batch in ids.chunks(batch_size.max(1)) {
         let options = crate::native_document::Options {
             selected_ids: batch.iter().copied().collect(),
@@ -1362,7 +1361,7 @@ pub fn attach_materials_in_batches(
             3,
             &crate::control::WalkerControl::default(),
             false,
-            Some(&materials),
+            Some(&*materials),
         )?;
         crate::control::stage("saved materials: apply");
         // By value, as in `attach_scoped_with_control`: freed as it is read.

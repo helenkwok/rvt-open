@@ -659,8 +659,9 @@ pub struct PartitionRead {
 }
 
 /// Call `visit` with every data object of every partition of `rf`, read by
-/// its schema, and return each partition's gaps. One object is held at a
-/// time, so memory stays bounded by the largest partition.
+/// its schema, and return each partition's gaps. At most [`READ_CHUNK`]
+/// objects are held at a time, so memory stays bounded by the largest
+/// partition.
 pub fn for_each_object(
     rf: &mut RevitFile,
     mut visit: impl FnMut(&SchemaObject),
@@ -676,12 +677,34 @@ pub fn for_each_object(
         let inflated = rf.inflated_partition(&name)?;
         let buf = inflated.bytes();
         let (found, gaps) = partition_frames(rf, &name, buf, width);
-        for frame in found {
-            visit(&read_frame(&layouts, &name, buf, frame));
-        }
+        read_frames_in_order(&layouts, &name, buf, &found, &mut visit);
         out.push((name, gaps));
     }
     Ok(out)
+}
+
+/// Data objects [`read_frames_in_order`] reads at once: enough to keep every
+/// core busy, few enough that memory stays bounded by a slice of a partition.
+const READ_CHUNK: usize = 4096;
+
+/// `visit` each of `frames` read by its schema, in order. The frames are read
+/// a chunk at a time on every core ([`crate::control::map_in_order`]), so
+/// what `visit` sees and in what order does not depend on the thread count.
+fn read_frames_in_order(
+    layouts: &SchemaLayouts,
+    stream: &str,
+    buf: &[u8],
+    frames: &[Frame],
+    visit: &mut impl FnMut(&SchemaObject),
+) {
+    for chunk in frames.chunks(READ_CHUNK) {
+        let objects = crate::control::map_in_order(chunk, |frame| {
+            read_frame(layouts, stream, buf, frame.clone())
+        });
+        for object in &objects {
+            visit(object);
+        }
+    }
 }
 
 /// [`for_each_object`] for the data objects `keep` accepts, given each
@@ -701,12 +724,9 @@ pub fn for_each_object_where(
         }
         let inflated = rf.inflated_partition(&name)?;
         let buf = inflated.bytes();
-        let (found, _) = partition_frames(rf, &name, buf, width);
-        for frame in found {
-            if keep(&frame, buf) {
-                visit(&read_frame(&layouts, &name, buf, frame));
-            }
-        }
+        let (mut found, _) = partition_frames(rf, &name, buf, width);
+        found.retain(|frame| keep(frame, buf));
+        read_frames_in_order(&layouts, &name, buf, &found, &mut visit);
     }
     Ok(())
 }

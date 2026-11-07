@@ -37,6 +37,14 @@ pub struct Statistics {
     pub opaque_terminal_bytes: usize,
     pub opaque_terminal_sha256: String,
 }
+/// A partition's groups, each with the members of the inflated stream its
+/// bytes span, and the walk's statistics: what a later walk of the same
+/// partition under the same budget replays (`RevitFile::partition_walk`).
+#[derive(Debug, Default)]
+pub(crate) struct PartitionWalk {
+    pub(crate) groups: Vec<(GroupSource, (usize, usize))>,
+    pub(crate) stats: Statistics,
+}
 struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
@@ -118,6 +126,24 @@ pub fn walk_inflated(
     registry: &Registry,
     max_group_bytes: usize,
     mut callback: impl FnMut(&GroupSource, &[u8]) -> Result<()>,
+) -> Result<Statistics> {
+    walk_inflated_spans(
+        prepared,
+        inflated,
+        registry,
+        max_group_bytes,
+        |source, bytes, _| callback(source, bytes),
+    )
+}
+/// [`walk_inflated`], also giving the callback the first and last member of
+/// `inflated` whose span ([`InflatedStream::members_span`]) the group's bytes
+/// are, when they are such a span rather than a copy.
+pub(crate) fn walk_inflated_spans(
+    prepared: &[u8],
+    inflated: Option<&InflatedStream>,
+    registry: &Registry,
+    max_group_bytes: usize,
+    mut callback: impl FnMut(&GroupSource, &[u8], Option<(usize, usize)>) -> Result<()>,
 ) -> Result<Statistics> {
     ensure!(max_group_bytes > 0, "zero partition group budget");
     let tag = |name: &str| {
@@ -293,7 +319,7 @@ pub fn walk_inflated(
                     (Some((first, _)), Some(stream)) => stream.member_start(first),
                     _ => None,
                 };
-                callback(&source, &group.data)?;
+                callback(&source, &group.data, group.span)?;
                 stats.groups += 1;
             }
         } else if next == checkback_tag {
