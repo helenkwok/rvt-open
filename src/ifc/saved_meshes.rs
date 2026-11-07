@@ -259,10 +259,9 @@ pub fn attach_with_control(
 /// it was the largest stage (BIM4LCA housing models: about 1.6 of 2.8 GB).
 /// The material pass runs once for all batches. Each element meshes from its
 /// own graphs, so the result does not depend on the batch.
-#[cfg(target_family = "wasm")]
+/// 256 natively too: against 1,024 it cut the peak by up to 47% on the
+/// Memory workflow's six models for at most 9% more time.
 const SAVED_SCENE_BATCH: usize = 256;
-#[cfg(not(target_family = "wasm"))]
-const SAVED_SCENE_BATCH: usize = 1024;
 
 /// The saved-graphics material resolver every pass here uses, built from
 /// every element once per file and kept on `rf`.
