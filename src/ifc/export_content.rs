@@ -7672,6 +7672,29 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                 });
             }
         }
+        // Every wall in a join of three or more walls at this end.
+        if let Some(walls) = decoded.fields.iter().find_map(|(name, value)| match value {
+            InstanceField::Vector(items)
+                if name == crate::partition_schema_mvp::WALL_JOIN_WALLS_FIELDS[slot] =>
+            {
+                Some(items)
+            }
+            _ => None,
+        }) {
+            let ids: Vec<String> = walls
+                .iter()
+                .filter_map(|item| match item {
+                    InstanceField::ElementId { id, .. } => Some(id.to_string()),
+                    _ => None,
+                })
+                .collect();
+            if !ids.is_empty() {
+                properties.push(Property {
+                    name: format!("Join{end}WallElementIds"),
+                    value: PropertyValue::Text(ids.join(",")),
+                });
+            }
+        }
         // How the end is joined, as the wall's record gives it: Revit's
         // join type, or Disallowed.
         if let Some(kind) = decoded.fields.iter().find_map(|(name, value)| match value {
