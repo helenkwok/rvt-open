@@ -1,5 +1,6 @@
 //! `--convention revit` maps family instances as Revit's export
-//! does, and every type the file defines is written, placed or not.
+//! does and writes only the types its elements use; `--convention open`
+//! also writes every type the file defines, placed or not.
 //!
 //! Revit 2027's own IFC4 exports of the Nordic models draw every family
 //! instance (doors, windows, members, columns, beams, plates, furniture,
@@ -8,7 +9,7 @@
 //! and never a wall, slab, covering, railing, stair, roof or opening. This
 //! checks the `revit` sharing against that rule on the library's model and
 //! its IFC4, and pins the counts, including the unplaced types (which
-//! Revit's export leaves out and rvt-open writes).
+//! Revit's export leaves out, and rvt-open writes under `open` only).
 //!
 //! Real file: `ARK_NordicLCA_Office_Concrete_BuildingPermit.rvt` (Nordic
 //! LCA / BIM4LCA, Revit 2024; VTT, Granlund, Gravicon, Insinööritoimisto
@@ -36,7 +37,7 @@ const NEVER_MAPPED: &[&str] = &[
 ];
 
 #[test]
-fn nordic_office_concrete_maps_family_instances_and_writes_every_type() {
+fn nordic_office_concrete_maps_family_instances_and_writes_used_types() {
     let Some(dir) = std::env::var_os("RVT_NORDIC_LCA_DIR").map(PathBuf::from) else {
         eprintln!("skipping: RVT_NORDIC_LCA_DIR is not set");
         return;
@@ -122,6 +123,36 @@ fn nordic_office_concrete_maps_family_instances_and_writes_every_type() {
         PINS,
         "(maps, mapped items, type objects, typed, unplaced type objects)"
     );
+
+    // `open` adds the types no element uses, and nothing else.
+    model.convention = rvt::ifc::ExportConvention::Open;
+    let open = write_step_graph(&IfcxGraph::from_model(
+        &model,
+        GraphOptions {
+            meshes: false,
+            shared_shapes: true,
+        },
+    ));
+    let open_lines: Vec<&str> = open.lines().collect();
+    let open_types = open_lines
+        .iter()
+        .filter(|l| {
+            l.split_once('=').is_some_and(|(_, e)| {
+                e.starts_with("IFC")
+                    && !e.starts_with("IFCREL")
+                    && e.split('(').next().is_some_and(|n| n.ends_with("TYPE"))
+            })
+        })
+        .count();
+    let open_typed = open_lines
+        .iter()
+        .filter(|l| l.contains("=IFCRELDEFINESBYTYPE("))
+        .count();
+    assert_eq!(
+        (open_types, open_typed),
+        OPEN_TYPES,
+        "(type objects, typed) under open"
+    );
 }
 
 /// Pinned: 1,944 maps (Revit 2027's own export:
@@ -130,4 +161,9 @@ fn nordic_office_concrete_maps_family_instances_and_writes_every_type() {
 /// types, 30 more type objects holding their maps: 2,270 and 2,234.
 // IfcFlowTerminal; the same three gained plan footprints in plan_maps_and_spaces.
 // against the 340 pin, measured by the gate.
-const PINS: (usize, usize, usize, usize, usize) = (1_935, 11_691, 2_260, 2_226, 34);
+// The revit convention writes no unplaced type (34 before it left them out).
+const PINS: (usize, usize, usize, usize, usize) = (1_935, 11_691, 2_226, 2_226, 0);
+
+/// Under `open`: the 2,226 typed type objects and the 34 types no element
+/// uses.
+const OPEN_TYPES: (usize, usize) = (2_260, 2_226);
