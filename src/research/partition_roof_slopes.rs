@@ -107,9 +107,8 @@ pub fn edge_slope_in(data: &[u8], revit_version: u32) -> Option<EdgeSlope> {
         let plane_raise = revit_version >= 2025;
         if defines_slope {
             let rise_over_run = le_bytes::f64_at(data, at + 0x3b)?;
-            let recorded = plane_raise
-                || rise_over_run == 0.0
-                || (rise_over_run + angle.tan()).abs() <= 1e-9;
+            let recorded =
+                plane_raise || rise_over_run == 0.0 || (rise_over_run + angle.tan()).abs() <= 1e-9;
             if !recorded {
                 return None;
             }
