@@ -76,7 +76,7 @@ const MAX_OBJECTS: usize = 1 << 16;
 pub const ES_BLOB_TAG: u16 = u16::MAX;
 
 /// How an object header writes its id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IdWidth {
     /// `u32` (before Revit 2024).
     Narrow,
@@ -134,6 +134,14 @@ fn u32_at(buf: &[u8], at: usize) -> Option<u32> {
 /// The data object whose header starts at `p`, if its trailing size and
 /// Adler-32 verify.
 pub fn frame_at(buf: &[u8], p: usize, width: IdWidth) -> Option<Frame> {
+    let frame = frame_unchecked(buf, p, width)?;
+    let mut sum = simd_adler32::Adler32::new();
+    sum.write(&buf[frame.payload.clone()]);
+    (sum.finish() == frame.header.adler).then_some(frame)
+}
+
+/// [`frame_at`] without the Adler-32: for offsets a scan already verified.
+fn frame_unchecked(buf: &[u8], p: usize, width: IdWidth) -> Option<Frame> {
     let w = width.bytes();
     let id_lo = u32_at(buf, p)?;
     if width == IdWidth::Wide && u32_at(buf, p + 4)? != 0 {
@@ -144,11 +152,6 @@ pub fn frame_at(buf: &[u8], p: usize, width: IdWidth) -> Option<Frame> {
     let start = p + w + 8;
     let end = start.checked_add(size as usize)?;
     if size < 2 || u32_at(buf, end)? != size {
-        return None;
-    }
-    let mut sum = simd_adler32::Adler32::new();
-    sum.write(&buf[start..end]);
-    if sum.finish() != adler {
         return None;
     }
     Some(Frame {
@@ -193,6 +196,38 @@ pub fn frames(buf: &[u8], width: IdWidth) -> (Vec<Frame>, Vec<Range<usize>>) {
         gaps.push(gap_start..buf.len());
     }
     (out, gaps)
+}
+
+/// [`frames`] of partition `name` (inflated bytes `buf`). The first scan of a
+/// partition sums every object's Adler-32; it keeps the header offsets it
+/// verified ([`RevitFile`]), so the many later passes over the same partition
+/// rebuild the same frames and gaps from them without summing again.
+fn partition_frames(
+    rf: &mut RevitFile,
+    name: &str,
+    buf: &[u8],
+    width: IdWidth,
+) -> (Vec<Frame>, Vec<Range<usize>>) {
+    if let Some(starts) = rf.frame_starts(name, width) {
+        let found: Vec<Frame> = starts
+            .iter()
+            .filter_map(|&p| frame_unchecked(buf, p, width))
+            .collect();
+        let (mut gaps, mut gap_start) = (Vec::new(), 0);
+        for frame in &found {
+            if gap_start < frame.span.start {
+                gaps.push(gap_start..frame.span.start);
+            }
+            gap_start = frame.span.end;
+        }
+        if gap_start < buf.len() {
+            gaps.push(gap_start..buf.len());
+        }
+        return (found, gaps);
+    }
+    let (found, gaps) = frames(buf, width);
+    rf.keep_frame_starts(name, width, found.iter().map(|f| f.span.start).collect());
+    (found, gaps)
 }
 
 /// One field value.
@@ -640,7 +675,7 @@ pub fn for_each_object(
         }
         let inflated = rf.inflated_partition(&name)?;
         let buf = inflated.bytes();
-        let (found, gaps) = frames(buf, width);
+        let (found, gaps) = partition_frames(rf, &name, buf, width);
         for frame in found {
             visit(&read_frame(&layouts, &name, buf, frame));
         }
@@ -666,7 +701,7 @@ pub fn for_each_object_where(
         }
         let inflated = rf.inflated_partition(&name)?;
         let buf = inflated.bytes();
-        let (found, _) = frames(buf, width);
+        let (found, _) = partition_frames(rf, &name, buf, width);
         for frame in found {
             if keep(&frame, buf) {
                 visit(&read_frame(&layouts, &name, buf, frame));

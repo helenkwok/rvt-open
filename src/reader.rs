@@ -213,6 +213,10 @@ pub struct RevitFile {
     /// original symbols, railing types and MEP systems each scanned every
     /// partition for them.
     data_objects: std::collections::HashMap<String, PartitionDataObjects>,
+    /// Header offsets of the data objects a full scan of each partition
+    /// verified (trailing size and Adler-32), by stream and id width, so the
+    /// later scans of the same partition skip the search and the checksums.
+    frame_starts: std::collections::HashMap<(String, crate::schema_objects::IdWidth), Arc<Vec<usize>>>,
     /// Memoised offsets of an element-data header in a partition, by stream
     /// and header: a dozen element-data readers each searched every partition
     /// for the release's header.
@@ -628,6 +632,7 @@ impl RevitFile {
             partition_progress: None,
             data_objects: std::collections::HashMap::new(),
             header_hits: std::collections::HashMap::new(),
+            frame_starts: std::collections::HashMap::new(),
             native_preamble: None,
             limit_events: BTreeSet::new(),
             skip_events: BTreeSet::new(),
@@ -1098,6 +1103,26 @@ impl RevitFile {
             name,
             self.read_stream(name)?,
         ))
+    }
+
+    /// The verified data-object offsets of partition `name` an earlier scan kept.
+    pub(crate) fn frame_starts(
+        &self,
+        name: &str,
+        width: crate::schema_objects::IdWidth,
+    ) -> Option<Arc<Vec<usize>>> {
+        self.frame_starts.get(&(name.to_string(), width)).cloned()
+    }
+
+    /// Keep the verified data-object offsets of partition `name`.
+    pub(crate) fn keep_frame_starts(
+        &mut self,
+        name: &str,
+        width: crate::schema_objects::IdWidth,
+        starts: Vec<usize>,
+    ) {
+        self.frame_starts
+            .insert((name.to_string(), width), Arc::new(starts));
     }
 
     /// Every offset of `header` in partition `name`'s inflated bytes, in

@@ -605,22 +605,29 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
             hosted.entry(*host).or_default().push(i);
         }
     }
-    let mut out = Vec::new();
-    for (index, entity) in model.entities.iter().enumerate() {
+    // Each element is measured on its own: share them out among threads,
+    // keeping the model's order.
+    let candidates: Vec<usize> = model
+        .entities
+        .iter()
+        .enumerate()
+        .filter(|(index, entity)| {
+            matches!(entity, IfcEntity::BuildingElement { ifc_type, .. }
+                if !piece_of.contains_key(index) && is_material_class(ifc_type))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let measure_one = |&index: &usize| -> Option<ElementQuantities> {
+        let entity = &model.entities[index];
         let IfcEntity::BuildingElement {
             ifc_type,
             type_guid,
             ..
         } = entity
         else {
-            continue;
+            return None;
         };
-        if piece_of.contains_key(&index) || !is_material_class(ifc_type) {
-            continue;
-        }
-        let Some(body) = body_geometry::element_body(entity, &model.representation_maps) else {
-            continue;
-        };
+        let body = body_geometry::element_body(entity, &model.representation_maps)?;
         let extruded = matches!(
             body,
             Body::Extrusion(_) | Body::Solid(SolidShape::ExtrudedArea(_))
@@ -752,9 +759,12 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
                 layer_width_feet: None,
             });
         }
-        out.push(q);
-    }
-    out
+        Some(q)
+    };
+    crate::control::map_in_order(&candidates, measure_one)
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// The IFC4 quantities `q` gives its class's set: (name, value).
