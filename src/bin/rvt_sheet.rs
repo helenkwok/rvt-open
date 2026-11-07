@@ -14,13 +14,23 @@
 //! rvt-sheet --src model.rvt --dst plan.svg             # older spelling, still accepted
 //! rvt-sheet model.rvt --format dxf                     # writes model.dxf (millimetres, layers by category)
 //! rvt-sheet model.rvt --format dwg --dwg-version 2013  # writes model.dwg
+//! rvt-sheet model.rvt --list-views                     # the plan views, as JSON
+//! rvt-sheet model.rvt --view "Level 1" --format dxf    # only what that plan view shows
+//! rvt-sheet model.rvt --level "Level 2" --cut-height 1200
 //! ```
+//!
+//! `--view` draws what a plan view shows: the elements between its view depth and its cut plane,
+//! clipped to its crop region when the crop is on, with its room tags, grid heads, text notes and
+//! dimensions as labels in DXF and DWG. `--level` draws the band from a level (by name or
+//! elevation in millimetres) up to `--cut-height` above it, with no crop.
 
 use clap::Parser;
 use rvt::RevitFile;
 use rvt::ifc::{
     Exporter, RvtDocExporter,
-    sheet::{SheetOptions, render_plan_svg},
+    sheet::{
+        CropRect, PlanAnnotation, PlanLine, PlanText, SheetOptions, ViewWindow, render_plan_svg,
+    },
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -88,6 +98,23 @@ struct Cli {
     /// Print element count + output size on success.
     #[arg(long)]
     verbose: bool,
+
+    /// Draw only what this plan view shows (its name; see `--list-views`).
+    #[arg(long, conflicts_with = "level")]
+    view: Option<String>,
+
+    /// Draw only the band from this level (its name, or its elevation in millimetres) to
+    /// `--cut-height` above it.
+    #[arg(long)]
+    level: Option<String>,
+
+    /// Cut height above `--level`, millimetres (a plan's usual cut plane).
+    #[arg(long, default_value_t = 1200.0, requires = "level")]
+    cut_height: f64,
+
+    /// Print the plan views (name, level, view range, crop, in feet) as JSON and exit.
+    #[arg(long)]
+    list_views: bool,
 }
 
 fn main() -> ExitCode {
@@ -132,6 +159,19 @@ fn run(cli: &Cli) -> Result<(), String> {
     )?;
     // Open errors from the library already name the file.
     let mut rf = RevitFile::open(&input).map_err(|e| e.to_string())?;
+    if cli.list_views {
+        let facts = rvt::plan_views::read(&mut rf).map_err(|e| e.to_string())?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&facts.views).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    let facts = if cli.view.is_some() {
+        Some(rvt::plan_views::read(&mut rf).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
     let model = RvtDocExporter
         .export(&mut rf)
         .map_err(|e| format!("export {}: {e}", input.display()))?;
@@ -145,6 +185,15 @@ fn run(cli: &Cli) -> Result<(), String> {
             "rvt-sheet: the project's last phase holds no room, so the rooms of {phase:?}, the latest phase that holds any, are drawn; every other element is of the last phase"
         );
     }
+    let (window, annotation) = match (&cli.view, &facts, &cli.level) {
+        (Some(name), Some(facts), _) => {
+            let view = facts.find(name)?;
+            let (window, annotation) = view_window(&model, facts, view)?;
+            (Some(window), Some(annotation))
+        }
+        (_, _, Some(level)) => (Some(level_window(&model, level, cli.cut_height)?), None),
+        _ => (None, None),
+    };
     let options = SheetOptions {
         width_px: cli.width,
         height_px: cli.height,
@@ -155,6 +204,8 @@ fn run(cli: &Cli) -> Result<(), String> {
         } else {
             Some("#FFFFFF".into())
         },
+        window,
+        annotation,
     };
     let bytes = match cli.format.as_str() {
         "svg" => render_plan_svg(&model, &options).into_bytes(),
@@ -185,6 +236,158 @@ fn run(cli: &Cli) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+const MM_PER_FOOT: f64 = 304.8;
+
+/// The band of `--level`: the level found by name (exact, then ignoring case) or by elevation in
+/// millimetres (the nearest within 1 mm), up to `cut_mm` above it.
+fn level_window(
+    model: &rvt::ifc::IfcModel,
+    level: &str,
+    cut_mm: f64,
+) -> Result<ViewWindow, String> {
+    let storeys = &model.building_storeys;
+    let found = storeys
+        .iter()
+        .find(|s| s.name == level)
+        .or_else(|| storeys.iter().find(|s| s.name.eq_ignore_ascii_case(level)))
+        .or_else(|| {
+            let mm: f64 = level.trim().parse().ok()?;
+            storeys
+                .iter()
+                .filter(|s| (s.elevation_feet * MM_PER_FOOT - mm).abs() <= 1.0)
+                .min_by(|a, b| {
+                    (a.elevation_feet * MM_PER_FOOT - mm)
+                        .abs()
+                        .total_cmp(&(b.elevation_feet * MM_PER_FOOT - mm).abs())
+                })
+        })
+        .ok_or_else(|| {
+            let names: Vec<String> = storeys
+                .iter()
+                .map(|s| format!("{} ({:.0} mm)", s.name, s.elevation_feet * MM_PER_FOOT))
+                .collect();
+            format!("no level {level:?}; the levels are: {}", names.join(", "))
+        })?;
+    Ok(ViewWindow {
+        bottom_feet: found.elevation_feet,
+        top_feet: found.elevation_feet + cut_mm / MM_PER_FOOT,
+        crop: None,
+    })
+}
+
+/// A plan view's band (view depth to cut plane), crop and annotation.
+fn view_window(
+    model: &rvt::ifc::IfcModel,
+    facts: &rvt::plan_views::ViewFacts,
+    view: &rvt::plan_views::PlanView,
+) -> Result<(ViewWindow, PlanAnnotation), String> {
+    let level_elevation = view.level.as_ref().and_then(|name| {
+        model
+            .building_storeys
+            .iter()
+            .find(|s| &s.name == name)
+            .map(|s| s.elevation_feet)
+    });
+    let cut = view
+        .cut_plane
+        .or_else(|| level_elevation.map(|e| e + 1200.0 / MM_PER_FOOT))
+        .ok_or_else(|| format!("plan view {:?}: no cut plane or level decoded", view.name))?;
+    let bottom = view.bottom.or(level_elevation).unwrap_or(cut).min(cut);
+    // The crop applies when the view crops (`on`) and a side face is active.
+    let crop = view
+        .crop
+        .as_ref()
+        .filter(|c| c.on && c.active[..2].iter().flatten().any(|a| *a))
+        .map(|c| {
+            let [x, y, _] = c.axes[0];
+            let n = x.hypot(y);
+            let x_axis = if n > 1e-9 { [x / n, y / n] } else { [1.0, 0.0] };
+            // The view's y axis is x turned a quarter left, or the opposite (a mirrored box):
+            // then its y range is negated.
+            let left = [-x_axis[1], x_axis[0]];
+            let flipped = c.axes[1][0] * left[0] + c.axes[1][1] * left[1] < 0.0;
+            let (y0, y1) = if flipped {
+                (-c.max[1], -c.min[1])
+            } else {
+                (c.min[1], c.max[1])
+            };
+            CropRect {
+                origin: [c.origin[0], c.origin[1]],
+                x_axis,
+                min: [c.min[0], y0],
+                max: [c.max[0], y1],
+            }
+        });
+    let scale = view.scale.unwrap_or(100.0);
+    // Annotation is drawn out to the view's annotation crop, which is not decoded and lies
+    // outside the model crop: text, tags and dimensions are kept wherever they are. Grid lines
+    // are cut at the model crop when drawn.
+    let in_crop = |p: [f64; 2]| crop.is_none_or(|c| c.contains((p[0], p[1])));
+    let mut a = PlanAnnotation::default();
+    for t in facts.texts.iter().filter(|t| t.view == view.id) {
+        a.texts.push(PlanText {
+            at: [t.at[0], t.at[1]],
+            value: t.value.clone(),
+            // Text heights are sheet sizes.
+            height_feet: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale,
+            rotation: t.rotation,
+            layer: "A-ANNO-NOTE".into(),
+        });
+    }
+    for tag in facts.room_tags.iter().filter(|t| t.view == view.id) {
+        let Some(room) = tag.room.and_then(|r| facts.rooms.get(&r)) else {
+            continue;
+        };
+        let Some(at) = tag.at.map(|p| [p[0], p[1]]).or(room.point) else {
+            continue;
+        };
+        for (i, value) in [&room.name, &room.number].into_iter().flatten().enumerate() {
+            a.texts.push(PlanText {
+                at: [at[0], at[1] - i as f64 * 4.0 * scale / MM_PER_FOOT],
+                value: value.clone(),
+                height_feet: 2.5 * scale / MM_PER_FOOT,
+                rotation: 0.0,
+                layer: "A-AREA-IDEN".into(),
+            });
+        }
+    }
+    for g in &facts.grids {
+        let Some([free, head]) = g.ends else { continue };
+        let (a2, b2) = ([free[0], free[1]], [head[0], head[1]]);
+        if !(in_crop(a2) || in_crop(b2)) && crop.is_some() {
+            continue;
+        }
+        a.lines.push(PlanLine {
+            a: a2,
+            b: b2,
+            layer: "S-GRID".into(),
+        });
+        if !g.name.is_empty() {
+            a.texts.push(PlanText {
+                at: b2,
+                value: g.name.clone(),
+                height_feet: 4.5 * scale / MM_PER_FOOT,
+                rotation: 0.0,
+                layer: "S-GRID-IDEN".into(),
+            });
+        }
+    }
+    for d in facts.dimensions.iter().filter(|d| d.view == view.id) {
+        for w in d.points.windows(2) {
+            let (p, q) = ([w[0][0], w[0][1]], [w[1][0], w[1][1]]);
+            a.dimensions.push([p, q]);
+        }
+    }
+    Ok((
+        ViewWindow {
+            bottom_feet: bottom,
+            top_feet: cut,
+            crop,
+        },
+        a,
+    ))
 }
 
 #[cfg(feature = "dwg")]

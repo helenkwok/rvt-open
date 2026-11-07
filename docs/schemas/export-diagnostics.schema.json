@@ -221,6 +221,21 @@
             "exclusiveMinimum": 0
           }
         },
+        "wall_join_types": {
+          "type": "object",
+          "description": "How each end of each exported wall's location curve is joined, keyed by ElementId, as the wall's native record gives it: start and end, each Abut, Miter, SquareOff or Disallowed; an end that is not joined and allows joins has none. The same values as the wall's JoinStartType and JoinEndType properties. Absent when no wall has one.",
+          "propertyNames": {
+            "pattern": "^[0-9]+$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "start": { "enum": ["Abut", "Miter", "SquareOff", "Disallowed"] },
+              "end": { "enum": ["Abut", "Miter", "SquareOff", "Disallowed"] }
+            },
+            "additionalProperties": false
+          }
+        },
         "walls_type_confirmed": {
           "type": "array",
           "description": "The ElementIds of the exported walls whose native record names the type the export gives them. Not written in the IFC file; absent when there is none.",

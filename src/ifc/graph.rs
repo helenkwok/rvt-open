@@ -439,6 +439,7 @@ impl IfcxGraph {
                     "revitGlobalId",
                     "openingCut",
                     "fillerSize",
+                    "wallLocationLine",
                     "layerSetUsage",
                     "mapTarget",
                 ],
@@ -458,6 +459,9 @@ impl IfcxGraph {
             }
             if let Some(v) = self.ifc4(p, "fillerSize") {
                 model.filler_sizes.insert(i, de(v.clone()));
+            }
+            if let Some(v) = self.ifc4(p, "wallLocationLine") {
+                model.wall_location_lines.insert(i, de(v.clone()));
             }
             if let Some(v) = self.ifc4(p, "mapTarget") {
                 model.instancing.targets.insert(i, de(v.clone()));
@@ -1384,6 +1388,9 @@ impl Builder {
             }
             if let Some(size) = model.filler_sizes.get(&i) {
                 self.attr4(&p, "fillerSize", json!(size));
+            }
+            if let Some(line) = model.wall_location_lines.get(&i) {
+                self.attr4(&p, "wallLocationLine", json!(line));
             }
             if let Some(c) = model.opening_cuts.get(&i) {
                 self.attr4(&p, "openingCut", json!(c));
