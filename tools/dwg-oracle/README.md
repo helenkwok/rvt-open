@@ -7,14 +7,16 @@ export is the reference for 3D. `score.sh` scores what rvt-open writes against t
 
 ```bash
 cargo build --release -p rvt-dwg --bin rvt-dwg && cargo build --release --bin rvt-sheet
-RVT_BIN=target/release tools/dwg-oracle/score.sh <exports dir> <samples dir> <out dir>
+RVT_BIN=target/release tools/dwg-oracle/score.sh <exports dir> <samples dir> <out dir> [manifest.tsv] [layer-map.tsv]
 ```
 
 - The exports folder is read-only: the script refuses an out dir inside it. Put a `manifest.tsv` beside the
-  exports (template: `manifest.example.tsv`) and, optionally, a `layer-map.tsv` (export layer, rvt-open
-  layer) when the export used a layer standard rvt-open does not write.
-- Today only `plan` rows get a score: the synthetic plan `rvt-sheet` draws is the baseline, so every decoding
-  step shows a number moving. `sheet` and `view` rows record the reference's inventory (tables, SVG of each
+  exports (template: `manifest.example.tsv`) or pass its path, and, optionally, a `layer-map.tsv` (export
+  layer, rvt-open layer) when the export used a layer standard rvt-open does not write: beside the exports,
+  or passed as the fifth argument.
+- Today only `plan` rows get a score: each is drawn with `rvt-sheet --view <the plan view>` (the view named
+  in the manifest's sixth column, else taken from the export's file name), labels on, so linework, text and
+  dimensions are all scored. A view `*` draws the whole model. `sheet` and `view` rows record the reference's inventory (tables, SVG of each
   layout, `report.json`) until rvt-open writes sheets and views.
 - Exports of sample files keep the samples' terms: they stay local, are never committed, and write-ups
   give counts only.

@@ -11,8 +11,25 @@ rvt-dwg drawings/ -o out --format csv,svg,report   # every .dwg/.dxf below a fol
 rvt-dwg sheet.dwg --all-layouts --format svg       # one SVG per layout
 rvt-dwg plan.dwg --format dwg --dwg-version 2004   # re-save as DWG 2004
 rvt-dwg compare reference.dwg candidate.dxf --tolerance 5 -o score
-rvt-sheet model.rvt --format dwg                   # the plan view as DWG (millimetres, layers by category)
+rvt-sheet model.rvt --format dwg                   # the whole model's plan as DWG (millimetres, layers by category)
+rvt-sheet model.rvt --list-views                   # the plan views: name, level, view range, crop (JSON, feet)
+rvt-sheet model.rvt --view "Level 1" --format dxf  # only what that plan view shows, with its annotation
+rvt-sheet model.rvt --level "Level 2" --format dxf # a level's band up to --cut-height (default 1200 mm)
 ```
+
+## Plan views (`rvt-sheet --view`, `--level`)
+
+`--view <name>` draws what a plan view shows: the elements whose height range meets the band from the
+view's bottom clip to its cut plane, cut at its crop region when the crop is on, and, as labels, the
+annotation the view owns: room tags (the room's name and number), text notes, grid lines with their heads,
+and dimensions (an aligned DIMENSION per segment). A name that a file name could not hold may be given
+with `_` for the character (`Live_Work` finds `Live/Work`); floor plans win over other plan types of the
+same name. `--level <name|mm>` draws a level's band up to `--cut-height` millimetres above it, with no
+crop and element names as labels. `--no-labels` leaves every label out. Outlines are still the elements'
+plan outlines, not Revit's cut and projection lines, and line styles are not drawn.
+
+Large DXF files read: DXF has its own input limit (`Limits::max_dxf_input_bytes`, 3 GiB; DWG keeps 512 MiB)
+and is streamed from disk rather than loaded first.
 
 ## Outputs
 
@@ -48,5 +65,5 @@ ends the process (allocation failure, stack overflow) costs only that file; `--n
 
 Linetype dashes, hatch patterns (a hatched area is tinted), fonts (one sans-serif face) and twisted viewports
 in the SVG; 3D solids, meshes, images, underlays, tables and multileaders are counted, not drawn; xref files
-are not opened. Revit sheets and views are not decoded yet: `rvt-sheet` writes the synthetic plan. The scorer
-for the authoring tool's own DWG exports is `tools/dwg-oracle/`.
+are not opened. Revit sheets, and views other than plans, are not drawn yet. The scorer for the authoring
+tool's own DWG exports is `tools/dwg-oracle/`.

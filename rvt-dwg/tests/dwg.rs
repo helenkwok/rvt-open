@@ -370,6 +370,91 @@ fn hostile_inputs_are_errors_not_crashes() {
     }
 }
 
+/// A DXF larger than the DWG input limit reads, streamed from disk, and the DXF limit still refuses
+/// one past it. The file is generated here (a written DXF with one LINE repeated, each with its own
+/// handle, to 513 MiB) and deleted afterwards.
+#[test]
+fn dxf_larger_than_the_dwg_limit_reads_from_disk() {
+    use std::io::Write;
+    let (bytes, _) = write_drawing(
+        &synthetic(),
+        CadFormat::Dxf,
+        parse_version("2018", CadFormat::Dxf).unwrap(),
+    )
+    .unwrap();
+    let base = read_bytes(&bytes, Limits::DEFAULT)
+        .unwrap()
+        .drawing
+        .entities
+        .len();
+    let text = String::from_utf8(bytes).unwrap();
+    // Group code / value pairs; the first LINE of the ENTITIES section is the template.
+    let lines: Vec<&str> = text.lines().collect();
+    let pairs: Vec<(&str, &str)> = lines.chunks(2).map(|c| (c[0], c[1])).collect();
+    let section = pairs
+        .iter()
+        .position(|(c, v)| c.trim() == "2" && *v == "ENTITIES")
+        .unwrap();
+    let start = section
+        + pairs[section..]
+            .iter()
+            .position(|(c, v)| c.trim() == "0" && *v == "LINE")
+            .unwrap();
+    let end = start
+        + 1
+        + pairs[start + 1..]
+            .iter()
+            .position(|(c, _)| c.trim() == "0")
+            .unwrap();
+    let template = &pairs[start..end];
+    let entity = |handle: u64| -> String {
+        template
+            .iter()
+            .map(|(c, v)| {
+                let v = if c.trim() == "5" {
+                    format!("{handle:X}")
+                } else {
+                    v.to_string()
+                };
+                format!("{c}\r\n{v}\r\n")
+            })
+            .collect()
+    };
+    let one = entity(0x1000_0000).len() as u64;
+    let target = Limits::DEFAULT.max_input_bytes as u64 + (1 << 20);
+    let copies = target / one + 1;
+    let path = std::env::temp_dir().join(format!("rvt-dwg-large-{}.dxf", std::process::id()));
+    {
+        let mut f = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+        let write_pairs = |f: &mut std::io::BufWriter<std::fs::File>, ps: &[(&str, &str)]| {
+            for (c, v) in ps {
+                write!(f, "{c}\r\n{v}\r\n").unwrap();
+            }
+        };
+        write_pairs(&mut f, &pairs[..end]);
+        for i in 0..copies {
+            f.write_all(entity(0x1000_0000 + i).as_bytes()).unwrap();
+        }
+        write_pairs(&mut f, &pairs[end..]);
+        f.flush().unwrap();
+    }
+    let len = std::fs::metadata(&path).unwrap().len();
+    assert!(len > Limits::DEFAULT.max_input_bytes as u64, "{len} bytes");
+    let read = rvt_dwg::read_file(&path, Limits::DEFAULT);
+    let refused = rvt_dwg::read_file(
+        &path,
+        Limits {
+            max_dxf_input_bytes: (len - 1) as usize,
+            ..Limits::DEFAULT
+        },
+    );
+    let _ = std::fs::remove_file(&path);
+    let read = read.unwrap_or_else(|e| panic!("{len} bytes: {e}"));
+    assert!(read.notes.is_empty(), "{:?}", read.notes);
+    assert_eq!(read.drawing.entities.len() as u64, base as u64 + copies);
+    assert!(refused.unwrap_err().0.contains("larger than"));
+}
+
 fn samples() -> Option<PathBuf> {
     match std::env::var_os("RVT_DWG_SAMPLES") {
         Some(d) => Some(PathBuf::from(d)),

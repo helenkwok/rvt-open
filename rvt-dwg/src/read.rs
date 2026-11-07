@@ -10,30 +10,51 @@ use acadrust::{
     CadDocument, Color, DwgReadOptions, DwgReader, DxfReader, Entity, LineWeight, Transparency,
 };
 use std::collections::HashMap;
-use std::io::Cursor;
+use std::io::{Cursor, Read as _};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Most read diagnostics copied into the notes; the rest are counted.
 const MAX_NOTED_DIAGNOSTICS: usize = 50;
 
-/// Read a DWG or DXF file. See [`read_bytes`].
+/// Read a DWG or DXF file. See [`read_bytes`]. A DXF file is streamed from disk, so a DXF larger
+/// than memory would hold twice is read without loading it first.
 pub fn read_file(path: &std::path::Path, limits: Limits) -> Result<Read, Error> {
-    let len = std::fs::metadata(path)
-        .map_err(|e| Error(format!("{}: {e}", path.display())))?
-        .len();
-    if len > limits.max_input_bytes as u64 {
-        return Err(too_large(len, limits));
+    let at = |e: std::io::Error| Error(format!("{}: {e}", path.display()));
+    let len = std::fs::metadata(path).map_err(at)?.len();
+    let mut head = Vec::with_capacity(4096);
+    std::fs::File::open(path)
+        .map_err(at)?
+        .take(4096)
+        .read_to_end(&mut head)
+        .map_err(at)?;
+    match sniff(&head) {
+        Some(format @ (Format::DxfAscii | Format::DxfBinary)) => {
+            check_size(len, format, limits)?;
+            read_input(Input::File(path), format, len, limits)
+        }
+        _ => {
+            check_size(len, Format::Dwg, limits)?;
+            let bytes = std::fs::read(path).map_err(at)?;
+            read_bytes(&bytes, limits)
+        }
     }
-    let bytes = std::fs::read(path).map_err(|e| Error(format!("{}: {e}", path.display())))?;
-    read_bytes(&bytes, limits)
 }
 
-fn too_large(len: u64, limits: Limits) -> Error {
-    Error(format!(
-        "the file is {:.1} MB, larger than the {:.1} MB limit",
-        len as f64 / 1e6,
-        limits.max_input_bytes as f64 / 1e6
-    ))
+/// The input limit for `format`: [`Limits::max_dxf_input_bytes`] for DXF, else
+/// [`Limits::max_input_bytes`].
+fn check_size(len: u64, format: Format, limits: Limits) -> Result<(), Error> {
+    let max = match format {
+        Format::DxfAscii | Format::DxfBinary => limits.max_dxf_input_bytes,
+        Format::Dwg => limits.max_input_bytes,
+    };
+    if len > max as u64 {
+        return Err(Error(format!(
+            "the file is {:.1} MB, larger than the {:.1} MB limit",
+            len as f64 / 1e6,
+            max as f64 / 1e6
+        )));
+    }
+    Ok(())
 }
 
 /// Read a DWG (R13-2018 and R11/12) or DXF (ASCII or binary) from bytes.
@@ -43,22 +64,29 @@ fn too_large(len: u64, limits: Limits) -> Error {
 /// every error it recovered from is noted, and an empty result from a file that has records is
 /// noted too, so a partial read never passes for a complete one.
 pub fn read_bytes(bytes: &[u8], limits: Limits) -> Result<Read, Error> {
-    if bytes.len() > limits.max_input_bytes {
-        return Err(too_large(bytes.len() as u64, limits));
-    }
-    let format = sniff(bytes).ok_or_else(|| Error("not a DWG or DXF file".into()))?;
+    let format = sniff(bytes);
+    check_size(bytes.len() as u64, format.unwrap_or(Format::Dwg), limits)?;
+    let format = format.ok_or_else(|| Error("not a DWG or DXF file".into()))?;
+    read_input(Input::Bytes(bytes), format, bytes.len() as u64, limits)
+}
+
+/// Where the engine reads from.
+#[derive(Clone, Copy)]
+enum Input<'a> {
+    Bytes(&'a [u8]),
+    File(&'a std::path::Path),
+}
+
+fn read_input(input: Input, format: Format, len: u64, limits: Limits) -> Result<Read, Error> {
     // The smallest DWG file header is 0x100 bytes.
-    if format == Format::Dwg && bytes.len() < 0x100 {
-        return Err(Error(format!(
-            "{} bytes is too short for a DWG file",
-            bytes.len()
-        )));
+    if format == Format::Dwg && len < 0x100 {
+        return Err(Error(format!("{len} bytes is too short for a DWG file")));
     }
     let mut notes = Vec::new();
-    let outcome = match engine_read(bytes, format, false, limits) {
+    let outcome = match engine_read(input, format, false, limits) {
         Ok(o) => o,
         Err(strict) => {
-            let o = engine_read(bytes, format, true, limits)
+            let o = engine_read(input, format, true, limits)
                 .map_err(|e| Error(format!("{strict}; recovery read: {e}")))?;
             notes.push(format!(
                 "read in recovery mode: the strict read failed ({strict})"
@@ -81,14 +109,23 @@ pub fn read_bytes(bytes: &[u8], limits: Limits) -> Result<Read, Error> {
 }
 
 fn engine_read(
-    bytes: &[u8],
+    input: Input,
     format: Format,
     failsafe: bool,
     limits: Limits,
 ) -> Result<acadrust::ReadOutcome, Error> {
-    let data = bytes.to_vec();
-    let result = catch_unwind(AssertUnwindSafe(move || match format {
-        Format::Dwg => {
+    let file = match input {
+        Input::File(path) => {
+            Some(std::fs::File::open(path).map_err(|e| Error(format!("{}: {e}", path.display())))?)
+        }
+        Input::Bytes(_) => None,
+    };
+    let data = match input {
+        Input::Bytes(bytes) => bytes.to_vec(),
+        Input::File(_) => Vec::new(),
+    };
+    let result = catch_unwind(AssertUnwindSafe(move || match (format, file) {
+        (Format::Dwg, _) => {
             let options = DwgReadOptions {
                 failsafe,
                 ..DwgReadOptions::default()
@@ -96,12 +133,19 @@ fn engine_read(
             .with_max_decompressed_bytes(limits.max_decompressed_bytes);
             DwgReader::from_stream_with_options(Cursor::new(data), options).read_with_stats()
         }
-        Format::DxfAscii | Format::DxfBinary => DxfReader::from_reader(Cursor::new(data))?
-            .with_configuration(acadrust::DxfReaderConfiguration {
+        (Format::DxfAscii | Format::DxfBinary, file) => {
+            let configuration = acadrust::DxfReaderConfiguration {
                 failsafe,
                 ..Default::default()
-            })
-            .read_with_stats(),
+            };
+            match file {
+                // The engine buffers the file itself.
+                Some(file) => DxfReader::from_reader(file)?,
+                None => DxfReader::from_reader(Cursor::new(data))?,
+            }
+            .with_configuration(configuration)
+            .read_with_stats()
+        }
     }));
     match result {
         Ok(Ok(o)) => Ok(o),
@@ -519,6 +563,7 @@ fn geom(e: &EntityType, ent: &dyn Entity) -> Geom {
                 },
                 text: b.user_text.clone().filter(|t| !t.is_empty() && t != "<>"),
                 at: v3(b.text_middle_point),
+                points: Vec::new(),
             }
         }
         EntityType::Hatch(h) => Geom::Hatch {

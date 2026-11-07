@@ -12,8 +12,9 @@
 //! # Damaged and hostile files
 //!
 //! Every read and write is guarded:
-//! - the input size is checked against [`Limits::max_input_bytes`] before anything is decoded, and
-//!   the engine's decompression is capped by [`Limits::max_decompressed_bytes`];
+//! - the input size is checked against [`Limits::max_input_bytes`] (DWG) or
+//!   [`Limits::max_dxf_input_bytes`] (DXF) before anything is decoded, and the engine's
+//!   decompression is capped by [`Limits::max_decompressed_bytes`];
 //! - the engine runs inside `catch_unwind`, so a panic is an error naming the file, not a crash;
 //! - a read that skipped records, recovered from errors or came back empty says so in
 //!   [`Read::notes`], so a partial read never passes for a complete one;
@@ -41,8 +42,12 @@ pub const ENGINE: &str = "acadrust 0.6.8";
 /// Size and work limits for one drawing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
-    /// Largest input file read.
+    /// Largest DWG input read.
     pub max_input_bytes: usize,
+    /// Largest DXF input read. DXF is text and holds the same drawing in several times the bytes of
+    /// DWG (a 92 MB DWG of 180,000 entities re-saves as a 750 MB DXF), so it has its own limit. A
+    /// DXF file is read from disk as a stream, not loaded first.
+    pub max_dxf_input_bytes: usize,
     /// Largest total of decompressed section data the engine may allocate for one read.
     pub max_decompressed_bytes: usize,
     /// Deepest chain of block inserts expanded (SVG, exploded tables).
@@ -54,10 +59,11 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// 512 MiB of input, 2 GiB decompressed, inserts 16 deep, 4 million expanded entities, 1 GiB
-    /// of SVG. Generous for real drawings; they exist for damaged ones.
+    /// 512 MiB of DWG, 3 GiB of DXF, 2 GiB decompressed, inserts 16 deep, 4 million expanded
+    /// entities, 1 GiB of SVG. Generous for real drawings; they exist for damaged ones.
     pub const DEFAULT: Limits = Limits {
         max_input_bytes: 512 << 20,
+        max_dxf_input_bytes: 3 << 30,
         max_decompressed_bytes: 2 << 30,
         max_insert_depth: 16,
         max_expanded: 4_000_000,
@@ -395,6 +401,11 @@ pub enum Geom {
         /// The text override, when set.
         text: Option<String>,
         at: P3,
+        /// The two points an aligned dimension measures between, for a dimension drawn from a
+        /// model (empty when read from a file). With no block, the writer writes it as an aligned
+        /// DIMENSION through these points.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        points: Vec<P3>,
     },
     Hatch {
         /// Boundary loops as (x, y, bulge).
@@ -593,11 +604,13 @@ impl Geom {
                 measurement,
                 text,
                 at,
+                points,
             } => Geom::Dimension {
                 block: block.clone(),
                 measurement: *measurement,
                 text: text.clone(),
                 at: t.apply(*at),
+                points: points.iter().map(|p| t.apply(*p)).collect(),
             },
             Geom::Hatch {
                 loops,
