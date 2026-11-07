@@ -659,7 +659,7 @@ pub struct PartitionRead {
 }
 
 /// Call `visit` with every data object of every partition of `rf`, read by
-/// its schema, and return each partition's gaps. At most [`READ_CHUNK`]
+/// its schema, and return each partition's gaps. At most 4,096
 /// objects are held at a time, so memory stays bounded by the largest
 /// partition.
 pub fn for_each_object(
