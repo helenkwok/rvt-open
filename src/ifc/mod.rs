@@ -148,6 +148,18 @@ pub use ifcx_writer::{
 pub use step_writer::{write_step, write_step_graph};
 pub use usd_writer::{write_usda, write_usda_graph, write_usdc, write_usdc_graph};
 
+/// How the two ends of a wall's location curve are joined
+/// ([`DecodedExportDiagnostics::wall_join_types`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WallJoinTypes {
+    /// The join at the curve's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    /// The join at the curve's end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+}
+
 /// In-memory IFC model — what a successful export produces. Wire format
 /// (STEP or IFC-JSON) is a separate concern handled by a serializer.
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -291,6 +303,11 @@ pub struct IfcModel {
     /// element with no entry gets `$` for both.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub filler_sizes: std::collections::BTreeMap<usize, entities::FillerSize>,
+    /// Each wall's location line, plan model feet, start and end, by index
+    /// into `entities`: the writer draws the wall's `Axis` representation
+    /// on it, as far as its body reaches along it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub wall_location_lines: std::collections::BTreeMap<usize, [[f64; 2]; 2]>,
     /// The steps of the walls' native records that write no further opening
     ///, by why: a rectangular wall opening, a cabinet, a
     /// door in a second wall or a curtain wall whose opening was not proven.
@@ -802,6 +819,14 @@ pub struct DecodedExportDiagnostics {
     /// written in the IFC file.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub walls_type_confirmed: std::collections::BTreeSet<u32>,
+    /// How each end of each exported wall's location curve is joined, by
+    /// ElementId, as the wall's native record gives it: `start` and `end`,
+    /// each Revit's join type (`Abut`, `Miter`, `SquareOff`) or `Disallowed`;
+    /// an end that is not joined and allows joins has none. The same values
+    /// as the wall's `JoinStartType` and `JoinEndType` properties. Absent
+    /// when no wall has one.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub wall_join_types: std::collections::BTreeMap<u32, WallJoinTypes>,
     /// Where each decoded element was read from, by ElementId: its
     /// carrier, the stream and byte offset in that stream inflated, where its
     /// ElementId is stored, its class tag and the class that names in the
@@ -1266,6 +1291,7 @@ impl Exporter for PlaceholderExporter {
             body_pieces: Default::default(),
             storey_properties: Default::default(),
             filler_sizes: Default::default(),
+            wall_location_lines: Default::default(),
             wall_cut_openings_left_out: Default::default(),
             wall_end_reads_unmarked: Default::default(),
         })
@@ -1857,6 +1883,9 @@ fn export_rvt_doc_reporting(
     attach_hosted_cut_openings(rf, &mut entities);
     // The openings a rectangular wall opening, a cabinet, a door in
     // a second wall and a curtain wall cut in a wall, which nothing fills.
+    if policy.include_geometry {
+        mitre_record_box_walls(&mut entities, &record_handoffs);
+    }
     let early_opening_cuts = policy
         .include_geometry
         .then(|| opening_cuts_through_hosts(&entities, &record_handoffs));
@@ -1899,6 +1928,7 @@ fn export_rvt_doc_reporting(
     let opening_cuts = early_opening_cuts
         .unwrap_or_else(|| opening_cuts_through_hosts(&entities, &record_handoffs));
     let filler_sizes = filler_sizes_from_handoffs(&record_handoffs);
+    let wall_location_lines = wall_location_lines_from_handoffs(&record_handoffs);
     let mut wall_end_reads_unmarked = std::collections::BTreeMap::<String, usize>::new();
     for property in record_handoffs.values().flatten() {
         if let (export_content::WALL_END_NOT_MARKED_PROPERTY, entities::PropertyValue::Text(why)) =
@@ -1941,6 +1971,7 @@ fn export_rvt_doc_reporting(
         body_pieces,
         storey_properties,
         filler_sizes,
+        wall_location_lines,
         wall_cut_openings_left_out,
         wall_end_reads_unmarked,
     })
@@ -2081,6 +2112,189 @@ fn cut_solid_size(handoffs: &[entities::Property]) -> Option<[f64; 3]> {
 /// which on the BIM4LCA office is 10 mm short of Revit's. Where the
 /// symbol's saved graphics hold lines of no category, their extent along X is
 /// the width, ahead of the record box's.
+/// Mitre the corner of each pair of walls whose records join them to each
+/// other by a mitre (`export_content::WALL_MITRE_PARTNER_PROPERTY`) where
+/// both bodies are still record boxes: unturned plan rectangles along the
+/// model axes, their location lines perpendicular and meeting end to end.
+/// Each body is cut on the line through the outer and the inner corner the
+/// two walls' faces make, keeping the side its own line comes from, as
+/// Revit's bodies are on the tiny reference models' mitred corner from 2018
+/// to 2027. A body the export already drew to the mitre, as a polygon, is
+/// left as it is.
+fn mitre_record_box_walls(
+    entities: &mut [entities::IfcEntity],
+    record_handoffs: &std::collections::BTreeMap<usize, Vec<entities::Property>>,
+) {
+    const NEAR_FEET: f64 = 1e-4;
+    struct BoxWall {
+        index: usize,
+        line: [[f64; 2]; 2],
+        partners: Vec<i64>,
+        rect: Vec<[f64; 2]>,
+        location: [f64; 2],
+        thickness: f64,
+    }
+    let lines = wall_location_lines_from_handoffs(record_handoffs);
+    let mut walls: std::collections::BTreeMap<i64, BoxWall> = Default::default();
+    for (&index, handoffs) in record_handoffs {
+        let partners: Vec<i64> = handoffs
+            .iter()
+            .filter_map(|property| match &property.value {
+                entities::PropertyValue::Integer(id)
+                    if property.name == export_content::WALL_MITRE_PARTNER_PROPERTY =>
+                {
+                    Some(*id)
+                }
+                _ => None,
+            })
+            .collect();
+        let Some(&line) = lines.get(&index) else {
+            continue;
+        };
+        let Some(entities::IfcEntity::BuildingElement {
+            ifc_type,
+            type_guid: Some(tag),
+            location_feet: Some(location),
+            rotation_radians,
+            extrusion: Some(body),
+            solid_shape: None,
+            representation_map_index: None,
+            ..
+        }) = entities.get(index)
+        else {
+            continue;
+        };
+        let [[x0, y0], [x1, y1]] = line;
+        let along_x = (y1 - y0).abs() <= NEAR_FEET;
+        let along_y = (x1 - x0).abs() <= NEAR_FEET;
+        if partners.is_empty()
+            || !matches!(ifc_type.as_str(), "IFCWALL" | "IFCWALLSTANDARDCASE")
+            || body.profile_override.is_some()
+            || rotation_radians.is_some_and(|turn| turn.abs() > 1e-12)
+            || along_x == along_y
+        {
+            continue;
+        }
+        let Ok(tag) = tag.parse::<i64>() else {
+            continue;
+        };
+        let (w, d) = (body.width_feet / 2.0, body.depth_feet / 2.0);
+        let [cx, cy] = [location[0], location[1]];
+        walls.insert(
+            tag,
+            BoxWall {
+                index,
+                line,
+                partners,
+                rect: vec![
+                    [cx - w, cy - d],
+                    [cx + w, cy - d],
+                    [cx + w, cy + d],
+                    [cx - w, cy + d],
+                ],
+                location: [cx, cy],
+                thickness: if along_x { 2.0 * d } else { 2.0 * w },
+            },
+        );
+    }
+    let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) <= NEAR_FEET;
+    let unit = |from: [f64; 2], to: [f64; 2]| {
+        let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
+        let length = dx.hypot(dy);
+        [dx / length, dy / length]
+    };
+    let mut cut: std::collections::BTreeMap<i64, Vec<[f64; 2]>> = Default::default();
+    for (&tag, wall) in &walls {
+        let mut outline = wall.rect.clone();
+        for partner in &wall.partners {
+            let Some(other) = walls
+                .get(partner)
+                .filter(|other| other.partners.contains(&tag))
+            else {
+                continue;
+            };
+            // The end the two lines share, and each line's far end.
+            let Some((joint, far, other_far)) = [0, 1].iter().find_map(|&mine| {
+                [0, 1].iter().find_map(|&theirs| {
+                    near(wall.line[mine], other.line[theirs])
+                        .then(|| (wall.line[mine], wall.line[1 - mine], other.line[1 - theirs]))
+                })
+            }) else {
+                continue;
+            };
+            let (a, b) = (unit(far, joint), unit(other_far, joint));
+            if (a[0] * b[0] + a[1] * b[1]).abs() > 1e-9 {
+                continue;
+            }
+            let (ta, tb) = (wall.thickness / 2.0, other.thickness / 2.0);
+            let outer = [
+                joint[0] + a[0] * tb + b[0] * ta,
+                joint[1] + a[1] * tb + b[1] * ta,
+            ];
+            let inner = [
+                joint[0] - a[0] * tb - b[0] * ta,
+                joint[1] - a[1] * tb - b[1] * ta,
+            ];
+            outline = clip_to_side(&outline, outer, inner, far);
+        }
+        if outline.len() >= 3 && outline != wall.rect {
+            cut.insert(tag, outline);
+        }
+    }
+    for (tag, outline) in cut {
+        let wall = &walls[&tag];
+        if let Some(entities::IfcEntity::BuildingElement {
+            extrusion: Some(body),
+            ..
+        }) = entities.get_mut(wall.index)
+        {
+            body.profile_override = Some(entities::ProfileDef::ArbitraryClosed {
+                points: outline
+                    .iter()
+                    .map(|p| (p[0] - wall.location[0], p[1] - wall.location[1]))
+                    .collect(),
+            });
+        }
+    }
+}
+
+/// The part of the plan polygon `ring` on the side of the line through `a`
+/// and `b` that `keep` lies on.
+fn clip_to_side(ring: &[[f64; 2]], a: [f64; 2], b: [f64; 2], keep: [f64; 2]) -> Vec<[f64; 2]> {
+    let side = |p: [f64; 2]| (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+    let sign = side(keep).signum();
+    let inside = |p: [f64; 2]| side(p) * sign >= -1e-12;
+    let mut out = Vec::new();
+    for (i, &p) in ring.iter().enumerate() {
+        let q = ring[(i + 1) % ring.len()];
+        if inside(p) {
+            out.push(p);
+        }
+        if inside(p) != inside(q) {
+            let (sp, sq) = (side(p), side(q));
+            let t = sp / (sp - sq);
+            out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+        }
+    }
+    out.dedup_by(|x, y| (x[0] - y[0]).hypot(x[1] - y[1]) <= 1e-9);
+    out
+}
+
+/// Each wall's location line from its hand-offs
+/// ([`export_content::WALL_LOCATION_LINE_PROPERTIES`]), by entity index.
+fn wall_location_lines_from_handoffs(
+    record_handoffs: &std::collections::BTreeMap<usize, Vec<entities::Property>>,
+) -> std::collections::BTreeMap<usize, [[f64; 2]; 2]> {
+    record_handoffs
+        .iter()
+        .filter_map(|(&index, handoffs)| {
+            let [x0, y0, x1, y1] = export_content::WALL_LOCATION_LINE_PROPERTIES
+                .map(|name| handoff_length(handoffs, name));
+            Some((index, [[x0?, y0?], [x1?, y1?]]))
+        })
+        .collect()
+}
+
 fn filler_sizes_from_handoffs(
     record_handoffs: &std::collections::BTreeMap<usize, Vec<entities::Property>>,
 ) -> std::collections::BTreeMap<usize, entities::FillerSize> {
@@ -5709,6 +5923,7 @@ pub(crate) fn build_export_diagnostics_and_decisions(
             unknown_unit_identifiers: recovered_units.unknown_identifiers,
             wall_curve_lengths_feet: walker_stats.wall_curve_lengths_feet,
             walls_type_confirmed: walker_stats.walls_type_confirmed,
+            wall_join_types: walker_stats.wall_join_types,
             element_provenance: None,
             element_record_stages,
         },
@@ -6638,6 +6853,8 @@ struct ProductionWalkerStats {
     wall_curve_lengths_feet: std::collections::BTreeMap<u32, f64>,
     /// [`DecodedExportDiagnostics::walls_type_confirmed`].
     walls_type_confirmed: std::collections::BTreeSet<u32>,
+    /// [`DecodedExportDiagnostics::wall_join_types`].
+    wall_join_types: std::collections::BTreeMap<u32, WallJoinTypes>,
 }
 
 fn production_walker_stats(
@@ -6695,6 +6912,20 @@ fn production_walker_stats(
                         && matches!(value, crate::walker::InstanceField::Bool(true))
                 }) {
                     stats.walls_type_confirmed.insert(id);
+                }
+                let [start, end] =
+                    crate::partition_schema_mvp::WALL_JOIN_TYPE_FIELDS.map(|wanted| {
+                        el.fields.iter().find_map(|(name, value)| match value {
+                            crate::walker::InstanceField::String(kind) if name == wanted => {
+                                Some(kind.clone())
+                            }
+                            _ => None,
+                        })
+                    });
+                if start.is_some() || end.is_some() {
+                    stats
+                        .wall_join_types
+                        .insert(id, WallJoinTypes { start, end });
                 }
             }
         }
@@ -7077,6 +7308,7 @@ mod tests {
             material_constituent_sets: Vec::new(),
             opening_cuts: BTreeMap::new(),
             filler_sizes: BTreeMap::new(),
+            wall_location_lines: BTreeMap::new(),
             instancing: Default::default(),
             display_bodies: Default::default(),
             type_property_sets: BTreeMap::new(),
@@ -7126,5 +7358,92 @@ mod tests {
 
         let _ifcx_val: serde_json::Value = serde_json::from_str(&ifcx1).expect("parse json");
         assert!(!ifcx1.contains("\"200\""));
+    }
+}
+
+#[cfg(test)]
+mod wall_mitre_tests {
+    use super::entities::{Extrusion, IfcEntity, ProfileDef, Property, PropertyValue};
+    use super::export_content::{WALL_LOCATION_LINE_PROPERTIES, WALL_MITRE_PARTNER_PROPERTY};
+
+    fn wall(tag: &str, location: [f64; 3], width: f64, depth: f64) -> IfcEntity {
+        IfcEntity::BuildingElement {
+            ifc_type: "IFCWALL".into(),
+            name: tag.into(),
+            type_guid: Some(tag.into()),
+            predefined_type: None,
+            storey_index: None,
+            material_index: None,
+            property_set: None,
+            location_feet: Some(location),
+            rotation_radians: None,
+            extrusion: Some(Extrusion::rectangle(width, depth, 3.0)),
+            host_element_index: None,
+            material_layer_set_index: None,
+            material_profile_set_index: None,
+            solid_shape: None,
+            representation_map_index: None,
+        }
+    }
+
+    fn handoffs(line: [f64; 4], partner: i64) -> Vec<Property> {
+        let mut out: Vec<Property> = WALL_LOCATION_LINE_PROPERTIES
+            .iter()
+            .zip(line)
+            .map(|(name, feet)| Property {
+                name: (*name).into(),
+                value: PropertyValue::LengthFeet(feet),
+            })
+            .collect();
+        out.push(Property {
+            name: WALL_MITRE_PARTNER_PROPERTY.into(),
+            value: PropertyValue::Integer(partner),
+        });
+        out
+    }
+
+    /// The mitred corner of the tiny reference model `3-wall-joins` as its
+    /// 2018 record boxes give it: two 0.2-thick walls meeting at (6, 4),
+    /// each box reaching the corner's outer face.
+    #[test]
+    fn record_boxes_joined_by_a_mitre_are_cut_on_the_corner_diagonal() {
+        let mut entities = vec![
+            wall("2", [6.0, 2.1, 0.0], 0.2, 4.0),
+            wall("3", [3.05, 4.0, 0.0], 6.1, 0.2),
+        ];
+        let record_handoffs = std::collections::BTreeMap::from([
+            (0, handoffs([6.0, 0.0, 6.0, 4.0], 3)),
+            (1, handoffs([6.0, 4.0, 0.0, 4.0], 2)),
+        ]);
+        super::mitre_record_box_walls(&mut entities, &record_handoffs);
+        let outline = |index: usize| match &entities[index] {
+            IfcEntity::BuildingElement {
+                extrusion:
+                    Some(Extrusion {
+                        profile_override: Some(ProfileDef::ArbitraryClosed { points }),
+                        ..
+                    }),
+                location_feet: Some(location),
+                ..
+            } => points
+                .iter()
+                .map(|(x, _)| ((x + location[0]) * 1e6).round() / 1e6)
+                .zip(
+                    points
+                        .iter()
+                        .map(|(_, y)| ((y + location[1]) * 1e6).round() / 1e6),
+                )
+                .collect::<Vec<_>>(),
+            _ => panic!("not mitred"),
+        };
+        // Wall 2 keeps the corner's outer point and loses its inner one.
+        assert_eq!(
+            outline(0),
+            vec![(5.9, 0.1), (6.1, 0.1), (6.1, 4.1), (5.9, 3.9)]
+        );
+        assert_eq!(
+            outline(1),
+            vec![(0.0, 3.9), (5.9, 3.9), (6.1, 4.1), (0.0, 4.1)]
+        );
     }
 }

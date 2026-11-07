@@ -317,6 +317,9 @@ pub fn recover_partition_schema_mvp(
         // --- Whether a wall's top is joined to a roof or floor, from its
         // native record ---
         attach_wall_top_joins(rf, revit_version, &mut out.walls, &mut wall_reads);
+        // --- The walls joined at each end of a wall, how, and whether joins
+        // are allowed there, from the same records ---
+        attach_wall_end_records_from_reads(rf, revit_version, &mut out.walls, &mut wall_reads);
 
         // --- A structural beam's or column's LoadBearing is its category's,
         // unless a parameter named for it says otherwise ---

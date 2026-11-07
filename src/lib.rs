@@ -191,6 +191,7 @@ pub mod partition_assoc_levels;
 pub mod partition_framing_types;
 pub mod partition_type_names;
 pub mod partitions;
+pub mod plan_views;
 pub mod project_information;
 pub mod reader;
 pub mod redact;

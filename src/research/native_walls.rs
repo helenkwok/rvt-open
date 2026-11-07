@@ -89,6 +89,112 @@ pub struct NativeWall {
     pub partners: Vec<u64>,
     /// `m_WallAttributesId`, the type the record names.
     pub type_id: Option<u64>,
+    /// `VWallDriver.m_noJoinAtEnd`: whether joins are disallowed at the
+    /// curve's start and at its end.
+    pub disallowed: [bool; 2],
+}
+
+/// What a wall's record says about the two ends of its location curve:
+/// which walls are joined there, how, and whether joins are allowed at all.
+/// Read the same way from Revit 2015 to 2027 ([`wall_ends`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WallEnds {
+    /// The location curve's start and its end, plan model feet.
+    pub curve: [[f64; 2]; 2],
+    /// The other walls in the one join that lists each end, in the record's
+    /// order. Empty where no join lists that end, or where several do.
+    pub joined: [Vec<u64>; 2],
+    /// The `m_wallJoinType` of the one join that lists each end: Revit's
+    /// `JoinType`, 0 Abut, 1 Miter, 2 SquareOff. `None` without one join.
+    pub join_types: [Option<i64>; 2],
+    /// `VWallDriver.m_noJoinAtEnd`: joins are disallowed at that end.
+    pub disallowed: [bool; 2],
+}
+
+impl WallEnds {
+    /// The ends of a wall read by [`native_walls_and_top_joins`].
+    pub fn of(id: u64, wall: &NativeWall) -> Self {
+        let others = |join: &Option<Vec<(u64, u32)>>| -> Vec<u64> {
+            join.iter()
+                .flatten()
+                .map(|(other, _)| *other)
+                .filter(|other| *other != id)
+                .collect()
+        };
+        Self {
+            curve: [wall.start, wall.end],
+            joined: [others(&wall.joins[0]), others(&wall.joins[1])],
+            join_types: wall.join_types,
+            disallowed: wall.disallowed,
+        }
+    }
+}
+
+/// [`WallEnds`] of wall `id` from its record's graph: its location curve
+/// (`VWallDriver.m_pCrv`), the joins of `VWallDriver.m_controlJoinsSet` that
+/// list each end of it (`m_JoinInfo.m_info`, each member with the end it
+/// joins by) and their `m_wallJoinType`, and `m_noJoinAtEnd`. On the tiny
+/// reference models of every release from 2018 to 2027 these are the Revit
+/// API's `LocationCurve.get_ElementsAtJoin`, `get_JoinType` and
+/// `WallUtils.IsWallJoinAllowedAtEnd` for every wall end. `None` where the
+/// record has no level line as its location curve.
+pub fn wall_ends(graph: &crate::native_parameters::ObjectGraph, id: u64) -> Option<WallEnds> {
+    let (start, end) = location_curve(graph)?;
+    let driver = &graph
+        .objects
+        .iter()
+        .find(|object| object.class_name == "VWallDriver")?
+        .fields;
+    let members = |control: &Value| -> Vec<(u64, u64)> {
+        control
+            .pointer("/m_JoinInfo/m_info")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|member| {
+                let other =
+                    u64::try_from(crate::native_json::identifier_i64(member.get("m_elemId")?)?)
+                        .ok()?;
+                Some((other, member.get("m_joinedEnd")?.as_u64()?))
+            })
+            .collect()
+    };
+    let controls: Vec<&Value> = driver
+        .get("m_controlJoinsSet")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect();
+    let mut joined: [Vec<u64>; 2] = [Vec::new(), Vec::new()];
+    let mut join_types = [None, None];
+    for slot in 0..2u64 {
+        let listing: Vec<&Value> = controls
+            .iter()
+            .copied()
+            .filter(|control| members(control).contains(&(id, slot)))
+            .collect();
+        if let [control] = listing.as_slice() {
+            let index = usize::try_from(slot).unwrap_or(0);
+            joined[index] = members(control)
+                .into_iter()
+                .map(|(other, _)| other)
+                .filter(|other| *other != id)
+                .collect();
+            join_types[index] = control
+                .pointer("/m_JoinInfo/m_wallJoinType")
+                .and_then(Value::as_i64);
+        }
+    }
+    let disallowed = match driver.get("m_noJoinAtEnd").and_then(Value::as_array) {
+        Some(flags) => [0, 1].map(|end| flags.get(end).and_then(Value::as_bool) == Some(true)),
+        None => [false, false],
+    };
+    Some(WallEnds {
+        curve: [start, end],
+        joined,
+        join_types,
+        disallowed,
+    })
 }
 
 /// The widths of a `CompoundStructure`'s layers outside its core, on its
@@ -458,7 +564,18 @@ fn is_top_joined(graph: &crate::native_parameters::ObjectGraph) -> bool {
 /// and `m_id`, which the check of a record against its identity reads.
 /// [`WallReads::read`] builds no other field of those graphs, so a field
 /// either function comes to read must be added here.
-pub const WALL_READ_FIELDS: &[&str] = &["m_id", "m_WallAttributesId", "m_baseOrTop"];
+pub const WALL_READ_FIELDS: &[&str] = &[
+    "m_id",
+    "m_WallAttributesId",
+    "m_baseOrTop",
+    // [`wall_ends`]: the location curve and the joins at its ends.
+    "m_pCrv",
+    "m_origin",
+    "m_dirVec",
+    "m_endParams",
+    "m_controlJoinsSet",
+    "m_noJoinAtEnd",
+];
 
 /// What [`WallReads::read`] takes from the graph of a wall's record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -502,6 +619,7 @@ pub struct WallReads {
     top_joins_read: BTreeSet<u64>,
     functions: BTreeMap<u64, i64>,
     functions_read: BTreeSet<u64>,
+    ends: BTreeMap<u64, WallEnds>,
 }
 
 impl WallReads {
@@ -543,12 +661,18 @@ impl WallReads {
         };
         let mut type_ids: BTreeMap<u64, u64> = BTreeMap::new();
         let mut top_joined: BTreeMap<u64, bool> = BTreeMap::new();
+        let mut ends: BTreeMap<u64, WallEnds> = BTreeMap::new();
         extract_graphs(rf, &options, |record| {
             let Some(graph) = record.graph.as_ref() else {
                 return Ok(());
             };
             let id = record.identity.element_id;
             let facts = wall_facts(graph);
+            if joins.contains(&id) && record.class_name.as_deref() == Some("SWall") {
+                if let Some(read) = wall_ends(graph, id) {
+                    ends.insert(id, read);
+                }
+            }
             if types.contains(&id) {
                 if let Some(type_id) = facts.type_id {
                     type_ids.insert(id, type_id);
@@ -564,8 +688,23 @@ impl WallReads {
         self.type_ids.extend(type_ids);
         self.type_ids_read.extend(types);
         self.top_joined.extend(top_joined);
+        self.ends.extend(ends);
         self.top_joins_read.extend(joins);
         Ok(())
+    }
+
+    /// [`WallEnds`] of each of `walls` whose `SWall` record is read, read in
+    /// the pass [`Self::top_joins`] makes.
+    pub fn ends(
+        &mut self,
+        rf: &mut RevitFile,
+        walls: &BTreeSet<u64>,
+    ) -> anyhow::Result<BTreeMap<u64, WallEnds>> {
+        self.read(rf, &BTreeSet::new(), walls)?;
+        Ok(walls
+            .iter()
+            .filter_map(|id| Some((*id, self.ends.get(id)?.clone())))
+            .collect())
     }
 
     /// [`wall_top_joins`], reading only the walls not read already.
@@ -813,6 +952,15 @@ pub fn native_walls_and_top_joins_into(
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            let driver_flags = graph
+                .objects
+                .iter()
+                .find(|object| object.class_name == "VWallDriver")
+                .and_then(|driver| driver.fields.get("m_noJoinAtEnd"))
+                .and_then(Value::as_array)
+                .map_or([false, false], |flags| {
+                    [0, 1].map(|end| flags.get(end).and_then(Value::as_bool) == Some(true))
+                });
             let root = graph.objects.first().map(|object| &object.fields);
             let length = (end[0] - start[0]).hypot(end[1] - start[1]);
             let direction = [(end[0] - start[0]) / length, (end[1] - start[1]) / length];
@@ -891,6 +1039,7 @@ pub fn native_walls_and_top_joins_into(
                 side_joins,
                 partners,
                 type_id: None,
+                disallowed: driver_flags,
             };
             let type_id = root.and_then(|fields| element_id(fields.get("m_WallAttributesId")?));
             (wall, type_id)
@@ -1054,4 +1203,63 @@ pub fn trimmed_ends(
         ((read - reach).abs() <= AGREE_FEET).then_some(read)
     };
     Some([end_of(0)?, end_of(1)?])
+}
+
+#[cfg(test)]
+mod wall_ends_tests {
+    use super::wall_ends;
+    use crate::native_parameters::{GraphObject, ObjectGraph};
+    use serde_json::json;
+
+    fn object(class_name: &str, token: u32, fields: serde_json::Value) -> GraphObject {
+        GraphObject {
+            class_tag: 0,
+            class_name: class_name.into(),
+            token,
+            start: 0,
+            fields_end: 0,
+            fields,
+        }
+    }
+
+    /// The shape of the record of the tiny reference model `3-wall-joins`'
+    /// fourth wall: its start meets the third wall's middle, its end allows
+    /// no join. `id` is written as Revit 2015 to 2023 save an ElementId.
+    #[test]
+    fn ends_read_the_control_joins_and_the_disallowed_end() {
+        let id = |n: i64| json!({"m_id": {"m_id": n}});
+        let graph = ObjectGraph {
+            consumed_bytes: 0,
+            objects: vec![
+                object("SWall", 0, json!({})),
+                object(
+                    "VWallDriver",
+                    1,
+                    json!({
+                        "m_pCrv": {"pointer_token": 7},
+                        "m_noJoinAtEnd": [false, true],
+                        "m_controlJoinsSet": [{"m_JoinInfo": {
+                            "m_info": [
+                                {"m_elemId": id(3), "m_joinedEnd": 2},
+                                {"m_elemId": id(4), "m_joinedEnd": 0}
+                            ],
+                            "m_wallJoinType": 0
+                        }}]
+                    }),
+                ),
+                object(
+                    "GLine",
+                    7,
+                    json!({"m_origin": [3.0, 4.0, 0.0], "m_dirVec": [0.0, -1.0, 0.0], "m_endParams": [0.0, 4.0]}),
+                ),
+            ],
+            edges: Vec::new(),
+            lookup: Default::default(),
+        };
+        let ends = wall_ends(&graph, 4).unwrap();
+        assert_eq!(ends.curve, [[3.0, 4.0], [3.0, 0.0]]);
+        assert_eq!(ends.joined, [vec![3], vec![]]);
+        assert_eq!(ends.join_types, [Some(0), None]);
+        assert_eq!(ends.disallowed, [false, true]);
+    }
 }

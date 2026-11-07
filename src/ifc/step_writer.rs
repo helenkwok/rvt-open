@@ -2219,7 +2219,9 @@ impl StepWriter<'_> {
             plan_ctx_ids.insert("Annotation".into(), sub);
         }
         for (name, view) in [("FootPrint", "MODEL_VIEW"), ("Axis", "GRAPH_VIEW")] {
-            if used_plan_contexts.contains(name) {
+            if used_plan_contexts.contains(name)
+                || (name == "Axis" && !model.wall_location_lines.is_empty())
+            {
                 let sub = self.id();
                 self.emit_entity(
                     sub,
@@ -3347,6 +3349,38 @@ impl StepWriter<'_> {
                         );
                         items.push(format!("#{piece_solid}"));
                     }
+                    // A wall's `Axis` before its body, as Revit's export
+                    // writes it: its location line where the body covers it.
+                    let mut reps = Vec::new();
+                    if let (Some(line), Some(&axis_ctx), Some(location)) = (
+                        model.wall_location_lines.get(&entity_idx),
+                        plan_ctx_ids.get("Axis"),
+                        location_feet,
+                    ) {
+                        if let Some([a, b]) =
+                            wall_axis_local(*line, *location, *rotation_radians, ex)
+                        {
+                            let list = self.id();
+                            self.emit_entity(
+                                list,
+                                format!(
+                                    "IFCCARTESIANPOINTLIST3D((({},{},0.),({},{},0.)))",
+                                    format_real(a[0] * 0.3048),
+                                    format_real(a[1] * 0.3048),
+                                    format_real(b[0] * 0.3048),
+                                    format_real(b[1] * 0.3048),
+                                ),
+                            );
+                            let curve = self.id();
+                            self.emit_entity(curve, format!("IFCINDEXEDPOLYCURVE(#{list},$,.F.)"));
+                            let rep = self.id();
+                            self.emit_entity(
+                                rep,
+                                format!("IFCSHAPEREPRESENTATION(#{axis_ctx},'Axis','Curve3D',(#{curve}))"),
+                            );
+                            reps.push(format!("#{rep}"));
+                        }
+                    }
                     // The representation groups the solid inside the
                     // project's 3D geometric context (#geom_ctx) with
                     // the IFC4-standard identifier + type for a
@@ -3359,10 +3393,11 @@ impl StepWriter<'_> {
                             items.join(",")
                         ),
                     );
+                    reps.push(format!("#{rep_id}"));
                     let prod_shape_id = self.id();
                     self.emit_entity(
                         prod_shape_id,
-                        format!("IFCPRODUCTDEFINITIONSHAPE($,$,(#{rep_id}))"),
+                        format!("IFCPRODUCTDEFINITIONSHAPE($,$,({}))", reps.join(",")),
                     );
                     Some(prod_shape_id)
                 } else {
@@ -5001,6 +5036,69 @@ fn site_reference(g: Option<&crate::georeference::Georeference>) -> String {
 }
 
 /// A STEP real with every digit of the `f64` (round-trip), `1.5E-17` style.
+/// The `Axis` of a wall whose body is `body`, placed at `location` and
+/// turned by `rotation` about Z: its location line `line` (plan model feet,
+/// start and end) from where the body starts along it to where it ends, in
+/// the element's own frame, feet, in the line's direction. Revit's export
+/// writes a wall's `Axis` so: on its IFC4 Reference View exports of the
+/// tiny reference models, 2018 to 2027, every wall's axis lies on its
+/// location line and runs from end to end of its body along it (past the
+/// line's end where the body runs through a join, short of it where it
+/// stops at one). `None` where the body's profile is not a polygon, or the
+/// line has no length.
+fn wall_axis_local(
+    line: [[f64; 2]; 2],
+    location: [f64; 3],
+    rotation: Option<f64>,
+    body: &Extrusion,
+) -> Option<[[f64; 2]; 2]> {
+    use super::entities::ProfileDef;
+    let corners = |w: f64, d: f64| {
+        vec![
+            (-w / 2.0, -d / 2.0),
+            (w / 2.0, -d / 2.0),
+            (w / 2.0, d / 2.0),
+            (-w / 2.0, d / 2.0),
+        ]
+    };
+    let points = match &body.profile_override {
+        None => corners(body.width_feet, body.depth_feet),
+        Some(ProfileDef::Rectangle {
+            width_feet,
+            depth_feet,
+        }) => corners(*width_feet, *depth_feet),
+        Some(
+            ProfileDef::ArbitraryClosed { points } | ProfileDef::ArbitraryWithVoids { points, .. },
+        ) => points.clone(),
+        Some(_) => return None,
+    };
+    let [[sx, sy], [ex, ey]] = line;
+    let length = (ex - sx).hypot(ey - sy);
+    if points.is_empty() || !length.is_finite() || length <= 1e-9 {
+        return None;
+    }
+    let (ux, uy) = ((ex - sx) / length, (ey - sy) / length);
+    let (sin, cos) = rotation.unwrap_or(0.0).sin_cos();
+    let along = points.iter().map(|&(x, y)| {
+        let (wx, wy) = (
+            location[0] + x * cos - y * sin,
+            location[1] + x * sin + y * cos,
+        );
+        (wx - sx) * ux + (wy - sy) * uy
+    });
+    let (low, high) = along.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
+        (lo.min(t), hi.max(t))
+    });
+    if !(low.is_finite() && high.is_finite() && high - low > 1e-9) {
+        return None;
+    }
+    let local = |t: f64| {
+        let (dx, dy) = (sx + ux * t - location[0], sy + uy * t - location[1]);
+        [dx * cos + dy * sin, -dx * sin + dy * cos]
+    };
+    Some([local(low), local(high)])
+}
+
 fn format_real(x: f64) -> String {
     let t = format!("{x:?}");
     let (m, e) = t
@@ -5524,9 +5622,10 @@ pub(super) fn type_object_plan(
         });
     }
 
-    // every type the file defines that no element names, so a
-    // family or type the project holds survives the export as Revit users
-    // expect (Revit's own export writes only the types its instances use).
+    // Under the `open` convention, every type the file defines that no
+    // element names, so a family or type the project holds survives the
+    // export (Revit's own export writes only the types its instances use:
+    // `ExportConvention::writes_unused_types`).
     // A type is written as the entity this file's placed types of its
     // category are written as, else by its category's default, else as a
     // proxy type; a type of a category with neither (annotation, views)
@@ -5581,7 +5680,12 @@ pub(super) fn type_object_plan(
             })
             .or_insert(seen);
     }
-    for ft in &model.file_types {
+    let unused_types = if model.convention.writes_unused_types() {
+        model.file_types.as_slice()
+    } else {
+        &[]
+    };
+    for ft in unused_types {
         let tag = ft.id.to_string();
         if typed.contains(&tag) {
             continue;
@@ -6059,5 +6163,53 @@ mod georeference_step_tests {
         assert_eq!(format_real(6.123e-17), "6.123E-17");
         assert_eq!(compound_angle(42.387), "(42,23,13,200000)");
         assert_eq!(compound_angle(-71.242), "(-71,-14,-31,-200000)");
+    }
+}
+
+#[cfg(test)]
+mod wall_axis_tests {
+    use super::super::entities::{Extrusion, ProfileDef};
+    use super::wall_axis_local;
+
+    fn close(a: [[f64; 2]; 2], b: [[f64; 2]; 2]) -> bool {
+        a.iter()
+            .flatten()
+            .zip(b.iter().flatten())
+            .all(|(x, y)| (x - y).abs() < 1e-9)
+    }
+
+    #[test]
+    fn axis_runs_from_end_to_end_of_the_body_along_the_line() {
+        // A body 6.1 long centred at (3.05, 0) on the line (0,0)-(6,0): it
+        // runs through the join at the line's end.
+        let body = Extrusion::rectangle(6.1, 0.2, 3.0);
+        let axis = wall_axis_local([[0.0, 0.0], [6.0, 0.0]], [3.05, 0.0, 0.0], None, &body);
+        assert!(close(axis.unwrap(), [[-3.05, 0.0], [3.05, 0.0]]));
+        // The same wall drawn the other way: the axis follows the line.
+        let axis = wall_axis_local([[6.0, 0.0], [0.0, 0.0]], [3.05, 0.0, 0.0], None, &body);
+        assert!(close(axis.unwrap(), [[3.05, 0.0], [-3.05, 0.0]]));
+        // A mitred end: the outer corner sets how far the axis runs.
+        let mitred = Extrusion {
+            profile_override: Some(ProfileDef::ArbitraryClosed {
+                points: vec![(0.1, -2.0), (0.1, 2.0), (-0.1, 1.8), (-0.1, -2.0)],
+            }),
+            ..Extrusion::rectangle(0.0, 0.0, 3.0)
+        };
+        let axis = wall_axis_local([[6.0, 0.0], [6.0, 4.0]], [6.0, 2.1, 0.0], None, &mitred);
+        assert!(close(axis.unwrap(), [[0.0, -2.0], [0.0, 2.0]]));
+        // A turned placement: local X along the line.
+        let turned = wall_axis_local(
+            [[0.0, 0.0], [0.0, 4.0]],
+            [0.0, 2.0, 0.0],
+            Some(std::f64::consts::FRAC_PI_2),
+            &Extrusion::rectangle(3.8, 0.2, 3.0),
+        );
+        assert!(close(turned.unwrap(), [[-1.9, 0.0], [1.9, 0.0]]));
+        // No polygon, no axis.
+        let round = Extrusion {
+            profile_override: Some(ProfileDef::Circle { radius_feet: 1.0 }),
+            ..Extrusion::rectangle(0.0, 0.0, 3.0)
+        };
+        assert!(wall_axis_local([[0.0, 0.0], [1.0, 0.0]], [0.0; 3], None, &round).is_none());
     }
 }

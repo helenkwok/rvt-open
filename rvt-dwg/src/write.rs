@@ -10,9 +10,9 @@
 use crate::read::panic_message;
 use crate::{Drawing2d, Entity2d, Error, Geom, Read, Space};
 use acadrust::entities::{
-    Arc, AttributeEntity, BoundaryEdge, BoundaryPath, BoundaryPathFlags, Circle, Ellipse,
-    EntityType, Hatch, HatchPattern, Insert, Line, LwPolyline, LwVertex, MText, Point,
-    PolylineEdge, Text, Viewport,
+    Arc, AttributeEntity, BoundaryEdge, BoundaryPath, BoundaryPathFlags, Circle, Dimension,
+    DimensionAligned, Ellipse, EntityType, Hatch, HatchPattern, Insert, Line, LwPolyline, LwVertex,
+    MText, Point, PolylineEdge, Text, Viewport,
 };
 use acadrust::objects::ObjectType;
 use acadrust::tables::{BlockRecord, Layer};
@@ -343,6 +343,24 @@ fn entity(
                 .map(|(t, v)| AttributeEntity::new(t.clone(), v.clone()))
                 .collect();
             EntityType::Insert(i)
+        }
+        // A dimension drawn from a model, with no block: an aligned DIMENSION through its points,
+        // which a CAD host draws itself.
+        Geom::Dimension {
+            block,
+            measurement,
+            text,
+            at,
+            points,
+        } if block.is_empty() && points.len() == 2 => {
+            let mut d = DimensionAligned::new(v3(points[0]), v3(points[1]));
+            d.definition_point = v3(points[1]);
+            d.base.actual_measurement = *measurement;
+            d.base.text_middle_point = v3(*at);
+            if let Some(t) = text {
+                d.base.user_text = Some(t.clone());
+            }
+            EntityType::Dimension(Box::new(Dimension::Aligned(d)))
         }
         // A dimension is written as what it draws: an insert of its block.
         Geom::Dimension { block, .. } => {
