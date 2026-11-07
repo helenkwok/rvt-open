@@ -1523,7 +1523,7 @@ pub fn append_typed_production_elements(
         }
         // A wall's location line, for the writer's `Axis`.
         if matches!(
-            model_ifc_type_of(&entities, entity_index),
+            model_ifc_type_of(entities, entity_index),
             Some("IFCWALL" | "IFCWALLSTANDARDCASE")
         ) {
             if let Some(line) =
