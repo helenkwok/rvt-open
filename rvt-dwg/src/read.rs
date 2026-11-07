@@ -555,12 +555,7 @@ fn geom(e: &EntityType, ent: &dyn Entity) -> Geom {
             let b = d.base();
             Geom::Dimension {
                 block: b.block_name.clone(),
-                measurement: match d.as_ref() {
-                    Dimension::Angular2Ln(_) | Dimension::Angular3Pt(_) => {
-                        b.actual_measurement.to_degrees()
-                    }
-                    _ => b.actual_measurement,
-                },
+                measurement: measurement(d),
                 text: b.user_text.clone().filter(|t| !t.is_empty() && t != "<>"),
                 at: v3(b.text_middle_point),
                 points: Vec::new(),
@@ -597,6 +592,26 @@ fn geom(e: &EntityType, ent: &dyn Entity) -> Geom {
 
 /// A hatch boundary path as (x, y, bulge) vertices: polyline edges directly, line edges as
 /// points, arc edges as bulges, ellipse and spline edges as their end points.
+/// What a dimension measures, in drawing units. A linear, aligned or radial dimension is measured
+/// from its definition points: the stored measurement can carry the dimension style's linear
+/// scale factor (DIMLFAC), which Revit's DWG export applies to it (914400 stored for a 3000 mm
+/// distance, under a style whose factor is 304.8), so it is used only when the points give none.
+fn measurement(d: &Dimension) -> f64 {
+    let stored = d.base().actual_measurement;
+    let measured = match d {
+        Dimension::Angular2Ln(_) | Dimension::Angular3Pt(_) => return stored.to_degrees(),
+        Dimension::Linear(l) => l.measurement(),
+        Dimension::Aligned(a) => a.measurement(),
+        Dimension::Radius(r) => r.measurement(),
+        _ => return stored,
+    };
+    if measured.is_finite() && measured > 0.0 {
+        measured
+    } else {
+        stored
+    }
+}
+
 fn hatch_loop(path: &acadrust::entities::BoundaryPath) -> Vec<P3> {
     use acadrust::entities::BoundaryEdge;
     let mut pts: Vec<P3> = Vec::new();

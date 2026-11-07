@@ -6,7 +6,13 @@
 //!   type (`m_planViewType`).
 //! - Its crop box is the `BoundedSpace` (`m_boundedSpace`) of the `Viewer` whose `m_dbViewId`
 //!   names it: an origin, three axes and, per axis, the offsets of the box's two faces
-//!   (`m_boundOffset`), with `m_boundActive` saying which faces crop.
+//!   (`m_boundOffset`), with `m_boundActive` saying which faces crop. Its annotation crop is on when
+//!   `m_bAnnotationCropActive` is set, lying outside the crop box by
+//!   `m_pAnnotationCropOffsets.m_leftRightTopBottomOffsets` (sheet feet).
+//! - What a view hides: the categories in its `IckyExcludedCategoriesSetPtrWrapper` draw filter
+//!   (`m_categoryIds`, BuiltInCategory ids; Planting, Topography and Mass on a floor plan of
+//!   rac_basic_sample_project) and the elements in its `HiddenElementsViewSettings`
+//!   (`m_hiddenElements`).
 //! - Levels and grids are `DatumPlane`s: the name is `m_text`; a grid's line is its plane
 //!   (`m_pSurface`) from origin along `m_xVec` across the plane's extent.
 //! - Annotation belongs to the view named by its `m_ownerDBViewId`: room tags (`RoomTag`, at its
@@ -45,6 +51,16 @@ pub struct PlanView {
     pub crop: Option<CropBox>,
     /// View scale (100 for 1:100): sheet sizes times this are model sizes.
     pub scale: Option<f64>,
+    /// Categories the view hides (its visibility settings), as BuiltInCategory ids.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_categories: Vec<i64>,
+    /// Elements hidden in the view.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_elements: Vec<i64>,
+    /// The view template that controls its visibility settings (`m_viewTemplateId`).
+    pub template_id: Option<i64>,
+    /// Whether it is placed on a sheet (`m_sheetViewportElemId` names a viewport).
+    pub on_sheet: bool,
 }
 
 /// A view's crop box: `origin` and the view's axes (`x`, `y`, `z`, model feet), and per axis
@@ -57,6 +73,9 @@ pub struct CropBox {
     pub max: [f64; 3],
     pub active: [[bool; 2]; 3],
     pub on: bool,
+    /// The annotation crop, when it is on: how far it lies outside the crop box on the left,
+    /// right, top and bottom, in sheet feet.
+    pub annotation: Option<[f64; 4]>,
 }
 
 /// A level or grid.
@@ -193,7 +212,34 @@ fn crop_box(f: &Fields) -> Option<CropBox> {
         max: [hi(0), hi(1), hi(2)],
         active: [[on(0), on(1)], [on(2), on(3)], [on(4), on(5)]],
         on: flag(f, "m_isOn"),
+        annotation: None,
     })
+}
+
+/// Every ElementId in field `field` of the objects of class `class` that `o` introduced (a
+/// view's hidden categories and elements live in such objects).
+fn ids_in(
+    o: &SchemaObject,
+    layouts: &crate::formats::SchemaLayouts,
+    class: &str,
+    field: &str,
+) -> Vec<i64> {
+    fn ids(v: &Value, out: &mut Vec<i64>) {
+        match v {
+            Value::Id(i) => out.push(*i),
+            Value::List(items) => items.iter().for_each(|i| ids(i, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for f in &o.objects {
+        if layouts.classes.get(&f.tag).is_some_and(|l| l.name == class) {
+            if let Some(v) = f.get(field) {
+                ids(v, &mut out);
+            }
+        }
+    }
+    out
 }
 
 /// The tag of every class that is, or derives from, one of `names`, with that name.
@@ -261,6 +307,20 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                     level_below: float(root, "m_levelBelowElev"),
                     crop: None,
                     scale: float(root, "m_scale").filter(|s| *s > 0.0),
+                    hidden_categories: ids_in(
+                        o,
+                        &layouts,
+                        "IckyExcludedCategoriesSetPtrWrapper",
+                        "m_categoryIds",
+                    ),
+                    hidden_elements: ids_in(
+                        o,
+                        &layouts,
+                        "HiddenElementsViewSettings",
+                        "m_hiddenElements",
+                    ),
+                    template_id: id(root, "m_viewTemplateId"),
+                    on_sheet: id(root, "m_sheetViewportElemId").is_some(),
                 }),
                 Some("Viewer") => {
                     if let (Some(view), Some(b)) =
@@ -270,7 +330,20 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                             Value::Object(f) => Some(f),
                             _ => None,
                         };
-                        if let Some(c) = fields.and_then(crop_box) {
+                        if let Some(mut c) = fields.and_then(crop_box) {
+                            // The annotation crop: offsets from the crop box (left, right, top,
+                            // bottom), used when `m_bAnnotationCropActive`.
+                            if flag(root, "m_bAnnotationCropActive") {
+                                let v = pointee(o, root, "m_pAnnotationCropOffsets")
+                                    .and_then(|a| a.get("m_leftRightTopBottomOffsets"))
+                                    .map(floats)
+                                    .unwrap_or_default();
+                                c.annotation = Some(if v.len() == 4 {
+                                    [v[0], v[1], v[2], v[3]]
+                                } else {
+                                    [0.0; 4]
+                                });
+                            }
                             crops.insert(view, c);
                         }
                     }
@@ -569,11 +642,18 @@ fn text_fragments(o: &SchemaObject, root: &Fields) -> String {
 }
 
 impl ViewFacts {
+    /// The categories `view` hides: its template's when a template controls it, else its own.
+    pub fn hidden_categories<'a>(&'a self, view: &'a PlanView) -> &'a [i64] {
+        view.template_id
+            .and_then(|t| self.views.iter().find(|v| v.id == t && v.template))
+            .map_or(&view.hidden_categories, |t| &t.hidden_categories)
+    }
+
     /// The plan view called `name`, not a template: an exact match first, then one ignoring case,
     /// then one where `_` stands for any character a file name cannot hold (`/ \ : * ? " < > |`)
     /// and accents are ignored.
-    /// Among several, a floor plan is preferred, then one with a crop box (a project view rather
-    /// than one of an embedded family), then the lowest id.
+    /// Among several, a floor plan is preferred, then one placed on a sheet, then one with a crop
+    /// box (a project view rather than one of an embedded family), then the lowest id.
     pub fn find(&self, name: &str) -> std::result::Result<&PlanView, String> {
         let candidates: Vec<&PlanView> = self.views.iter().filter(|v| !v.template).collect();
         // Combining marks dropped, so a decomposed name (a file name written on macOS) meets its
@@ -610,7 +690,14 @@ impl ViewFacts {
             if hits.is_empty() {
                 continue;
             }
-            hits.sort_by_key(|v| (v.plan_type != Some(FLOOR_PLAN), v.crop.is_none(), v.id));
+            hits.sort_by_key(|v| {
+                (
+                    v.plan_type != Some(FLOOR_PLAN),
+                    !v.on_sheet,
+                    v.crop.is_none(),
+                    v.id,
+                )
+            });
             return Ok(hits[0]);
         }
         let mut names: Vec<&str> = candidates.iter().map(|v| v.name.as_str()).collect();
@@ -650,6 +737,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(facts.find("Cafe\u{301} Kitchen Plan").unwrap().id, 1);
+        // Of two views of one name, the one placed on a sheet.
+        let mut placed = view(3, "L1");
+        placed.on_sheet = true;
+        let facts2 = super::ViewFacts {
+            views: vec![view(0, "L1"), placed],
+            ..Default::default()
+        };
+        assert_eq!(facts2.find("L1").unwrap().id, 3);
         assert_eq!(facts.find("live_work core a").unwrap().id, 2);
         assert!(
             facts

@@ -677,3 +677,57 @@ fn acadsharp_sample_layouts_render_and_match_their_snapshots() {
         "SVG changed: inspect the new SVGs, then rerun with RVT_DWG_UPDATE_SNAPSHOTS=1"
     );
 }
+
+/// A dimension reads back as the distance it measures, in drawing units, whatever its stored
+/// measurement: Revit's DWG export stores the measurement times its dimension style's linear
+/// factor (914400 for a 3000 mm distance under a factor of 304.8).
+#[test]
+fn a_dimension_measures_its_points_not_its_scaled_stored_value() {
+    let d = Drawing2d {
+        version: "AC1032".into(),
+        units: 4,
+        layers: vec![Layer2d::new("0", 7), Layer2d::new("A-ANNO-DIMS", 7)],
+        layouts: vec![Layout2d {
+            name: "Model".into(),
+            block: rvt_dwg::MODEL_SPACE.into(),
+            tab_order: 0,
+            is_model: true,
+            limits: None,
+        }],
+        entities: vec![Entity2d::new(
+            "DIMENSION",
+            "A-ANNO-DIMS",
+            Geom::Dimension {
+                block: String::new(),
+                measurement: 3000.0,
+                text: None,
+                at: [1500.0, 0.0, 0.0],
+                points: vec![[0.0, 0.0, 0.0], [3000.0, 0.0, 0.0]],
+            },
+        )],
+        ..Default::default()
+    };
+    let v = parse_version("2018", CadFormat::Dxf).unwrap();
+    let (bytes, _) = write_drawing(&d, CadFormat::Dxf, v).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    // Store the measurement scaled, as Revit's export does (group 42 of the DIMENSION).
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let start = lines.iter().position(|l| l.trim() == "DIMENSION").unwrap();
+    let at = (start..lines.len())
+        .find(|&i| lines[i].trim() == "42")
+        .unwrap();
+    lines[at + 1] = "914400.0".into();
+    let scaled = lines.join("\r\n");
+    let back = read_bytes(scaled.as_bytes(), Limits::DEFAULT).unwrap();
+    let got: Vec<f64> = back
+        .drawing
+        .entities
+        .iter()
+        .filter_map(|e| match &e.geom {
+            Geom::Dimension { measurement, .. } => Some(*measurement),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(got.len(), 1);
+    assert!((got[0] - 3000.0).abs() < 1e-6, "read {got:?}");
+}
