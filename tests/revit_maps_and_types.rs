@@ -124,7 +124,7 @@ fn nordic_office_concrete_maps_family_instances_and_writes_used_types() {
         "(maps, mapped items, type objects, typed, unplaced type objects)"
     );
 
-    // `open` adds the types no element uses, and nothing else.
+    // `open` also writes the types no element uses.
     model.convention = rvt::ifc::ExportConvention::Open;
     let open = write_step_graph(&IfcxGraph::from_model(
         &model,
@@ -164,6 +164,6 @@ fn nordic_office_concrete_maps_family_instances_and_writes_used_types() {
 // The revit convention writes no unplaced type (34 before it left them out).
 const PINS: (usize, usize, usize, usize, usize) = (1_935, 11_691, 2_226, 2_226, 0);
 
-/// Under `open`: the 2,226 typed type objects and the 34 types no element
-/// uses.
-const OPEN_TYPES: (usize, usize) = (2_260, 2_226);
+/// Under `open`: type objects are one per Revit type, not split by map
+/// (1,302 typing elements), plus the 34 types no element uses.
+const OPEN_TYPES: (usize, usize) = (1_336, 1_302);
