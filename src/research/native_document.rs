@@ -367,7 +367,7 @@ fn read_partition(file: &mut RevitFile, name: &str) -> Result<Option<Vec<u8>>> {
 /// A record [`extract_records`] emits, in order: finished already, or with
 /// its graph still to decode.
 enum Pending<'a> {
-    Done(Record),
+    Done(Box<Record>),
     Decode {
         id: u64,
         offset: usize,
@@ -1206,7 +1206,7 @@ fn extract_records(
                             {
                                 let base = crate::native_element::decode_base(body, registry);
                                 summary.emitted_records += 1;
-                                pending.push(Pending::Done(Record {
+                                pending.push(Pending::Done(Box::new(Record {
                                     identity: identity.clone(),
                                     derived_default_ifc_guid: None,
                                     derived_identifier_diagnostic: None,
@@ -1233,7 +1233,7 @@ fn extract_records(
                                     metadata_diagnostic: None,
                                     base: base.ok(),
                                     body: options.keep_body.then(|| body.to_vec()),
-                                }));
+                                })));
                                 continue;
                             }
                         }
@@ -1356,7 +1356,7 @@ fn extract_records(
                 for (job, done) in pending.into_iter().zip(done.drain(..)) {
                     let (id, offset, body, identity, class_name, finished) = match (job, done) {
                         (Pending::Done(record), _) => {
-                            emit(record)?;
+                            emit(*record)?;
                             continue;
                         }
                         (
