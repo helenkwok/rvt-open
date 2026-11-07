@@ -321,19 +321,20 @@ fn view_window(
             }
         });
     let scale = view.scale.unwrap_or(100.0);
+    // Annotation is drawn out to the view's annotation crop, which is not decoded and lies
+    // outside the model crop: text, tags and dimensions are kept wherever they are. Grid lines
+    // are cut at the model crop when drawn.
     let in_crop = |p: [f64; 2]| crop.is_none_or(|c| c.contains((p[0], p[1])));
     let mut a = PlanAnnotation::default();
     for t in facts.texts.iter().filter(|t| t.view == view.id) {
-        if in_crop([t.at[0], t.at[1]]) {
-            a.texts.push(PlanText {
-                at: [t.at[0], t.at[1]],
-                value: t.value.clone(),
-                // Text heights are sheet sizes.
-                height_feet: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale,
-                rotation: t.rotation,
-                layer: "A-ANNO-NOTE".into(),
-            });
-        }
+        a.texts.push(PlanText {
+            at: [t.at[0], t.at[1]],
+            value: t.value.clone(),
+            // Text heights are sheet sizes.
+            height_feet: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale,
+            rotation: t.rotation,
+            layer: "A-ANNO-NOTE".into(),
+        });
     }
     for tag in facts.room_tags.iter().filter(|t| t.view == view.id) {
         let Some(room) = tag.room.and_then(|r| facts.rooms.get(&r)) else {
@@ -342,9 +343,6 @@ fn view_window(
         let Some(at) = tag.at.map(|p| [p[0], p[1]]).or(room.point) else {
             continue;
         };
-        if !in_crop(at) {
-            continue;
-        }
         for (i, value) in [&room.name, &room.number].into_iter().flatten().enumerate() {
             a.texts.push(PlanText {
                 at: [at[0], at[1] - i as f64 * 4.0 * scale / MM_PER_FOOT],
@@ -379,9 +377,7 @@ fn view_window(
     for d in facts.dimensions.iter().filter(|d| d.view == view.id) {
         for w in d.points.windows(2) {
             let (p, q) = ([w[0][0], w[0][1]], [w[1][0], w[1][1]]);
-            if in_crop(p) || in_crop(q) {
-                a.dimensions.push([p, q]);
-            }
+            a.dimensions.push([p, q]);
         }
     }
     Ok((

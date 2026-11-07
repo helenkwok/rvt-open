@@ -45,7 +45,7 @@ pub struct Limits {
     /// Largest DWG input read.
     pub max_input_bytes: usize,
     /// Largest DXF input read. DXF is text and holds the same drawing in several times the bytes of
-    /// DWG (a 166 MB DWG of 180,000 entities re-saves as a 750 MB DXF), so it has its own limit. A
+    /// DWG (a 92 MB DWG of 180,000 entities re-saves as a 750 MB DXF), so it has its own limit. A
     /// DXF file is read from disk as a stream, not loaded first.
     pub max_dxf_input_bytes: usize,
     /// Largest total of decompressed section data the engine may allocate for one read.

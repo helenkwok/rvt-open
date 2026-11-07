@@ -570,16 +570,30 @@ fn text_fragments(o: &SchemaObject, root: &Fields) -> String {
 
 impl ViewFacts {
     /// The plan view called `name`, not a template: an exact match first, then one ignoring case,
-    /// then one where `_` stands for any character a file name cannot hold (`/ \ : * ? " < > |`).
+    /// then one where `_` stands for any character a file name cannot hold (`/ \ : * ? " < > |`)
+    /// and accents are ignored.
     /// Among several, a floor plan is preferred, then one with a crop box (a project view rather
     /// than one of an embedded family), then the lowest id.
     pub fn find(&self, name: &str) -> std::result::Result<&PlanView, String> {
         let candidates: Vec<&PlanView> = self.views.iter().filter(|v| !v.template).collect();
+        // Combining marks dropped, so a decomposed name (a file name written on macOS) meets its
+        // composed form.
+        let fold = |s: &str| -> Vec<char> {
+            s.chars()
+                .filter(|c| !('\u{300}'..='\u{36f}').contains(c))
+                .collect()
+        };
+        // ponytail: an accented letter matches any letter, not only its base; a decomposition
+        // table would be exact.
         let loose = |a: &str, b: &str| {
-            a.chars().count() == b.chars().count()
-                && a.chars().zip(b.chars()).all(|(x, y)| {
+            let (a, b) = (fold(a), fold(b));
+            a.len() == b.len()
+                && a.iter().zip(&b).all(|(&x, &y)| {
                     x.to_lowercase().eq(y.to_lowercase())
                         || (x == '_' && "/\\:*?\"<>|_".contains(y))
+                        || (x.is_alphabetic()
+                            && y.is_alphabetic()
+                            && (!x.is_ascii() || !y.is_ascii()))
                 })
         };
         let tests: [&dyn Fn(&str) -> bool; 3] = [
@@ -618,5 +632,30 @@ mod tests {
         let rtf = r"{\rtf1\ansi{\fonttbl{\f0 Arial;}}{\*\generator x;}\f0\fs20 FIRE EXIT\par Caf\'e9 \u8211? 2\par}";
         assert_eq!(rtf_plain(rtf), "FIRE EXIT\nCaf\u{e9} \u{2013} 2");
         assert_eq!(rtf_plain(r"{\rtf1 a\{b\}\\c}"), "a{b}\\c");
+    }
+
+    #[test]
+    fn a_view_is_found_by_its_file_name() {
+        let view = |id, name: &str| super::PlanView {
+            id,
+            name: name.into(),
+            plan_type: Some(super::FLOOR_PLAN),
+            ..Default::default()
+        };
+        let facts = super::ViewFacts {
+            views: vec![
+                view(1, "Caf\u{e9} Kitchen Plan"),
+                view(2, "Live/Work Core A"),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(facts.find("Cafe\u{301} Kitchen Plan").unwrap().id, 1);
+        assert_eq!(facts.find("live_work core a").unwrap().id, 2);
+        assert!(
+            facts
+                .find("Level 9")
+                .unwrap_err()
+                .contains("Live/Work Core A")
+        );
     }
 }
