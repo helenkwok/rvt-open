@@ -99,7 +99,7 @@ def wall_axis(prod):
     if rep is None:
         return None
     m = ifcopenshell.util.placement.get_local_placement(prod.ObjectPlacement)
-    scale = ifcopenshell.util.unit.calculate_unit_scale(prod.wrapped_data.file)
+    scale = ifcopenshell.util.unit.calculate_unit_scale(prod.file)
     item = rep.Items[0]
     if item.is_a("IfcPolyline"):
         pts = [list(p.Coordinates) for p in item.Points]
@@ -110,6 +110,23 @@ def wall_axis(prod):
     else:
         return None
     return [(m @ np.array([p[0], p[1], p[2] if len(p) > 2 else 0.0, 1.0]))[:2] * scale for p in (pts[0], pts[-1])]
+
+
+def axis_error(ax, ends, verts):
+    """How far (m) a wall's Axis end points are from where Revit's export puts them, or None.
+
+    Revit's IFC export draws a wall's Axis on its location line, from where its body starts along
+    that line to where it ends: past the line's end where the body runs through a join, short of it
+    where the body stops at one. That holds for every wall of its IFC4 Reference View exports of
+    the tiny models, 2018 to 2027. The error is the larger of the end points' distance off the line
+    and their distance from the body's ends along it."""
+    if ax is None or verts is None:
+        return None
+    d = (ends[1] - ends[0]) / np.linalg.norm(ends[1] - ends[0])
+    off = max(abs(float(d[0] * (a - ends[0])[1] - d[1] * (a - ends[0])[0])) for a in ax)
+    along = sorted(float(np.dot(a - ends[0], d)) for a in ax)
+    body = (verts[:, :2] - ends[0]) @ d
+    return max(off, abs(along[0] - float(body.min())), abs(along[1] - float(body.max())))
 
 
 def near(a, b, tol):
@@ -163,11 +180,10 @@ def score(answer, ifc_path, jsonl_path):
         chk(f"{label}:length", near(w["length"]["m"], row.get("length_m"), TOL_LEN), r4(w["length"]["m"]), r4(row.get("length_m")))
         ends = [np.array(e["point"]["m"][:2]) for e in w["ends"]]
         ax = wall_axis(p) if p is not None else None
-        err = None if ax is None else min(max(np.linalg.norm(ax[0] - ends[0]), np.linalg.norm(ax[1] - ends[1])),
-                                          max(np.linalg.norm(ax[0] - ends[1]), np.linalg.norm(ax[1] - ends[0])))
-        chk(f"{label}:axis", err is not None and err <= TOL_LEN, "Axis on the location line",
-            "no Axis representation" if ax is None else f"end point error {err:.4f} m")
         v = mesh(p)[0] if p is not None else None
+        err = axis_error(ax, ends, v)
+        chk(f"{label}:axis", err is not None and err <= TOL_LEN, "Axis on the location line, end to end of the body",
+            "no Axis representation" if ax is None else "no body" if err is None else f"error {err:.4f} m")
         base = levels[w["level_id"]]["elevation"]["m"] + w["base_offset"]["m"]
         top = base + w["unconnected_height"]["m"]
         got = None if v is None else [r4(v[:, 2].min()), r4(v[:, 2].max())]

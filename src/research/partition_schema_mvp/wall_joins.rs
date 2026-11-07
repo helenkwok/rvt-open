@@ -555,6 +555,120 @@ pub(super) fn attach_wall_butt_joins(
     }
 }
 
+/// Give each wall what its native record says about the ends of its location
+/// curve ([`crate::native_walls::WallEnds`]): the curve itself
+/// ([`WALL_LOCATION_LINE_FIELD`]) and its length
+/// ([`WALL_CURVE_LENGTH_FIELD`], where none is given yet), and at each end
+/// how it is joined ([`WALL_JOIN_TYPE_FIELDS`]) and the wall it is joined to
+/// ([`WALL_JOIN_PARTNER_FIELDS`]).
+///
+/// The record decides the partner: a partner another reading named that the
+/// record does not list at that end is dropped, with whether it runs
+/// through, and where the record lists one other wall alone there and none is
+/// named, that wall is. At an end where joins are disallowed, nothing is
+/// joined: its partner and the reaches a join gave it are dropped, so the
+/// body runs to the end of its line, as Revit's does.
+///
+/// The fields' ends are the wall's centreline's where it has one
+/// ([`wall_axis_from_fields`]) and the curve runs the other way, and the
+/// curve's otherwise.
+pub fn attach_wall_end_records(
+    walls: &mut [DecodedElement],
+    ends: &BTreeMap<u64, crate::native_walls::WallEnds>,
+) {
+    let near = |a: [f64; 2], b: [f64; 2]| {
+        (a[0] - b[0]).hypot(a[1] - b[1]) <= NATIVE_WALL_LINE_TOLERANCE_FEET
+    };
+    for wall in walls.iter_mut() {
+        let Some(read) = wall.id.and_then(|id| ends.get(&u64::from(id))) else {
+            continue;
+        };
+        let [start, end] = read.curve;
+        let reversed = wall_axis_from_fields(&wall.fields)
+            .is_some_and(|axis| near(start, axis.end) && near(end, axis.start));
+        let float = |value: f64| InstanceField::Float { value, size: 8 };
+        wall.fields.push((
+            WALL_LOCATION_LINE_FIELD.into(),
+            InstanceField::Vector(vec![
+                float(start[0]),
+                float(start[1]),
+                float(end[0]),
+                float(end[1]),
+            ]),
+        ));
+        let length = (end[0] - start[0]).hypot(end[1] - start[1]);
+        if length.is_finite()
+            && length > 0.0
+            && !wall
+                .fields
+                .iter()
+                .any(|(name, _)| name == WALL_CURVE_LENGTH_FIELD)
+        {
+            wall.fields
+                .push((WALL_CURVE_LENGTH_FIELD.into(), float(length)));
+        }
+        for curve_end in 0..2 {
+            let slot = if reversed { 1 - curve_end } else { curve_end };
+            let partner_of = |fields: &[(String, InstanceField)]| {
+                fields.iter().find_map(|(name, value)| match value {
+                    InstanceField::ElementId { id, .. }
+                        if name == WALL_JOIN_PARTNER_FIELDS[slot] =>
+                    {
+                        Some(*id)
+                    }
+                    _ => None,
+                })
+            };
+            let joined = &read.joined[curve_end];
+            let named = partner_of(&wall.fields);
+            let kind = if read.disallowed[curve_end] {
+                let dropped = [
+                    WALL_JOIN_PARTNER_FIELDS[slot],
+                    WALL_JOIN_THROUGH_FIELDS[slot],
+                    WALL_JOIN_REACH_FIELDS[slot],
+                    WALL_JOIN_LAYER_REACH_FIELDS[slot],
+                    WALL_JOIN_LAYER_EDGE_REACH_FIELDS[slot],
+                ];
+                wall.fields
+                    .retain(|(name, _)| !dropped.contains(&name.as_str()));
+                Some(WALL_JOIN_DISALLOWED)
+            } else {
+                if named.is_some_and(|id| !joined.contains(&u64::from(id))) {
+                    let dropped = [
+                        WALL_JOIN_PARTNER_FIELDS[slot],
+                        WALL_JOIN_THROUGH_FIELDS[slot],
+                    ];
+                    wall.fields
+                        .retain(|(name, _)| !dropped.contains(&name.as_str()));
+                }
+                if partner_of(&wall.fields).is_none() {
+                    if let [other] = joined.as_slice() {
+                        if let Ok(id) = u32::try_from(*other) {
+                            wall.fields.push((
+                                WALL_JOIN_PARTNER_FIELDS[slot].into(),
+                                InstanceField::ElementId { tag: 0, id },
+                            ));
+                        }
+                    }
+                }
+                (!joined.is_empty())
+                    .then(|| {
+                        read.join_types[curve_end]
+                            .and_then(|kind| usize::try_from(kind).ok())
+                            .and_then(|kind| WALL_JOIN_TYPE_NAMES.get(kind).copied())
+                    })
+                    .flatten()
+            };
+            if let Some(kind) = kind {
+                wall.fields.push((
+                    WALL_JOIN_TYPE_FIELDS[slot].into(),
+                    InstanceField::String(kind.into()),
+                ));
+            }
+        }
+    }
+}
+
 /// Rewrite a wall's plan centre and plan extents to the trimmed body.
 pub(super) fn apply_wall_join_trim(
     decoded: &mut DecodedElement,

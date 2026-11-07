@@ -1467,6 +1467,7 @@ pub fn append_typed_production_elements(
             }
         });
         let level_set = level_parameter_property_set(&decoded, &ifc_type);
+        let dimensions_set = wall_dimensions_property_set(&decoded, &ifc_type);
         record_type_common(&mut type_commons, &ifc_type, &decoded);
         // Revit's export writes a ceiling of separate loops as one
         // covering whose body holds every piece, where it splits a floor.
@@ -1495,6 +1496,50 @@ pub fn append_typed_production_elements(
             solid_shape,
             representation_map_index: None,
         });
+        // The walls a wall's record joins by a mitre, for the pass that
+        // mitres record-box bodies.
+        for (name, value) in &decoded.fields {
+            if let (Some(slot), InstanceField::String(kind)) = (
+                crate::partition_schema_mvp::WALL_JOIN_TYPE_FIELDS
+                    .iter()
+                    .position(|field| field == name),
+                value,
+            ) {
+                let partner = decoded.fields.iter().find_map(|(name, value)| match value {
+                    InstanceField::ElementId { id, .. }
+                        if name == crate::partition_schema_mvp::WALL_JOIN_PARTNER_FIELDS[slot] =>
+                    {
+                        Some(*id)
+                    }
+                    _ => None,
+                });
+                if let (Some(partner), true) = (partner, kind == "Miter") {
+                    record_handoffs.push(Property {
+                        name: WALL_MITRE_PARTNER_PROPERTY.into(),
+                        value: PropertyValue::Integer(i64::from(partner)),
+                    });
+                }
+            }
+        }
+        // A wall's location line, for the writer's `Axis`.
+        if matches!(
+            model_ifc_type_of(entities, entity_index),
+            Some("IFCWALL" | "IFCWALLSTANDARDCASE")
+        ) {
+            if let Some(line) =
+                crate::partition_schema_mvp::wall_location_line_from_fields(&decoded.fields)
+            {
+                for (name, feet) in WALL_LOCATION_LINE_PROPERTIES
+                    .iter()
+                    .zip([line[0][0], line[0][1], line[1][0], line[1][1]])
+                {
+                    record_handoffs.push(Property {
+                        name: (*name).into(),
+                        value: PropertyValue::LengthFeet(feet),
+                    });
+                }
+            }
+        }
         if !record_handoffs.is_empty() {
             out.record_handoffs.insert(entity_index, record_handoffs);
         }
@@ -1666,6 +1711,14 @@ pub fn append_typed_production_elements(
         // The Level parameters, in the `Constraints` set Revit's
         // export writes them in.
         if let Some(set) = level_set {
+            entities.push(entities::IfcEntity::ElementPropertySet {
+                element: entity_index,
+                set,
+            });
+        }
+        // A wall's Length, its location curve's, in the `Dimensions` set
+        // that Revit groups the parameter in.
+        if let Some(set) = dimensions_set {
             entities.push(entities::IfcEntity::ElementPropertySet {
                 element: entity_index,
                 set,
@@ -2256,6 +2309,38 @@ fn level_parameter_property_set(decoded: &DecodedElement, ifc_type: &str) -> Opt
     Some(PropertySet {
         name: "Constraints".into(),
         properties,
+    })
+}
+
+/// The `Dimensions` set of a wall exported as `IFCWALL`: its `Length`
+/// parameter, the length of its location curve
+/// ([`crate::partition_schema_mvp::WALL_CURVE_LENGTH_FIELD`]), which is the
+/// Revit API's `CURVE_ELEM_LENGTH` on every wall of the tiny reference
+/// models from 2018 to 2027. Revit's export writes its
+/// `Qto_WallBaseQuantities.Length` from the cut-back curve instead, so that
+/// quantity is written only where the two agree ([`add_wall_quantities`]).
+/// `None` without the curve's length.
+fn wall_dimensions_property_set(decoded: &DecodedElement, ifc_type: &str) -> Option<PropertySet> {
+    if !matches!(ifc_type, "IFCWALL" | "IFCWALLSTANDARDCASE") {
+        return None;
+    }
+    let length = decoded
+        .fields
+        .iter()
+        .find_map(|(name, value)| match value {
+            InstanceField::Float { value, .. }
+                if name == crate::partition_schema_mvp::WALL_CURVE_LENGTH_FIELD =>
+            {
+                Some(*value)
+            }
+            _ => None,
+        })?;
+    (length.is_finite() && length > 0.0).then(|| PropertySet {
+        name: "Dimensions".into(),
+        properties: vec![Property {
+            name: "Length".into(),
+            value: PropertyValue::LengthFeet(length),
+        }],
     })
 }
 
@@ -5115,6 +5200,30 @@ pub const INSTANCE_BOX_SIZE_PROPERTIES: [&str; 2] = ["BoxWidth", "BoxHeight"];
 /// `crate::partition_schema_mvp::SYMBOL_WIRE_WIDTH_FIELD`), feet.
 pub const SYMBOL_WIRE_WIDTH_PROPERTY: &str = "SymbolWireWidth";
 
+/// The names of the hand-offs holding a wall's location line, plan model
+/// feet: its start's X and Y and its end's
+/// (`crate::partition_schema_mvp::WALL_LOCATION_LINE_FIELD`). The writer
+/// draws the wall's `Axis` on it ([`super::IfcModel::wall_location_lines`]).
+pub const WALL_LOCATION_LINE_PROPERTIES: [&str; 4] = [
+    "LocationStartX",
+    "LocationStartY",
+    "LocationEndX",
+    "LocationEndY",
+];
+
+/// The name of the hand-off naming a wall that a wall's record joins it to
+/// by a mitre (`crate::partition_schema_mvp::WALL_JOIN_TYPE_FIELDS`), one
+/// per such end.
+pub const WALL_MITRE_PARTNER_PROPERTY: &str = "MitrePartner";
+
+/// The STEP entity name of the building element at `index` in `entities`.
+fn model_ifc_type_of(entities: &[entities::IfcEntity], index: usize) -> Option<&str> {
+    match entities.get(index)? {
+        entities::IfcEntity::BuildingElement { ifc_type, .. } => Some(ifc_type.as_str()),
+        _ => None,
+    }
+}
+
 /// Classes whose body another rule draws, which a family instance's turn
 /// leaves alone: columns (their type's section), beams (their line), and
 /// curtain-wall panels and mullions (their grid).
@@ -7551,14 +7660,31 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
             }
             _ => None,
         });
-        if let (Some(partner), Some(through)) = (partner, through) {
+        if let Some(partner) = partner {
             properties.push(Property {
                 name: format!("Join{end}WallElementId"),
                 value: PropertyValue::Integer(i64::from(partner)),
             });
+            if let Some(through) = through {
+                properties.push(Property {
+                    name: format!("Join{end}RunsThrough"),
+                    value: PropertyValue::Boolean(through),
+                });
+            }
+        }
+        // How the end is joined, as the wall's record gives it: Revit's
+        // join type, or Disallowed.
+        if let Some(kind) = decoded.fields.iter().find_map(|(name, value)| match value {
+            InstanceField::String(kind)
+                if name == crate::partition_schema_mvp::WALL_JOIN_TYPE_FIELDS[slot] =>
+            {
+                Some(kind)
+            }
+            _ => None,
+        }) {
             properties.push(Property {
-                name: format!("Join{end}RunsThrough"),
-                value: PropertyValue::Boolean(through),
+                name: format!("Join{end}Type"),
+                value: PropertyValue::Text(kind.clone()),
             });
         }
         if let Some(reach) = reaches[slot] {

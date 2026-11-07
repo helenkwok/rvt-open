@@ -525,6 +525,25 @@ pub const WALL_JOIN_REACH_FIELDS: [&str; 2] = ["m_wall_join_start_reach", "m_wal
 /// or the wall it stops against at a T joint.
 pub const WALL_JOIN_PARTNER_FIELDS: [&str; 2] = ["m_wall_join_start_wall", "m_wall_join_end_wall"];
 
+/// Fields holding how each end of a wall's location curve is joined, as its
+/// native record gives it ([`crate::native_walls::wall_ends`]): one of
+/// [`WALL_JOIN_TYPE_NAMES`], or [`WALL_JOIN_DISALLOWED`] where joins are not
+/// allowed there. Absent at an end that is not joined and allows joins.
+pub const WALL_JOIN_TYPE_FIELDS: [&str; 2] = ["m_wall_join_start_type", "m_wall_join_end_type"];
+
+/// The names of Revit's `JoinType` values 0, 1 and 2, as
+/// [`WALL_JOIN_TYPE_FIELDS`] gives them.
+pub const WALL_JOIN_TYPE_NAMES: [&str; 3] = ["Abut", "Miter", "SquareOff"];
+
+/// [`WALL_JOIN_TYPE_FIELDS`] at an end where joins are disallowed.
+pub const WALL_JOIN_DISALLOWED: &str = "Disallowed";
+
+/// Field holding, as a flat vector of floats `[x0, y0, x1, y1]`, the plan
+/// start and end of a wall's location curve from its native record
+/// ([`crate::native_walls::WallEnds::curve`]), on every release the record
+/// is read: the line the export writes the wall's `Axis` on.
+pub const WALL_LOCATION_LINE_FIELD: &str = "m_wall_location_line";
+
 /// Fields holding how far past the start and the end of its centreline
 /// each of a wall's layers reaches at a layered butt join or T
 /// joint, exterior first, feet.
