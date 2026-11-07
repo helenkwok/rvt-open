@@ -5524,9 +5524,10 @@ pub(super) fn type_object_plan(
         });
     }
 
-    // every type the file defines that no element names, so a
-    // family or type the project holds survives the export as Revit users
-    // expect (Revit's own export writes only the types its instances use).
+    // Under the `open` convention, every type the file defines that no
+    // element names, so a family or type the project holds survives the
+    // export (Revit's own export writes only the types its instances use:
+    // `ExportConvention::writes_unused_types`).
     // A type is written as the entity this file's placed types of its
     // category are written as, else by its category's default, else as a
     // proxy type; a type of a category with neither (annotation, views)
@@ -5581,7 +5582,12 @@ pub(super) fn type_object_plan(
             })
             .or_insert(seen);
     }
-    for ft in &model.file_types {
+    let unused_types = if model.convention.writes_unused_types() {
+        model.file_types.as_slice()
+    } else {
+        &[]
+    };
+    for ft in unused_types {
         let tag = ft.id.to_string();
         if typed.contains(&tag) {
             continue;

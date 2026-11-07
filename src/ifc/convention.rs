@@ -162,4 +162,19 @@ impl ExportConvention {
             Self::Open => true,
         }
     }
+    /// Switch point 8: types no exported element uses.
+    ///
+    /// - `Revit`: none. Revit's export writes a type object only for a type
+    ///   its exported elements use, with that type's property sets: on the
+    ///   tiny reference models (fixtures-tiny-1, Revit 2018 to 2027) all 105
+    ///   `IfcTypeObject`s of Revit's own 50 IFC4 exports type an element.
+    /// - `Open`: every type the file defines with a name and a category the
+    ///   writer can class, placed or not, so a family or type the project
+    ///   holds survives the export.
+    pub fn writes_unused_types(self) -> bool {
+        match self {
+            Self::Revit => false,
+            Self::Open => true,
+        }
+    }
 }

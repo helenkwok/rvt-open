@@ -16,7 +16,8 @@
 //! u8    1
 //! u8    0
 //! ...   on an edge that defines the slope, the slope as −rise/run at
-//!       +0x0b past the flags (2024; on 2025 the plane's raise)
+//!       +0x0b past the flags (2024, or 0.0; on 2025 to 2027 the plane's
+//!       raise)
 //! ```
 //!
 //! On the Autodesk tutorial house (Revit 2024) three roofs have no edge
@@ -32,6 +33,11 @@
 //! rise/run there: it is how far the edge's plane is raised at the edge. On
 //! the roofs of `R2025_Models.zip` (sheds, a gable, hips, L-shaped hips)
 //! every defining edge and its angle match Revit's own IFC export.
+//!
+//! On the tiny reference hip and gable roofs (fixtures-tiny-1) the block is
+//! the same bytes on 2024, 2025, 2026 and 2027, and +0x3b is 0.0 on every
+//! defining edge, also on 2024. Their 30 degree planes then give each edge
+//! the slope and the roof the top (6.2517 m) the Revit API reports.
 
 use crate::ifc::element_provenance::CopyTrail;
 use crate::le_bytes;
@@ -39,14 +45,13 @@ use crate::native_json::element_id_i64;
 use crate::{Result, RevitFile};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Releases this layout is measured on. Revit 2026 and 2027 are left out
-///: they would take the 2024 reading of the slope (the fascia, rafter
-/// cut and plate offset of 2025 are not read there), `rac_advanced`'s sloped
-/// roof drawn so is its 2024 save's body (532 triangles), which its 2025 save
-/// draws too since then (it drew 12 triangles while the 2025 save read the
-/// roof's 30 ft arc as a chord), and no Revit export of a 2026 or 2027 roof
-/// scores either.
-pub const ROOF_SLOPE_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024, 2025];
+/// Releases this layout is measured on. Revit 2026 and 2027 write the
+/// block as 2025 does, byte for byte at the same offsets past the `ff` run,
+/// with the plane's raise at +0x3b: on the tiny reference hip and gable
+/// roofs (fixtures-tiny-1) every edge's angle and defining flag match the
+/// Revit API's, and the roofs' 30 degree planes give the API's slopes and top.
+/// The fascia depth and rafter cut stay read on 2025 only.
+pub const ROOF_SLOPE_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 
 /// How far into a sketch line's data its slope block is looked for.
 pub const EDGE_SLOPE_WINDOW: usize = 0x1000;
@@ -59,7 +64,7 @@ pub struct EdgeSlope {
     /// The edge's slope angle from horizontal, radians.
     pub angle_radians: f64,
     /// How far the edge's plane is raised at the edge, feet: the f64 at
-    /// +0x3b on 2025, 0 on 2024, where that f64 is −rise/run.
+    /// +0x3b on 2025 to 2027, 0 on 2024, where that f64 is −rise/run or 0.0.
     pub plate_offset_feet: f64,
 }
 
@@ -70,7 +75,7 @@ pub fn edge_slope(data: &[u8]) -> Option<EdgeSlope> {
     edge_slope_in(data, 2024)
 }
 
-/// [`edge_slope`] as `revit_version` writes the block. On 2025 the f64 at
+/// [`edge_slope`] as `revit_version` writes the block. On 2025 to 2027 the f64 at
 /// +0x3b is not the rise over run but how far the edge's plane is raised
 ///: 0.0 on most edges; 0.17713 ft (54 mm) on `03_2Slope_Rafter2SquareCut`
 /// (`R2025_Models.zip`), whose off-centre ridge it reproduces, with
@@ -97,16 +102,22 @@ pub fn edge_slope_in(data: &[u8], revit_version: u32) -> Option<EdgeSlope> {
             [1, 1, 1, 0] => true,
             _ => return None,
         };
+        // 2025 on: the plane's raise. 2024: the rise over run, or 0.0
+        // where the edge is not raised (the tiny reference hip and gable).
+        let plane_raise = revit_version >= 2025;
         if defines_slope {
             let rise_over_run = le_bytes::f64_at(data, at + 0x3b)?;
-            let recorded = revit_version == 2025 || (rise_over_run + angle.tan()).abs() <= 1e-9;
+            let recorded = plane_raise
+                || rise_over_run == 0.0
+                || (rise_over_run + angle.tan()).abs() <= 1e-9;
             if !recorded {
                 return None;
             }
         }
-        let plate_offset_feet = match revit_version {
-            2025 => le_bytes::f64_at(data, at + 0x3b).filter(|v| v.is_finite())?,
-            _ => 0.0,
+        let plate_offset_feet = if plane_raise {
+            le_bytes::f64_at(data, at + 0x3b).filter(|v| v.is_finite())?
+        } else {
+            0.0
         };
         Some(EdgeSlope {
             defines_slope,
