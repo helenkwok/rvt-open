@@ -297,6 +297,24 @@ jobs:
           "$RUNNER_TEMP/ifc/bin/python" tools/re/space_profiles_vs_ifc.py "$RUNNER_TEMP/re1-architecture.ifc" \
             "$dir/RE1-Architecture.ifc" \
             --match globalid --min-in-both 11 --min-area 11 --min-outline 11 --min-boundary 11
+      # Einhoven (Revit 2023) has one Level, which Revit's own IFC4 exports
+      # write as their one storey, with the GlobalId below, holding the wall,
+      # its two windows and the curtain wall (tests/fixtures/project-counts/
+      # revit-ifc5-einhoven.json).
+      - name: Einhoven's storey against Revit's export
+        run: |
+          target/ci/rvt-ifc _project_corpus/Revit/Revit_IFC5_Einhoven.rvt -o "$RUNNER_TEMP/einhoven.ifc"
+          "$RUNNER_TEMP/ifc/bin/python" - "$RUNNER_TEMP/einhoven.ifc" <<'PY'
+          import sys
+          import ifcopenshell
+          f = ifcopenshell.open(sys.argv[1])
+          storeys = f.by_type("IfcBuildingStorey")
+          got = [(s.GlobalId, s.Name, float(s.Elevation or 0.0)) for s in storeys]
+          assert got == [("3V7WWv02fDhAgcYNgjNa6g", "Level 1", 0.0)], got
+          held = {e.Tag for r in storeys[0].ContainsElements for e in r.RelatedElements}
+          assert {"2808", "5317", "5388", "7187"} <= held, held
+          print("Einhoven: one storey, Level 1, holding", sorted(held))
+          PY
       - name: Element table read back with openpyxl, pyarrow and sqlite3
         run: |
           d=$RUNNER_TEMP/table; mkdir -p "$d"

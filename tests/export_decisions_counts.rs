@@ -112,11 +112,8 @@ const CASES: [Case; 5] = [
     Case {
         model: "Revit_IFC5_Einhoven",
         phase: None,
-        reasons: &[
-            "body_is_record_box",
-            "low_confidence_schema_scan_candidate",
-            "unsupported_geometry_missing_level",
-        ],
+        // No element lacks a storey since its one Level is read.
+        reasons: &["body_is_record_box", "low_confidence_schema_scan_candidate"],
         frames: false,
     },
     Case {

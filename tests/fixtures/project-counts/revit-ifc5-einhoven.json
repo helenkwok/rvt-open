@@ -13,14 +13,15 @@
   },
   "counts": {
     "levels": {
-      "status": "decoder_baseline",
+      "status": "known",
       "expected": 1,
       "source": "Revit 2023.1 (23.1.90.15) default IFC4RV and IFC4DTV exports, 2026-11-03 (local only; RV sha256 b461e080451406124a06234d7f9e89db1b8ce103ce51fb2db73e5c77c7160cee, DTV sha256 c596a4674b7091904d438fc844c06d9f5166e27287a0118df66b59136909eb70); both agree: one IfcBuildingStorey, Level 1",
+      "source_ifc_type": "IFCBUILDINGSTOREY",
+      "tolerance": 0,
       "decoder_metric": "diagnostics.exported.storey_count",
-      "decoder_expected": 4,
+      "decoder_expected": 1,
       "decoder_tolerance": 0,
-      "tracking": "einhoven_levels_2023",
-      "notes": "Einhoven's Level records do not decode, so its storeys come from the base elevations of its ArcWall records, which are the curtain panels' (Level 1 plus one per panel row, named Elevation 6.562 ft, 13.123 ft and Roof)."
+      "notes": "Its one Level, Level 1 at 0 ft, read from its Level record and name block, is its one storey, with Revit's GlobalId; the curtain panels' rows are no longer storeys."
     },
     "walls": {
       "status": "known",

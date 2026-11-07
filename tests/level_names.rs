@@ -69,3 +69,65 @@ fn re1_levels_and_storeys_are_revits() {
         eprintln!("skipping: no RE1 model under RVT_PROJECT_CORPUS_DIR");
     }
 }
+
+/// Einhoven (Revit 2023, MIT) has one Level, `Level 1` at 0 ft, which
+/// Revit's own IFC4 exports write as their one storey (GlobalId
+/// `3V7WWv02fDhAgcYNgjNa6g`), holding the wall, its two windows and the
+/// curtain wall. Its storey is that Level, not one per row of curtain
+/// panels.
+#[test]
+fn einhoven_one_level_is_its_one_storey() {
+    let Some(dir) = std::env::var_os("RVT_PROJECT_CORPUS_DIR").map(PathBuf::from) else {
+        eprintln!("skipping: RVT_PROJECT_CORPUS_DIR is not set");
+        return;
+    };
+    let rvt = dir.join("Revit_IFC5_Einhoven.rvt");
+    if !rvt.exists() {
+        eprintln!("skipping: Revit_IFC5_Einhoven.rvt absent");
+        return;
+    }
+    let mut rf = RevitFile::open(&rvt).expect("open");
+    let levels = recover_partition_levels(&mut rf, 2023).expect("levels");
+    let read: Vec<(&str, f64)> = levels
+        .iter()
+        .map(|level| (level.name.as_str(), level.elevation_feet))
+        .collect();
+    assert_eq!(read, [("Level 1", 0.0)]);
+
+    let ours = write_step(
+        &RvtDocExporter
+            .export_with_diagnostics(&mut rf)
+            .expect("export")
+            .model,
+    );
+    assert_eq!(
+        global_ids_of(&ours, "IFCBUILDINGSTOREY"),
+        BTreeSet::from(["3V7WWv02fDhAgcYNgjNa6g".to_string()])
+    );
+    // The wall, the two windows and the curtain wall, by Tag, in it.
+    let storey = ours
+        .lines()
+        .find(|line| line.contains("=IFCBUILDINGSTOREY("))
+        .and_then(|line| line.split('=').next())
+        .expect("storey")
+        .to_string();
+    let contained = ours
+        .lines()
+        .find(|line| {
+            line.contains("=IFCRELCONTAINEDINSPATIALSTRUCTURE(")
+                && line.trim_end().ends_with(&format!(",{storey});"))
+        })
+        .expect("containment in the storey");
+    for tag in ["2808", "5317", "5388", "7187"] {
+        let product = ours
+            .lines()
+            .find(|line| line.contains(&format!(",'{tag}',")) && line.starts_with('#'))
+            .and_then(|line| line.split('=').next())
+            .unwrap_or_else(|| panic!("element {tag}"));
+        assert!(
+            contained.contains(&format!("{product},"))
+                || contained.contains(&format!("{product})")),
+            "element {tag} is not in Level 1"
+        );
+    }
+}
