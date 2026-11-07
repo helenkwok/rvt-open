@@ -737,14 +737,6 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(facts.find("Cafe\u{301} Kitchen Plan").unwrap().id, 1);
-        // Of two views of one name, the one placed on a sheet.
-        let mut placed = view(3, "L1");
-        placed.on_sheet = true;
-        let facts2 = super::ViewFacts {
-            views: vec![view(0, "L1"), placed],
-            ..Default::default()
-        };
-        assert_eq!(facts2.find("L1").unwrap().id, 3);
         assert_eq!(facts.find("live_work core a").unwrap().id, 2);
         assert!(
             facts

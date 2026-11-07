@@ -330,7 +330,8 @@ struct Footprint {
     axis_aligned_rectangle: bool,
     ifc_type: String,
     name: String,
-    /// Index into `model.entities`.
+    /// Index into `model.entities` (its layer in DXF and DWG output).
+    #[cfg_attr(not(feature = "dwg"), allow(dead_code))]
     index: usize,
 }
 
