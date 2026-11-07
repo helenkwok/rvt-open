@@ -720,12 +720,13 @@ projectSampleTest(
     // No bare dashes standing in for an absent optional.
     await expect(info.locator('.info-row .v', { hasText: /^—$/ })).toHaveCount(0);
 
-    // The wall hosts Revit's two windows. It has no storey (Einhoven's Level
-    // records do not decode), and the panel says so rather than
-    // offering a storey link; the storey link is checked on Core Interior.
+    // The wall hosts Revit's two windows and stands on Level 1, Einhoven's
+    // one Level, at 0 ft; the storey link's jump is checked on Core Interior.
     await expect(info).toContainText(/Hosts 2 openings/);
-    await expect(info).toContainText('Not recovered: level binding');
-    await expect(info.locator('[data-group="storey"] .info-relation')).toHaveCount(0);
+    await expect(info).not.toContainText('Not recovered: level binding');
+    const storeyRelation = info.locator('[data-group="storey"] .info-relation');
+    await expect(storeyRelation).toHaveCount(1);
+    await expect(storeyRelation).toContainText('Level 1 · 0.000 ft');
 
     // Einhoven's 36 material objects bind none to a wall (only two windows
     // carry a set); the wall takes the material of its saved graphics, as
