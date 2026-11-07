@@ -37,6 +37,25 @@ pub fn wall_axis_from_fields(fields: &[(String, InstanceField)]) -> Option<WallA
     })
 }
 
+/// The plan start and end of a wall's location curve
+/// ([`WALL_LOCATION_LINE_FIELD`]).
+pub fn wall_location_line_from_fields(fields: &[(String, InstanceField)]) -> Option<[[f64; 2]; 2]> {
+    let flat: Vec<f64> = fields.iter().find_map(|(name, value)| match value {
+        InstanceField::Vector(items) if name == WALL_LOCATION_LINE_FIELD => items
+            .iter()
+            .map(|item| match item {
+                InstanceField::Float { value, .. } => Some(*value),
+                _ => None,
+            })
+            .collect::<Option<Vec<f64>>>(),
+        _ => None,
+    })?;
+    match flat.as_slice() {
+        [x0, y0, x1, y1] => Some([[*x0, *y0], [*x1, *y1]]),
+        _ => None,
+    }
+}
+
 /// The ElementIds [`WALL_TOP_CUTTERS_FIELD`] records: what a wall's top join
 /// and cut pairs name. Empty where it holds none.
 pub fn wall_top_cutters_from_fields(fields: &[(String, InstanceField)]) -> Vec<u32> {
@@ -638,6 +657,28 @@ pub(super) fn attach_wall_top_joins(
     }
 }
 
+/// [`attach_wall_end_records`] on the releases in
+/// [`WALL_TOP_JOIN_RECORD_REVIT_VERSIONS`], from the read of the walls'
+/// records [`attach_wall_top_joins`] makes. 2024 and later take them in
+/// [`attach_wall_layers`].
+pub(super) fn attach_wall_end_records_from_reads(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    walls: &mut [DecodedElement],
+    reads: &mut crate::native_walls::WallReads,
+) {
+    if !WALL_TOP_JOIN_RECORD_REVIT_VERSIONS.contains(&revit_version) {
+        return;
+    }
+    let ids: BTreeSet<u64> = walls
+        .iter()
+        .filter_map(|wall| wall.id.map(u64::from))
+        .collect();
+    if let Ok(ends) = reads.ends(rf, &ids) {
+        attach_wall_end_records(walls, &ends);
+    }
+}
+
 pub(super) fn attach_wall_layers(
     rf: &mut RevitFile,
     revit_version: u32,
@@ -1007,6 +1048,11 @@ pub(super) fn attach_wall_layers(
         attach_wall_butt_joins(rf, revit_version, walls, &layers, &native);
         attach_native_tee_reaches(walls, &native);
         attach_wall_corner_reaches(walls, &layers, &native);
+        let ends: BTreeMap<u64, crate::native_walls::WallEnds> = native
+            .iter()
+            .map(|(&id, wall)| (id, crate::native_walls::WallEnds::of(id, wall)))
+            .collect();
+        attach_wall_end_records(walls, &ends);
         attach_wall_lengths(walls, &native);
     }
 }
