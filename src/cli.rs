@@ -247,6 +247,7 @@ pub fn write_output(
 /// a buffer, instead of held whole first. Returns what `fill` returned and
 /// the number of bytes written; `fill`'s error leaves no output behind where
 /// [`write_output`] would have replaced the file.
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub fn write_output_with<T, E: std::error::Error + Send + Sync + 'static>(
     path: impl AsRef<std::path::Path>,
     fill: impl FnOnce(&mut dyn std::io::Write) -> Result<T, E>,
@@ -271,11 +272,13 @@ pub fn write_output_with<T, E: std::error::Error + Send + Sync + 'static>(
 }
 
 /// A writer that counts the bytes it passes on.
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 struct Counted<W> {
     inner: W,
     written: u64,
 }
 
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 impl<W: std::io::Write> std::io::Write for Counted<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let n = self.inner.write(buf)?;
