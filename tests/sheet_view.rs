@@ -54,12 +54,60 @@ fn a_plan_view_cuts_walls_at_openings_and_leaves_out_what_it_hides() {
         entities: vec![
             // An interior wall 10 ft long, with a window across the cut plane (4 ft) and a
             // door-height opening that ends below it.
-            element("IFCWALL", "1", "Walls", [0.0, 0.0, 0.0], [10.0, 1.0, 8.0], None, Some(false)),
-            element("IFCWINDOW", "2", "Windows", [0.0, 0.0, 3.0], [2.0, 1.0, 2.0], Some(0), None),
-            element("IFCWINDOW", "3", "Windows", [3.0, 0.0, 0.5], [1.0, 1.0, 1.0], Some(0), None),
-            element("IFCBUILDINGELEMENTPROXY", "4", "Planting", [20.0, 0.0, 0.0], [1.0, 1.0, 1.0], None, None),
-            element("IFCSTAIR", "5", "Stairs", [30.0, 0.0, 0.0], [1.0, 1.0, 1.0], None, None),
-            element("IFCFURNITURE", "6", "Furniture", [40.0, 0.0, 0.0], [1.0, 1.0, 1.0], None, None),
+            element(
+                "IFCWALL",
+                "1",
+                "Walls",
+                [0.0, 0.0, 0.0],
+                [10.0, 1.0, 8.0],
+                None,
+                Some(false),
+            ),
+            element(
+                "IFCWINDOW",
+                "2",
+                "Windows",
+                [0.0, 0.0, 3.0],
+                [2.0, 1.0, 2.0],
+                Some(0),
+                None,
+            ),
+            element(
+                "IFCWINDOW",
+                "3",
+                "Windows",
+                [3.0, 0.0, 0.5],
+                [1.0, 1.0, 1.0],
+                Some(0),
+                None,
+            ),
+            element(
+                "IFCBUILDINGELEMENTPROXY",
+                "4",
+                "Planting",
+                [20.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                None,
+                None,
+            ),
+            element(
+                "IFCSTAIR",
+                "5",
+                "Stairs",
+                [30.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                None,
+                None,
+            ),
+            element(
+                "IFCFURNITURE",
+                "6",
+                "Furniture",
+                [40.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                None,
+                None,
+            ),
         ],
         ..Default::default()
     };
@@ -79,10 +127,12 @@ fn a_plan_view_cuts_walls_at_openings_and_leaves_out_what_it_hides() {
             .iter()
             .filter(|e| e.layer == layer)
             .filter_map(|e| match &e.geom {
-                Geom::Polyline { pts, .. } => Some(pts.iter().fold(
-                    (f64::INFINITY, f64::NEG_INFINITY),
-                    |(a, b), p| (a.min(p[0]), b.max(p[0])),
-                )),
+                Geom::Polyline { pts, .. } => Some(
+                    pts.iter()
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
+                            (a.min(p[0]), b.max(p[0]))
+                        }),
+                ),
                 _ => None,
             })
             .collect()
@@ -93,11 +143,20 @@ fn a_plan_view_cuts_walls_at_openings_and_leaves_out_what_it_hides() {
     wall.sort_by(|a, b| a.0.total_cmp(&b.0));
     assert_eq!(wall.len(), 2, "{wall:?}");
     let mm = 304.8;
-    assert!((wall[0].0 + 5.0 * mm).abs() < 1e-6 && (wall[0].1 + 1.0 * mm).abs() < 1e-6, "{wall:?}");
-    assert!((wall[1].0 - 1.0 * mm).abs() < 1e-6 && (wall[1].1 - 5.0 * mm).abs() < 1e-6, "{wall:?}");
+    assert!(
+        (wall[0].0 + 5.0 * mm).abs() < 1e-6 && (wall[0].1 + 1.0 * mm).abs() < 1e-6,
+        "{wall:?}"
+    );
+    assert!(
+        (wall[1].0 - 1.0 * mm).abs() < 1e-6 && (wall[1].1 - 5.0 * mm).abs() < 1e-6,
+        "{wall:?}"
+    );
     assert!(on("A-WALL").is_empty());
     assert_eq!(on("A-GLAZ").len(), 2);
     assert_eq!(on("S-STRS").len(), 1, "stairs on Revit's stairs layer");
-    assert!(on("L-PLNT").is_empty() && on("A-GENM").is_empty(), "hidden category");
+    assert!(
+        on("L-PLNT").is_empty() && on("A-GENM").is_empty(),
+        "hidden category"
+    );
     assert!(on("I-FURN").is_empty(), "hidden element");
 }
