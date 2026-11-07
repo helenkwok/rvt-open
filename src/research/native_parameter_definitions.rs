@@ -178,6 +178,15 @@ pub fn project(graph: &ObjectGraph) -> Result<Option<Definition>> {
     }))
 }
 
+/// Built-in length parameters read from a family type's own slots
+/// (`FamilySymbol.m_pParams`) with no definition record: a door's or
+/// window's type Width (-1001301) and Height (-1001300), in feet. On the
+/// tiny reference models (fixtures-tiny-1, Revit 2018 to 2027) every door
+/// and window type slot holds the Width and Height the Revit API reports
+/// for its instance. A slot flagged as an instance parameter holds the
+/// family's default, not the type's value, and is not read.
+pub const FAMILY_SLOT_LENGTHS: &[i64] = &[-1_001_301, -1_001_300];
+
 #[derive(Debug, Default, Serialize)]
 pub struct Registry {
     pub definitions: BTreeMap<i64, Definition>,
@@ -402,14 +411,21 @@ impl Registry {
         }
         Ok(())
     }
-    /// Select a slot only from an independently recovered definition. This does
-    /// not claim HasValue, evaluated formula values, or instance inheritance.
+    /// Select a slot only from an independently recovered definition, or a
+    /// type slot of one of [`FAMILY_SLOT_LENGTHS`]. This does not claim
+    /// HasValue, evaluated formula values, or instance inheritance.
     pub fn resolve_slot(&self, slot: &FamilyParameterSlots) -> Option<ResolvedFamilyParameter> {
         let storage_type = if slot.parameter_id < 0 {
-            self.builtin_definitions
-                .get(&slot.parameter_id)?
-                .storage_type
-                .as_str()
+            match self.builtin_definitions.get(&slot.parameter_id) {
+                Some(definition) => definition.storage_type.as_str(),
+                None if FAMILY_SLOT_LENGTHS.contains(&slot.parameter_id)
+                    && !slot.stored_instance_flag
+                    && slot.double_slot.as_f64().is_some_and(f64::is_finite) =>
+                {
+                    "Double"
+                }
+                None => return None,
+            }
         } else {
             self.definitions
                 .get(&slot.parameter_id)?
