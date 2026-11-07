@@ -1551,6 +1551,33 @@ impl StepWriter<'_> {
         solid_id
     }
 
+    /// A wall's `Axis` representation in context `axis_ctx`: an
+    /// `IfcIndexedPolyCurve` from `ends[0]` to `ends[1]` (element frame,
+    /// feet, at z 0), as Revit's export writes it. Returns the
+    /// representation's id.
+    fn emit_wall_axis(&mut self, axis_ctx: usize, ends: [[f64; 2]; 2]) -> usize {
+        let [a, b] = ends;
+        let list = self.id();
+        self.emit_entity(
+            list,
+            format!(
+                "IFCCARTESIANPOINTLIST3D((({},{},0.),({},{},0.)))",
+                format_real(a[0] * 0.3048),
+                format_real(a[1] * 0.3048),
+                format_real(b[0] * 0.3048),
+                format_real(b[1] * 0.3048),
+            ),
+        );
+        let curve = self.id();
+        self.emit_entity(curve, format!("IFCINDEXEDPOLYCURVE(#{list},$,.F.)"));
+        let rep = self.id();
+        self.emit_entity(
+            rep,
+            format!("IFCSHAPEREPRESENTATION(#{axis_ctx},'Axis','Curve3D',(#{curve}))"),
+        );
+        rep
+    }
+
     /// One solid of a body. `operand` says it is an operand of an
     /// `IfcBooleanResult` (a union of a compound's items, or an operand of a
     /// [`SolidShape::BooleanResult`]): IFC4 takes a tessellated operand only
@@ -3251,6 +3278,22 @@ impl StepWriter<'_> {
                         prod_shape_id
                     })
                 } else if let Some(shape) = solid_shape {
+                    // A wall drawn from a mesh or another solid gets its
+                    // `Axis` too, as Revit's export writes one for every
+                    // wall: on its location line, end to end of the body.
+                    let mut reps = Vec::new();
+                    if let (Some(line), Some(&axis_ctx), Some(location)) = (
+                        model.wall_location_lines.get(&entity_idx),
+                        plan_ctx_ids.get("Axis"),
+                        location_feet,
+                    ) {
+                        let points = solid_plan_points(shape);
+                        if let Some(ends) =
+                            wall_axis_local(*line, *location, *rotation_radians, &points)
+                        {
+                            reps.push(format!("#{}", self.emit_wall_axis(axis_ctx, ends)));
+                        }
+                    }
                     let (solid_ids, rep_type) =
                         self.emit_solid_items(shape, solid_position, z_axis);
                     let items = solid_ids
@@ -3265,10 +3308,11 @@ impl StepWriter<'_> {
                             "IFCSHAPEREPRESENTATION(#{geom_ctx},'Body','{rep_type}',({items}))"
                         ),
                     );
+                    reps.push(format!("#{rep_id}"));
                     let prod_shape_id = self.id();
                     self.emit_entity(
                         prod_shape_id,
-                        format!("IFCPRODUCTDEFINITIONSHAPE($,$,(#{rep_id}))"),
+                        format!("IFCPRODUCTDEFINITIONSHAPE($,$,({}))", reps.join(",")),
                     );
                     Some(prod_shape_id)
                 } else if let Some(ex) = extrusion {
@@ -3357,28 +3401,10 @@ impl StepWriter<'_> {
                         plan_ctx_ids.get("Axis"),
                         location_feet,
                     ) {
-                        if let Some([a, b]) =
-                            wall_axis_local(*line, *location, *rotation_radians, ex)
-                        {
-                            let list = self.id();
-                            self.emit_entity(
-                                list,
-                                format!(
-                                    "IFCCARTESIANPOINTLIST3D((({},{},0.),({},{},0.)))",
-                                    format_real(a[0] * 0.3048),
-                                    format_real(a[1] * 0.3048),
-                                    format_real(b[0] * 0.3048),
-                                    format_real(b[1] * 0.3048),
-                                ),
-                            );
-                            let curve = self.id();
-                            self.emit_entity(curve, format!("IFCINDEXEDPOLYCURVE(#{list},$,.F.)"));
-                            let rep = self.id();
-                            self.emit_entity(
-                                rep,
-                                format!("IFCSHAPEREPRESENTATION(#{axis_ctx},'Axis','Curve3D',(#{curve}))"),
-                            );
-                            reps.push(format!("#{rep}"));
+                        if let Some(ends) = extrusion_plan_points(ex).and_then(|points| {
+                            wall_axis_local(*line, *location, *rotation_radians, &points)
+                        }) {
+                            reps.push(format!("#{}", self.emit_wall_axis(axis_ctx, ends)));
                         }
                     }
                     // The representation groups the solid inside the
@@ -5036,42 +5062,22 @@ fn site_reference(g: Option<&crate::georeference::Georeference>) -> String {
 }
 
 /// A STEP real with every digit of the `f64` (round-trip), `1.5E-17` style.
-/// The `Axis` of a wall whose body is `body`, placed at `location` and
-/// turned by `rotation` about Z: its location line `line` (plan model feet,
-/// start and end) from where the body starts along it to where it ends, in
-/// the element's own frame, feet, in the line's direction. Revit's export
-/// writes a wall's `Axis` so: on its IFC4 Reference View exports of the
-/// tiny reference models, 2018 to 2027, every wall's axis lies on its
-/// location line and runs from end to end of its body along it (past the
-/// line's end where the body runs through a join, short of it where it
-/// stops at one). `None` where the body's profile is not a polygon, or the
-/// line has no length.
+/// The `Axis` of a wall whose body has the plan points `points` (its own
+/// frame, feet: [`extrusion_plan_points`], [`solid_plan_points`]), placed at
+/// `location` and turned by `rotation` about Z: its location line `line`
+/// (plan model feet, start and end) from where the body starts along it to
+/// where it ends, in the element's own frame, feet, in the line's direction.
+/// Revit's export writes a wall's `Axis` so: on its IFC4 Reference View
+/// exports of the tiny reference models, 2018 to 2027, every wall's axis lies
+/// on its location line and runs from end to end of its body along it (past
+/// the line's end where the body runs through a join, short of it where it
+/// stops at one). `None` without points, or where the line has no length.
 fn wall_axis_local(
     line: [[f64; 2]; 2],
     location: [f64; 3],
     rotation: Option<f64>,
-    body: &Extrusion,
+    points: &[(f64, f64)],
 ) -> Option<[[f64; 2]; 2]> {
-    use super::entities::ProfileDef;
-    let corners = |w: f64, d: f64| {
-        vec![
-            (-w / 2.0, -d / 2.0),
-            (w / 2.0, -d / 2.0),
-            (w / 2.0, d / 2.0),
-            (-w / 2.0, d / 2.0),
-        ]
-    };
-    let points = match &body.profile_override {
-        None => corners(body.width_feet, body.depth_feet),
-        Some(ProfileDef::Rectangle {
-            width_feet,
-            depth_feet,
-        }) => corners(*width_feet, *depth_feet),
-        Some(
-            ProfileDef::ArbitraryClosed { points } | ProfileDef::ArbitraryWithVoids { points, .. },
-        ) => points.clone(),
-        Some(_) => return None,
-    };
     let [[sx, sy], [ex, ey]] = line;
     let length = (ex - sx).hypot(ey - sy);
     if points.is_empty() || !length.is_finite() || length <= 1e-9 {
@@ -5097,6 +5103,87 @@ fn wall_axis_local(
         [dx * cos + dy * sin, -dx * sin + dy * cos]
     };
     Some([local(low), local(high)])
+}
+
+/// The plan corners of an extrusion's profile in the element's frame, feet:
+/// its rectangle, or its polygon. `None` for any other profile.
+fn extrusion_plan_points(body: &Extrusion) -> Option<Vec<(f64, f64)>> {
+    use super::entities::ProfileDef;
+    let corners = |w: f64, d: f64| {
+        vec![
+            (-w / 2.0, -d / 2.0),
+            (w / 2.0, -d / 2.0),
+            (w / 2.0, d / 2.0),
+            (-w / 2.0, d / 2.0),
+        ]
+    };
+    match &body.profile_override {
+        None => Some(corners(body.width_feet, body.depth_feet)),
+        Some(ProfileDef::Rectangle {
+            width_feet,
+            depth_feet,
+        }) => Some(corners(*width_feet, *depth_feet)),
+        Some(
+            ProfileDef::ArbitraryClosed { points } | ProfileDef::ArbitraryWithVoids { points, .. },
+        ) => Some(points.clone()),
+        Some(_) => None,
+    }
+}
+
+/// The plan points of a solid in the element's frame, feet, for how far a
+/// wall's body reaches along its location line ([`wall_axis_local`]): an
+/// extrusion's profile corners (a placed one's at both ends), a mesh's
+/// vertices, a compound's parts' and a boolean's first operand's. Empty for a
+/// sweep or a revolution.
+fn solid_plan_points(shape: &SolidShape) -> Vec<(f64, f64)> {
+    match shape {
+        SolidShape::ExtrudedArea(body) => extrusion_plan_points(body).unwrap_or_default(),
+        SolidShape::FacetedBrep { vertices_feet, .. }
+        | SolidShape::TriangulatedFaceSet { vertices_feet, .. } => {
+            vertices_feet.iter().map(|v| (v[0], v[1])).collect()
+        }
+        SolidShape::BooleanResult { operand_a, .. } => solid_plan_points(operand_a),
+        SolidShape::Compound(parts) => parts.iter().flat_map(solid_plan_points).collect(),
+        SolidShape::PlacedExtrusion {
+            profile,
+            origin_feet: o,
+            axis: z,
+            ref_direction: r,
+            depth_feet,
+        } => {
+            let body = Extrusion {
+                profile_override: Some(profile.clone()),
+                ..Extrusion::rectangle(0.0, 0.0, 0.0)
+            };
+            let norm = |v: [f64; 3]| {
+                let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                (n > 1e-12).then(|| v.map(|c| c / n))
+            };
+            let (Some(z), Some(points)) = (norm(*z), extrusion_plan_points(&body)) else {
+                return Vec::new();
+            };
+            let dot = r[0] * z[0] + r[1] * z[1] + r[2] * z[2];
+            let Some(x) = norm([r[0] - dot * z[0], r[1] - dot * z[1], r[2] - dot * z[2]]) else {
+                return Vec::new();
+            };
+            let y = [
+                z[1] * x[2] - z[2] * x[1],
+                z[2] * x[0] - z[0] * x[2],
+                z[0] * x[1] - z[1] * x[0],
+            ];
+            points
+                .iter()
+                .flat_map(|&(u, v)| {
+                    let p = [0, 1].map(|k| o[k] + u * x[k] + v * y[k]);
+                    [
+                        (p[0], p[1]),
+                        (p[0] + depth_feet * z[0], p[1] + depth_feet * z[1]),
+                    ]
+                })
+                .collect()
+        }
+        SolidShape::SweptPath { .. } | SolidShape::RevolvedArea { .. } => Vec::new(),
+    }
 }
 
 fn format_real(x: f64) -> String {
@@ -6168,8 +6255,22 @@ mod georeference_step_tests {
 
 #[cfg(test)]
 mod wall_axis_tests {
-    use super::super::entities::{Extrusion, ProfileDef};
-    use super::wall_axis_local;
+    use super::super::entities::{BrepTriangle, Extrusion, ProfileDef, SolidShape};
+    use super::{extrusion_plan_points, solid_plan_points, wall_axis_local};
+
+    fn axis_of(
+        line: [[f64; 2]; 2],
+        location: [f64; 3],
+        rotation: Option<f64>,
+        body: &Extrusion,
+    ) -> Option<[[f64; 2]; 2]> {
+        wall_axis_local(
+            line,
+            location,
+            rotation,
+            &extrusion_plan_points(body).unwrap_or_default(),
+        )
+    }
 
     fn close(a: [[f64; 2]; 2], b: [[f64; 2]; 2]) -> bool {
         a.iter()
@@ -6183,10 +6284,10 @@ mod wall_axis_tests {
         // A body 6.1 long centred at (3.05, 0) on the line (0,0)-(6,0): it
         // runs through the join at the line's end.
         let body = Extrusion::rectangle(6.1, 0.2, 3.0);
-        let axis = wall_axis_local([[0.0, 0.0], [6.0, 0.0]], [3.05, 0.0, 0.0], None, &body);
+        let axis = axis_of([[0.0, 0.0], [6.0, 0.0]], [3.05, 0.0, 0.0], None, &body);
         assert!(close(axis.unwrap(), [[-3.05, 0.0], [3.05, 0.0]]));
         // The same wall drawn the other way: the axis follows the line.
-        let axis = wall_axis_local([[6.0, 0.0], [0.0, 0.0]], [3.05, 0.0, 0.0], None, &body);
+        let axis = axis_of([[6.0, 0.0], [0.0, 0.0]], [3.05, 0.0, 0.0], None, &body);
         assert!(close(axis.unwrap(), [[3.05, 0.0], [-3.05, 0.0]]));
         // A mitred end: the outer corner sets how far the axis runs.
         let mitred = Extrusion {
@@ -6195,10 +6296,10 @@ mod wall_axis_tests {
             }),
             ..Extrusion::rectangle(0.0, 0.0, 3.0)
         };
-        let axis = wall_axis_local([[6.0, 0.0], [6.0, 4.0]], [6.0, 2.1, 0.0], None, &mitred);
+        let axis = axis_of([[6.0, 0.0], [6.0, 4.0]], [6.0, 2.1, 0.0], None, &mitred);
         assert!(close(axis.unwrap(), [[0.0, -2.0], [0.0, 2.0]]));
         // A turned placement: local X along the line.
-        let turned = wall_axis_local(
+        let turned = axis_of(
             [[0.0, 0.0], [0.0, 4.0]],
             [0.0, 2.0, 0.0],
             Some(std::f64::consts::FRAC_PI_2),
@@ -6210,6 +6311,37 @@ mod wall_axis_tests {
             profile_override: Some(ProfileDef::Circle { radius_feet: 1.0 }),
             ..Extrusion::rectangle(0.0, 0.0, 3.0)
         };
-        assert!(wall_axis_local([[0.0, 0.0], [1.0, 0.0]], [0.0; 3], None, &round).is_none());
+        assert!(axis_of([[0.0, 0.0], [1.0, 0.0]], [0.0; 3], None, &round).is_none());
+    }
+
+    #[test]
+    fn a_wall_drawn_from_a_mesh_or_a_compound_solid_gets_its_axis() {
+        // A mesh body from x = -2 to 2.1 in its own frame, placed at (2, 0)
+        // on the line (0,0)-(4,0): the axis runs end to end of the mesh.
+        let mesh = SolidShape::TriangulatedFaceSet {
+            vertices_feet: vec![
+                [-2.0, -0.1, 0.0],
+                [2.1, -0.1, 0.0],
+                [2.1, 0.1, 3.0],
+                [-2.0, 0.1, 3.0],
+            ],
+            triangles: vec![BrepTriangle(0, 1, 2), BrepTriangle(0, 2, 3)],
+            face_materials: Vec::new(),
+        };
+        let line = [[0.0, 0.0], [4.0, 0.0]];
+        let axis = wall_axis_local(line, [2.0, 0.0, 0.0], None, &solid_plan_points(&mesh));
+        assert!(close(axis.unwrap(), [[-2.0, 0.0], [2.1, 0.0]]));
+        // A stepped body of two extrusions: both count.
+        let steps = SolidShape::Compound(vec![
+            SolidShape::ExtrudedArea(Extrusion::rectangle(2.0, 0.2, 3.0)),
+            SolidShape::ExtrudedArea(Extrusion {
+                profile_override: Some(ProfileDef::ArbitraryClosed {
+                    points: vec![(1.0, -0.1), (2.5, -0.1), (2.5, 0.1), (1.0, 0.1)],
+                }),
+                ..Extrusion::rectangle(0.0, 0.0, 1.0)
+            }),
+        ]);
+        let axis = wall_axis_local(line, [2.0, 0.0, 0.0], None, &solid_plan_points(&steps));
+        assert!(close(axis.unwrap(), [[-1.0, 0.0], [2.5, 0.0]]));
     }
 }
