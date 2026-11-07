@@ -42,6 +42,12 @@ def export_guid(unique_id):
     return ifcopenshell.guid.compress(head[:24] + "%08x" % (int(head[24:], 16) ^ eid))
 
 
+def sub_element_guid(global_id, index):
+    """GlobalId of sub-element `index` of the element with `global_id`: `index` XORed into GUID bytes 10 and 11."""
+    h = ifcopenshell.guid.expand(global_id)
+    return ifcopenshell.guid.compress(h[:20] + "%04x" % (int(h[20:24], 16) ^ index) + h[24:])
+
+
 def mesh(prod):
     """World vertices (n, 3) and faces (m, 3) in metres of a product and its aggregated parts."""
     parts = [prod] + [p for r in prod.IsDecomposedBy or [] for p in r.RelatedObjects]
@@ -204,6 +210,14 @@ def score(answer, ifc_path, jsonl_path):
         label = f"roof{i}"
         p = by_tag.get(str(rf["id"]))
         gid(label, rf)
+        # Revit writes the roof as one IfcSlab .ROOF. per slope-defining edge, its sub-elements 2, 3, ...
+        slabs = [s for r in (p.IsDecomposedBy if p is not None else []) or [] for s in r.RelatedObjects]
+        planes = sum(1 for e in rf["edges"] if e["defines_slope"])
+        chk(f"{label}:slabs", len(slabs) == planes and all(s.is_a("IfcSlab") and s.PredefinedType == "ROOF" for s in slabs),
+            planes, len(slabs))
+        exp = [sub_element_guid(export_guid(rf["unique_id"]), k + 2) for k in range(planes)]
+        got = [s.GlobalId for s in slabs]
+        chk(f"{label}:slab-globalids", exp == got, exp, got)
         v, fc = mesh(p) if p is not None else (None, None)
         top = None if v is None else v[:, 2].max()
         chk(f"{label}:top", near(rf["bbox_max"]["m"][2], top, TOL_LEN), r4(rf["bbox_max"]["m"][2]), r4(top))

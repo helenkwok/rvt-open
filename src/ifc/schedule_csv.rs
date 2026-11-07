@@ -157,7 +157,12 @@ pub fn elements_csv(model: &IfcModel, options: &CsvOptions) -> String {
             constituent_set_of.entry(element).or_insert(set);
         }
     }
+    // A roof's slabs are listed as the roof.
+    let roof_slabs = super::roof_slab_wholes(model);
     for (entity_index, entity) in model.entities.iter().enumerate() {
+        if roof_slabs.contains_key(&entity_index) {
+            continue;
+        }
         let IfcEntity::BuildingElement {
             ifc_type,
             name,
