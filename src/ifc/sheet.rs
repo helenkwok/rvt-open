@@ -41,13 +41,18 @@ pub struct SheetOptions {
 }
 
 /// What a plan view shows, in model feet: the elements whose height range meets
-/// `bottom_feet..=top_feet` (the view depth up to the cut plane), inside `crop` when set.
+/// `bottom_feet..=top_feet` (the view depth up to the cut plane), inside `crop` when set, leaving
+/// out the categories (by Revit name) and elements (by ElementId) the view hides.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ViewWindow {
     pub bottom_feet: f64,
     pub top_feet: f64,
     #[serde(default)]
     pub crop: Option<CropRect>,
+    #[serde(default)]
+    pub hidden_categories: Vec<String>,
+    #[serde(default)]
+    pub hidden_elements: Vec<i64>,
 }
 
 /// A plan view's crop region: a rectangle `min..max` in the view's own axes, whose origin is
@@ -325,14 +330,35 @@ struct Footprint {
     axis_aligned_rectangle: bool,
     ifc_type: String,
     name: String,
+    /// Index into `model.entities` (its layer in DXF and DWG output).
+    #[cfg_attr(not(feature = "dwg"), allow(dead_code))]
+    index: usize,
 }
 
 fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Footprint> {
     let mut out = Vec::new();
-    for ent in &model.entities {
+    let sets = window
+        .filter(|w| !w.hidden_categories.is_empty())
+        .map(|_| super::element_table::element_sets(model))
+        .unwrap_or_default();
+    // What each element hosts (doors, windows, openings), for walls cut at the cut plane.
+    let mut hosted: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+    if window.is_some() {
+        for (i, e) in model.entities.iter().enumerate() {
+            if let IfcEntity::BuildingElement {
+                host_element_index: Some(h),
+                ..
+            } = e
+            {
+                hosted.entry(*h).or_default().push(i);
+            }
+        }
+    }
+    for (index, ent) in model.entities.iter().enumerate() {
         let IfcEntity::BuildingElement {
             ifc_type,
             name,
+            type_guid,
             location_feet,
             rotation_radians,
             ..
@@ -343,6 +369,19 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
         // An opening is a void in its host, not something drawn.
         if ifc_type == "IFCOPENINGELEMENT" {
             continue;
+        }
+        if let Some(w) = window {
+            // `type_guid` holds the element's ElementId.
+            let id = type_guid.as_deref().and_then(|t| t.parse::<i64>().ok());
+            if id.is_some_and(|id| w.hidden_elements.contains(&id)) {
+                continue;
+            }
+            let category = sets
+                .get(&index)
+                .and_then(|s| super::element_table::category_in(s));
+            if category.is_some_and(|c| w.hidden_categories.contains(&c)) {
+                continue;
+            }
         }
         let Some(location) = location_feet else {
             continue;
@@ -370,13 +409,26 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
         let on_axes = placement.sin.abs() < 1e-12 || placement.cos.abs() < 1e-12;
         let axis_aligned_rectangle = on_axes
             && matches!(body, Body::Extrusion(extrusion) if extrusion.profile_override.is_none());
-        out.push(Footprint {
-            outer,
-            holes,
-            axis_aligned_rectangle,
-            ifc_type: ifc_type.clone(),
-            name: name.clone(),
-        });
+        let cut = window.map(|w| w.top_feet);
+        let pieces = match (cut, hosted.get(&index)) {
+            (Some(cut), Some(h))
+                if matches!(ifc_type.as_str(), "IFCWALL" | "IFCWALLSTANDARDCASE") =>
+            {
+                cut_at_openings(model, &outer, h, cut)
+            }
+            _ => vec![outer],
+        };
+        let whole = pieces.len() == 1;
+        for outer in pieces {
+            out.push(Footprint {
+                outer,
+                holes: if whole { holes.clone() } else { Vec::new() },
+                axis_aligned_rectangle,
+                ifc_type: ifc_type.clone(),
+                name: name.clone(),
+                index,
+            });
+        }
     }
     // Plates and spaces underlie the plan: drawn after the walls, their
     // fills would hide every wall, column and door on their storey.
@@ -384,10 +436,9 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
     out
 }
 
-/// Whether the body's height range meets the window's band. A body with no mesh is placed by its
-/// origin's height.
-fn meets_band(body: Body<'_>, placement: &Placement, w: &ViewWindow) -> bool {
-    let (lo, hi) = super::body_geometry::body_mesh(body)
+/// The body's height range, model feet. A body with no mesh is placed by its origin's height.
+fn height_range(body: Body<'_>, placement: &Placement) -> (f64, f64) {
+    super::body_geometry::body_mesh(body)
         .filter(|m| !m.vertices.is_empty())
         .map(|m| {
             m.vertices
@@ -397,9 +448,114 @@ fn meets_band(body: Body<'_>, placement: &Placement, w: &ViewWindow) -> bool {
                     (lo.min(z), hi.max(z))
                 })
         })
-        .unwrap_or((placement.origin[2], placement.origin[2]));
+        .unwrap_or((placement.origin[2], placement.origin[2]))
+}
+
+/// Whether the body's height range meets the window's band.
+fn meets_band(body: Body<'_>, placement: &Placement, w: &ViewWindow) -> bool {
+    let (lo, hi) = height_range(body, placement);
     // A thousandth of a foot: a slab whose top is the level counts as in the band.
     lo <= w.top_feet + 1e-3 && hi >= w.bottom_feet - 1e-3
+}
+
+/// A wall as the view's cut plane cuts it: its plan outline split where a door, window or
+/// opening it hosts crosses the cut plane, as a plan draws a wall broken at its openings. Each
+/// hosted element's outline, measured along the wall's axis, is taken out of the wall; the
+/// pieces between are returned (the whole outline when nothing it hosts is cut).
+fn cut_at_openings(model: &IfcModel, outer: &Ring, hosted: &[usize], cut_feet: f64) -> Vec<Ring> {
+    // The wall's axis: its outline's longest edge.
+    let Some(axis) = (0..outer.len())
+        .map(|i| {
+            let (p, q) = (outer[i], outer[(i + 1) % outer.len()]);
+            (q.0 - p.0, q.1 - p.1)
+        })
+        .max_by(|a, b| a.0.hypot(a.1).total_cmp(&b.0.hypot(b.1)))
+        .map(|(x, y)| (x / x.hypot(y), y / x.hypot(y)))
+        .filter(|a| a.0.is_finite() && a.1.is_finite())
+    else {
+        return vec![outer.clone()];
+    };
+    let origin = outer[0];
+    let along = |p: (f64, f64)| (p.0 - origin.0) * axis.0 + (p.1 - origin.1) * axis.1;
+    let mut gaps: Vec<(f64, f64)> = Vec::new();
+    for &i in hosted {
+        let ent = &model.entities[i];
+        let IfcEntity::BuildingElement {
+            location_feet: Some(location),
+            rotation_radians,
+            ..
+        } = ent
+        else {
+            continue;
+        };
+        let Some(body) = element_body(ent, &model.representation_maps) else {
+            continue;
+        };
+        let p = Placement::new(Some(*location), *rotation_radians);
+        let (lo, hi) = height_range(body, &p);
+        if !(lo < cut_feet && cut_feet < hi) {
+            continue;
+        }
+        let Some((ring, _)) = plan_outline(body, &p) else {
+            continue;
+        };
+        let (a, b) = ring
+            .iter()
+            .map(|&q| along(q))
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
+                (a.min(t), b.max(t))
+            });
+        if b - a > 1e-6 {
+            gaps.push((a, b));
+        }
+    }
+    if gaps.is_empty() {
+        return vec![outer.clone()];
+    }
+    gaps.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let (u0, u1) = outer
+        .iter()
+        .map(|&q| along(q))
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| {
+            (a.min(t), b.max(t))
+        });
+    let mut pieces = Vec::new();
+    let mut from = u0;
+    for (a, b) in gaps.into_iter().chain(std::iter::once((u1, u1))) {
+        if a > from + 1e-6 {
+            let piece = clip_half(
+                &clip_half(outer, origin, axis, from, 1.0),
+                origin,
+                axis,
+                a,
+                -1.0,
+            );
+            if piece.len() >= 3 {
+                pieces.push(piece);
+            }
+        }
+        from = from.max(b);
+    }
+    pieces
+}
+
+/// The part of `ring` where `sign * (along(p) - at) >= 0`, `along` measured on `axis` from
+/// `origin` (one Sutherland-Hodgman pass; exact for a convex outline).
+fn clip_half(ring: &Ring, origin: (f64, f64), axis: (f64, f64), at: f64, sign: f64) -> Ring {
+    let side = |p: (f64, f64)| sign * ((p.0 - origin.0) * axis.0 + (p.1 - origin.1) * axis.1 - at);
+    let mut out = Vec::new();
+    for i in 0..ring.len() {
+        let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
+        let (sp, sq) = (side(p), side(q));
+        if sp >= 0.0 {
+            out.push(p);
+        }
+        if (sp >= 0.0) != (sq >= 0.0) {
+            let t = sp / (sp - sq);
+            out.push((p.0 + t * (q.0 - p.0), p.1 + t * (q.1 - p.1)));
+        }
+    }
+    out
 }
 
 /// Types drawn beneath the rest of the plan.
@@ -510,8 +666,10 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
             d.layers.push(Layer2d::new(layer, aci));
         }
     };
+    let sets = super::element_table::element_sets(model);
     for fp in collect_footprints(model, options.window.as_ref()) {
-        let (layer, aci) = layer_for_ifc_type(&fp.ifc_type);
+        let own = sets.get(&fp.index).map(Vec::as_slice).unwrap_or_default();
+        let (layer, aci) = layer_for(own, &fp.ifc_type);
         ensure(&mut d, layer, aci);
         for ring in std::iter::once(&fp.outer).chain(&fp.holes) {
             let parts = match crop {
@@ -606,6 +764,116 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
     d
 }
 
+/// The layer Revit's DWG export draws an element on, by its Revit category, with its default
+/// (AIA) layer names: read from Revit's own exports of the public samples, where every sample
+/// gives a category the same layer. Walls go by their Function: an interior wall (not
+/// `IsExternal`) on `I-WALL`. An element with no category known here falls back to its IFC type.
+#[cfg(feature = "dwg")]
+fn layer_for(sets: &[&super::entities::PropertySet], ifc_type: &str) -> (&'static str, i16) {
+    let fallback = layer_for_ifc_type(ifc_type);
+    let Some(category) = super::element_table::category_in(sets) else {
+        return fallback;
+    };
+    if category == "Walls" {
+        let external = sets
+            .iter()
+            .flat_map(|s| s.properties.iter())
+            .find(|p| p.name == "IsExternal")
+            .and_then(|p| match p.value {
+                super::entities::PropertyValue::Boolean(b) => Some(b),
+                _ => None,
+            });
+        return if external == Some(false) {
+            ("I-WALL", fallback.1)
+        } else {
+            ("A-WALL", fallback.1)
+        };
+    }
+    CATEGORY_LAYERS
+        .iter()
+        .find(|(c, _)| *c == category)
+        .map_or(fallback, |(_, l)| (l, fallback.1))
+}
+
+/// Revit category to the layer its DWG export uses (projection and cut agree for each).
+#[cfg(feature = "dwg")]
+const CATEGORY_LAYERS: &[(&str, &str)] = &[
+    ("Air Terminals", "M-HVAC-CDFF"),
+    ("Areas", "A-AREA"),
+    ("Cable Tray Fittings", "E-CABL-TRAY"),
+    ("Cable Trays", "E-CABL-TRAY"),
+    ("Casework", "Q-CASE"),
+    ("Ceilings", "A-CLNG"),
+    ("Columns", "A-COLS"),
+    ("Communication Devices", "E-COMM"),
+    ("Conduit Fittings", "E-POWR-CNDT"),
+    ("Conduits", "E-POWR-CNDT"),
+    ("Curtain Panels", "A-GLAZ-CURT"),
+    ("Curtain Systems", "A-GLAZ-CURT"),
+    ("Curtain Wall Mullions", "A-GLAZ-CWMG"),
+    ("Data Devices", "E-DATA"),
+    ("Doors", "A-DOOR"),
+    ("Duct Accessories", "M-HVAC-DUCT"),
+    ("Duct Fittings", "M-HVAC-DUCT"),
+    ("Ducts", "M-HVAC-DUCT"),
+    ("Electrical Equipment", "E-ELEC-EQPM"),
+    ("Electrical Fixtures", "E-ELEC-FIXT"),
+    ("Entourage", "A-DETL-GENF"),
+    ("Fascias", "A-ROOF-OTLN"),
+    ("Fire Alarm Devices", "E-FIRE"),
+    ("Flex Ducts", "M-HVAC-DUCT"),
+    ("Flex Pipes", "P-PIPE"),
+    ("Floors", "A-FLOR"),
+    ("Food Service Equipment", "A-FDSQ"),
+    ("Furniture", "I-FURN"),
+    ("Furniture Systems", "I-FURN-PNLS"),
+    ("Generic Models", "A-GENM"),
+    ("Gutters", "A-ROOF-OTLN"),
+    ("Handrails", "A-FLOR-HRAL"),
+    ("Hardscape", "L-HRDS"),
+    ("Lighting Devices", "E-LITE"),
+    ("Lighting Fixtures", "E-LITE-EQPM"),
+    ("Mass", "A-MASS"),
+    ("Mechanical Equipment", "M-EQPM"),
+    ("Medical Equipment", "A-MEDQ"),
+    ("Nurse Call Devices", "E-NURS"),
+    ("Parking", "C-PRKG"),
+    ("Pipe Accessories", "P-PIPE"),
+    ("Pipe Fittings", "P-PIPE"),
+    ("Pipes", "P-PIPE"),
+    ("Planting", "L-PLNT"),
+    ("Plumbing Equipment", "P-EQPM"),
+    ("Plumbing Fixtures", "P-SANR-FIXT"),
+    ("Railings", "A-FLOR-HRAL"),
+    ("Ramps", "A-FLOR-LEVL"),
+    ("Roof Soffits", "A-ROOF-OTLN"),
+    ("Roofs", "A-ROOF"),
+    ("Rooms", "A-AREA"),
+    ("Security Devices", "E-SERT"),
+    ("Signage", "A-SIGN"),
+    ("Site", "L-SITE"),
+    ("Slab Edges", "A-FLOR-OTLN"),
+    ("Spaces", "M-AREA"),
+    ("Specialty Equipment", "Q-SPCQ"),
+    ("Sprinklers", "F-SPRN"),
+    ("Stairs", "S-STRS"),
+    ("Structural Beam Systems", "S-BEAM"),
+    ("Structural Columns", "S-COLS"),
+    ("Structural Connections", "S-FSTN"),
+    ("Structural Foundations", "S-FNDN"),
+    ("Structural Framing", "S-BEAM"),
+    ("Structural Rebar", "S-RBAR"),
+    ("Structural Trusses", "S-TRUS"),
+    ("Supports", "A-FLOR-HRAL"),
+    ("Telephone Devices", "E-COMM"),
+    ("Top Rails", "A-FLOR-HRAL"),
+    ("Topography", "C-TOPO"),
+    ("Toposolid", "C-TOPO"),
+    ("Vertical Circulation", "A-VRTC"),
+    ("Wall Sweeps", "A-WALL"),
+    ("Windows", "A-GLAZ"),
+];
+
 /// Layer (in the style of the AIA standard) and colour index for an IFC type.
 #[cfg(feature = "dwg")]
 fn layer_for_ifc_type(ifc_type: &str) -> (&'static str, i16) {
@@ -618,11 +886,11 @@ fn layer_for_ifc_type(ifc_type: &str) -> (&'static str, i16) {
         "IFCSLAB" => ("A-FLOR", 8),
         "IFCROOF" => ("A-ROOF", 8),
         "IFCCOVERING" => ("A-CLNG", 8),
-        "IFCSTAIR" | "IFCSTAIRFLIGHT" => ("A-FLOR-STRS", 32),
+        "IFCSTAIR" | "IFCSTAIRFLIGHT" => ("S-STRS", 32),
         "IFCRAILING" => ("A-FLOR-HRAL", 32),
         "IFCFURNITURE" | "IFCFURNISHINGELEMENT" => ("I-FURN", 3),
         "IFCSPACE" => ("A-AREA", 4),
-        "IFCPLATE" => ("A-GLAZ-CWMG", 5),
+        "IFCPLATE" => ("A-GLAZ-CURT", 5),
         _ => ("A-GENM", 8),
     }
 }

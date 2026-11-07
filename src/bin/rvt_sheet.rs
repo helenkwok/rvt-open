@@ -273,7 +273,7 @@ fn level_window(
     Ok(ViewWindow {
         bottom_feet: found.elevation_feet,
         top_feet: found.elevation_feet + cut_mm / MM_PER_FOOT,
-        crop: None,
+        ..ViewWindow::default()
     })
 }
 
@@ -321,19 +321,34 @@ fn view_window(
             }
         });
     let scale = view.scale.unwrap_or(100.0);
-    // Annotation is drawn out to the view's annotation crop, which is not decoded and lies
-    // outside the model crop: text, tags and dimensions are kept wherever they are. Grid lines
-    // are cut at the model crop when drawn.
+    // Annotation is drawn out to the view's annotation crop when that is on: the crop box grown
+    // by its offsets (sheet sizes, left, right, top, bottom). With it off, text, tags and
+    // dimensions are kept wherever they are. Grid lines are cut at the model crop when drawn.
     let in_crop = |p: [f64; 2]| crop.is_none_or(|c| c.contains((p[0], p[1])));
+    let annotation_crop = crop.zip(view.crop.as_ref().and_then(|c| c.annotation)).map(
+        |(mut c, [left, right, top, bottom])| {
+            c.min[0] -= left * scale;
+            c.max[0] += right * scale;
+            c.max[1] += top * scale;
+            c.min[1] -= bottom * scale;
+            c
+        },
+    );
+    let in_annotation_crop = |p: [f64; 2]| annotation_crop.is_none_or(|c| c.contains((p[0], p[1])));
+    let hidden_element = |id: i64| view.hidden_elements.contains(&id);
     let mut a = PlanAnnotation::default();
-    for t in facts.texts.iter().filter(|t| t.view == view.id) {
+    for t in facts
+        .texts
+        .iter()
+        .filter(|t| t.view == view.id && in_annotation_crop([t.at[0], t.at[1]]))
+    {
         a.texts.push(PlanText {
             at: [t.at[0], t.at[1]],
             value: t.value.clone(),
             // Text heights are sheet sizes.
             height_feet: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale,
             rotation: t.rotation,
-            layer: "A-ANNO-NOTE".into(),
+            layer: "G-ANNO-TEXT".into(),
         });
     }
     for tag in facts.room_tags.iter().filter(|t| t.view == view.id) {
@@ -343,6 +358,9 @@ fn view_window(
         let Some(at) = tag.at.map(|p| [p[0], p[1]]).or(room.point) else {
             continue;
         };
+        if !in_annotation_crop(at) {
+            continue;
+        }
         for (i, value) in [&room.name, &room.number].into_iter().flatten().enumerate() {
             a.texts.push(PlanText {
                 at: [at[0], at[1] - i as f64 * 4.0 * scale / MM_PER_FOOT],
@@ -353,7 +371,7 @@ fn view_window(
             });
         }
     }
-    for g in &facts.grids {
+    for g in facts.grids.iter().filter(|g| !hidden_element(g.id)) {
         let Some([free, head]) = g.ends else { continue };
         let (a2, b2) = ([free[0], free[1]], [head[0], head[1]]);
         if !(in_crop(a2) || in_crop(b2)) && crop.is_some() {
@@ -377,14 +395,26 @@ fn view_window(
     for d in facts.dimensions.iter().filter(|d| d.view == view.id) {
         for w in d.points.windows(2) {
             let (p, q) = ([w[0][0], w[0][1]], [w[1][0], w[1][1]]);
-            a.dimensions.push([p, q]);
+            if in_annotation_crop([(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]) {
+                a.dimensions.push([p, q]);
+            }
         }
     }
+    // Hidden categories (the view template's when one controls the view), by the names elements
+    // carry.
+    let hidden_categories: Vec<String> = facts
+        .hidden_categories(view)
+        .iter()
+        .filter_map(|id| rvt::builtin_parameters::category_name(*id))
+        .map(String::from)
+        .collect();
     Ok((
         ViewWindow {
             bottom_feet: bottom,
             top_feet: cut,
             crop,
+            hidden_categories,
+            hidden_elements: view.hidden_elements.clone(),
         },
         a,
     ))
