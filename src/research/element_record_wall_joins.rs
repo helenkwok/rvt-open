@@ -738,10 +738,20 @@ pub fn tee_join(
             // face side shows the same functions as the other wall's near
             // side: it nests past that many of the other wall's layers.
             let (depth, side): (usize, Vec<u32>) = if index < exterior_count {
-                (index, wall.layers[..=index].iter().map(|layer| layer.1).collect())
+                (
+                    index,
+                    wall.layers[..=index].iter().map(|layer| layer.1).collect(),
+                )
             } else if count - 1 - index < interior_count {
                 let depth = count - 1 - index;
-                (depth, wall.layers[index..].iter().rev().map(|layer| layer.1).collect())
+                (
+                    depth,
+                    wall.layers[index..]
+                        .iter()
+                        .rev()
+                        .map(|layer| layer.1)
+                        .collect(),
+                )
             } else {
                 return by_priority;
             };
@@ -1053,7 +1063,11 @@ pub fn layer_reaches(
             // the partner's inner face, and the wall that stops ends it
             // against the other's last paired layer.
             if rank < first {
-                Some(if runs_through { bounds[first_partner] } else { bounds[0] })
+                Some(if runs_through {
+                    bounds[first_partner]
+                } else {
+                    bounds[0]
+                })
             } else if rank > last {
                 Some(if runs_through {
                     bounds[bounds.len() - 1]

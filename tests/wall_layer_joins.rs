@@ -107,7 +107,9 @@ const NORDIC: &[Case] = &[
         "ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt",
         1346757,
         0,
-        &[0.6332, 0.54134, 0.46916, 0.33137, 0.30184, -0.51837, -0.58399],
+        &[
+            0.6332, 0.54134, 0.46916, 0.33137, 0.30184, -0.51837, -0.58399,
+        ],
     ),
     (
         "ARK_NordicLCA_Office_Concrete_As-Built.rvt",
