@@ -1,5 +1,7 @@
-//! Layered walls at butt joins whose walls' heights differ end layer by layer
-//! as Revit's IFC4 export draws them.
+//! Layered walls at butt joins end layer by layer as Revit's IFC4 export
+//! draws them: walls of different heights, walls whose layer functions differ
+//! from the outside of the corner, T joints whose layers nest, and walls whose
+//! line only their native record gives.
 //!
 //! Each case is a wall end and, per layer (exterior first), how far its body
 //! reaches past the end of its centreline, in feet, read from Revit's own IFC4
@@ -15,6 +17,20 @@
 //! - BIM4LCA `ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt` (Revit 2024;
 //!   CC BY-SA 4.0, <https://cris.vtt.fi/en/publications/bim-files-to-download/>):
 //!   wall 1346777 does the same.
+//! - Snowdon Towers Architectural: wall 1699930 stops at a T joint, and its
+//!   layers outside the core on the side whose functions match the other
+//!   wall's near side step into that wall's like layers; wall 685081 stops at
+//!   a T joint against a wall whose line only its native record gives;
+//!   wall 2115148, a structure and finish wall, runs through one whose
+//!   finish is on the other side, and its finish stops at the other's core.
+//! - BIM4LCA Housing Concrete Building Permit: walls 1499172 and 1501553 meet
+//!   at an L joint, each with a finish 1 on one face and a finish 2 on the
+//!   other; their cores nest, the finish 2 of the wall that stops wraps the
+//!   corner and the other's finish 1 stops at it.
+//! - BIM4LCA Housing Timber Building Permit (wall 1346757) and Office
+//!   Concrete As-Built (wall 1348463): walls joined to walls whose data copies
+//!   disagree on their line, which now take their native record's line, so
+//!   the joins are read and the layers nest.
 //!
 //! Runs against `RVT_REVIT2024_SAMPLES_DIR` and `RVT_NORDIC_LCA_DIR`; each
 //! case skips when its model is absent.
@@ -46,14 +62,60 @@ const SAMPLES_2024: &[Case] = &[
         1,
         &[0.52604; 6],
     ),
+    (
+        "Snowdon Towers Sample Architectural.rvt",
+        1699930,
+        1,
+        &[-0.60937, -0.46354, -0.32812, -0.16146, -0.10937, -0.60937],
+    ),
+    (
+        "Snowdon Towers Sample Architectural.rvt",
+        685081,
+        0,
+        &[
+            -0.52604, -0.47396, -0.47396, -0.47396, -0.47396, -0.47396, -0.47396, -0.52604,
+        ],
+    ),
+    (
+        "Snowdon Towers Sample Architectural.rvt",
+        2115148,
+        1,
+        &[0.125, -0.17708],
+    ),
 ];
 
-const NORDIC: &[Case] = &[(
-    "ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt",
-    1346777,
-    0,
-    &[0.88583; 5],
-)];
+const NORDIC: &[Case] = &[
+    (
+        "ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt",
+        1346777,
+        0,
+        &[0.88583; 5],
+    ),
+    (
+        "ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt",
+        1499172,
+        1,
+        &[0.10827, 0.10827, -0.15092],
+    ),
+    (
+        "ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt",
+        1501553,
+        0,
+        &[-0.10827, -0.10827, 0.15092],
+    ),
+    (
+        "ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt",
+        1346757,
+        0,
+        &[0.6332, 0.54134, 0.46916, 0.33137, 0.30184, -0.51837, -0.58399],
+    ),
+    (
+        "ARK_NordicLCA_Office_Concrete_As-Built.rvt",
+        1348463,
+        1,
+        &[0.71358, 0.61516, 0.45112, 0.35269, -0.22146],
+    ),
+];
 
 fn check(dir: &str, cases: &[Case]) {
     let Some(dir) = std::env::var_os(dir).map(PathBuf::from) else {
