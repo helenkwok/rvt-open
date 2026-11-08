@@ -10,9 +10,13 @@
 //! - Elements are on the export's layers: interior walls on `I-WALL`, stairs on `S-STRS`, curtain
 //!   panels on `A-GLAZ-CURT`, text notes on `G-ANNO-TEXT`.
 //! - Plan view "Level 1" draws the doors' plan symbols (their swings, as lines on `A-DOOR`), the
-//!   stairs above the cut plane as overhead lines on `S-STRS-MBND`, and the project's model lines.
+//!   stairs above the cut plane as overhead lines on `S-STRS-MBND`, the project's model lines on
+//!   `A-DETL` and its rooms on `A-AREA-BNDY`, as the export does; lines that only shape another
+//!   element (a wall's or a stair's sketch) are not drawn.
+//! - Plan view "Level 2" draws its grids with their heads (circles and names on `S-GRID-IDEN`).
 //! - Plan view "Site" is turned to true north: it is drawn in the view's own axes, so its walls
 //!   run at 37 degrees as in the authoring tool's export of it, and the grids it hides are left out.
+//!   Its property lines are drawn on `C-PROP-LINE`.
 #![cfg(feature = "dwg")]
 
 use std::collections::BTreeMap;
@@ -98,6 +102,7 @@ fn level_2_reads_its_visibility_and_draws_its_dimensions_on_the_export_layers() 
         "A-GLAZ-CURT",
         "G-ANNO-TEXT",
         "S-GRID",
+        "S-GRID-IDEN",
     ] {
         assert!(layers.contains_key(layer), "{layer}: {layers:?}");
     }
@@ -129,7 +134,7 @@ fn draw(rvt: &std::path::Path, view: &str) -> rvt_dwg::Drawing2d {
 }
 
 #[test]
-fn level_1_draws_door_symbols_overhead_stairs_and_model_lines() {
+fn level_1_draws_door_symbols_overhead_stairs_model_lines_and_rooms() {
     let Some(rvt) = sample() else { return };
     let d = draw(&rvt, "Level 1");
     let count = |layer: &str, kind: &str| {
@@ -141,14 +146,21 @@ fn level_1_draws_door_symbols_overhead_stairs_and_model_lines() {
     // Door outlines are polylines; their plan symbols are lines.
     assert!(count("A-DOOR", "LINE") > 0, "no door symbol lines");
     assert!(count("S-STRS-MBND", "LINE") > 0, "no overhead stair lines");
-    assert!(count("A-DETL-GENF", "LINE") > 0, "no model lines");
+    assert!(count("A-DETL", "LINE") > 0, "no model lines");
+    assert!(count("A-AREA-BNDY", "LWPOLYLINE") > 0, "no room polylines");
+    // Model lines go on the export's `Lines` layer, not the detail items' one.
+    assert_eq!(count("A-DETL-GENF", "LINE"), 0);
 }
 
 #[test]
-fn site_is_drawn_turned_to_true_north_without_its_hidden_grids() {
+fn site_is_drawn_turned_to_true_north_with_its_property_lines_without_its_hidden_grids() {
     let Some(rvt) = sample() else { return };
     let d = draw(&rvt, "Site");
     assert!(!d.entities.iter().any(|e| e.layer == "S-GRID"));
+    assert!(
+        d.entities.iter().any(|e| e.layer == "C-PROP-LINE"),
+        "no property lines"
+    );
     // Every wall edge's direction, modulo a quarter turn, weighted by length.
     let mut by_angle: BTreeMap<i64, f64> = BTreeMap::new();
     for e in d.entities.iter().filter(|e| e.layer == "A-WALL") {
