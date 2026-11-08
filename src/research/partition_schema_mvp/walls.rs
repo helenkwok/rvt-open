@@ -955,6 +955,10 @@ pub(super) fn attach_wall_layers(
         // that its body and the joins of the walls meeting it are read: on
         // the BIM4LCA models and Snowdon Towers, the walls joined to such a
         // wall were the ones whose partner had no centreline.
+        // The native record is the line's source only where the data gives none.
+        if lines.contains_key(&id) || arcs.contains_key(&id) {
+            rf.forget_value_source(id, "native_wall");
+        }
         let line = lines
             .get(&id)
             .map(|line| {
