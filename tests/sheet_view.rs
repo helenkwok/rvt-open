@@ -10,8 +10,8 @@
 //! - Elements are on the export's layers: interior walls on `I-WALL`, stairs on `S-STRS`, curtain
 //!   panels on `A-GLAZ-CURT`, text notes on `G-ANNO-TEXT`.
 //! - Plan view "Level 1" draws the doors' plan symbols (their swings, as lines on `A-DOOR`), the
-//!   stairs above the cut plane as overhead lines on `S-STRS-MBND`, the project's model lines on
-//!   `A-DETL` and its rooms on `A-AREA-BNDY`, as the export does; lines that only shape another
+//!   stairs above the cut plane as overhead lines on `S-STRS-MBND`, its room separation lines on
+//!   `A-AREA` and its rooms on `A-AREA-BNDY`, as the export does; lines that only shape another
 //!   element (a wall's or a stair's sketch) are not drawn.
 //! - Plan view "Level 2" draws its grids with their heads (circles and names on `S-GRID-IDEN`).
 //! - Plan view "Site" is turned to true north: it is drawn in the view's own axes, so its walls
@@ -134,7 +134,7 @@ fn draw(rvt: &std::path::Path, view: &str) -> rvt_dwg::Drawing2d {
 }
 
 #[test]
-fn level_1_draws_door_symbols_overhead_stairs_model_lines_and_rooms() {
+fn level_1_draws_door_symbols_overhead_stairs_room_separations_and_rooms() {
     let Some(rvt) = sample() else { return };
     let d = draw(&rvt, "Level 1");
     let count = |layer: &str, kind: &str| {
@@ -146,9 +146,10 @@ fn level_1_draws_door_symbols_overhead_stairs_model_lines_and_rooms() {
     // Door outlines are polylines; their plan symbols are lines.
     assert!(count("A-DOOR", "LINE") > 0, "no door symbol lines");
     assert!(count("S-STRS-MBND", "LINE") > 0, "no overhead stair lines");
-    assert!(count("A-DETL", "LINE") > 0, "no model lines");
+    // Its project lines are room separation lines (the export's `A-AREA`); the lines drawn on
+    // `A-DETL-GENF` before were the sketches of walls, stairs and floors.
+    assert!(count("A-AREA", "LINE") > 0, "no room separation lines");
     assert!(count("A-AREA-BNDY", "LWPOLYLINE") > 0, "no room polylines");
-    // Model lines go on the export's `Lines` layer, not the detail items' one.
     assert_eq!(count("A-DETL-GENF", "LINE"), 0);
 }
 
