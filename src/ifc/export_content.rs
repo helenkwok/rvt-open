@@ -1545,8 +1545,7 @@ pub fn append_typed_production_elements(
                     });
                 }
             }
-            if let Some(axis) =
-                crate::partition_schema_mvp::wall_axis_from_fields(&decoded.fields)
+            if let Some(axis) = crate::partition_schema_mvp::wall_axis_from_fields(&decoded.fields)
             {
                 let run = (axis.end[0] - axis.start[0]).hypot(axis.end[1] - axis.start[1]);
                 let along = [
