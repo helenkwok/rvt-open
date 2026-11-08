@@ -78,7 +78,7 @@ fn number(v: f64) -> Value {
 
 /// Each element's property sets: its own, then the sets the export attaches
 /// to it, by index into `model.entities`.
-fn element_sets(model: &IfcModel) -> BTreeMap<usize, Vec<&PropertySet>> {
+pub(crate) fn element_sets(model: &IfcModel) -> BTreeMap<usize, Vec<&PropertySet>> {
     let mut sets: BTreeMap<usize, Vec<&PropertySet>> = BTreeMap::new();
     for (i, e) in model.entities.iter().enumerate() {
         if let IfcEntity::BuildingElement {
@@ -99,7 +99,7 @@ fn element_sets(model: &IfcModel) -> BTreeMap<usize, Vec<&PropertySet>> {
 
 /// The text of property `name` in the first of `sets` named `set` that has
 /// it (any set when `set` is `None`).
-fn text_in(sets: &[&PropertySet], set: Option<&str>, name: &str) -> Option<String> {
+pub(crate) fn text_in(sets: &[&PropertySet], set: Option<&str>, name: &str) -> Option<String> {
     sets.iter()
         .filter(|s| set.is_none_or(|n| s.name == n))
         .flat_map(|s| s.properties.iter())
@@ -119,12 +119,14 @@ fn text_in(sets: &[&PropertySet], set: Option<&str>, name: &str) -> Option<Strin
 pub fn categories(model: &IfcModel) -> BTreeMap<usize, String> {
     element_sets(model)
         .into_iter()
-        .filter_map(|(i, sets)| {
-            text_in(&sets, Some(REVIT_OTHER_SET), "Category")
-                .or_else(|| text_in(&sets, Some(super::revit_identity::SET), "Category"))
-                .map(|c| (i, c))
-        })
+        .filter_map(|(i, sets)| category_in(&sets).map(|c| (i, c)))
         .collect()
+}
+
+/// An element's Revit category (its `Other` or `Revit` set) among its `sets`.
+pub(crate) fn category_in(sets: &[&PropertySet]) -> Option<String> {
+    text_in(sets, Some(REVIT_OTHER_SET), "Category")
+        .or_else(|| text_in(sets, Some(super::revit_identity::SET), "Category"))
 }
 
 /// The first value of property `name` that is a length, area or volume, in

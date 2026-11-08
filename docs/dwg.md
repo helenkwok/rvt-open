@@ -25,8 +25,20 @@ annotation the view owns: room tags (the room's name and number), text notes, gr
 and dimensions (an aligned DIMENSION per segment). A name that a file name could not hold may be given
 with `_` for the character (`Live_Work` finds `Live/Work`); floor plans win over other plan types of the
 same name. `--level <name|mm>` draws a level's band up to `--cut-height` millimetres above it, with no
-crop and element names as labels. `--no-labels` leaves every label out. Outlines are still the elements'
-plan outlines, not Revit's cut and projection lines, and line styles are not drawn.
+crop and element names as labels. `--no-labels` leaves every label out.
+
+What the view hides is left out: the categories its visibility settings (or its view template's) turn off
+and the elements hidden in it. Of several plan views with one name, the one placed on a sheet is drawn.
+With the annotation crop on, text, tags and dimensions outside it (the crop box grown by its offsets, sheet sizes times the view scale)
+are left out. A wall the cut plane cuts is drawn broken where a door, window or opening it hosts crosses
+the cut plane. Layers follow the authoring tool's default (AIA) export layers by category (`A-WALL`
+or `I-WALL` by the wall's Function, `S-STRS`, `A-GLAZ-CURT`, `G-ANNO-TEXT`, ...), and the IFC type where
+the category is not known. Other outlines are still the elements' plan outlines, not cut and projection
+lines, and line styles are not drawn.
+
+Dimensions read from a DWG or DXF measure their definition points: the authoring tool's DWG export stores each
+dimension's measurement times its dimension style's linear factor (914400 for a 3000 mm distance under a
+factor of 304.8), so the stored value is used only when the points give none.
 
 Large DXF files read: DXF has its own input limit (`Limits::max_dxf_input_bytes`, 3 GiB; DWG keeps 512 MiB)
 and is streamed from disk rather than loaded first.
