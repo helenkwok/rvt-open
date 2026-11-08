@@ -333,6 +333,8 @@ mod usd_writer;
 mod value_sources_offsets;
 #[path = "../walker_to_ifc_integration.rs"]
 mod walker_to_ifc_integration;
+#[path = "../wall_layer_joins.rs"]
+mod wall_layer_joins;
 #[path = "../wall_profile_openings.rs"]
 mod wall_profile_openings;
 #[path = "../witness_registry.rs"]

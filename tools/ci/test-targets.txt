@@ -152,6 +152,7 @@ real      unfilled_openings
 real      untyped_elements
 real      value_sources_offsets
 real      walker_to_ifc_integration
+real      wall_layer_joins
 real      wall_profile_openings
 
 cli       cli_ergonomics
