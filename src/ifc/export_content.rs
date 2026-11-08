@@ -1830,7 +1830,7 @@ pub fn append_typed_production_elements(
         // A footprint roof none of whose edges defines a slope is its one
         // slab ([`super::split_single_slab_roofs`], once its body is final).
         if roof_parts.is_empty()
-            && ifc_type == "IFCROOF"
+            && decoded.class == "Roof"
             && decoded.fields.iter().any(|(name, value)| {
                 name == crate::partition_schema_mvp::ROOF_NO_SLOPE_EDGE_FIELD
                     && matches!(value, InstanceField::Bool(true))
