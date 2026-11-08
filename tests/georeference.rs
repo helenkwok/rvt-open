@@ -117,7 +117,9 @@ fn nordic_housing_terrain_carries_its_georeference_and_set_names_everywhere() {
     let head = &usda[..usda.find("\n)\n").unwrap()];
     assert!(head.contains("dictionary georeference = {"));
     assert!(head.contains("int64 epsg = 3879"));
-    assert_eq!(usda.matches("matrix4d xformOp:transform").count(), 2 + 507);
+    // 542 bodies: 507 and the 35 toposolids and sub-divisions Revit's export
+    // writes as `IfcGeographicElement .TERRAIN.`.
+    assert_eq!(usda.matches("matrix4d xformOp:transform").count(), 2 + 542);
     assert!(usda.contains("rvtopen:ifc:psetOf:"));
     // The binary layer: the reference points' transforms are specs there too
     let usdc = write_usdc_graph(&graph).expect("usdc");
@@ -125,7 +127,7 @@ fn nordic_housing_terrain_carries_its_georeference_and_set_names_everywhere() {
         .iter()
         .filter(|(p, _)| p.ends_with(".xformOp:transform"))
         .count();
-    assert_eq!(ops, 2 + 507, "xformOp:transform specs in the .usdc");
+    assert_eq!(ops, 2 + 542, "xformOp:transform specs in the .usdc");
 
     // Fragments: no set named `bsi::ifc::prop`, georeference in metadata.
     let (frag, _) = rvt::ifc::frag_writer::write_frag_graph(&graph).expect("frag");
