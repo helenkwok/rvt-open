@@ -7418,9 +7418,10 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
     };
     // A roof whose slopes are read but do not draw it keeps its record box,
     // which its saved mesh replaces, rather than its outline at the box's
-    // full height: on `DACH_sample_project` (2021 to 2027) roofs 1229815 and
-    // 4233698 stood as level blocks of 16.92 and 14.41 m³ where Revit's export
-    // holds 1.19 and 0.56 m³.
+    // full height: on `DACH_sample_project` saved by 2024 to 2027 roofs
+    // 1229815 and 4233698 stood as level blocks of 16.92 and 14.41 m³ where
+    // Revit's export holds 1.19 and 0.56 m³, and on 2018 to 2023, where roof
+    // slopes are newly read, they would have.
     let undrawn_slopes = class == "Roof"
         && roof_slope.is_none()
         && !crate::partition_schema_mvp::roof_slopes_from_fields(&decoded.fields).is_empty();

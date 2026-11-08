@@ -32,13 +32,12 @@ fn shell_volume(vertices: &[[f64; 3]], triangles: &[(u32, u32, u32)]) -> f64 {
         / 6.0
 }
 
-#[test]
-fn butterfly_roof_is_revits_two_slabs() {
+fn butterfly_roof_is_revits_two_slabs(k: usize, n: usize) {
     let Some(dir) = std::env::var_os("RVT_AUTODESK_SAMPLES_DIR").map(PathBuf::from) else {
         eprintln!("skipping: RVT_AUTODESK_SAMPLES_DIR is not set");
         return;
     };
-    for release in RELEASES {
+    for release in crate::shard(RELEASES, k, n) {
         let path = dir.join(format!("{release}/rac_advanced_sample_project.rvt"));
         if !path.exists() {
             eprintln!("skipping: {release} absent");
@@ -86,3 +85,5 @@ fn butterfly_roof_is_revits_two_slabs() {
         }
     }
 }
+
+split!(butterfly_roof_is_revits_two_slabs, butterfly_roof_is_revits_two_slabs, s0 0, s1 1, s2 2, s3 3, s4 4);
