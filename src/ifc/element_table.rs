@@ -312,6 +312,85 @@ pub fn element_rows(model: &IfcModel, quantities: &[ElementQuantities]) -> Vec<E
             parameters,
         });
     }
+    // Each element that only cuts openings (a shaft opening, a rectangular
+    // wall opening), once, as its first opening: it has no body of its own.
+    let mut listed: std::collections::BTreeSet<u32> =
+        rows.iter().filter_map(|row| row.element_id).collect();
+    for entity in &model.entities {
+        let (tag, name) = match entity {
+            IfcEntity::VoidOpening { tag, name, .. }
+            | IfcEntity::WallProfileOpening { tag, name, .. }
+            | IfcEntity::WallCutOpening { tag, name, .. }
+            | IfcEntity::HostedCutOpening { tag, name, .. } => (tag, name),
+            _ => continue,
+        };
+        let Some((id, category)) = tag
+            .parse::<u32>()
+            .ok()
+            .and_then(|id| Some((id, model.opening_categories.get(&id)?)))
+        else {
+            continue;
+        };
+        let Some(global_id) = super::step_writer::opening_global_id(model, &global_ids, entity)
+        else {
+            continue;
+        };
+        if !listed.insert(id) {
+            continue;
+        }
+        rows.push(ElementRow {
+            element_id: Some(id),
+            global_id: Some(global_id),
+            ifc_class: "IfcOpeningElement".into(),
+            predefined_type: Some("OPENING".into()),
+            name: name.clone(),
+            category: Some(category.clone()),
+            family: None,
+            type_name: None,
+            type_id: None,
+            level: None,
+            level_elevation_m: None,
+            area_m2: None,
+            volume_m3: None,
+            length_m: None,
+            area_source: None,
+            volume_source: None,
+            length_source: None,
+            quantity_basis: None,
+            parameters: Vec::new(),
+        });
+    }
+    // Each grid line, as a row of the `IfcGrid` that holds it.
+    if super::grids::axes(model).is_some() && !model.building_storeys.is_empty() {
+        let global_id = super::step_writer::grid_global_id(model);
+        let storey = model.building_storeys.first();
+        let category = crate::builtin_parameters::category_name_and_parent(super::grids::OST_GRIDS)
+            .map(|(name, _)| name.to_string());
+        for line in &model.grids {
+            let length = (line.end[0] - line.start[0]).hypot(line.end[1] - line.start[1]);
+            rows.push(ElementRow {
+                element_id: Some(line.id),
+                global_id: Some(global_id.clone()),
+                ifc_class: "IfcGrid".into(),
+                predefined_type: None,
+                name: line.name.clone(),
+                category: category.clone(),
+                family: None,
+                type_name: None,
+                type_id: None,
+                level: storey.map(|s| s.name.clone()),
+                level_elevation_m: storey.and_then(|s| finite(s.elevation_feet * M_PER_FT)),
+                area_m2: None,
+                volume_m3: None,
+                length_m: finite(length * M_PER_FT),
+                area_source: None,
+                volume_source: None,
+                length_source: Some("measured"),
+                quantity_basis: None,
+                parameters: Vec::new(),
+            });
+        }
+    }
     rows
 }
 

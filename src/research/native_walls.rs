@@ -939,8 +939,11 @@ pub fn native_walls_and_top_joins_into(
             })
             .map(|(_, object)| object)
             .collect();
+        // A wall with an edited elevation profile also holds its sketch's
+        // lines: its location curve is the one its driver points to.
         let read = match curves.as_slice() {
             [curve] if curve.class_name == "GLine" => line_ends(&curve.fields),
+            [_, _, ..] => location_curve(graph),
             _ => None,
         }
         .map(|(start, end)| {

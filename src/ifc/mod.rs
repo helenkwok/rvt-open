@@ -100,6 +100,7 @@ pub mod frag_writer;
 pub mod from_decoded;
 pub mod gltf;
 pub mod graph;
+pub mod grids;
 pub mod ifc_options;
 pub mod ifcx_writer;
 pub mod instancing;
@@ -308,6 +309,14 @@ pub struct IfcModel {
     /// on it, as far as its body reaches along it.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub wall_location_lines: std::collections::BTreeMap<usize, [[f64; 2]; 2]>,
+    /// The Revit category of each opening element (a shaft opening, a
+    /// rectangular wall opening) the model's openings are cut by, by its
+    /// ElementId: the element table lists each as a row of its own.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub opening_categories: std::collections::BTreeMap<u32, String>,
+    /// The file's grid lines ([`grids`]), written as one `IfcGrid`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grids: Vec<grids::GridLine>,
     /// The steps of the walls' native records that write no further opening
     ///, by why: a rectangular wall opening, a cabinet, a
     /// door in a second wall or a curtain wall whose opening was not proven.
@@ -1292,6 +1301,8 @@ impl Exporter for PlaceholderExporter {
             storey_properties: Default::default(),
             filler_sizes: Default::default(),
             wall_location_lines: Default::default(),
+            opening_categories: Default::default(),
+            grids: Vec::new(),
             wall_cut_openings_left_out: Default::default(),
             wall_end_reads_unmarked: Default::default(),
         })
@@ -1975,6 +1986,8 @@ fn export_rvt_doc_reporting(
         storey_properties,
         filler_sizes,
         wall_location_lines,
+        opening_categories: Default::default(),
+        grids: grids::read(rf),
         wall_cut_openings_left_out,
         wall_end_reads_unmarked,
     })
@@ -7362,6 +7375,8 @@ mod tests {
             opening_cuts: BTreeMap::new(),
             filler_sizes: BTreeMap::new(),
             wall_location_lines: BTreeMap::new(),
+            opening_categories: BTreeMap::new(),
+            grids: Vec::new(),
             instancing: Default::default(),
             display_bodies: Default::default(),
             type_property_sets: BTreeMap::new(),
