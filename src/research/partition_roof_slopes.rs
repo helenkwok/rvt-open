@@ -38,6 +38,28 @@
 //! the same bytes on 2024, 2025, 2026 and 2027, and +0x3b is 0.0 on every
 //! defining edge, also on 2024. Their 30 degree planes then give each edge
 //! the slope and the roof the top (6.2517 m) the Revit API reports.
+//!
+//! Revit 2018 to 2023 write the block shorter, the `u32` 0 or 1 and the 7
+//! before a 16-byte `ff` run, and an `i32` in place of the `i64`:
+//!
+//! ```text
+//! f64   slope angle, radians
+//! 00 × 16
+//! u32   0 or 1
+//! u32   7
+//! ff × 16
+//! i32   a small negative value (−6, −9)
+//! u8 × 4  the same flags as above
+//! ```
+//!
+//! The bytes after the flags are the same as on 2024 to 2027 on the tiny
+//! reference hip and gable roofs of every release 2018 to 2027, each edge's
+//! angle and defining flag are the Revit API's, and +0x0b past the flags is
+//! 0.0. What that f64 holds on a raised rising edge is not measured before
+//! 2024, so such a block is read only where it is 0.0. An edge falling into
+//! the roof (a negative angle, `rac_advanced_sample_project`'s butterfly roof
+//! 142430, saved by every release 2018 to 2027) carries its overhang's raise
+//! there, as on 2024.
 
 use crate::ifc::element_provenance::CopyTrail;
 use crate::le_bytes;
@@ -50,8 +72,11 @@ use std::collections::{BTreeMap, BTreeSet};
 /// with the plane's raise at +0x3b: on the tiny reference hip and gable
 /// roofs (fixtures-tiny-1) every edge's angle and defining flag match the
 /// Revit API's, and the roofs' 30 degree planes give the API's slopes and top.
-/// The fascia depth and rafter cut stay read on 2025 only.
-pub const ROOF_SLOPE_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
+/// The fascia depth and rafter cut stay read on 2025 only. Revit 2018 to 2023
+/// write the shorter block (see the module), measured on the same tiny
+/// reference roofs; slope arrows are not read there.
+pub const ROOF_SLOPE_SUPPORTED_REVIT_VERSIONS: &[u32] =
+    &[2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
 
 /// How far into a sketch line's data its slope block is looked for.
 pub const EDGE_SLOPE_WINDOW: usize = 0x1000;
@@ -61,7 +86,8 @@ pub const EDGE_SLOPE_WINDOW: usize = 0x1000;
 pub struct EdgeSlope {
     /// Whether the edge defines the roof's slope.
     pub defines_slope: bool,
-    /// The edge's slope angle from horizontal, radians.
+    /// The edge's slope angle from horizontal, radians: below zero where
+    /// the roof falls from the edge, as a butterfly roof's does.
     pub angle_radians: f64,
     /// How far the edge's plane is raised at the edge, feet: the f64 at
     /// +0x3b on 2025 to 2027, 0 on 2024, where that f64 is −rise/run or 0.0.
@@ -82,6 +108,9 @@ pub fn edge_slope(data: &[u8]) -> Option<EdgeSlope> {
 /// 0.10827 ft (the edge's 33 mm offset from its wall) at +0x47; 0.98425 ft
 /// on `09_LShapedHipRoof_1Edge300Offset`'s 300 mm edge.
 pub fn edge_slope_in(data: &[u8], revit_version: u32) -> Option<EdgeSlope> {
+    if revit_version <= 2023 {
+        return edge_slope_32(data);
+    }
     const RUN: [u8; 32] = [0xff; 32];
     memchr::memmem::find_iter(data, &RUN).find_map(|at| {
         let zeros = data.get(at.checked_sub(0x10)?..at)?;
@@ -89,7 +118,7 @@ pub fn edge_slope_in(data: &[u8], revit_version: u32) -> Option<EdgeSlope> {
             return None;
         }
         let angle = le_bytes::f64_at(data, at.checked_sub(0x18)?)?;
-        if !(angle.is_finite() && angle > 0.0 && angle < std::f64::consts::FRAC_PI_2) {
+        if !(angle.is_finite() && angle != 0.0 && angle.abs() < std::f64::consts::FRAC_PI_2) {
             return None;
         }
         let small = le_bytes::i64_at(data, at + 0x20)?;
@@ -107,8 +136,13 @@ pub fn edge_slope_in(data: &[u8], revit_version: u32) -> Option<EdgeSlope> {
         let plane_raise = revit_version >= 2025;
         if defines_slope {
             let rise_over_run = le_bytes::f64_at(data, at + 0x3b)?;
-            let recorded =
-                plane_raise || rise_over_run == 0.0 || (rise_over_run + angle.tan()).abs() <= 1e-9;
+            // An edge sloping down into the roof (a negative angle) carries
+            // its overhang's raise there on 2024 too: 0.5275 ft, 600 mm at
+            // 15 degrees, on `rac_advanced_sample_project`'s roof 142430.
+            let recorded = plane_raise
+                || angle < 0.0
+                || rise_over_run == 0.0
+                || (rise_over_run + angle.tan()).abs() <= 1e-9;
             if !recorded {
                 return None;
             }
@@ -126,6 +160,45 @@ pub fn edge_slope_in(data: &[u8], revit_version: u32) -> Option<EdgeSlope> {
     })
 }
 
+/// The block as Revit 2018 to 2023 write it (see the module): the plane is
+/// read only where the f64 at +0x0b past the flags is 0.0.
+fn edge_slope_32(data: &[u8]) -> Option<EdgeSlope> {
+    const RUN: [u8; 20] = [
+        7, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff,
+    ];
+    memchr::memmem::find_iter(data, &RUN).find_map(|at| {
+        let zeros = data.get(at.checked_sub(0x14)?..at.checked_sub(4)?)?;
+        if zeros.iter().any(|&b| b != 0) || le_bytes::u32_at(data, at.checked_sub(4)?)? > 1 {
+            return None;
+        }
+        let angle = le_bytes::f64_at(data, at.checked_sub(0x1c)?)?;
+        if !(angle.is_finite() && angle != 0.0 && angle.abs() < std::f64::consts::FRAC_PI_2) {
+            return None;
+        }
+        let small = le_bytes::i32_at(data, at + 0x14)?;
+        if !(-64..=-1).contains(&small) {
+            return None;
+        }
+        let defines_slope = match data.get(at + 0x18..at + 0x1c)? {
+            [0, 0, 1, 0] => false,
+            [1, 1, 1, 0] => true,
+            _ => return None,
+        };
+        // A rising edge only where nothing raises it; a falling edge's raise
+        // is its overhang's, which the record box places.
+        let raise = le_bytes::f64_at(data, at + 0x18 + 0x0b)?;
+        if !raise.is_finite() || (angle > 0.0 && raise != 0.0) {
+            return None;
+        }
+        Some(EdgeSlope {
+            defines_slope,
+            angle_radians: angle,
+            plate_offset_feet: 0.0,
+        })
+    })
+}
+
 /// Each sketch line's slope, by ElementId, from its own data; a line whose
 /// copies disagree is dropped. Empty on a release this layout is not
 /// measured on.
@@ -134,10 +207,11 @@ pub fn scan_edge_slopes(
     revit_version: u32,
     lines: &BTreeSet<u32>,
 ) -> Result<BTreeMap<u32, EdgeSlope>> {
-    let header = match crate::partition_names::element_data_header(revit_version) {
-        Some(header) if ROOF_SLOPE_SUPPORTED_REVIT_VERSIONS.contains(&revit_version) => header,
+    let layout = match crate::partition_names::element_data_layout(revit_version) {
+        Some(layout) if ROOF_SLOPE_SUPPORTED_REVIT_VERSIONS.contains(&revit_version) => layout,
         _ => return Ok(BTreeMap::new()),
     };
+    let header = layout.header;
     let mut found: BTreeMap<u32, Option<EdgeSlope>> = BTreeMap::new();
     let recording = rf.recording_value_sources();
     let mut trail = CopyTrail::default();
@@ -151,10 +225,7 @@ pub fn scan_edge_slopes(
         };
         for (index, &hit) in hits.iter().enumerate() {
             let id_at = hit + header.len();
-            let Some(id) = le_bytes::u64_at(buf, id_at)
-                .and_then(|id| u32::try_from(id).ok())
-                .filter(|id| lines.contains(id))
-            else {
+            let Some(id) = layout.id_at(buf, id_at).filter(|id| lines.contains(id)) else {
                 continue;
             };
             let end = hits

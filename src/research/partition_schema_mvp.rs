@@ -234,6 +234,9 @@ pub fn recover_partition_schema_mvp(
             revit_version,
             &mut [&mut out.walls, &mut out.slabs, &mut out.products],
         );
+        // --- Footprint roofs' outlines and slopes, before the layers, which
+        // leave a sloped roof out ---
+        attach_roofs_32(rf, revit_version, &mut out.products);
         // --- Walls', floors' and roofs' layers, for their material layer
         // sets ---
         attach_wall_layers(rf, revit_version, &mut out.walls, &mut wall_reads);

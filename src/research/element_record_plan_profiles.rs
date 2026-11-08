@@ -1160,6 +1160,99 @@ fn sketch_curve_list(
     })
 }
 
+/// Offset of the sketched element's `u32` ElementId in a Sketch element's
+/// data on Revit 2018 to 2023, from the start of its element-data header.
+pub const SKETCH_OWNER_OFFSET_32: usize = 45;
+
+/// The curves each element in `owners` lists in its Sketch on Revit 2018 to
+/// 2023, where a sketch line has no element record to name its owner by: a
+/// Sketch's data holds the sketched element's `u32` ElementId at
+/// [`SKETCH_OWNER_OFFSET_32`] and a counted list `u32 n · n × (u32 ElementId ·
+/// u32 index)` whose indices rise, as 2024 writes it with `u64` ids. Measured
+/// on the tiny reference hip and gable roofs (fixtures-tiny-1) of every
+/// release 2018 to 2023, whose lists are the Revit API's sketch lines. The
+/// ids are not checked here: the caller reads each one's own data. An element
+/// whose copies disagree, or that two Sketches name, is dropped. Empty on any
+/// other release.
+pub fn scan_sketch_curve_lists_32(
+    rf: &mut crate::RevitFile,
+    revit_version: u32,
+    owners: &std::collections::BTreeSet<u32>,
+) -> BTreeMap<u32, Vec<u32>> {
+    let mut found: BTreeMap<u32, Option<(u32, Vec<u32>)>> = BTreeMap::new();
+    if !(2018..=2023).contains(&revit_version) || owners.is_empty() {
+        return BTreeMap::new();
+    }
+    let Some(layout) = crate::partition_names::element_data_layout(revit_version) else {
+        return BTreeMap::new();
+    };
+    let header = layout.header;
+    for stream in rf.partition_stream_names() {
+        let Ok(inflated) = rf.inflated_partition(&stream) else {
+            continue;
+        };
+        let buf = inflated.bytes();
+        let Ok(hits) = rf.header_hits(&stream, &header) else {
+            continue;
+        };
+        for (index, &hit) in hits.iter().enumerate() {
+            let end = hits
+                .get(index + 1)
+                .copied()
+                .unwrap_or(buf.len())
+                .min(hit.saturating_add(SKETCH_DATA_WINDOW));
+            let Some(data) = buf.get(hit..end) else {
+                continue;
+            };
+            let u32_at = |at: usize| le_bytes::u32_at(data, at);
+            let (Some(own), Some(owner)) = (
+                layout.id_at(data, header.len()),
+                u32_at(SKETCH_OWNER_OFFSET_32),
+            ) else {
+                continue;
+            };
+            if own == owner || !owners.contains(&owner) {
+                continue;
+            }
+            let list = (header.len() + 8..data.len()).find_map(|at| {
+                let count = usize::try_from(u32_at(at)?).ok()?;
+                if !(SKETCH_MIN_CURVES..=SKETCH_MAX_CURVES).contains(&count) {
+                    return None;
+                }
+                let mut last: Option<u32> = None;
+                (0..count)
+                    .map(|index| {
+                        let entry = at + 4 + 8 * index;
+                        let (id, key) = (u32_at(entry)?, u32_at(entry + 4)?);
+                        if last.is_some_and(|last| key <= last) || id == own || id == owner {
+                            return None;
+                        }
+                        last = Some(key);
+                        Some(id)
+                    })
+                    .collect::<Option<Vec<u32>>>()
+            });
+            let Some(list) = list else {
+                continue;
+            };
+            match found.get_mut(&owner) {
+                None => {
+                    found.insert(owner, Some((own, list)));
+                }
+                Some(held) => {
+                    if held.as_ref() != Some(&(own, list)) {
+                        *held = None;
+                    }
+                }
+            }
+        }
+    }
+    found
+        .into_iter()
+        .filter_map(|(owner, list)| Some((owner, list?.1)))
+        .collect()
+}
+
 /// Whether an edge of loop `a` touches or crosses an edge of loop `b`.
 fn edges_meet(a: &[(f64, f64)], b: &[(f64, f64)]) -> bool {
     let edges = |points: &[(f64, f64)]| -> Vec<((f64, f64), (f64, f64))> {

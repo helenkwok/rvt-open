@@ -261,6 +261,8 @@ mod revit_global_ids;
 mod revit_maps_and_types;
 #[path = "../revit_property_sets.rs"]
 mod revit_property_sets;
+#[path = "../roof_butterfly.rs"]
+mod roof_butterfly;
 #[path = "../rooms_floors_from_records_only.rs"]
 mod rooms_floors_from_records_only;
 #[path = "../rvt_dump_cli.rs"]
