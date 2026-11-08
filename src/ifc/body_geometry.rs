@@ -995,13 +995,76 @@ pub(super) fn envelope_slab_mesh_split(
             .map(|i| plane_at(undersides[i].0, p).max(undersides[i].1))
             .fold(f64::INFINITY, f64::min)
     };
+    envelope_mesh(&section, &lines, &pieces, top, bottom)
+}
+
+/// A slab over the plan area inside `outer` made of `parts`, each a set of
+/// planes rising from a pair of facing edges over a region: `(domain, tops,
+/// undersides)`, the region where every half-plane of `domain` is not
+/// negative. A part's top is the lowest of its `tops` and its underside the
+/// lowest of its `undersides`, never below 0; where parts overlap, the
+/// highest part's top and the highest part's underside win, as gables run
+/// into one another. `None` as [`envelope_slab_mesh`], or where a point lies
+/// in no part.
+pub(super) fn envelope_parts_mesh(
+    outer: &[Point2],
+    parts: &[(Vec<PlanPlane>, Vec<PlanPlane>, Vec<PlanPlane>)],
+) -> Option<Mesh> {
+    let tops: Vec<PlanPlane> = parts.iter().flat_map(|part| part.1.clone()).collect();
+    let undersides: Vec<(PlanPlane, f64)> = parts
+        .iter()
+        .flat_map(|part| part.2.iter().map(|&plane| (plane, 0.0)))
+        .collect();
+    if parts.is_empty()
+        || parts
+            .iter()
+            .any(|part| part.1.is_empty() || part.2.is_empty())
+        || tops.len() > MAX_ENVELOPE_PLANES
+        || undersides.len() > MAX_ENVELOPE_PLANES
+    {
+        return None;
+    }
+    let domains: Vec<Vec<PlanPlane>> = parts.iter().map(|part| part.0.clone()).collect();
+    let (section, lines, pieces) =
+        envelope_pieces(outer, &[], &tops, &undersides, &domains, &domains)?;
+    // The highest part's lowest plane: of its tops (`under` false) or its
+    // undersides.
+    let highest = |p: Point2, under: bool| {
+        parts
+            .iter()
+            .filter(|part| part.0.iter().all(|&d| plane_at(d, p) >= -1e-7))
+            .map(|part| {
+                let planes = if under { &part.2 } else { &part.1 };
+                planes
+                    .iter()
+                    .map(|&plane| plane_at(plane, p))
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+    let top = |p: Point2| highest(p, false);
+    let bottom = |p: Point2| highest(p, true).max(0.0);
+    envelope_mesh(&section, &lines, &pieces, top, bottom)
+}
+
+/// The slab over `pieces` and up the sides of `section`'s rings, cut where
+/// `lines` cross them, between `bottom` and `top`. `None` past
+/// [`MAX_ENVELOPE_PIECES`] sides, at a point with no finite top, or with a top
+/// below the underside anywhere.
+fn envelope_mesh(
+    section: &Section,
+    lines: &[PlanPlane],
+    pieces: &[Vec<Point2>],
+    top: impl Fn(Point2) -> f64,
+    bottom: impl Fn(Point2) -> f64,
+) -> Option<Mesh> {
     let mut mesh = Mesh::default();
     let push = |mesh: &mut Mesh, points: [[f64; 3]; 3]| {
         let base = mesh.vertices.len() as u32;
         mesh.vertices.extend(points);
         mesh.triangles.push([base, base + 1, base + 2]);
     };
-    for poly in &pieces {
+    for poly in pieces {
         for i in 1..poly.len() - 1 {
             let [a, b, c] = [poly[0], poly[i], poly[i + 1]];
             let lift = |p: Point2, z: f64| [p.0, p.1, z];
@@ -1021,7 +1084,7 @@ pub(super) fn envelope_slab_mesh_split(
         for i in 0..ring.len() {
             let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
             let mut cuts: Vec<f64> = vec![0.0, 1.0];
-            for &line in &lines {
+            for &line in lines {
                 let (fa, fb) = (plane_at(line, a), plane_at(line, b));
                 if (fa > ENVELOPE_SPLIT_EPS && fb < -ENVELOPE_SPLIT_EPS)
                     || (fa < -ENVELOPE_SPLIT_EPS && fb > ENVELOPE_SPLIT_EPS)

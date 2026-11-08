@@ -399,11 +399,13 @@ pub struct ButtJoin {
 /// the wall that runs through reaches the outer edge of the partner's layer
 /// `i`, and layer `i` of the wall that stops, its inner edge. That holds
 /// where both walls show the same layer functions in the same order from
-/// the corner and share their base and top, and those ends get
-/// `layer_reach_feet`.
+/// the corner, and those ends get `layer_reach_feet`; for walls of
+/// different heights see [`layer_reaches`].
 ///
 /// An end no other wall's centreline ends at is read as a T joint where it
-/// lies part way along another wall's centreline ([`tee_join`]).
+/// lies part way along another wall's centreline ([`tee_join`]). A wall
+/// whose line runs back along this one from the joint, drawn over it, is not
+/// counted as ending there.
 ///
 /// Two walls that meet at 45 to 135 degrees, rather than at a right angle,
 /// are read the same way, and their ends slant along the other
@@ -455,6 +457,26 @@ pub fn butt_joins(
             } else {
                 [-along[0], -along[1]]
             };
+            // A wall whose line runs back along this one from the joint lies
+            // over it (a second wall drawn on the same line); it takes no part
+            // in how this end meets the others.
+            let mates: BTreeSet<usize> = mates
+                .into_iter()
+                .filter(|other| {
+                    let other = lines[*other];
+                    let far = if (other.start[0] - point[0]).hypot(other.start[1] - point[1])
+                        <= JOIN_EPS_FEET
+                    {
+                        other.end
+                    } else {
+                        other.start
+                    };
+                    let run = (far[0] - point[0]).hypot(far[1] - point[1]);
+                    run <= 1e-9
+                        || ((far[0] - point[0]) * into[0] + (far[1] - point[1]) * into[1]) / run
+                            < 1.0 - COLLINEAR_EPS
+                })
+                .collect();
             if mates.is_empty() {
                 joins[slot] = tee_join(wall, &lines, point, into);
                 continue;
@@ -883,11 +905,14 @@ pub fn angled_tee_edges(
 /// first, where `wall` meets `other` at a layered butt join.
 /// `into` points from the joint along `wall`.
 ///
-/// `None` unless both walls have several layers, both show the same layer
-/// functions in the same order counted from the outside of the corner, and
-/// both share their base and top: on Snowdon Towers, 522 of the 528 such
-/// ends are cleaned layer by layer, against 17 of 75 clean where the walls'
-/// heights differ.
+/// `None` unless both walls have several layers and both show the same layer
+/// functions in the same order counted from the outside of the corner.
+/// Walls of different heights nest the same way, except that a wall that
+/// runs through a lower one, whose height range holds the other's, reaches
+/// the other's far face with every layer. Against Revit's IFC4 bodies of the
+/// 2024 and 2025 samples, of the layered L joints whose walls' heights differ,
+/// 155 ends nest and 37 of the 44 taller walls that run through reach the far
+/// face square.
 pub fn layer_reaches(
     wall: &WallLine,
     other: &WallLine,
@@ -895,13 +920,17 @@ pub fn layer_reaches(
     into: [f64; 2],
     runs_through: bool,
 ) -> Option<Vec<f64>> {
-    if wall.layers.len() < 2
-        || other.layers.len() != wall.layers.len()
-        || (wall.base_feet - other.base_feet).abs() > LAYER_JOIN_HEIGHT_EPS_FEET
-        || (wall.top_feet - other.top_feet).abs() > LAYER_JOIN_HEIGHT_EPS_FEET
-    {
+    if wall.layers.len() < 2 || other.layers.len() != wall.layers.len() {
         return None;
     }
+    let same_height = (wall.base_feet - other.base_feet).abs() <= LAYER_JOIN_HEIGHT_EPS_FEET
+        && (wall.top_feet - other.top_feet).abs() <= LAYER_JOIN_HEIGHT_EPS_FEET;
+    // A taller wall that runs through a lower one reaches its far face with
+    // every layer: above the lower wall nothing cleans its layers back.
+    let over = !same_height
+        && runs_through
+        && wall.base_feet <= other.base_feet + LAYER_JOIN_HEIGHT_EPS_FEET
+        && wall.top_feet >= other.top_feet - LAYER_JOIN_HEIGHT_EPS_FEET;
     let dot = |a: [f64; 2], b: [f64; 2]| a[0] * b[0] + a[1] * b[1];
     // The partner runs from the joint to its other end. On the side of
     // `wall` it runs to, `wall`'s face is inside the corner.
@@ -941,6 +970,9 @@ pub fn layer_reaches(
         return None;
     }
     bounds.sort_by(|a, b| b.total_cmp(a));
+    if over {
+        return Some(vec![bounds[0]; wall.layers.len()]);
+    }
     let reaches: Vec<f64> = (0..wall.layers.len())
         .map(|rank| bounds[if runs_through { rank } else { rank + 1 }])
         .collect();
@@ -1006,7 +1038,7 @@ struct CornerMember {
 }
 
 /// How a wall is cut at one end of a corner.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CornerEnd {
     /// The body ends square, this far past its line's end (negative where it
     /// stops short), every layer alike. Where one perpendicular wall alone
@@ -1021,6 +1053,10 @@ pub enum CornerEnd {
     /// line's end it reaches along its exterior-side edge and along its
     /// interior-side edge, feet.
     Mitre([f64; 2]),
+    /// The wall stops against `partner`, which runs through the corner,
+    /// layer by layer as at a layered L joint ([`layer_reaches`]): how far
+    /// past its line's end each layer reaches, exterior first.
+    Layers { reach_feet: Vec<f64>, partner: u32 },
 }
 
 /// The end of the wall `wall` at `slot` (0 its start, 1 its end), where three
@@ -1049,8 +1085,12 @@ pub enum CornerEnd {
 ///   element but a wall cuts `wall`;
 /// - the deciding walls' faces agree;
 /// - `wall` has one layer, or has several and stops against walls of one
-///   layer each: against a layered wall, Revit's layers nest and a rule for
-///   the outermost does not give the others.
+///   layer each, or has several and stops against one layered wall listed
+///   before it. That wall runs through the corner unless a wall that
+///   continues `wall` is listed before it: then `wall`'s layers nest against
+///   it as at an L joint ([`layer_reaches`], same layer functions from the
+///   outside of the corner), and otherwise the earlier wall is itself cut
+///   back there and `wall` stops square at its near face.
 ///
 /// A mitre (`m_wallJoinType` 1) of two single-layer walls whose lines end at
 /// one point at right angles ends each on the line through the outer corner,
@@ -1149,6 +1189,10 @@ fn corner_end(
             Meets::Across
         } else if cosine < -(1.0 - COLLINEAR_EPS) {
             Meets::Along
+        } else if cosine > 1.0 - COLLINEAR_EPS {
+            // A wall drawn over this one, along its line, is no part of the
+            // corner ([`butt_joins`] leaves it out too).
+            continue;
         } else {
             return None;
         };
@@ -1208,7 +1252,34 @@ fn corner_end(
         .collect();
     if !earlier_walls.is_empty() {
         if layered_wall && layered_others {
-            return None;
+            // Against one earlier wall: where that wall itself runs through
+            // (no wall that continues this one is listed before it), this
+            // wall's layers nest against it as at an L joint; where it stops
+            // against an earlier wall in its turn, its face there is flat and
+            // this wall stops square at it.
+            let [only] = earlier_walls[..] else {
+                return None;
+            };
+            let at = corner.iter().position(|member| member.id == only.id)?;
+            let stopped = corner[..at]
+                .iter()
+                .any(|member| member.meets == Meets::Along);
+            if !stopped {
+                if !only.on_line {
+                    return None;
+                }
+                let line = by_id.get(&only.id)?;
+                return layer_reaches(wall, line, point, into, false).map(|reach_feet| {
+                    CornerEnd::Layers {
+                        reach_feet,
+                        partner: only.id,
+                    }
+                });
+            }
+            return Some(CornerEnd::Reach {
+                reach_feet: only.x - only.thickness_feet / 2.0,
+                partner: Some((only.id, false)),
+            });
         }
         let faces: Vec<f64> = earlier_walls
             .iter()

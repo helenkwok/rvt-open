@@ -175,32 +175,13 @@ pub(crate) fn attach_with(
     if wanted_symbols.is_empty() {
         return Ok(report);
     }
-    let mut opts = crate::native_document::Options {
-        selected_ids: wanted_symbols,
-        max_graph_values: 1_000_000,
-        max_graph_objects: 1_000_000,
-        ..Default::default()
-    };
-    opts.channels = BTreeSet::from([103]);
-    let mut symbol_curves: BTreeMap<u32, Vec<PlanPolyline>> = BTreeMap::new();
-    crate::native_document::extract(rf, &opts, |r| {
-        if let (Some(g), Ok(id)) = (&r.graph, u32::try_from(r.identity.element_id)) {
-            report.symbols_read += 1;
-            let curves: Vec<PlanPolyline> = plan_curves(g, view)
-                .curves
-                .iter()
-                .map(|c| symbol_polyline(&c.curve, &c.transform))
-                .collect();
-            if !curves.is_empty() {
-                symbol_curves.insert(id, curves);
-            }
-        }
-        Ok(())
-    })?;
-    let version = rf.basic_file_info().map(|b| b.version).unwrap_or(0);
-    let transforms =
-        crate::partition_instance_transforms::scan_instance_transforms(rf, version, &instance_ids)
-            .unwrap_or_default();
+    let (symbol_curves, transforms) = read_symbols(
+        rf,
+        view,
+        wanted_symbols,
+        &instance_ids,
+        &mut report.symbols_read,
+    )?;
     // an instance with no Level draws no plan
     // symbol in Revit's export ([`crate::schema_spatial::levelless`]).
     let levelless = if model.convention == super::ExportConvention::Revit {
@@ -309,6 +290,136 @@ pub(crate) fn attach_with(
         }
     }
     Ok(report)
+}
+
+type SymbolCurves = BTreeMap<u32, Vec<PlanPolyline>>;
+type Transforms = BTreeMap<u32, crate::partition_instance_transforms::InstanceTransform>;
+
+/// Each wanted family symbol's plan curves (in its own frame) and each wanted instance's
+/// transform. `read` counts the symbols whose saved graphics were read.
+fn read_symbols(
+    rf: &mut crate::RevitFile,
+    view: &PlanView,
+    wanted_symbols: BTreeSet<u64>,
+    instance_ids: &BTreeSet<u32>,
+    read: &mut usize,
+) -> anyhow::Result<(SymbolCurves, Transforms)> {
+    let mut opts = crate::native_document::Options {
+        selected_ids: wanted_symbols,
+        max_graph_values: 1_000_000,
+        max_graph_objects: 1_000_000,
+        ..Default::default()
+    };
+    opts.channels = BTreeSet::from([103]);
+    let mut symbol_curves = SymbolCurves::new();
+    crate::native_document::extract(rf, &opts, |r| {
+        if let (Some(g), Ok(id)) = (&r.graph, u32::try_from(r.identity.element_id)) {
+            *read += 1;
+            let curves: Vec<PlanPolyline> = plan_curves(g, view)
+                .curves
+                .iter()
+                .map(|c| symbol_polyline(&c.curve, &c.transform))
+                .collect();
+            if !curves.is_empty() {
+                symbol_curves.insert(id, curves);
+            }
+        }
+        Ok(())
+    })?;
+    let version = rf.basic_file_info().map(|b| b.version).unwrap_or(0);
+    let transforms =
+        crate::partition_instance_transforms::scan_instance_transforms(rf, version, instance_ids)
+            .unwrap_or_default();
+    Ok((symbol_curves, transforms))
+}
+
+/// Each family instance's plan symbol in model coordinates (feet), by its index in
+/// `model.entities`: the curves its symbol shows in a plan view (doors' swings, windows' glass
+/// and sill lines, fixtures' outlines), placed by the instance's own transform, so its flips and
+/// hand are the instance's.
+pub fn instance_plan_symbols(
+    rf: &mut crate::RevitFile,
+    model: &IfcModel,
+) -> anyhow::Result<BTreeMap<usize, Vec<PlanPolyline>>> {
+    let family = super::body_geometry::revit_family_instances(model);
+    let mut by_id: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut wanted_symbols = BTreeSet::new();
+    for (u, e) in model.entities.iter().enumerate() {
+        let IfcEntity::BuildingElement { type_guid, .. } = e else {
+            continue;
+        };
+        let Some(id) = type_guid.as_ref().and_then(|t| t.parse::<u32>().ok()) else {
+            continue;
+        };
+        if !family[u] {
+            continue;
+        }
+        if let Some(t) = model.element_type_ids.get(&id) {
+            wanted_symbols.insert(u64::from(*t));
+            by_id.insert(id, u);
+        }
+    }
+    let mut out = BTreeMap::new();
+    if wanted_symbols.is_empty() {
+        return Ok(out);
+    }
+    let ids: BTreeSet<u32> = by_id.keys().copied().collect();
+    let mut read = 0;
+    let (symbol_curves, mut transforms) =
+        read_symbols(rf, &PlanView::default(), wanted_symbols, &ids, &mut read)?;
+    // Where the element data gives no transform (before 2024), the instance's own `InstanceInfo`
+    // matrix, whose columns are its axes.
+    if transforms.len() < ids.len() {
+        let docs = crate::family_documents::read_memoised(rf)?;
+        for id in &ids {
+            if transforms.contains_key(id) {
+                continue;
+            }
+            let Some(pose) = docs.instances.get(&i64::from(*id)) else {
+                continue;
+            };
+            let m = pose.matrix;
+            let axes = [0, 1, 2].map(|j| [m[0][j], m[1][j], m[2][j]]);
+            transforms.insert(
+                *id,
+                crate::partition_instance_transforms::InstanceTransform {
+                    axes,
+                    origin: pose.origin,
+                },
+            );
+        }
+    }
+    for (id, u) in by_id {
+        let (Some(curves), Some(t)) = (
+            model
+                .element_type_ids
+                .get(&id)
+                .and_then(|s| symbol_curves.get(s)),
+            transforms.get(&id),
+        ) else {
+            continue;
+        };
+        let world = curves
+            .iter()
+            .map(|c| PlanPolyline {
+                arc: c.arc,
+                points_feet: c
+                    .points_feet
+                    .iter()
+                    .map(|p| {
+                        [0, 1, 2].map(|i| {
+                            t.axes[0][i] * p[0]
+                                + t.axes[1][i] * p[1]
+                                + t.axes[2][i] * p[2]
+                                + t.origin[i]
+                        })
+                    })
+                    .collect(),
+            })
+            .collect();
+        out.insert(u, world);
+    }
+    Ok(out)
 }
 
 /// A model point in an element's frame: its location, turned by its rotation.

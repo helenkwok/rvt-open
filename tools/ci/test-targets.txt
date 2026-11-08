@@ -131,6 +131,7 @@ real      revit_global_ids
 real      revit_maps_and_types
 real      plan_maps_and_spaces
 real      rooms_floors_from_records_only
+real      roof_extrusion_holes
 real      samples
 real      saved_mesh_budget
 real      scan_limits
@@ -153,6 +154,7 @@ real      unfilled_openings
 real      untyped_elements
 real      value_sources_offsets
 real      walker_to_ifc_integration
+real      wall_layer_joins
 real      wall_profile_openings
 
 cli       cli_ergonomics

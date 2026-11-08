@@ -5661,6 +5661,13 @@ fn roof_extrusion_solid(
         .chunks_exact(3)
         .map(|t| [t[0] as usize, t[1] as usize, t[2] as usize])
         .collect();
+    if !extrusion.cuts.is_empty() {
+        if let Some(solid) =
+            roof_extrusion_cut_solid(extrusion, &outline, &cap, &place, (start, end))
+        {
+            return Some(solid);
+        }
+    }
     let mut triangles: Vec<[usize; 3]> = Vec::new();
     // The outward side of a triangle: the caps face away from each other,
     // a side away from the section (its outline runs clockwise across the
@@ -5714,6 +5721,276 @@ fn roof_extrusion_solid(
     Some(entities::SolidShape::FacetedBrep {
         vertices_feet: vertices,
         triangles,
+    })
+}
+
+/// A band of a roof section, `low <= n · p <= high`: `(n, low, high)`.
+type CutBand = ((f64, f64), f64, f64);
+
+/// A roof by extrusion's body less the holes its hosted doors and windows
+/// cut ([`crate::partition_schema_mvp::RoofExtrusionCut`]). The section's
+/// triangles (`cap`, into `outline`) are split by every line that bounds a
+/// cut, so each piece lies wholly inside or outside each cut, and pieces
+/// sharing an edge share its points. The axis is broken at every cut's ends;
+/// over each stretch a piece is solid unless a cut over the stretch holds it.
+/// The body is then the pieces' caps where a piece starts or stops being
+/// solid and their sides where a solid piece meets an empty one or the
+/// outline. `None` unless every edge is shared by exactly two triangles in
+/// opposite directions and the volume is the pieces' areas times their solid
+/// lengths, to 1e-9 of it.
+fn roof_extrusion_cut_solid(
+    extrusion: &crate::partition_schema_mvp::RoofExtrusion,
+    outline: &[(f64, f64)],
+    cap: &[[usize; 3]],
+    place: &dyn Fn((f64, f64), f64) -> [f64; 3],
+    (start, end): (f64, f64),
+) -> Option<entities::SolidShape> {
+    const SIDE_FEET: f64 = 1e-9;
+    let dot = |a: (f64, f64), b: (f64, f64)| a.0 * b.0 + a.1 * b.1;
+    // Each cut as two bands, `low <= n · p <= high`: between its sides,
+    // and within its depth of its loop.
+    let mut bands: Vec<[CutBand; 2]> = Vec::new();
+    let mut breaks = vec![start, end];
+    for cut in &extrusion.cuts {
+        let (low, high) = (cut.along.0.max(start), cut.along.1.min(end));
+        if high - low <= SIDE_FEET {
+            continue;
+        }
+        let d = cut.direction;
+        let n = (-d.1, d.0);
+        let (a, b) = (dot(n, cut.from), dot(n, cut.to));
+        let t = dot(d, cut.from);
+        bands.push([(n, a.min(b), a.max(b)), (d, t - cut.depth, t + cut.depth)]);
+        breaks.extend([low, high]);
+    }
+    if bands.is_empty() {
+        return None;
+    }
+    breaks.sort_by(f64::total_cmp);
+    breaks.dedup_by(|a, b| (*a - *b).abs() <= SIDE_FEET);
+    let lines: Vec<((f64, f64), f64)> = bands
+        .iter()
+        .flatten()
+        .flat_map(|&(n, low, high)| [(n, low), (n, high)])
+        .collect();
+    // Split the section's triangles by every line. A point made where a line
+    // crosses an edge is keyed by the edge's ends and the line, so the two
+    // pieces either side of the edge share it.
+    let mut points: Vec<(f64, f64)> = outline.to_vec();
+    let mut made: BTreeMap<(usize, usize, usize), usize> = BTreeMap::new();
+    let mut pieces: Vec<Vec<usize>> = cap.iter().map(|t| t.to_vec()).collect();
+    for (index, &(n, at)) in lines.iter().enumerate() {
+        let mut next = Vec::with_capacity(pieces.len());
+        for piece in pieces {
+            let side = |k: usize| {
+                let f = dot(n, points[k]) - at;
+                if f > SIDE_FEET {
+                    1
+                } else if f < -SIDE_FEET {
+                    -1
+                } else {
+                    0
+                }
+            };
+            let sides: Vec<i32> = piece.iter().map(|&k| side(k)).collect();
+            if sides.iter().all(|&s| s >= 0) || sides.iter().all(|&s| s <= 0) {
+                next.push(piece);
+                continue;
+            }
+            let (mut above, mut below) = (Vec::new(), Vec::new());
+            for i in 0..piece.len() {
+                let j = (i + 1) % piece.len();
+                let (a, b) = (piece[i], piece[j]);
+                if sides[i] >= 0 {
+                    above.push(a);
+                }
+                if sides[i] <= 0 {
+                    below.push(a);
+                }
+                if sides[i] * sides[j] < 0 {
+                    let key = (a.min(b), a.max(b), index);
+                    let k = match made.get(&key) {
+                        Some(&k) => k,
+                        None => {
+                            let (p, q) = (points[key.0], points[key.1]);
+                            let (fp, fq) = (dot(n, p) - at, dot(n, q) - at);
+                            let t = fp / (fp - fq);
+                            points.push((p.0 + (q.0 - p.0) * t, p.1 + (q.1 - p.1) * t));
+                            made.insert(key, points.len() - 1);
+                            points.len() - 1
+                        }
+                    };
+                    above.push(k);
+                    below.push(k);
+                }
+            }
+            next.extend([above, below].into_iter().filter(|part| part.len() >= 3));
+        }
+        pieces = next;
+    }
+    let area = |piece: &[usize]| {
+        let o = points[piece[0]];
+        (1..piece.len().saturating_sub(1))
+            .map(|i| {
+                let (a, b) = (points[piece[i]], points[piece[i + 1]]);
+                ((a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)) / 2.0
+            })
+            .sum::<f64>()
+    };
+    // Counter-clockwise, and with some area.
+    let pieces: Vec<Vec<usize>> = pieces
+        .into_iter()
+        .filter_map(|mut piece| {
+            let signed = area(&piece);
+            if signed.abs() <= 1e-15 {
+                return None;
+            }
+            if signed < 0.0 {
+                piece.reverse();
+            }
+            Some(piece)
+        })
+        .collect();
+    let stretches = breaks.len() - 1;
+    let solid: Vec<Vec<bool>> = pieces
+        .iter()
+        .map(|piece| {
+            let centre = piece.iter().fold((0.0, 0.0), |acc, &k| {
+                (acc.0 + points[k].0, acc.1 + points[k].1)
+            });
+            let centre = (centre.0 / piece.len() as f64, centre.1 / piece.len() as f64);
+            (0..stretches)
+                .map(|s| {
+                    let (from, to) = (breaks[s], breaks[s + 1]);
+                    !extrusion.cuts.iter().zip(&bands).any(|(cut, band)| {
+                        cut.along.0 <= from + SIDE_FEET
+                            && cut.along.1 >= to - SIDE_FEET
+                            && band
+                                .iter()
+                                .all(|&(n, low, high)| (low..=high).contains(&dot(n, centre)))
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    let mut edges: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        for i in 0..piece.len() {
+            edges.insert((piece[i], piece[(i + 1) % piece.len()]), index);
+        }
+    }
+    let mut vertices: Vec<[f64; 3]> = Vec::new();
+    let mut vertex_of: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+    let mut vertex = |point: usize, at: usize| {
+        *vertex_of.entry((point, at)).or_insert_with(|| {
+            vertices.push(place(points[point], breaks[at]));
+            vertices.len() - 1
+        })
+    };
+    let axis = extrusion.axis;
+    let u_axis = 1 - axis;
+    let mut faces: Vec<([usize; 3], [f64; 3])> = Vec::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        for i in 0..piece.len() {
+            let (a, b) = (piece[i], piece[(i + 1) % piece.len()]);
+            let twin = edges.get(&(b, a)).copied();
+            let (pa, pb) = (points[a], points[b]);
+            let mut normal = [0.0; 3];
+            normal[u_axis] = pb.1 - pa.1;
+            normal[2] = pa.0 - pb.0;
+            for (s, &here) in solid[index].iter().enumerate() {
+                if here && !twin.is_some_and(|t| solid[t][s]) {
+                    let (a0, b0, b1, a1) = (
+                        vertex(a, s),
+                        vertex(b, s),
+                        vertex(b, s + 1),
+                        vertex(a, s + 1),
+                    );
+                    faces.push(([a0, b0, b1], normal));
+                    faces.push(([a0, b1, a1], normal));
+                }
+            }
+        }
+        for at in 0..breaks.len() {
+            let before = at > 0 && solid[index][at - 1];
+            let after = at < stretches && solid[index][at];
+            if before == after {
+                continue;
+            }
+            let mut normal = [0.0; 3];
+            normal[axis] = if before { 1.0 } else { -1.0 };
+            let first = vertex(piece[0], at);
+            for i in 1..piece.len() - 1 {
+                let (b, c) = (vertex(piece[i], at), vertex(piece[i + 1], at));
+                faces.push(([first, b, c], normal));
+            }
+        }
+    }
+    let triangles: Vec<[usize; 3]> = faces
+        .into_iter()
+        .map(|([a, b, c], out)| {
+            let (pa, pb, pc) = (vertices[a], vertices[b], vertices[c]);
+            let (e1, e2) = (
+                [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]],
+                [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]],
+            );
+            let normal = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            let facing = normal[0] * out[0] + normal[1] * out[1] + normal[2] * out[2];
+            if facing < 0.0 { [a, c, b] } else { [a, b, c] }
+        })
+        .collect();
+    // Closed: every directed edge once, and its reverse once.
+    let mut directed: BTreeMap<(usize, usize), i32> = BTreeMap::new();
+    for t in &triangles {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *directed.entry((a, b)).or_insert(0) += 1;
+        }
+    }
+    if directed
+        .iter()
+        .any(|(&(a, b), &count)| count != 1 || directed.get(&(b, a)) != Some(&1))
+    {
+        return None;
+    }
+    let volume: f64 = triangles
+        .iter()
+        .map(|t| {
+            let (a, b, c) = (vertices[t[0]], vertices[t[1]], vertices[t[2]]);
+            (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                / 6.0
+        })
+        .sum();
+    let expected: f64 = pieces
+        .iter()
+        .zip(&solid)
+        .map(|(piece, solid)| {
+            area(piece)
+                * (0..stretches)
+                    .filter(|&s| solid[s])
+                    .map(|s| breaks[s + 1] - breaks[s])
+                    .sum::<f64>()
+        })
+        .sum();
+    if !(expected > 0.0 && (volume - expected).abs() <= 1e-9 * expected) {
+        return None;
+    }
+    Some(entities::SolidShape::FacetedBrep {
+        vertices_feet: vertices,
+        triangles: triangles
+            .into_iter()
+            .map(|[a, b, c]| {
+                Some(entities::BrepTriangle(
+                    u32::try_from(a).ok()?,
+                    u32::try_from(b).ok()?,
+                    u32::try_from(c).ok()?,
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?,
     })
 }
 
@@ -6245,6 +6522,8 @@ fn roof_arrow_planes_solid(
     let mut edge_of: Vec<usize> = Vec::new();
     let mut ends: Vec<[(f64, f64); 2]> = Vec::new();
     let mut probes: Vec<(f64, f64)> = Vec::new();
+    // Each edge's unit direction into the roof, and along it.
+    let mut inward: Vec<EdgeFrame> = Vec::new();
     for slope in slopes {
         let [sx, sy] = slope.edge_start;
         let [ex, ey] = slope.edge_end;
@@ -6287,9 +6566,12 @@ fn roof_arrow_planes_solid(
         bottom_domains.push(vec![[-uy * sign, ux * sign, c * sign]]);
         ends.push([start, end]);
         probes.push((mid.0 - uy * sign * 1e-3, mid.1 + ux * sign * 1e-3));
+        inward.push(((-uy * sign, ux * sign), (ux, uy)));
     }
     if arrow_roof_hip_ambiguous(outer, &edge_of) {
-        return None;
+        let parts = arrow_roof_gables(&ends, &inward, &tops, &under_planes)?;
+        let mesh = super::body_geometry::envelope_parts_mesh(outer, &parts)?;
+        return arrow_roof_closed(mesh, height);
     }
     let at = |[a, b, c]: super::body_geometry::PlanPlane, (px, py): (f64, f64)| a * px + b * py + c;
     for i in 0..slopes.len() {
@@ -6330,6 +6612,15 @@ fn roof_arrow_planes_solid(
         &top_domains,
         Some(bottom_domains.as_slice()),
     )?;
+    arrow_roof_closed(mesh, height)
+}
+
+/// `mesh` as a body, where its highest point reproduces `height` and its
+/// lowest the base, within [`ROOF_SLOPE_CLOSURE_FEET`].
+fn arrow_roof_closed(
+    mesh: super::body_geometry::Mesh,
+    height: f64,
+) -> Option<entities::SolidShape> {
     let heights = mesh.vertices.iter().map(|v| v[2]);
     let highest = heights.clone().fold(f64::NEG_INFINITY, f64::max);
     let lowest = heights.fold(f64::INFINITY, f64::min);
@@ -6346,6 +6637,191 @@ fn roof_arrow_planes_solid(
             .collect(),
     })
 }
+
+/// A roof [`arrow_roof_hip_ambiguous`] names as gables running into one
+/// another: each sloped edge paired with the nearest parallel sloped edge
+/// facing it, each one's nearest the other's, every sloped edge in one pair.
+/// A pair is a gable between the two edges' lines, with their two planes,
+/// along its ridge from where both edges run as far as either edge does,
+/// but ending where its ridge first runs under another gable's top. The
+/// parts are [`super::body_geometry::envelope_parts_mesh`]'s `(domain, tops,
+/// undersides)`. On `20_T_U_Roof`'s U (roof 5941) this is Revit's body: the
+/// bar a gable between its long eaves, with upright ends, and each arm a
+/// gable between its walls running into the bar's slope, where the outer
+/// walls slope along the arms alone. `None` where an edge pairs with none.
+fn arrow_roof_gables(
+    ends: &[[(f64, f64); 2]],
+    inward: &[EdgeFrame],
+    tops: &[super::body_geometry::PlanPlane],
+    unders: &[super::body_geometry::PlanPlane],
+) -> Option<Vec<GableDomain>> {
+    use super::body_geometry::PlanPlane;
+    const EPS: f64 = 1e-9;
+    let dot = |a: (f64, f64), b: (f64, f64)| a.0 * b.0 + a.1 * b.1;
+    let at = |[a, b, c]: PlanPlane, p: (f64, f64)| a * p.0 + b * p.1 + c;
+    let n = ends.len();
+    // The facing edge nearest each edge, and how far.
+    let facing = |i: usize| {
+        let (w, _) = inward[i];
+        (0..n)
+            .filter(|&j| j != i && dot(w, inward[j].0) < -1.0 + EPS)
+            .filter_map(|j| {
+                let gap = dot(
+                    w,
+                    (ends[j][0].0 - ends[i][0].0, ends[j][0].1 - ends[i][0].1),
+                );
+                (gap > ROOF_ARROW_EDGE_FEET).then_some((gap, j))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+    };
+    // Each gable: its edges, its frame (origin, inward, along), its gap,
+    // the extent along it where both edges run and where either does.
+    struct Gable {
+        pair: [usize; 2],
+        origin: (f64, f64),
+        w: (f64, f64),
+        along: (f64, f64),
+        gap: f64,
+        both: (f64, f64),
+        either: (f64, f64),
+    }
+    let mut gables: Vec<Gable> = Vec::new();
+    let mut paired = vec![false; n];
+    for i in 0..n {
+        let (gap, j) = facing(i)?;
+        if facing(j).map(|(_, k)| k) != Some(i) {
+            return None;
+        }
+        if paired[i] {
+            continue;
+        }
+        paired[i] = true;
+        paired[j] = true;
+        let (w, along) = inward[i];
+        let origin = ends[i][0];
+        let s = |p: (f64, f64)| dot(along, (p.0 - origin.0, p.1 - origin.1));
+        let span = |k: usize| {
+            let (a, b) = (s(ends[k][0]), s(ends[k][1]));
+            (a.min(b), a.max(b))
+        };
+        let (si, sj) = (span(i), span(j));
+        let both = (si.0.max(sj.0), si.1.min(sj.1));
+        if both.1 - both.0 <= EPS {
+            return None;
+        }
+        gables.push(Gable {
+            pair: [i, j],
+            origin,
+            w,
+            along,
+            gap,
+            both,
+            either: (si.0.min(sj.0), si.1.max(sj.1)),
+        });
+    }
+    // `a x + b y + c >= 0` inside: past the first edge, short of the second,
+    // and within `low..high` along it.
+    let domain = |g: &Gable, (low, high): (f64, f64)| -> Vec<PlanPlane> {
+        let offset =
+            |normal: (f64, f64), shift: f64| [normal.0, normal.1, -dot(normal, g.origin) - shift];
+        vec![
+            offset(g.w, 0.0),
+            offset((-g.w.0, -g.w.1), -g.gap),
+            offset(g.along, low),
+            offset((-g.along.0, -g.along.1), -high),
+        ]
+    };
+    let whole: Vec<Vec<PlanPlane>> = gables.iter().map(|g| domain(g, g.either)).collect();
+    let top_of = |k: usize, p: (f64, f64)| {
+        gables[k]
+            .pair
+            .iter()
+            .map(|&e| at(tops[e], p))
+            .fold(f64::INFINITY, f64::min)
+    };
+    let mut parts = Vec::new();
+    for (k, g) in gables.iter().enumerate() {
+        let [i, j] = g.pair;
+        // The ridge: across the gable where its two tops meet. Both are flat
+        // along it.
+        let point = |a: f64, s: f64| {
+            (
+                g.origin.0 + g.w.0 * a + g.along.0 * s,
+                g.origin.1 + g.w.1 * a + g.along.1 * s,
+            )
+        };
+        let (fi0, fi1) = (at(tops[i], point(0.0, 0.0)), at(tops[i], point(g.gap, 0.0)));
+        let (fj0, fj1) = (at(tops[j], point(0.0, 0.0)), at(tops[j], point(g.gap, 0.0)));
+        let slope = (fi1 - fi0) - (fj1 - fj0);
+        if slope.abs() <= EPS {
+            return None;
+        }
+        let ridge = g.gap * (fj0 - fi0) / slope;
+        let height = fi0 + (fi1 - fi0) * ridge / g.gap;
+        // Where along the ridge another gable's planes or bounds cross.
+        let mut crossings: Vec<f64> = Vec::new();
+        for (m, other) in gables.iter().enumerate().filter(|(m, _)| *m != k) {
+            let lines = other
+                .pair
+                .iter()
+                .map(|&e| {
+                    let [a, b, c] = tops[e];
+                    [a, b, c - height]
+                })
+                .chain(whole[m].iter().copied());
+            for line in lines {
+                let (v0, v1) = (at(line, point(ridge, 0.0)), at(line, point(ridge, 1.0)));
+                if (v1 - v0).abs() > EPS {
+                    crossings.push(-v0 / (v1 - v0));
+                }
+            }
+        }
+        let under = |s: f64| {
+            let p = point(ridge, s);
+            (0..gables.len()).any(|m| {
+                m != k
+                    && whole[m].iter().all(|&d| at(d, p) >= -1e-7)
+                    && top_of(m, p) > height + 1e-7
+            })
+        };
+        // Walk out from where both edges run, each way, to the first stretch
+        // that runs under another gable.
+        let reach = |from: f64, to: f64| {
+            let mut stops: Vec<f64> = crossings
+                .iter()
+                .copied()
+                .filter(|&s| (s - from) * (to - from) > EPS && (s - to) * (from - to) > EPS)
+                .collect();
+            stops.sort_by(|a, b| (a - from).abs().total_cmp(&(b - from).abs()));
+            stops.push(to);
+            let mut last = from;
+            for stop in stops {
+                if under((last + stop) / 2.0) {
+                    return last;
+                }
+                last = stop;
+            }
+            to
+        };
+        let extent = (reach(g.both.0, g.either.0), reach(g.both.1, g.either.1));
+        parts.push((
+            domain(g, extent),
+            vec![tops[i], tops[j]],
+            vec![unders[i], unders[j]],
+        ));
+    }
+    Some(parts)
+}
+
+/// An edge's unit direction into the roof, and its unit direction along it.
+type EdgeFrame = ((f64, f64), (f64, f64));
+
+/// A gable's region, its top planes and its underside planes.
+type GableDomain = (
+    Vec<super::body_geometry::PlanPlane>,
+    Vec<super::body_geometry::PlanPlane>,
+    Vec<super::body_geometry::PlanPlane>,
+);
 
 /// `BodySource` of a wall drawn its type's thickness either side of its
 /// centreline.

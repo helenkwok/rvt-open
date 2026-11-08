@@ -263,6 +263,8 @@ mod revit_maps_and_types;
 mod revit_property_sets;
 #[path = "../roof_butterfly.rs"]
 mod roof_butterfly;
+#[path = "../roof_extrusion_holes.rs"]
+mod roof_extrusion_holes;
 #[path = "../rooms_floors_from_records_only.rs"]
 mod rooms_floors_from_records_only;
 #[path = "../rvt_dump_cli.rs"]
@@ -335,6 +337,8 @@ mod usd_writer;
 mod value_sources_offsets;
 #[path = "../walker_to_ifc_integration.rs"]
 mod walker_to_ifc_integration;
+#[path = "../wall_layer_joins.rs"]
+mod wall_layer_joins;
 #[path = "../wall_profile_openings.rs"]
 mod wall_profile_openings;
 #[path = "../witness_registry.rs"]
