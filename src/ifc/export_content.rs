@@ -6253,6 +6253,51 @@ fn roof_plane_surfaces(
     Some((tops, undersides, domains))
 }
 
+/// A roof whose defining edges all slope down into it, as the upright
+/// roof it is upside down: each edge at the same angle, rising, its plate
+/// offset left out (the record box places the roof). `None` unless every
+/// edge's angle is below zero. On `rac_advanced_sample_project`'s butterfly
+/// roof 142430 (Revit 2024) both edges are at −15 degrees, each with its
+/// 600 mm overhang's raise; Revit's export writes its two slabs falling to a
+/// valley, the eaves at the record box's top and the valley's underside at
+/// its base.
+fn roof_slopes_turned_over(
+    slopes: &[crate::partition_schema_mvp::RoofSlope],
+) -> Option<Vec<crate::partition_schema_mvp::RoofSlope>> {
+    (!slopes.is_empty() && slopes.iter().all(|slope| slope.angle_radians < 0.0)).then(|| {
+        slopes
+            .iter()
+            .map(|slope| crate::partition_schema_mvp::RoofSlope {
+                angle_radians: -slope.angle_radians,
+                plate_offset_feet: 0.0,
+                ..*slope
+            })
+            .collect()
+    })
+}
+
+/// A roof body drawn upright by [`roof_slopes_turned_over`]'s slopes, turned
+/// back over within its record box's `height`: each height `z` becomes
+/// `height − z`, each triangle's winding reversed so its faces still point out.
+fn turn_roof_over(solid: entities::SolidShape, height: f64) -> entities::SolidShape {
+    match solid {
+        entities::SolidShape::FacetedBrep {
+            vertices_feet,
+            triangles,
+        } => entities::SolidShape::FacetedBrep {
+            vertices_feet: vertices_feet
+                .into_iter()
+                .map(|[vx, vy, vz]| [vx, vy, height - vz])
+                .collect(),
+            triangles: triangles
+                .into_iter()
+                .map(|entities::BrepTriangle(a, b, c)| entities::BrepTriangle(a, c, b))
+                .collect(),
+        },
+        other => other,
+    }
+}
+
 /// A gable, hip or shed roof's slabs as Revit's export writes them, one per
 /// defining edge in the edges' order, each the part of the body
 /// [`roof_planes_solid`] draws (without a rafter cut) where that edge's plane
@@ -7780,6 +7825,28 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
             // defining edge; a two-cut one as one body, as Revit's export
             // writes them.
             let one_loop = profile.pieces.is_empty();
+            // Every edge sloping down into the roof: the same roof upside
+            // down, its record box's top at the eaves.
+            if let Some(upright) = roof_slopes_turned_over(&slopes) {
+                let plumb = matches!(
+                    crate::partition_schema_mvp::roof_rafter_cut_from_fields(&decoded.fields),
+                    None | Some(RafterCut::Plumb)
+                );
+                if !plumb || fascia != 0.0 {
+                    return None;
+                }
+                let turn = |solid| turn_roof_over(solid, height);
+                let solid = match upright.as_slice() {
+                    [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height)?,
+                    _ => roof_planes_solid(&upright, [x, y], &outer, &inner, height, None)?,
+                };
+                let parts = match upright.as_slice() {
+                    _ if !one_loop => Vec::new(),
+                    [_] => vec![solid.clone()],
+                    _ => roof_plane_parts(&upright, [x, y], &outer, &inner).unwrap_or_default(),
+                };
+                return Some((turn(solid), parts.into_iter().map(turn).collect()));
+            }
             let plain = || match slopes.as_slice() {
                 [] => None,
                 [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height).map(|solid| {
@@ -7825,6 +7892,17 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
         Some((solid, parts)) => (Some(solid), parts),
         None => (None, Vec::new()),
     };
+    // A roof whose slopes are read but do not draw it is not resolved by its
+    // outline: its saved mesh replaces its body, which the wall pass still
+    // reads as its outline at the box's full height, as before. Drawn as that
+    // outline instead: on `DACH_sample_project` saved by 2024 to 2027 roofs
+    // 1229815 and 4233698 stood as level blocks of 16.92 and 14.41 m³ where
+    // Revit's export holds 1.19 and 0.56 m³, and on 2018 to 2023, where roof
+    // slopes are newly read, they would have.
+    let undrawn_slopes = class == "Roof"
+        && roof_slope.is_none()
+        && !crate::partition_schema_mvp::roof_slopes_from_fields(&decoded.fields).is_empty();
+    let profile = profile.filter(|_| !undrawn_slopes);
     // A floor whose corner vertices are shape-edited rises along the
     // plane they lie in.
     let floor_slope = if class == "Floor" {

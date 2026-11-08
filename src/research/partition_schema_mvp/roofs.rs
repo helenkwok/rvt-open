@@ -1005,12 +1005,21 @@ pub(super) fn attach_roof_slopes(
         if !rest.is_empty() {
             continue;
         }
-        let sloped: Vec<(u32, f64, f64)> = lines
+        let mut sloped: Vec<(u32, f64, f64)> = lines
             .iter()
             .filter_map(|line| slopes.get(line).map(|slope| (*line, slope)))
             .filter(|(_, slope)| slope.defines_slope)
             .map(|(line, slope)| (line, slope.angle_radians, slope.plate_offset_feet))
             .collect();
+        // Edges falling into the roof and edges rising into it together
+        // are not drawn.
+        let rising = sloped.iter().filter(|(_, angle, _)| *angle > 0.0).count();
+        if rising != 0 && rising != sloped.len() {
+            continue;
+        }
+        // The slabs follow the edges' order, and Revit's export puts a raised
+        // edge's slab after the others ([`roof_slope_order`]).
+        roof_slope_order(&mut sloped);
         if !sloped.is_empty() {
             defining.insert(roof, sloped);
         }
@@ -1163,31 +1172,7 @@ pub(super) fn attach_roof_slopes(
                 },
             ));
         }
-        for (index, (start, end, angle, offset)) in edges.into_iter().enumerate() {
-            for (name, value) in roof_slope_edge_fields(index)
-                .into_iter()
-                .zip([start[0], start[1], end[0], end[1], angle])
-            {
-                roof.fields
-                    .push((name, InstanceField::Float { value, size: 8 }));
-            }
-            if offset != 0.0 {
-                roof.fields.push((
-                    roof_slope_plate_offset_field(index),
-                    InstanceField::Float {
-                        value: offset,
-                        size: 8,
-                    },
-                ));
-            }
-        }
-        roof.fields.push((
-            ROOF_TYPE_THICKNESS_FIELD.into(),
-            InstanceField::Float {
-                value: thickness,
-                size: 8,
-            },
-        ));
+        push_roof_slope_fields(roof, edges, thickness);
         if let Some(&depth) = fascia.get(&id) {
             roof.fields.push((
                 ROOF_FASCIA_DEPTH_FIELD.into(),
@@ -1203,6 +1188,187 @@ pub(super) fn attach_roof_slopes(
                 InstanceField::String(cut.name().into()),
             ));
         }
+    }
+}
+
+/// Put a roof's defining edges `(line, angle, plate offset)` in the order
+/// Revit's export numbers their slabs: by sketch-line id, a raised edge after
+/// the edges that are not (a stable sort by plate offset). On the L-shaped
+/// hips of `R2025_Models.zip` this is Revit's order: `08_LShapedHipRoof`, no
+/// edge raised, in id order, and `09_LShapedHipRoof_1Edge300Offset` and
+/// `10_..._Hole`, whose fourth edge of six is raised 300 mm, with that edge's
+/// slab last. Those are the only roofs measured with a raised edge, so an
+/// order that differs only where offsets differ (raised edges last by id, or
+/// by height) fits them as well.
+pub(super) fn roof_slope_order(sloped: &mut [(u32, f64, f64)]) {
+    sloped.sort_by(|a, b| a.2.total_cmp(&b.2));
+}
+
+/// Record a roof's sloped edges and its type's thickness in its fields.
+fn push_roof_slope_fields(roof: &mut DecodedElement, edges: Vec<RoofEdgeSlope>, thickness: f64) {
+    for (index, (start, end, angle, offset)) in edges.into_iter().enumerate() {
+        for (name, value) in roof_slope_edge_fields(index)
+            .into_iter()
+            .zip([start[0], start[1], end[0], end[1], angle])
+        {
+            roof.fields
+                .push((name, InstanceField::Float { value, size: 8 }));
+        }
+        if offset != 0.0 {
+            roof.fields.push((
+                roof_slope_plate_offset_field(index),
+                InstanceField::Float {
+                    value: offset,
+                    size: 8,
+                },
+            ));
+        }
+    }
+    roof.fields.push((
+        ROOF_TYPE_THICKNESS_FIELD.into(),
+        InstanceField::Float {
+            value: thickness,
+            size: 8,
+        },
+    ));
+}
+
+/// Revit 2018 to 2023: give each footprint roof the outline its sketch lines
+/// close and its sloped edges, where every line its Sketch lists
+/// ([`crate::element_record_plan_profiles::scan_sketch_curve_lists_32`]) holds
+/// a level segment ([`crate::partition_beam_axes::scan_sketch_bounded_lines`])
+/// and a slope block ([`crate::partition_roof_slopes::edge_slope_in`]), and at
+/// least one line defines the slope. A sketch line has no element record on
+/// these releases, so the record-box solve 2024 starts from is not made, and a
+/// roof missing any of this keeps its saved mesh rather than becoming a level
+/// block. Slope arrows are not read. Measured on the tiny reference hip and
+/// gable roofs (fixtures-tiny-1), whose slabs then match the 2024 to 2027
+/// saves of the same recipes and Revit's exports.
+pub(super) fn attach_roofs_32(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    products: &mut [DecodedElement],
+) {
+    use crate::partition_roof_slopes as prs;
+    let type_of = |element: &DecodedElement| {
+        element.fields.iter().find_map(|(name, value)| match value {
+            InstanceField::ElementId { id, .. } if name == TYPE_ID_FIELD => Some(*id),
+            _ => None,
+        })
+    };
+    let roofs: BTreeSet<u32> = products
+        .iter()
+        .filter(|element| element.class == "Roof" && type_of(element).is_some())
+        .filter_map(|element| element.id)
+        .collect();
+    if roofs.is_empty() || !prs::ROOF_SLOPE_SUPPORTED_REVIT_VERSIONS.contains(&revit_version) {
+        return;
+    }
+    let lists =
+        crate::element_record_plan_profiles::scan_sketch_curve_lists_32(rf, revit_version, &roofs);
+    let ids: BTreeSet<u32> = lists.values().flatten().copied().collect();
+    if ids.is_empty() {
+        return;
+    }
+    let (Ok(lines), Ok(slopes)) = (
+        crate::partition_beam_axes::scan_sketch_bounded_lines(rf, revit_version, &ids),
+        prs::scan_edge_slopes(rf, revit_version, &ids),
+    ) else {
+        return;
+    };
+    let eps = crate::element_record_plan_profiles::VERTEX_EPS_FEET;
+    let mut found: BTreeMap<
+        u32,
+        (
+            crate::element_record_plan_profiles::PlanProfile,
+            Vec<RoofEdgeSlope>,
+        ),
+    > = BTreeMap::new();
+    for (&roof, curves) in &lists {
+        let read: Option<Vec<[f64; 4]>> = curves
+            .iter()
+            .map(|id| {
+                let line = lines.get(id)?;
+                slopes.get(id)?;
+                let (a, b) = (line.start(), line.end());
+                ((a[2] - b[2]).abs() <= eps).then_some([a[0], a[1], b[0], b[1]])
+            })
+            .collect();
+        // In sketch-line id order, as 2024 orders them.
+        let ordered: BTreeSet<u32> = curves.iter().copied().collect();
+        let edges: Vec<RoofEdgeSlope> = ordered
+            .iter()
+            .filter(|id| slopes.get(id).is_some_and(|slope| slope.defines_slope))
+            .filter_map(|id| {
+                let (line, slope) = (lines.get(id)?, slopes.get(id)?);
+                Some((
+                    line.start(),
+                    line.end(),
+                    slope.angle_radians,
+                    slope.plate_offset_feet,
+                ))
+            })
+            .collect();
+        // Edges falling into the roof and edges rising into it together are
+        // not drawn.
+        let rising = edges.iter().filter(|edge| edge.2 > 0.0).count();
+        let one_way = !edges.is_empty() && (rising == 0 || rising == edges.len());
+        let Some(mut profile) = read.filter(|_| one_way).and_then(|chords| {
+            crate::element_record_plan_profiles::plan_profile_from_lines(&chords)
+        }) else {
+            continue;
+        };
+        profile.segment_ids = ordered.into_iter().collect();
+        found.insert(roof, (profile, edges));
+    }
+    if found.is_empty() {
+        return;
+    }
+    let declared: BTreeSet<u32> = match crate::elem_table::parse_records(rf) {
+        Ok(records) => crate::elem_table::declared_ids(&records),
+        Err(_) => return,
+    };
+    let types: BTreeSet<u32> = products
+        .iter()
+        .filter(|element| element.id.is_some_and(|id| found.contains_key(&id)))
+        .filter_map(type_of)
+        .collect();
+    let Some((materials, _)) = materials_and_names(rf, revit_version, &declared) else {
+        return;
+    };
+    let Ok(layers) = crate::partition_compound_structure::scan_type_layers(
+        rf,
+        revit_version,
+        &types,
+        &materials,
+        &declared,
+    ) else {
+        return;
+    };
+    let recording = rf.recording_value_sources();
+    for roof in products
+        .iter_mut()
+        .filter(|element| element.class == "Roof")
+    {
+        let (Some(id), Some(type_id)) = (roof.id, type_of(roof)) else {
+            continue;
+        };
+        let (Some((profile, edges)), Some(type_layers)) = (found.remove(&id), layers.get(&type_id))
+        else {
+            continue;
+        };
+        let thickness: f64 = type_layers.iter().map(|layer| layer.width_feet).sum();
+        if !(thickness.is_finite() && thickness > 0.0) {
+            continue;
+        }
+        if recording {
+            let all: BTreeSet<u32> = profile.segment_ids.iter().copied().collect();
+            note_line_source(rf, id, "roof_line_data", &all, &["sketch_line"]);
+            note_line_source(rf, id, "roof_slope_edges", &all, &["edge_slope"]);
+            rf.attribute_value_source(type_id, "type_layers", id, "roof_type_layers");
+        }
+        roof.fields.extend(profile.fields());
+        push_roof_slope_fields(roof, edges, thickness);
     }
 }
 

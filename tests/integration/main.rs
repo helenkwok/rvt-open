@@ -261,6 +261,8 @@ mod revit_global_ids;
 mod revit_maps_and_types;
 #[path = "../revit_property_sets.rs"]
 mod revit_property_sets;
+#[path = "../roof_butterfly.rs"]
+mod roof_butterfly;
 #[path = "../roof_extrusion_holes.rs"]
 mod roof_extrusion_holes;
 #[path = "../rooms_floors_from_records_only.rs"]
