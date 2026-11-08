@@ -33,8 +33,16 @@ With the annotation crop on, text, tags and dimensions outside it (the crop box 
 are left out. A wall the cut plane cuts is drawn broken where a door, window or opening it hosts crosses
 the cut plane. Layers follow the authoring tool's default (AIA) export layers by category (`A-WALL`
 or `I-WALL` by the wall's Function, `S-STRS`, `A-GLAZ-CURT`, `G-ANNO-TEXT`, ...), and the IFC type where
-the category is not known. Other outlines are still the elements' plan outlines, not cut and projection
-lines, and line styles are not drawn.
+the category is not known. An element wholly below the cut plane is drawn as the edges of its body seen
+from above (projection lines, with no hidden-line removal yet); a stair or railing the cut plane cuts
+draws its part above it as overhead lines on its layer's `-MBND` layer; other elements the cut plane cuts
+are drawn as their plan outlines. Each family instance's plan symbol (door swings, window and fixture
+lines: the curves its type shows in a plan view) is drawn through the instance's transform, on the
+instance's layer. The project's own lines are drawn: model, room and area separation lines in the view's
+range (`A-DETL-GENF`), and the view's detail lines (`A-DETL`; legend views drawn as plans are mostly
+these). A view whose axes are turned
+(a site plan set to true north) is drawn in its own axes about the internal origin. Line styles are not
+drawn.
 
 Dimensions read from a DWG or DXF measure their definition points: the authoring tool's DWG export stores each
 dimension's measurement times its dimension style's linear factor (914400 for a 3000 mm distance under a

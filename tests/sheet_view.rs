@@ -9,6 +9,10 @@
 //!   view holds the same eleven grid dimensions).
 //! - Elements are on the export's layers: interior walls on `I-WALL`, stairs on `S-STRS`, curtain
 //!   panels on `A-GLAZ-CURT`, text notes on `G-ANNO-TEXT`.
+//! - Plan view "Level 1" draws the doors' plan symbols (their swings, as lines on `A-DOOR`), the
+//!   stairs above the cut plane as overhead lines on `S-STRS-MBND`, and the project's model lines.
+//! - Plan view "Site" is turned to true north: it is drawn in the view's own axes, so its walls
+//!   run at 37 degrees as in the authoring tool's export of it, and the grids it hides are left out.
 #![cfg(feature = "dwg")]
 
 use std::collections::BTreeMap;
@@ -100,4 +104,75 @@ fn level_2_reads_its_visibility_and_draws_its_dimensions_on_the_export_layers() 
     for old in ["A-FLOR-STRS", "A-ANNO-NOTE"] {
         assert!(!layers.contains_key(old), "{old}: {layers:?}");
     }
+}
+
+fn draw(rvt: &std::path::Path, view: &str) -> rvt_dwg::Drawing2d {
+    let dir = std::env::temp_dir().join(format!(
+        "rvt-sheet-view-{}-{}",
+        std::process::id(),
+        view.replace(' ', "-")
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dxf = dir.join("view.dxf");
+    sheet(&[
+        rvt.as_os_str(),
+        "--view".as_ref(),
+        view.as_ref(),
+        "--format".as_ref(),
+        "dxf".as_ref(),
+        "-o".as_ref(),
+        dxf.as_os_str(),
+    ]);
+    let read = rvt_dwg::read_file(&dxf, rvt_dwg::Limits::DEFAULT).expect("read back");
+    let _ = std::fs::remove_dir_all(&dir);
+    read.drawing
+}
+
+#[test]
+fn level_1_draws_door_symbols_overhead_stairs_and_model_lines() {
+    let Some(rvt) = sample() else { return };
+    let d = draw(&rvt, "Level 1");
+    let count = |layer: &str, kind: &str| {
+        d.entities
+            .iter()
+            .filter(|e| e.layer == layer && e.kind == kind)
+            .count()
+    };
+    // Door outlines are polylines; their plan symbols are lines.
+    assert!(count("A-DOOR", "LINE") > 0, "no door symbol lines");
+    assert!(count("S-STRS-MBND", "LINE") > 0, "no overhead stair lines");
+    assert!(count("A-DETL-GENF", "LINE") > 0, "no model lines");
+}
+
+#[test]
+fn site_is_drawn_turned_to_true_north_without_its_hidden_grids() {
+    let Some(rvt) = sample() else { return };
+    let d = draw(&rvt, "Site");
+    assert!(!d.entities.iter().any(|e| e.layer == "S-GRID"));
+    // Every wall edge's direction, modulo a quarter turn, weighted by length.
+    let mut by_angle: BTreeMap<i64, f64> = BTreeMap::new();
+    for e in d.entities.iter().filter(|e| e.layer == "A-WALL") {
+        // Walls below the cut plane are their edges (lines), cut ones their outlines.
+        let pts: Vec<[f64; 3]> = match &e.geom {
+            rvt_dwg::Geom::Line { a, b } => vec![*a, *b],
+            rvt_dwg::Geom::Polyline { pts, closed, .. } => {
+                let mut v = pts.clone();
+                if *closed && !pts.is_empty() {
+                    v.push(pts[0]);
+                }
+                v
+            }
+            _ => continue,
+        };
+        for w in pts.windows(2) {
+            let (dx, dy) = (w[1][0] - w[0][0], w[1][1] - w[0][1]);
+            let degrees = dy.atan2(dx).to_degrees().rem_euclid(90.0);
+            *by_angle.entry(degrees.round() as i64 % 90).or_default() += dx.hypot(dy);
+        }
+    }
+    let main = by_angle
+        .iter()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(a, _)| *a);
+    assert_eq!(main, Some(37), "{by_angle:?}");
 }

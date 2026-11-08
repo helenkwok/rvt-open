@@ -175,6 +175,15 @@ fn run(cli: &Cli) -> Result<(), String> {
     let model = RvtDocExporter
         .export(&mut rf)
         .map_err(|e| format!("export {}: {e}", input.display()))?;
+    // A plan view draws each family instance's plan symbol (door swings, window lines).
+    let symbols = if cli.view.is_some() && cli.format != "svg" {
+        rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model).unwrap_or_else(|e| {
+            eprintln!("rvt-sheet: plan symbols not read: {e}");
+            Default::default()
+        })
+    } else {
+        Default::default()
+    };
     // Where the last phase holds no room, the plan draws the rooms of
     // the latest phase that holds any.
     if let Some(fallback) = rf.room_phase_fallback() {
@@ -206,6 +215,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         },
         window,
         annotation,
+        symbols,
     };
     let bytes = match cli.format.as_str() {
         "svg" => render_plan_svg(&model, &options).into_bytes(),
@@ -239,6 +249,9 @@ fn run(cli: &Cli) -> Result<(), String> {
 }
 
 const MM_PER_FOOT: f64 = 304.8;
+/// BuiltInCategory ids: Lines, Grids.
+const LINES: i64 = -2_000_051;
+const GRIDS: i64 = -2_000_220;
 
 /// The band of `--level`: the level found by name (exact, then ignoring case) or by elevation in
 /// millimetres (the nearest within 1 mm), up to `cut_mm` above it.
@@ -320,6 +333,14 @@ fn view_window(
                 max: [c.max[0], y1],
             }
         });
+    // The view's own axes (its crop box's x axis, kept whether or not it crops, and that turned
+    // a quarter left): a site plan turned to true north draws the model turned.
+    let frame = view.crop.as_ref().and_then(|c| {
+        let (x, y) = (c.axes[0][0], c.axes[0][1]);
+        let n = x.hypot(y);
+        (n > 1e-9 && ((x / n - 1.0).abs() > 1e-9 || (y / n).abs() > 1e-9))
+            .then(|| [[x / n, y / n], [-y / n, x / n]])
+    });
     let scale = view.scale.unwrap_or(100.0);
     // Annotation is drawn out to the view's annotation crop when that is on: the crop box grown
     // by its offsets (sheet sizes, left, right, top, bottom). With it off, text, tags and
@@ -371,7 +392,12 @@ fn view_window(
             });
         }
     }
-    for g in facts.grids.iter().filter(|g| !hidden_element(g.id)) {
+    let grids_hidden = facts.hidden_categories(view).contains(&GRIDS);
+    for g in facts
+        .grids
+        .iter()
+        .filter(|g| !grids_hidden && !hidden_element(g.id))
+    {
         let Some([free, head]) = g.ends else { continue };
         let (a2, b2) = ([free[0], free[1]], [head[0], head[1]]);
         if !(in_crop(a2) || in_crop(b2)) && crop.is_some() {
@@ -400,10 +426,47 @@ fn view_window(
             }
         }
     }
+    // The project's own lines: the view's detail lines, and model and separation lines in its
+    // range, unless their category is hidden.
+    let hidden_ids = facts.hidden_categories(view);
+    for c in &facts.curves {
+        let (lo, hi) = c
+            .points
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
+                (a.min(p[2]), b.max(p[2]))
+            });
+        let shown = match c.view {
+            Some(v) => v == view.id,
+            None => lo <= cut + 1e-3 && hi >= bottom - 1e-3,
+        };
+        // Most are stored with no category (-1); a hidden Lines category hides them all.
+        let hidden = hidden_ids.contains(&LINES)
+            || c.category
+                .is_some_and(|k| k < -1 && hidden_ids.contains(&k));
+        if !shown || hidden {
+            continue;
+        }
+        let layer = if c.view.is_some() {
+            "A-DETL"
+        } else {
+            "A-DETL-GENF"
+        };
+        for w in c.points.windows(2) {
+            let (p, q) = ([w[0][0], w[0][1]], [w[1][0], w[1][1]]);
+            if crop.is_some() && !(in_crop(p) || in_crop(q)) {
+                continue;
+            }
+            a.lines.push(PlanLine {
+                a: p,
+                b: q,
+                layer: layer.into(),
+            });
+        }
+    }
     // Hidden categories (the view template's when one controls the view), by the names elements
     // carry.
-    let hidden_categories: Vec<String> = facts
-        .hidden_categories(view)
+    let hidden_categories: Vec<String> = hidden_ids
         .iter()
         .filter_map(|id| rvt::builtin_parameters::category_name(*id))
         .map(String::from)
@@ -415,6 +478,7 @@ fn view_window(
             crop,
             hidden_categories,
             hidden_elements: view.hidden_elements.clone(),
+            frame,
         },
         a,
     ))

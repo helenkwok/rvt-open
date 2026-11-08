@@ -122,6 +122,16 @@ pub struct RoomLabel {
     pub point: Option<[f64; 2]>,
 }
 
+/// A line of the project (not of a family): a model line, a room or area separation line, or a
+/// detail line a view owns (`view`). `category` is `CurveElemData.m_categoryId`: a built-in
+/// category (negative) or the line style's subcategory. Points in model feet; an arc as chords.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct ViewCurve {
+    pub view: Option<i64>,
+    pub category: Option<i64>,
+    pub points: Vec<[f64; 3]>,
+}
+
 /// Everything [`read`] finds.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct ViewFacts {
@@ -132,6 +142,7 @@ pub struct ViewFacts {
     pub dimensions: Vec<ViewDimension>,
     pub room_tags: Vec<ViewRoomTag>,
     pub rooms: BTreeMap<i64, RoomLabel>,
+    pub curves: Vec<ViewCurve>,
 }
 
 fn id(f: &Fields, name: &str) -> Option<i64> {
@@ -278,8 +289,24 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
             "RoomElem",
             "TextElement",
             "LinearDimString",
+            "CurveElem",
         ],
     );
+    // Partition sections are the loaded families' own documents: a curve after a section start
+    // is a family's, not the project's.
+    let mut sections: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for name in rf.partition_stream_names() {
+        if let Ok(inflated) = rf.inflated_partition(&name) {
+            let starts: Vec<usize> = inflated.sections().iter().map(|(at, _)| *at).collect();
+            sections.insert(name, starts);
+        }
+    }
+    let in_family = |o: &SchemaObject| {
+        sections
+            .get(&o.stream)
+            .and_then(|s| s.first())
+            .is_some_and(|first| *first <= o.frame.span.start)
+    };
     let mut out = ViewFacts::default();
     let mut crops: BTreeMap<i64, CropBox> = BTreeMap::new();
     for_each_object_where(
@@ -439,6 +466,24 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                         }
                     }
                 }
+                Some("CurveElem") if !in_family(o) => {
+                    // `CurveElemData`'s fields are read inline with the element's.
+                    let category = match root.get("m_categoryId") {
+                        Some(Value::Id(i)) => Some(*i),
+                        _ => None,
+                    };
+                    let points = pointee(o, root, "m_pCurveDriver")
+                        .and_then(|d| pointee(o, d, "m_pCrv"))
+                        .map(curve_points)
+                        .unwrap_or_default();
+                    if points.len() >= 2 {
+                        out.curves.push(ViewCurve {
+                            view: owner,
+                            category,
+                            points,
+                        });
+                    }
+                }
                 _ => {}
             }
         },
@@ -450,6 +495,38 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
         v.crop = crops.remove(&v.id);
     }
     Ok(out)
+}
+
+/// A `GLine` or `GArc` as points: its two ends, or chords at most 1/32 of a turn.
+fn curve_points(c: &Fields) -> Vec<[f64; 3]> {
+    let t = c.get("m_endParams").map(floats).unwrap_or_default();
+    if t.len() != 2 {
+        return Vec::new();
+    }
+    if let (Some(origin), Some(dir)) = (point(c, "m_origin"), point(c, "m_dirVec")) {
+        return t
+            .iter()
+            .map(|t| [0, 1, 2].map(|i| origin[i] + t * dir[i]))
+            .collect();
+    }
+    let (Some(center), Some(x), Some(y), Some(r)) = (
+        point(c, "m_center"),
+        point(c, "m_xVec"),
+        point(c, "m_yVec"),
+        float(c, "m_radius"),
+    ) else {
+        return Vec::new();
+    };
+    let n = ((t[1] - t[0]).abs() / (std::f64::consts::TAU / 32.0))
+        .ceil()
+        .max(1.0) as usize;
+    (0..=n)
+        .map(|k| {
+            let a = t[0] + (t[1] - t[0]) * k as f64 / n as f64;
+            let (s, cs) = a.sin_cos();
+            [0, 1, 2].map(|i| center[i] + r * (cs * x[i] + s * y[i]))
+        })
+        .collect()
 }
 
 /// A datum's line: its plane's origin moved along the plane's x axis to the two ends of the
