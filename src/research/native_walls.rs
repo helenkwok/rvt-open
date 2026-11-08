@@ -808,6 +808,9 @@ pub fn native_walls_and_top_joins_into(
     let options = Options {
         selected_ids: walls.clone(),
         selected_classes: BTreeSet::from(["BasicWallType".to_string()]),
+        // A wall whose data copies disagree on its line takes its location
+        // curve from this record.
+        value_source: Some("native_wall"),
         ..Options::default()
     };
     let mut found: BTreeMap<u64, (NativeWall, Option<u64>)> = BTreeMap::new();

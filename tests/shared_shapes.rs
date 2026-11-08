@@ -175,11 +175,15 @@ fn nordic_office_concrete_draws_shared_shapes_in_place() {
             // their saved mesh, and floors along their shape-edited tops,
             // share no map; the bodies are the same 12,803. 1,626 -> 1,628
             // shapes: walls whose layered ends now nest at their joins, as
-            // Revit's bodies do, are drawn as their own outlines.
-            maps: 740,
-            mapped_items: 10_844,
+            // Revit's bodies do, are drawn as their own outlines. 740 -> 739
+            // maps, 10,844 -> 10,842 mapped items and 1,628 -> 1,631 shapes:
+            // walls whose data copies disagree on their line take their native
+            // record's, and their bodies and their partners' layered ends are
+            // drawn as their own outlines.
+            maps: 739,
+            mapped_items: 10_842,
             bodies: 12_803,
-            shapes: 1_628,
+            shapes: 1_631,
         },
     );
 }

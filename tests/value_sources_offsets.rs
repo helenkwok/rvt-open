@@ -170,6 +170,13 @@ const LINE: Coverage = Recorded {
     rules: &["agreeing"],
 };
 
+/// A wall's centreline: its location line where every copy of its element
+/// data agrees, and otherwise its native record's location curve.
+const WALL_LINE: Coverage = Recorded {
+    readers: &["bounded_line", "native_wall"],
+    rules: &["agreeing", "native"],
+};
+
 /// Every `BodySource` on the models below, and how its value sources are
 /// covered. A row is disputed here, not left out.
 const COVERAGE: &[(&str, Coverage)] = &[
@@ -177,9 +184,9 @@ const COVERAGE: &[(&str, Coverage)] = &[
     ("partition_element_record_join_trimmed", FRAME),
     ("partition_element_record_join_cut", FRAME),
     ("partition_element_record_column_cut", FRAME),
-    ("partition_wall_centreline", LINE),
-    ("partition_wall_centreline_layer_joins", LINE),
-    ("partition_wall_tapered_section", LINE),
+    ("partition_wall_centreline", WALL_LINE),
+    ("partition_wall_centreline_layer_joins", WALL_LINE),
+    ("partition_wall_tapered_section", WALL_LINE),
     (
         "partition_wall_arc",
         Recorded {
