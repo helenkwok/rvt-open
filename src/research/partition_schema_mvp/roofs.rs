@@ -55,8 +55,8 @@ pub(super) fn attach_roof_profiles(
             .map(|found| found.into_keys().collect())
             .unwrap_or_default();
     // On Revit 2026 and 2027 a roof is held to the record-box solve
-    // alone; a ceiling takes the readers of the lines' exact ends and of a
-    // Sketch's curve list.
+    // (but see below); a ceiling takes the readers of the lines' exact ends
+    // and of a Sketch's curve list.
     let roof_ids: BTreeSet<u32> = products
         .iter()
         .filter(|element| element.class == "Roof")
@@ -85,6 +85,36 @@ pub(super) fn attach_roof_profiles(
                 &arrows,
                 exact,
             ));
+        }
+    }
+    // A held roof the record-box solve leaves without an outline takes its
+    // lines' exact ends where every one of its lines carries a slope block
+    // and one of them defines its slope, so its slope is read and it is not
+    // drawn as a level block: the tiny reference hip roofs (fixtures-tiny-1)
+    // on 2026 and 2027, whose sketch lines' record boxes reach past the
+    // lines, rise at the Revit API's 30 degrees to its top so.
+    let unsolved: BTreeMap<u32, [f64; 4]> = box_only
+        .iter()
+        .filter(|(id, _)| !profiles.contains_key(id))
+        .map(|(id, plan_box)| (*id, *plan_box))
+        .collect();
+    if !unsolved.is_empty() {
+        let exact =
+            sketch_plan_profiles(rf, revit_version, &sketch_lines, &unsolved, &arrows, true);
+        let lines: BTreeSet<u32> = exact
+            .values()
+            .flat_map(|profile| profile.segment_ids.iter().copied())
+            .collect();
+        let slopes = crate::partition_roof_slopes::scan_edge_slopes(rf, revit_version, &lines)
+            .unwrap_or_default();
+        for (id, profile) in exact {
+            let ids = &profile.segment_ids;
+            let sloped = !ids.is_empty()
+                && ids.iter().all(|line| slopes.contains_key(line))
+                && ids.iter().any(|line| slopes[line].defines_slope);
+            if sloped {
+                profiles.insert(id, profile);
+            }
         }
     }
     for roof in products
@@ -366,7 +396,10 @@ pub(super) fn attach_extrusion_roofs(
 ) {
     use crate::partition_beam_axes as pba;
     use crate::partition_element_records as per;
-    if !pba::SKETCH_SPLINE_SUPPORTED_REVIT_VERSIONS.contains(&revit_version) {
+    // Straight lines are read on every release their reader is measured on;
+    // a spline only where its reader is, and a roof with a spline it cannot
+    // read keeps no section.
+    if !pba::SKETCH_LINE_SUPPORTED_REVIT_VERSIONS.contains(&revit_version) {
         return;
     }
     let float = |element: &DecodedElement, wanted: &str| {

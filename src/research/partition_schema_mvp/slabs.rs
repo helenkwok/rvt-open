@@ -148,7 +148,10 @@ pub(super) fn sketch_plan_profiles(
 /// and 2027: they are measured there on floors and ceilings against
 /// Autodesk's samples saved by 2024 and 2025, no roof is scored against Revit's
 /// export, and a roof whose slope is not read is drawn as its outline at the
-/// record box's full height, so a sloped roof would become a level block.
+/// record box's full height, so a sloped roof would become a level block. A
+/// roof whose lines all carry slope blocks, one of them defining its slope,
+/// is read from them all the same where the record boxes do not close
+/// ([`super::attach_roof_profiles`]).
 pub(super) fn roof_reads_exact_sketches(revit_version: u32) -> bool {
     !matches!(revit_version, 2026..=2027)
 }

@@ -682,6 +682,8 @@ pub fn append_typed_production_elements(
     // Doors and windows whose type draws no geometry.
     let mut without_geometry: std::collections::BTreeSet<usize> = Default::default();
     let mut pending_parts: Vec<(usize, u32)> = Vec::new();
+    // Each roof written as its slabs, and the slabs.
+    let mut roof_slabs: Vec<(usize, Vec<usize>)> = Vec::new();
     let mut pending_bounded: Vec<wall_areas::Pending> = Vec::new();
     // Each column whose type is a plain rectangle, and the elements its pairs name.
     let mut pending_columns: Vec<column_quantities::Pending> = Vec::new();
@@ -1066,6 +1068,7 @@ pub fn append_typed_production_elements(
         let mut void_bodies: Vec<VoidBody> = Vec::new();
         let mut held_body = None;
         let mut solid_shape = None;
+        let mut roof_parts: Vec<entities::SolidShape> = Vec::new();
 
         // Read in every mode: a door's or window's type GlobalId hangs on
         // its flip against its host wall, and the record's property
@@ -1091,6 +1094,7 @@ pub fn append_typed_production_elements(
                 handoffs,
                 pieces,
                 void_openings,
+                roof_parts: parts,
             }) = element_record_geometry
             {
                 location_feet = Some(location);
@@ -1098,6 +1102,7 @@ pub fn append_typed_production_elements(
                 solid_shape = solid;
                 piece_bodies = pieces;
                 void_bodies = void_openings;
+                roof_parts = parts;
                 // A stair or curtain wall is carried by its
                 // parts, as in Revit's export; its own record box would
                 // double their volume. It is held until the parts are known.
@@ -1236,6 +1241,7 @@ pub fn append_typed_production_elements(
             void_bodies.clear();
             held_body = None;
             solid_shape = None;
+            roof_parts.clear();
         }
 
         let entity_index = entities.len();
@@ -1681,6 +1687,47 @@ pub fn append_typed_production_elements(
                 pieces_of.push((entity_index, start..entities.len()));
             }
         }
+        // A plain footprint roof is written as its slabs, `IfcSlab` `.ROOF.`
+        // with the roof's name and `Tag`, aggregated by the roof, which keeps
+        // no body of its own, as in Revit's export.
+        if !roof_parts.is_empty() {
+            if let Some(whole @ entities::IfcEntity::BuildingElement { .. }) =
+                entities.get(entity_index).cloned()
+            {
+                let start = entities.len();
+                for part in roof_parts {
+                    let mut slab = whole.clone();
+                    if let entities::IfcEntity::BuildingElement {
+                        ifc_type,
+                        predefined_type,
+                        solid_shape,
+                        extrusion,
+                        representation_map_index,
+                        ..
+                    } = &mut slab
+                    {
+                        *ifc_type = "IFCSLAB".into();
+                        *predefined_type = Some("ROOF".into());
+                        *solid_shape = Some(part);
+                        *extrusion = None;
+                        *representation_map_index = None;
+                    }
+                    entities.push(slab);
+                }
+                if let Some(entities::IfcEntity::BuildingElement {
+                    solid_shape,
+                    extrusion,
+                    representation_map_index,
+                    ..
+                }) = entities.get_mut(entity_index)
+                {
+                    *solid_shape = None;
+                    *extrusion = None;
+                    *representation_map_index = None;
+                }
+                roof_slabs.push((entity_index, (start..entities.len()).collect()));
+            }
+        }
         // Each tagged void of a floor's sketch is an opening voiding
         // the floor, or the piece it is in, named `Family:Type:<type id>` as
         // in Revit's export.
@@ -1951,7 +1998,7 @@ pub fn append_typed_production_elements(
             );
         }
     }
-    for (whole, parts) in parts_by_whole {
+    for (whole, parts) in parts_by_whole.into_iter().chain(roof_slabs) {
         entities.push(entities::IfcEntity::Aggregate { whole, parts });
     }
 
@@ -4800,6 +4847,9 @@ struct RecordGeometry {
     /// Each tagged void of a floor's sketch: the piece it is in, its
     /// tag, its outline in the body's frame and the floor's thickness.
     void_openings: Vec<VoidBody>,
+    /// A roof's slabs, each a body in the roof's frame, where its body
+    /// (`solid`) is written as them.
+    roof_parts: Vec<entities::SolidShape>,
 }
 
 /// A tagged void of a floor's sketch: the piece it is in, its tag,
@@ -5812,36 +5862,22 @@ fn point_in_ring((px, py): (f64, f64), ring: &[(f64, f64)]) -> bool {
     inside
 }
 
-/// A gable or hip roof's body: each defining edge's plane rises
-/// from it into the roof at its angle (raised by the edge's plate offset).
-/// A plane counts within its edge's straight-skeleton wedge: on the edge's
-/// side, between the lines where it meets its neighbouring defining edges'
-/// planes, which converge at a hip and part at a valley. The roof's top is
-/// the lowest counting plane at each point, so hips and valleys both come
-/// out right over convex and L-shaped footprints. The planes' tops meet the
-/// outline at one eave height, `T / cos θ` of the shallowest edge; each
-/// plane's underside lies its own `T / cos θ` below its top, never below
-/// the record box's base.
-///
-/// With `rafter_cut`, a two-cut rafter's fascia depth `F`, the eave height
-/// is `F` instead, and each plane is cut level at the base raised by its
-/// plate offset: `F = 0` (the default) sets the plain roof down by the
-/// thickness's vertical extent, `F = T / cos θ` is the plain roof. The
-/// plumb and square two-cuts coincide at `F = 0`.
-///
-/// Revit's export of the roofs `R2025_Models.zip` has this shape:
-/// sheds, a gable, hips at 30° and at 15° and 35°, two-cuts with plate
-/// offsets, and L-shaped hips with a raised edge and a hole. `None` unless the
-/// highest point of the top reproduces `height` within
-/// [`ROOF_SLOPE_CLOSURE_FEET`].
-fn roof_planes_solid(
+/// Each of a gable or hip roof's planes as [`roof_planes_solid`] draws it:
+/// its top, its underside with the height it is cut level at, and the
+/// half-planes of its wedge. `None` for fewer than three outline points or an
+/// edge that is not a slope.
+type RoofPlaneSurfaces = (
+    Vec<super::body_geometry::PlanPlane>,
+    Vec<(super::body_geometry::PlanPlane, f64)>,
+    Vec<Vec<super::body_geometry::PlanPlane>>,
+);
+
+fn roof_plane_surfaces(
     slopes: &[crate::partition_schema_mvp::RoofSlope],
     [x, y]: [f64; 2],
     outer: &[(f64, f64)],
-    inner: &[Vec<(f64, f64)>],
-    height: f64,
     rafter_cut: Option<f64>,
-) -> Option<entities::SolidShape> {
+) -> Option<RoofPlaneSurfaces> {
     if outer.len() < 3 {
         return None;
     }
@@ -5937,6 +5973,82 @@ fn roof_planes_solid(
             ([*a, *b, c + eave - vertical], floor)
         })
         .collect();
+    Some((tops, undersides, domains))
+}
+
+/// A gable, hip or shed roof's slabs as Revit's export writes them, one per
+/// defining edge in the edges' order, each the part of the body
+/// [`roof_planes_solid`] draws (without a rafter cut) where that edge's plane
+/// is the roof's top, with upright sides. On the tiny reference hip and gable
+/// roofs (fixtures-tiny-1) and on `R2025_Models.zip`'s plain sheds, gable and
+/// L-shaped hips, Revit's export aggregates one `IfcSlab` `.ROOF.` per
+/// defining edge under the `IfcRoof`. `None` where a plane is nowhere the top,
+/// or where the edges' slopes differ: their slabs, each its own thickness's
+/// vertical extent, would not make the body, and Revit's export writes such a
+/// roof as one body (`04_Gable_Swapped_Slopes`, edges at 15 and 35 degrees).
+fn roof_plane_parts(
+    slopes: &[crate::partition_schema_mvp::RoofSlope],
+    at: [f64; 2],
+    outer: &[(f64, f64)],
+    inner: &[Vec<(f64, f64)>],
+) -> Option<Vec<entities::SolidShape>> {
+    let first = slopes.first()?;
+    let one_slope = slopes.iter().all(|slope| {
+        (slope.angle_radians - first.angle_radians).abs() <= 1e-9
+            && slope.thickness_feet == first.thickness_feet
+    });
+    if !one_slope {
+        return None;
+    }
+    let (tops, undersides, domains) = roof_plane_surfaces(slopes, at, outer, None)?;
+    let meshes =
+        super::body_geometry::envelope_part_meshes(outer, inner, &tops, &undersides, &domains)?;
+    meshes
+        .into_iter()
+        .map(|mesh| {
+            (!mesh.triangles.is_empty()).then(|| entities::SolidShape::FacetedBrep {
+                vertices_feet: mesh.vertices,
+                triangles: mesh
+                    .triangles
+                    .into_iter()
+                    .map(|[a, b, c]| entities::BrepTriangle(a, b, c))
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
+/// A gable or hip roof's body: each defining edge's plane rises
+/// from it into the roof at its angle (raised by the edge's plate offset).
+/// A plane counts within its edge's straight-skeleton wedge: on the edge's
+/// side, between the lines where it meets its neighbouring defining edges'
+/// planes, which converge at a hip and part at a valley. The roof's top is
+/// the lowest counting plane at each point, so hips and valleys both come
+/// out right over convex and L-shaped footprints. The planes' tops meet the
+/// outline at one eave height, `T / cos θ` of the shallowest edge; each
+/// plane's underside lies its own `T / cos θ` below its top, never below
+/// the record box's base.
+///
+/// With `rafter_cut`, a two-cut rafter's fascia depth `F`, the eave height
+/// is `F` instead, and each plane is cut level at the base raised by its
+/// plate offset: `F = 0` (the default) sets the plain roof down by the
+/// thickness's vertical extent, `F = T / cos θ` is the plain roof. The
+/// plumb and square two-cuts coincide at `F = 0`.
+///
+/// Revit's export of the roofs `R2025_Models.zip` has this shape:
+/// sheds, a gable, hips at 30° and at 15° and 35°, two-cuts with plate
+/// offsets, and L-shaped hips with a raised edge and a hole. `None` unless the
+/// highest point of the top reproduces `height` within
+/// [`ROOF_SLOPE_CLOSURE_FEET`].
+fn roof_planes_solid(
+    slopes: &[crate::partition_schema_mvp::RoofSlope],
+    at: [f64; 2],
+    outer: &[(f64, f64)],
+    inner: &[Vec<(f64, f64)>],
+    height: f64,
+    rafter_cut: Option<f64>,
+) -> Option<entities::SolidShape> {
+    let (tops, undersides, domains) = roof_plane_surfaces(slopes, at, outer, rafter_cut)?;
     let mesh =
         super::body_geometry::envelope_slab_mesh(outer, inner, &tops, &undersides, &domains)?;
     let highest = mesh
@@ -7183,14 +7295,34 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                         == Some(0.0);
                 return if plumb && no_fascia && profile.pieces.is_empty() {
                     roof_arrow_planes_solid(&slopes, [x, y], &outer, &inner, height)
+                        .map(|solid| (solid, Vec::new()))
                 } else {
                     None
                 };
             }
+            // A plain roof of one loop is written as its slabs, one per
+            // defining edge; a two-cut one as one body, as Revit's export
+            // writes them.
+            let one_loop = profile.pieces.is_empty();
             let plain = || match slopes.as_slice() {
                 [] => None,
-                [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height),
-                _ => roof_planes_solid(&slopes, [x, y], &outer, &inner, height, None),
+                [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height).map(|solid| {
+                    let parts = if one_loop {
+                        vec![solid.clone()]
+                    } else {
+                        Vec::new()
+                    };
+                    (solid, parts)
+                }),
+                _ => {
+                    roof_planes_solid(&slopes, [x, y], &outer, &inner, height, None).map(|solid| {
+                        let parts = one_loop
+                            .then(|| roof_plane_parts(&slopes, [x, y], &outer, &inner))
+                            .flatten()
+                            .unwrap_or_default();
+                        (solid, parts)
+                    })
+                }
             };
             let two_cut = || {
                 (!slopes.is_empty())
@@ -7198,6 +7330,7 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                         roof_planes_solid(&slopes, [x, y], &outer, &inner, height, Some(fascia))
                     })
                     .flatten()
+                    .map(|solid| (solid, Vec::new()))
             };
             // The roof's own rafter cut where it is read; elsewhere
             // the plain body, else the two-cut one its record box singles out.
@@ -7211,6 +7344,10 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
         })
     } else {
         None
+    };
+    let (roof_slope, roof_parts) = match roof_slope {
+        Some((solid, parts)) => (Some(solid), parts),
+        None => (None, Vec::new()),
     };
     // A floor whose corner vertices are shape-edited rises along the
     // plane they lie in.
@@ -8092,6 +8229,11 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
         }),
         solid => solid,
     };
+    let roof_parts = if class == "Roof" && solid.is_some() {
+        roof_parts
+    } else {
+        Vec::new()
+    };
     Some(RecordGeometry {
         location,
         rotation,
@@ -8104,6 +8246,7 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
         handoffs,
         pieces: piece_bodies,
         void_openings,
+        roof_parts,
     })
 }
 
@@ -8135,4 +8278,67 @@ fn floor_boundary_annotation_from_decoded(decoded: &DecodedElement) -> Option<Pr
             },
         ],
     })
+}
+
+#[cfg(test)]
+mod roof_slab_tests {
+    use super::*;
+
+    fn volume(solid: &entities::SolidShape) -> f64 {
+        let entities::SolidShape::FacetedBrep {
+            vertices_feet,
+            triangles,
+        } = solid
+        else {
+            panic!("a faceted brep");
+        };
+        triangles
+            .iter()
+            .map(|t| {
+                let [a, b, c] = [t.0, t.1, t.2].map(|k| vertices_feet[k as usize]);
+                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0
+            })
+            .sum()
+    }
+
+    /// A 10 × 6 ft hip roof at 30 degrees, 1 ft thick, placed at (2, 3): one
+    /// slab per edge, each its plan wedge (two trapezoids of 21 ft², two
+    /// triangles of 9 ft²) times the thickness's vertical extent, together
+    /// the whole body.
+    #[test]
+    fn a_hip_roof_is_four_slabs_that_make_its_body() {
+        let angle = 30f64.to_radians();
+        let corners = [[2.0, 3.0], [12.0, 3.0], [12.0, 9.0], [2.0, 9.0]];
+        let slopes: Vec<_> = (0..4)
+            .map(|k| crate::partition_schema_mvp::RoofSlope {
+                edge_start: corners[k],
+                edge_end: corners[(k + 1) % 4],
+                angle_radians: angle,
+                thickness_feet: 1.0,
+                plate_offset_feet: 0.0,
+            })
+            .collect();
+        let outer = [(0.0, 0.0), (10.0, 0.0), (10.0, 6.0), (0.0, 6.0)];
+        let vertical = 1.0 / angle.cos();
+        let height = vertical + 3.0 * angle.tan();
+        let whole = roof_planes_solid(&slopes, [2.0, 3.0], &outer, &[], height, None)
+            .expect("the hip's body");
+        let parts = roof_plane_parts(&slopes, [2.0, 3.0], &outer, &[]).expect("its slabs");
+        assert_eq!(parts.len(), 4);
+        for (part, area) in parts.iter().zip([21.0, 9.0, 21.0, 9.0]) {
+            assert!(
+                (volume(part) - area * vertical).abs() < 1e-9,
+                "{}",
+                volume(part)
+            );
+        }
+        let sum: f64 = parts.iter().map(volume).sum();
+        assert!(
+            (sum - volume(&whole)).abs() < 1e-9,
+            "{sum} vs {}",
+            volume(&whole)
+        );
+    }
 }

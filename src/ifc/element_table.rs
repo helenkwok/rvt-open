@@ -215,7 +215,12 @@ pub fn element_rows(model: &IfcModel, quantities: &[ElementQuantities]) -> Vec<E
     let measured: BTreeMap<usize, &ElementQuantities> =
         quantities.iter().map(|q| (q.index, q)).collect();
     let mut rows = Vec::new();
+    // A roof's slabs are listed as the roof.
+    let roof_slabs = super::roof_slab_wholes(model);
     for (i, entity) in model.entities.iter().enumerate() {
+        if roof_slabs.contains_key(&i) {
+            continue;
+        }
         let IfcEntity::BuildingElement {
             ifc_type,
             name,

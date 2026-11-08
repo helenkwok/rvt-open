@@ -536,15 +536,17 @@ pub fn type_objects(model: &IfcModel) -> TypeObjects {
 pub(super) fn type_object_pset_values(model: &IfcModel) -> usize {
     let mut groups: std::collections::BTreeSet<(u32, String, String, Option<String>)> =
         Default::default();
-    for entity in &model.entities {
+    let roof_slabs = super::roof_slab_wholes(model);
+    for (entity_idx, entity) in model.entities.iter().enumerate() {
         let super::entities::IfcEntity::BuildingElement {
-            ifc_type,
             type_guid,
-            predefined_type,
             property_set,
             ..
         } = entity
         else {
+            continue;
+        };
+        let Some((ifc_type, predefined_type)) = typed_as(model, &roof_slabs, entity_idx) else {
             continue;
         };
         let element = type_guid.as_deref().and_then(|tag| tag.parse::<u32>().ok());
@@ -5343,6 +5345,29 @@ pub(super) struct TypeObjectPlan {
     pub space: bool,
 }
 
+/// The occurrence entity and predefined type the type object of element
+/// `index` is chosen by: its own, but a roof's slab's are its roof's, and a
+/// roof written as its slabs is not typed. Revit's export types the slabs
+/// with the `IfcRoofType` (all 20 tiny reference roofs).
+fn typed_as<'a>(
+    model: &'a IfcModel,
+    roof_slabs: &HashMap<usize, usize>,
+    index: usize,
+) -> Option<(&'a String, &'a Option<String>)> {
+    if roof_slabs.values().any(|&whole| whole == index) {
+        return None;
+    }
+    let source = roof_slabs.get(&index).copied().unwrap_or(index);
+    match model.entities.get(source)? {
+        super::entities::IfcEntity::BuildingElement {
+            ifc_type,
+            predefined_type,
+            ..
+        } => Some((ifc_type, predefined_type)),
+        _ => None,
+    }
+}
+
 /// Every type object of the model, in the order the STEP writer emits them:
 /// the `Family:Type` ones, then one per room.
 pub(super) fn type_object_plan(
@@ -5392,16 +5417,18 @@ pub(super) fn type_object_plan(
         }
     }
     let mut type_groups: Vec<TypeGroup> = Vec::new();
+    let roof_slabs = super::roof_slab_wholes(model);
     for (entity_idx, entity) in model.entities.iter().enumerate() {
         let super::entities::IfcEntity::BuildingElement {
-            ifc_type,
             type_guid,
-            predefined_type,
             property_set,
             representation_map_index,
             ..
         } = entity
         else {
+            continue;
+        };
+        let Some((ifc_type, predefined_type)) = typed_as(model, &roof_slabs, entity_idx) else {
             continue;
         };
         // planting and entourage keep one type object per
