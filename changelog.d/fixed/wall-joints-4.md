@@ -10,7 +10,10 @@
   pair nests; the stopping wall's unpaired outer layers wrap the corner and
   the through wall's stop at the partner's first paired layer. At a T joint,
   a layer outside the core whose face side shows the same functions as the
-  other wall's near side nests past that many of its layers. Matched by
+  other wall's near side nests past that many of its layers.
+  The wall's `Axis` ends where Revit's does at such joins, at the plain join
+  (the other wall's far face where the wall runs through, its near face
+  where it stops), not where its layers end. Matched by
   ElementId against Revit's own IFC4 export at 0.001 ft over 6,739 walls:
   5,145 have both body ends within 0.001 ft, from 4,956 (239 go from wrong to
   right, 50 from right to wrong, 24 of those in the advanced architectural

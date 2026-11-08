@@ -308,6 +308,12 @@ pub struct IfcModel {
     /// on it, as far as its body reaches along it.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub wall_location_lines: std::collections::BTreeMap<usize, [[f64; 2]; 2]>,
+    /// For a wall whose layers end apart at a layered join, the plan points,
+    /// model feet, where the plain join lies on its centreline, by index into
+    /// `entities`: the writer ends the wall's `Axis` there, at that end, in
+    /// place of where its body ends.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub wall_axis_ends: std::collections::BTreeMap<usize, Vec<[f64; 2]>>,
     /// The steps of the walls' native records that write no further opening
     ///, by why: a rectangular wall opening, a cabinet, a
     /// door in a second wall or a curtain wall whose opening was not proven.
@@ -1292,6 +1298,7 @@ impl Exporter for PlaceholderExporter {
             storey_properties: Default::default(),
             filler_sizes: Default::default(),
             wall_location_lines: Default::default(),
+            wall_axis_ends: Default::default(),
             wall_cut_openings_left_out: Default::default(),
             wall_end_reads_unmarked: Default::default(),
         })
@@ -1932,6 +1939,7 @@ fn export_rvt_doc_reporting(
         .unwrap_or_else(|| opening_cuts_through_hosts(&entities, &record_handoffs));
     let filler_sizes = filler_sizes_from_handoffs(&record_handoffs);
     let wall_location_lines = wall_location_lines_from_handoffs(&record_handoffs);
+    let wall_axis_ends = wall_axis_ends_from_handoffs(&record_handoffs);
     let mut wall_end_reads_unmarked = std::collections::BTreeMap::<String, usize>::new();
     for property in record_handoffs.values().flatten() {
         if let (export_content::WALL_END_NOT_MARKED_PROPERTY, entities::PropertyValue::Text(why)) =
@@ -1975,6 +1983,7 @@ fn export_rvt_doc_reporting(
         storey_properties,
         filler_sizes,
         wall_location_lines,
+        wall_axis_ends,
         wall_cut_openings_left_out,
         wall_end_reads_unmarked,
     })
@@ -2294,6 +2303,25 @@ fn wall_location_lines_from_handoffs(
             let [x0, y0, x1, y1] = export_content::WALL_LOCATION_LINE_PROPERTIES
                 .map(|name| handoff_length(handoffs, name));
             Some((index, [[x0?, y0?], [x1?, y1?]]))
+        })
+        .collect()
+}
+
+/// Each wall's plain-join axis ends from its hand-offs
+/// ([`export_content::WALL_AXIS_END_PROPERTIES`]), by entity index.
+fn wall_axis_ends_from_handoffs(
+    record_handoffs: &std::collections::BTreeMap<usize, Vec<entities::Property>>,
+) -> std::collections::BTreeMap<usize, Vec<[f64; 2]>> {
+    record_handoffs
+        .iter()
+        .filter_map(|(&index, handoffs)| {
+            let points: Vec<[f64; 2]> = export_content::WALL_AXIS_END_PROPERTIES
+                .iter()
+                .filter_map(|[x, y]| {
+                    Some([handoff_length(handoffs, x)?, handoff_length(handoffs, y)?])
+                })
+                .collect();
+            (!points.is_empty()).then_some((index, points))
         })
         .collect()
 }
@@ -7362,6 +7390,7 @@ mod tests {
             opening_cuts: BTreeMap::new(),
             filler_sizes: BTreeMap::new(),
             wall_location_lines: BTreeMap::new(),
+            wall_axis_ends: BTreeMap::new(),
             instancing: Default::default(),
             display_bodies: Default::default(),
             type_property_sets: BTreeMap::new(),

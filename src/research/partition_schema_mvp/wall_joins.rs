@@ -416,6 +416,7 @@ pub(super) fn attach_wall_corner_reaches(
                 WALL_JOIN_REACH_FIELDS[slot],
                 WALL_JOIN_LAYER_REACH_FIELDS[slot],
                 WALL_JOIN_LAYER_EDGE_REACH_FIELDS[slot],
+                WALL_JOIN_AXIS_REACH_FIELDS[slot],
             ];
             wall.fields
                 .retain(|(name, _)| !replaced.contains(&name.as_str()));
@@ -451,7 +452,12 @@ pub(super) fn attach_wall_corner_reaches(
                 joins::CornerEnd::Layers {
                     reach_feet,
                     partner,
+                    axis_reach_feet,
                 } => {
+                    wall.fields.push((
+                        WALL_JOIN_AXIS_REACH_FIELDS[slot].into(),
+                        float(axis_reach_feet),
+                    ));
                     wall.fields.push((
                         WALL_JOIN_PARTNER_FIELDS[slot].into(),
                         InstanceField::ElementId {
@@ -557,6 +563,24 @@ pub(super) fn attach_wall_butt_joins(
                     ),
                 ));
             }
+            if let (Some(reaches), Some(partner)) = (
+                &join.layer_reach_feet,
+                lines.iter().find(|line| line.element_id == join.partner),
+            ) {
+                // The plain join: the partner's far face where this wall
+                // runs through, its near face where it stops.
+                let half = partner.thickness_feet * 0.5;
+                let plain = if join.runs_through { half } else { -half };
+                if reaches.iter().any(|reach| (reach - plain).abs() > 1e-9) {
+                    wall.fields.push((
+                        WALL_JOIN_AXIS_REACH_FIELDS[slot].into(),
+                        InstanceField::Float {
+                            value: plain,
+                            size: 8,
+                        },
+                    ));
+                }
+            }
             if let Some(reaches) = &join.layer_reach_feet {
                 wall.fields.push((
                     WALL_JOIN_LAYER_REACH_FIELDS[slot].into(),
@@ -648,6 +672,7 @@ pub fn attach_wall_end_records(
                     WALL_JOIN_REACH_FIELDS[slot],
                     WALL_JOIN_LAYER_REACH_FIELDS[slot],
                     WALL_JOIN_LAYER_EDGE_REACH_FIELDS[slot],
+                    WALL_JOIN_AXIS_REACH_FIELDS[slot],
                 ];
                 wall.fields
                     .retain(|(name, _)| !dropped.contains(&name.as_str()));

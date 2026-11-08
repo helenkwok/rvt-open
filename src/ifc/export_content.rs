@@ -1545,6 +1545,38 @@ pub fn append_typed_production_elements(
                     });
                 }
             }
+            if let Some(axis) =
+                crate::partition_schema_mvp::wall_axis_from_fields(&decoded.fields)
+            {
+                let run = (axis.end[0] - axis.start[0]).hypot(axis.end[1] - axis.start[1]);
+                let along = [
+                    (axis.end[0] - axis.start[0]) / run,
+                    (axis.end[1] - axis.start[1]) / run,
+                ];
+                for (slot, names) in WALL_AXIS_END_PROPERTIES.iter().enumerate() {
+                    let wanted = crate::partition_schema_mvp::WALL_JOIN_AXIS_REACH_FIELDS[slot];
+                    let reach = decoded.fields.iter().find_map(|(name, value)| match value {
+                        InstanceField::Float { value, .. } if name == wanted => Some(*value),
+                        _ => None,
+                    });
+                    let (Some(reach), true) = (reach, run.is_finite() && run > 1e-9) else {
+                        continue;
+                    };
+                    // Past the end, away from the wall.
+                    let (from, step) = if slot == 0 {
+                        (axis.start, -reach)
+                    } else {
+                        (axis.end, reach)
+                    };
+                    let point = [from[0] + step * along[0], from[1] + step * along[1]];
+                    for (name, feet) in names.iter().zip(point) {
+                        record_handoffs.push(Property {
+                            name: (*name).into(),
+                            value: PropertyValue::LengthFeet(feet),
+                        });
+                    }
+                }
+            }
         }
         if !record_handoffs.is_empty() {
             out.record_handoffs.insert(entity_index, record_handoffs);
@@ -5259,6 +5291,16 @@ pub const WALL_LOCATION_LINE_PROPERTIES: [&str; 4] = [
     "LocationStartY",
     "LocationEndX",
     "LocationEndY",
+];
+
+/// The names of the hand-offs holding, at each end of a wall whose layers end
+/// apart at a layered join, the plan point where the plain join lies on its
+/// centreline, model feet: X and Y at its start and at its end
+/// (`crate::partition_schema_mvp::WALL_JOIN_AXIS_REACH_FIELDS`). The writer
+/// ends the wall's `Axis` there ([`super::IfcModel::wall_axis_ends`]).
+pub const WALL_AXIS_END_PROPERTIES: [[&str; 2]; 2] = [
+    ["AxisStartAtX", "AxisStartAtY"],
+    ["AxisEndAtX", "AxisEndAtY"],
 ];
 
 /// The name of the hand-off naming a wall that a wall's record joins it to

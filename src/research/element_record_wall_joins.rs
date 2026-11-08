@@ -1196,7 +1196,13 @@ pub enum CornerEnd {
     /// The wall stops against `partner`, which runs through the corner,
     /// layer by layer as at a layered L joint ([`layer_reaches`]): how far
     /// past its line's end each layer reaches, exterior first.
-    Layers { reach_feet: Vec<f64>, partner: u32 },
+    /// `axis_reach_feet` is how far past its line's end the partner's near
+    /// face lies, where Revit's export ends the wall's `Axis`.
+    Layers {
+        reach_feet: Vec<f64>,
+        partner: u32,
+        axis_reach_feet: f64,
+    },
 }
 
 /// The end of the wall `wall` at `slot` (0 its start, 1 its end), where three
@@ -1413,6 +1419,7 @@ fn corner_end(
                     CornerEnd::Layers {
                         reach_feet,
                         partner: only.id,
+                        axis_reach_feet: only.x - only.thickness_feet / 2.0,
                     }
                 });
             }
