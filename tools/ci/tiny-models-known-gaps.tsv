@@ -1,26 +1,2 @@
 # Checks rvt-open does not pass yet. tools/ci/tiny_models_check.py reports these without failing, and fails when one passes: remove it then.
 release	recipe	check	reason
-2018	1-hip-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2018	1-hip-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2018	2-gable-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2018	2-gable-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2019	1-hip-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2019	1-hip-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2019	2-gable-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2019	2-gable-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2020	1-hip-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2020	1-hip-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2020	2-gable-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2020	2-gable-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2021	1-hip-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2021	1-hip-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2021	2-gable-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2021	2-gable-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2022	1-hip-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2022	1-hip-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2022	2-gable-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2022	2-gable-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2023	1-hip-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2023	1-hip-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2023	2-gable-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
-2023	2-gable-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body

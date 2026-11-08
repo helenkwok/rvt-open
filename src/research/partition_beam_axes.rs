@@ -417,8 +417,10 @@ pub fn scan_bounded_lines(
 /// as a bounded line: 2024 and 2025 (the roof sketches of
 /// `R2025_Models.zip`, each line's ends on Revit's exported outline);
 /// Revit 2026 and 2027 against the same Autodesk samples saved by an earlier
-/// release.
-pub const SKETCH_LINE_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
+/// release. Revit 2018 to 2023: the same record in the lines of the tiny
+/// reference hip and gable roofs (fixtures-tiny-1), each end the Revit API's.
+pub const SKETCH_LINE_SUPPORTED_REVIT_VERSIONS: &[u32] =
+    &[2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
 
 /// Each sketch line's segment, read as [`scan_bounded_lines`] reads a beam's
 /// line except that a line whose copies disagree takes its current

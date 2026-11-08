@@ -101,6 +101,7 @@ real      beam_storeys skip=ifc_beam_storeys_match_revit_export
 real      export_conventions skip=framing_class_follows_the_convention,no_rule_beam_storey_follows_the_convention,model_without_storeys_follows_the_convention
 real      beam_system_params skip=beam_system_values_equal_revits
 real      truss_framing
+real      roof_butterfly
 real      rvt_open_hints
 real      design_options_open
 real      assoc_levels_2022

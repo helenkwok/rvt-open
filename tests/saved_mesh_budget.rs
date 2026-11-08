@@ -21,13 +21,17 @@ use std::path::PathBuf;
 /// separate pass, not counted here).
 /// Three more of each since gutters are recovered from their element records
 ///: the three gutters of each house are drawn from their saved meshes.
+/// Three more again since a roof whose read slopes do not draw it keeps its
+/// record box: roofs 1567719, 1567730 and 2291293 of each house are drawn from
+/// their saved meshes, the first two at Revit 2027's export's volumes, where
+/// they were level blocks of their outlines.
 const HOUSES: [(&str, usize, usize); 2] = [
     (
         "ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt",
-        1084,
-        1019,
+        1087,
+        1022,
     ),
-    ("ARK_NordicLCA_Housing_Timber_As-Built.rvt", 1085, 1020),
+    ("ARK_NordicLCA_Housing_Timber_As-Built.rvt", 1088, 1023),
 ];
 
 fn timber_houses_read_their_saved_meshes(k: usize, n: usize) {
