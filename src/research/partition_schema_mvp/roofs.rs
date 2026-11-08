@@ -189,6 +189,108 @@ pub struct RoofExtrusion {
     pub axis: usize,
     pub top: Vec<(f64, f64)>,
     pub bottom: Vec<(f64, f64)>,
+    /// The holes the doors and windows hosted in it cut through it.
+    pub cuts: Vec<RoofExtrusionCut>,
+}
+
+/// A hole a door or window hosted in a roof by extrusion cuts through it:
+/// over `along` on the roof's axis, the band of the section between the
+/// lines through `from` and `to` along `direction`, within `depth` of the
+/// line through them, `(u, z)` as the section. Its symbol's loop is a
+/// rectangle with two sides along the axis, and the instance cuts square
+/// to the axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoofExtrusionCut {
+    pub along: (f64, f64),
+    pub from: (f64, f64),
+    pub to: (f64, f64),
+    pub direction: (f64, f64),
+    pub depth: f64,
+}
+
+impl RoofExtrusionCut {
+    fn values(&self) -> [f64; 9] {
+        [
+            self.along.0,
+            self.along.1,
+            self.from.0,
+            self.from.1,
+            self.to.0,
+            self.to.1,
+            self.direction.0,
+            self.direction.1,
+            self.depth,
+        ]
+    }
+
+    fn from_values(v: &[f64]) -> Option<Self> {
+        let [a0, a1, f0, f1, t0, t1, d0, d1, depth] = *v else {
+            return None;
+        };
+        v.iter().all(|x| x.is_finite()).then_some(Self {
+            along: (a0, a1),
+            from: (f0, f1),
+            to: (t0, t1),
+            direction: (d0, d1),
+            depth,
+        })
+    }
+
+    /// The cut placed from `cut`'s corners, where its loop is a
+    /// rectangle with two sides along `axis` (to
+    /// [`ROOF_EXTRUSION_CUT_TOLERANCE`]) and it cuts square to `axis`, in
+    /// a roof `thickness` thick.
+    fn placed(
+        cut: &crate::native_symbol_cuts::HostLoopCut,
+        axis: usize,
+        thickness: f64,
+    ) -> Option<Self> {
+        let u_axis = 1 - axis;
+        let d = cut.direction;
+        if cut.corners.len() != 4 || d[axis].abs() > ROOF_EXTRUSION_CUT_TOLERANCE {
+            return None;
+        }
+        let across = d[u_axis].hypot(d[2]);
+        if across < 1.0 - ROOF_EXTRUSION_CUT_TOLERANCE {
+            return None;
+        }
+        // The sides along the axis, and the two across it.
+        let mut along_sides = Vec::new();
+        for k in 0..4 {
+            let (p, q) = (cut.corners[k], cut.corners[(k + 1) % 4]);
+            let e = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+            let length = (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt();
+            if length <= ROOF_EXTRUSION_CUT_TOLERANCE {
+                return None;
+            }
+            let share = e[axis].abs() / length;
+            if share >= 1.0 - ROOF_EXTRUSION_CUT_TOLERANCE {
+                along_sides.push(p);
+            } else if share > ROOF_EXTRUSION_CUT_TOLERANCE {
+                return None;
+            }
+        }
+        let [a, b] = along_sides.as_slice() else {
+            return None;
+        };
+        let low = cut
+            .corners
+            .iter()
+            .map(|p| p[axis])
+            .fold(f64::INFINITY, f64::min);
+        let high = cut
+            .corners
+            .iter()
+            .map(|p| p[axis])
+            .fold(f64::NEG_INFINITY, f64::max);
+        Some(Self {
+            along: (low, high),
+            from: (a[u_axis], a[2]),
+            to: (b[u_axis], b[2]),
+            direction: (d[u_axis] / across, d[2] / across),
+            depth: ROOF_EXTRUSION_CUT_DEPTH_THICKNESSES * thickness,
+        })
+    }
 }
 
 /// The [`RoofExtrusion`] the extrusion-roof pass recorded in an element's
@@ -203,6 +305,26 @@ pub fn roof_extrusion_from_fields(fields: &[(String, InstanceField)]) -> Option<
         InstanceField::Integer { value, .. } => usize::try_from(*value).ok().filter(|a| *a < 2)?,
         _ => return None,
     };
+    let cuts = match field(ROOF_EXTRUSION_CUTS_FIELD) {
+        None => Vec::new(),
+        Some(InstanceField::Vector(items)) => {
+            let values: Vec<f64> = items
+                .iter()
+                .map(|item| match item {
+                    InstanceField::Float { value, .. } => Some(*value),
+                    _ => None,
+                })
+                .collect::<Option<_>>()?;
+            if values.len() % 9 != 0 {
+                return None;
+            }
+            values
+                .chunks_exact(9)
+                .map(RoofExtrusionCut::from_values)
+                .collect::<Option<_>>()?
+        }
+        Some(_) => return None,
+    };
     Some(RoofExtrusion {
         axis,
         top: crate::element_record_plan_profiles::points_from_field(field(
@@ -211,6 +333,7 @@ pub fn roof_extrusion_from_fields(fields: &[(String, InstanceField)]) -> Option<
         bottom: crate::element_record_plan_profiles::points_from_field(field(
             ROOF_EXTRUSION_BOTTOM_FIELD,
         )?)?,
+        cuts,
     })
 }
 
@@ -393,6 +516,7 @@ pub(super) fn attach_extrusion_roofs(
     rf: &mut RevitFile,
     revit_version: u32,
     products: &mut [DecodedElement],
+    openings: &BTreeSet<u64>,
 ) {
     use crate::partition_beam_axes as pba;
     use crate::partition_element_records as per;
@@ -533,6 +657,10 @@ pub(super) fn attach_extrusion_roofs(
     ) else {
         return;
     };
+    // The holes the doors and windows hosted in these roofs cut.
+    let hosts: BTreeSet<u64> = planes.keys().map(|&id| u64::from(id)).collect();
+    let hosted_cuts =
+        crate::native_symbol_cuts::host_loop_cuts(rf, openings, &hosts).unwrap_or_default();
     let inside = |point: [f64; 3], record: &[f64; 6]| {
         (0..3).all(|k| {
             point[k] >= record[k] - pba::END_TOLERANCE_FEET
@@ -625,6 +753,17 @@ pub(super) fn attach_extrusion_roofs(
         if !reproduces {
             continue;
         }
+        // The holes its doors and windows cut. A roof with one it cannot
+        // place (a loop that is not a rectangle along the axis, or a cut
+        // not square to it) keeps no section.
+        let Some(cuts) = hosted_cuts
+            .iter()
+            .filter(|cut| cut.host == u64::from(id))
+            .map(|cut| RoofExtrusionCut::placed(cut, axis, thickness))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
         if recording {
             use crate::ifc::element_provenance::{CopyRule, SourcePart, ValueSource};
             // The first frame of each of the roof's sketch lines, the lines'
@@ -664,6 +803,17 @@ pub(super) fn attach_extrusion_roofs(
             ROOF_EXTRUSION_BOTTOM_FIELD.into(),
             crate::element_record_plan_profiles::loop_field(&bottom),
         ));
+        if !cuts.is_empty() {
+            roof.fields.push((
+                ROOF_EXTRUSION_CUTS_FIELD.into(),
+                InstanceField::Vector(
+                    cuts.iter()
+                        .flat_map(RoofExtrusionCut::values)
+                        .map(|value| InstanceField::Float { value, size: 8 })
+                        .collect(),
+                ),
+            ));
+        }
     }
 }
 

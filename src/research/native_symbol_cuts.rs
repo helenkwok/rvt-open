@@ -49,6 +49,25 @@ impl CutLoop {
 /// each line's start the previous line's end, closed, flat in the symbol's
 /// XZ plane and with some width and height. Anything else is `None`.
 fn cut_loop(graph: &crate::native_parameters::ObjectGraph) -> Option<CutLoop> {
+    let corners = cut_loop_corners(graph)?;
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for p in &corners {
+        for ((low, high), v) in min.iter_mut().zip(max.iter_mut()).zip(p) {
+            *low = low.min(*v);
+            *high = high.max(*v);
+        }
+    }
+    let cut = CutLoop { min, max };
+    (max[1] - min[1] <= JOIN_TOLERANCE_FEET && cut.width_feet() > 0.0 && cut.height_feet() > 0.0)
+        .then_some(cut)
+}
+
+/// The corners of a `FamilySymbol` graph's one cut loop, in order, in the
+/// symbol's coordinates: each `GLine`'s start, where every curve is a
+/// `GLine` and each starts at the previous one's end, closed. Anything else
+/// is `None`.
+fn cut_loop_corners(graph: &crate::native_parameters::ObjectGraph) -> Option<Vec<[f64; 3]>> {
     let root = graph.objects.first()?;
     let [loop_pointer] = root.fields.get("m_pCutLoops")?.as_array()?.as_slice() else {
         return None;
@@ -81,20 +100,7 @@ fn cut_loop(graph: &crate::native_parameters::ObjectGraph) -> Option<CutLoop> {
     }
     let joined = (0..ends.len())
         .all(|i| distance(ends[i].1, ends[(i + 1) % ends.len()].0) <= JOIN_TOLERANCE_FEET);
-    if !joined {
-        return None;
-    }
-    let mut min = [f64::INFINITY; 3];
-    let mut max = [f64::NEG_INFINITY; 3];
-    for (p, _) in &ends {
-        for ((low, high), v) in min.iter_mut().zip(max.iter_mut()).zip(p) {
-            *low = low.min(*v);
-            *high = high.max(*v);
-        }
-    }
-    let cut = CutLoop { min, max };
-    (max[1] - min[1] <= JOIN_TOLERANCE_FEET && cut.width_feet() > 0.0 && cut.height_feet() > 0.0)
-        .then_some(cut)
+    joined.then(|| ends.into_iter().map(|(start, _)| start).collect())
 }
 
 fn point2(value: Option<&serde_json::Value>) -> Option<[f64; 2]> {
@@ -505,6 +511,131 @@ pub fn face_hosted_cuts(
                 instance,
                 host: *hosts.get(&plane)?,
                 vertices: solids.get(&symbol)?.clone(),
+            })
+        })
+        .collect())
+}
+
+/// A door or window whose symbol cuts a loop in the element hosting it
+/// directly (its `m_hostId`), and that loop placed in the model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostLoopCut {
+    /// The instance's ElementId.
+    pub instance: u64,
+    /// The element it is hosted in.
+    pub host: u64,
+    /// The loop's corners, in order, in model coordinates, feet.
+    pub corners: Vec<[f64; 3]>,
+    /// The instance's Z axis in the model: the loop lies square to it, and
+    /// the instance cuts its host along it.
+    pub direction: [f64; 3],
+}
+
+/// For each of `instances` (family instances' ElementIds) hosted directly in
+/// one of `hosts` (its record's `m_hostId`), whose symbol (its
+/// `InstanceInfo.m_symbolId`) cuts one loop flat in the symbol's XY plane,
+/// that loop placed by the instance's `InstanceInfo.m_Trf` (its rows' columns
+/// the instance's axes, `m_or` its origin): `rac_basic_sample_project`'s two
+/// skylights in roof 243274, each cutting a 3.3763 by 3.5469 ft hole square
+/// through the roof. An instance whose transform is not a rotation is left
+/// out. Two passes: the instances, then the symbols they name.
+pub fn host_loop_cuts(
+    rf: &mut RevitFile,
+    instances: &BTreeSet<u64>,
+    hosts: &BTreeSet<u64>,
+) -> anyhow::Result<Vec<HostLoopCut>> {
+    if instances.is_empty() || hosts.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Each instance's host, symbol and axes and origin.
+    let mut named: BTreeMap<u64, (u64, u64, [[f64; 3]; 3], [f64; 3])> = BTreeMap::new();
+    let options = native_document::Options {
+        selected_ids: instances.clone(),
+        ..native_document::Options::default()
+    };
+    native_document::extract_graphs(rf, &options, |record| {
+        let Some(graph) = record.graph.as_ref() else {
+            return Ok(());
+        };
+        let Some(host) = graph
+            .objects
+            .first()
+            .and_then(|root| root.fields.get("m_hostId"))
+            .and_then(element_id)
+            .filter(|host| hosts.contains(host))
+        else {
+            return Ok(());
+        };
+        let Some(info) = graph
+            .objects
+            .iter()
+            .find(|object| object.class_name == "InstanceInfo")
+        else {
+            return Ok(());
+        };
+        let symbol = info.fields.get("m_symbolId").and_then(element_id);
+        let rows: Option<Vec<[f64; 3]>> = info
+            .fields
+            .pointer("/m_Trf/m_3x3")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|rows| rows.iter().map(finite_triple).collect());
+        let origin = info.fields.pointer("/m_Trf/m_or").and_then(finite_triple);
+        if let (Some(symbol), Some(rows), Some(origin)) = (symbol, rows, origin) {
+            if let [a, b, c] = rows.as_slice() {
+                let axes = [0, 1, 2].map(|j| [a[j], b[j], c[j]]);
+                let dot = |p: [f64; 3], q: [f64; 3]| p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+                let orthonormal = (0..3).all(|i| {
+                    (0..3).all(|j| {
+                        let want = if i == j { 1.0 } else { 0.0 };
+                        (dot(axes[i], axes[j]) - want).abs() <= 1e-9
+                    })
+                });
+                if orthonormal {
+                    named.insert(record.identity.element_id, (host, symbol, axes, origin));
+                }
+            }
+        }
+        Ok(())
+    })?;
+    if named.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut loops: BTreeMap<u64, Vec<[f64; 3]>> = BTreeMap::new();
+    let options = native_document::Options {
+        selected_ids: named.values().map(|(_, symbol, _, _)| *symbol).collect(),
+        ..native_document::Options::default()
+    };
+    native_document::extract_graphs(rf, &options, |record| {
+        if record.class_name.as_deref() != Some("FamilySymbol") {
+            return Ok(());
+        }
+        let Some(corners) = record.graph.as_ref().and_then(cut_loop_corners) else {
+            return Ok(());
+        };
+        let z = corners[0][2];
+        if corners
+            .iter()
+            .all(|corner| (corner[2] - z).abs() <= JOIN_TOLERANCE_FEET)
+        {
+            loops.insert(record.identity.element_id, corners);
+        }
+        Ok(())
+    })?;
+    Ok(named
+        .into_iter()
+        .filter_map(|(instance, (host, symbol, axes, origin))| {
+            let corners = loops
+                .get(&symbol)?
+                .iter()
+                .map(|v| {
+                    [0, 1, 2].map(|i| origin[i] + (0..3).map(|j| axes[j][i] * v[j]).sum::<f64>())
+                })
+                .collect();
+            Some(HostLoopCut {
+                instance,
+                host,
+                corners,
+                direction: axes[2],
             })
         })
         .collect())

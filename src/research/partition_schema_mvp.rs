@@ -631,7 +631,13 @@ pub fn recover_partition_schema_mvp(
     // --- A shed roof's slope ---
     attach_roof_slopes(rf, revit_version, &mut out.products);
     // --- A roof by extrusion's section ---
-    attach_extrusion_roofs(rf, revit_version, &mut out.products);
+    let openings: BTreeSet<u64> = out
+        .doors
+        .iter()
+        .chain(&out.windows)
+        .filter_map(|element| element.id.map(u64::from))
+        .collect();
+    attach_extrusion_roofs(rf, revit_version, &mut out.products, &openings);
     // --- Floors', roofs' and ceilings' layers ---
     attach_slab_layers(
         rf,
