@@ -697,6 +697,10 @@ pub fn strip_building_element_geometry(entities: &mut [entities::IfcEntity]) {
     }
 }
 
+/// The hand-off marking a footprint roof none of whose edges defines a
+/// slope, which Revit's export writes as its one slab.
+pub const ROOF_ONE_SLAB_PROPERTY: &str = "RoofOneSlab";
+
 /// The class a Shaft Opening's record is read as.
 pub const SHAFT_OPENING_CLASS: &str = "ShaftOpening";
 
@@ -1824,27 +1828,21 @@ pub fn append_typed_production_elements(
             }
         }
         // A footprint roof none of whose edges defines a slope is its one
-        // slab, whatever body it has (tiny reference models set 2, recipe 7:
-        // the flat roof of Revit 2018 to 2020 and the roof sloped by an arrow
-        // of 2021 to 2023 are each one `IfcSlab` `.ROOF.` in Revit's export).
+        // slab ([`super::split_single_slab_roofs`], once its body is final).
         if roof_parts.is_empty()
+            && ifc_type == "IFCROOF"
             && decoded.fields.iter().any(|(name, value)| {
                 name == crate::partition_schema_mvp::ROOF_NO_SLOPE_EDGE_FIELD
                     && matches!(value, InstanceField::Bool(true))
             })
-            && let Some(entities::IfcEntity::BuildingElement {
-                ifc_type,
-                solid_shape,
-                extrusion,
-                representation_map_index: None,
-                ..
-            }) = entities.get(entity_index)
-            && ifc_type == "IFCROOF"
-            && let Some(body) = solid_shape
-                .clone()
-                .or_else(|| extrusion.clone().map(entities::SolidShape::ExtrudedArea))
         {
-            roof_parts.push(body);
+            out.record_handoffs
+                .entry(entity_index)
+                .or_default()
+                .push(Property {
+                    name: ROOF_ONE_SLAB_PROPERTY.into(),
+                    value: PropertyValue::Boolean(true),
+                });
         }
         // A plain footprint roof is written as its slabs, `IfcSlab` `.ROOF.`
         // with the roof's name and `Tag`, aggregated by the roof, which keeps

@@ -317,6 +317,10 @@ pub struct IfcModel {
     /// The file's grid lines ([`grids`]), written as one `IfcGrid`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grids: Vec<grids::GridLine>,
+    /// The ElementIds of the footprint roofs written as their one slab
+    /// ([`split_single_slab_roofs`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub single_slab_roofs: std::collections::BTreeSet<u32>,
     /// The steps of the walls' native records that write no further opening
     ///, by why: a rectangular wall opening, a cabinet, a
     /// door in a second wall or a curtain wall whose opening was not proven.
@@ -1303,6 +1307,7 @@ impl Exporter for PlaceholderExporter {
             wall_location_lines: Default::default(),
             opening_categories: Default::default(),
             grids: Vec::new(),
+            single_slab_roofs: Default::default(),
             wall_cut_openings_left_out: Default::default(),
             wall_end_reads_unmarked: Default::default(),
         })
@@ -1943,6 +1948,7 @@ fn export_rvt_doc_reporting(
         .unwrap_or_else(|| opening_cuts_through_hosts(&entities, &record_handoffs));
     let filler_sizes = filler_sizes_from_handoffs(&record_handoffs);
     let wall_location_lines = wall_location_lines_from_handoffs(&record_handoffs);
+    let single_slab_roofs = single_slab_roofs_from_handoffs(&entities, &record_handoffs);
     let mut wall_end_reads_unmarked = std::collections::BTreeMap::<String, usize>::new();
     for property in record_handoffs.values().flatten() {
         if let (export_content::WALL_END_NOT_MARKED_PROPERTY, entities::PropertyValue::Text(why)) =
@@ -1988,6 +1994,7 @@ fn export_rvt_doc_reporting(
         wall_location_lines,
         opening_categories: Default::default(),
         grids: grids::read(rf),
+        single_slab_roofs,
         wall_cut_openings_left_out,
         wall_end_reads_unmarked,
     })
@@ -2294,6 +2301,107 @@ fn clip_to_side(ring: &[[f64; 2]], a: [f64; 2], b: [f64; 2], keep: [f64; 2]) -> 
     }
     out.dedup_by(|x, y| (x[0] - y[0]).hypot(x[1] - y[1]) <= 1e-9);
     out
+}
+
+/// The ElementIds of the roofs their hand-offs mark as their one slab
+/// ([`export_content::ROOF_ONE_SLAB_PROPERTY`]).
+fn single_slab_roofs_from_handoffs(
+    entities: &[entities::IfcEntity],
+    record_handoffs: &std::collections::BTreeMap<usize, Vec<entities::Property>>,
+) -> std::collections::BTreeSet<u32> {
+    record_handoffs
+        .iter()
+        .filter(|(_, handoffs)| {
+            handoffs
+                .iter()
+                .any(|p| p.name == export_content::ROOF_ONE_SLAB_PROPERTY)
+        })
+        .filter_map(|(&index, _)| match entities.get(index)? {
+            entities::IfcEntity::BuildingElement {
+                type_guid: Some(tag),
+                ..
+            } => tag.parse().ok(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Write each roof of [`IfcModel::single_slab_roofs`] that is not yet
+/// written as slabs as its one slab: an `IfcSlab` `.ROOF.` with the roof's
+/// name, `Tag` and final body, aggregated by the roof, which keeps no body,
+/// as Revit's export writes a footprint roof none of whose edges defines a
+/// slope (tiny reference models set 2, recipe 7: the flat roof of Revit 2018
+/// to 2020). Run once the bodies are final, so the slab takes the body the
+/// saved graphics or the family passes gave the roof.
+pub fn split_single_slab_roofs(model: &mut IfcModel) {
+    if model.single_slab_roofs.is_empty() {
+        return;
+    }
+    let wholes: std::collections::BTreeSet<usize> = model
+        .entities
+        .iter()
+        .filter_map(|e| match e {
+            entities::IfcEntity::Aggregate { whole, .. } => Some(*whole),
+            _ => None,
+        })
+        .collect();
+    let roofs: Vec<usize> = model
+        .entities
+        .iter()
+        .enumerate()
+        .filter(|(index, e)| {
+            !wholes.contains(index)
+                && matches!(e, entities::IfcEntity::BuildingElement {
+                    ifc_type,
+                    type_guid: Some(tag),
+                    representation_map_index: None,
+                    ..
+                } if ifc_type == "IFCROOF"
+                    && tag.parse().is_ok_and(|id: u32| model.single_slab_roofs.contains(&id)))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    for whole in roofs {
+        let mut slab = model.entities[whole].clone();
+        let entities::IfcEntity::BuildingElement {
+            ifc_type,
+            predefined_type,
+            solid_shape,
+            extrusion,
+            ..
+        } = &mut slab
+        else {
+            continue;
+        };
+        let Some(body) = solid_shape
+            .take()
+            .or_else(|| extrusion.take().map(entities::SolidShape::ExtrudedArea))
+        else {
+            continue;
+        };
+        *ifc_type = "IFCSLAB".into();
+        *predefined_type = Some("ROOF".into());
+        *solid_shape = Some(body);
+        *extrusion = None;
+        if let entities::IfcEntity::BuildingElement {
+            solid_shape,
+            extrusion,
+            ..
+        } = &mut model.entities[whole]
+        {
+            *solid_shape = None;
+            *extrusion = None;
+        }
+        let part = model.entities.len();
+        model.entities.push(slab);
+        if let Some(body) = model.display_bodies.remove(&whole) {
+            model.display_bodies.insert(part, body);
+        }
+        model.entities.push(entities::IfcEntity::Aggregate {
+            whole,
+            parts: vec![part],
+        });
+    }
 }
 
 /// Each wall's location line from its hand-offs
@@ -7377,6 +7485,7 @@ mod tests {
             wall_location_lines: BTreeMap::new(),
             opening_categories: BTreeMap::new(),
             grids: Vec::new(),
+            single_slab_roofs: Default::default(),
             instancing: Default::default(),
             display_bodies: Default::default(),
             type_property_sets: BTreeMap::new(),
