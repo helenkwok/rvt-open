@@ -342,16 +342,17 @@ jobs:
       - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: ci-profile }
-      # Five small projects saved in every release from 2018 to 2027, each with
-      # an answer key read from the Revit API (release fixtures-tiny-1, MIT).
+      # Small projects saved in every release from 2018 to 2027, each with an
+      # answer key read from the Revit API: recipes 1-5 (release fixtures-tiny-1)
+      # and 6-22 (fixtures-tiny-2), both MIT. The key changes with either pin.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with: { path: _tiny, key: "tiny-models-67f06a30110313174c16c6ea3a4e21c29d34a42a30afd51877d849199e843d33" }
+        with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
       - run: tools/ci/fetch-tiny-models.sh _tiny
       - run: cargo build --profile ci --bin rvt-ifc --bin rvt-schedule
       - name: Exports against the answer keys
         run: |
           python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt
-          "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny/rvt-open-tiny-models-1 target/ci "$RUNNER_TEMP/tiny-out"
+          "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny target/ci "$RUNNER_TEMP/tiny-out"
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: tiny-models-checks, path: "${{ runner.temp }}/tiny-out/tiny-models-checks.tsv", if-no-files-found: ignore }

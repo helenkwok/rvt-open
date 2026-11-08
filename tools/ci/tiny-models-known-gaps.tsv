@@ -24,3 +24,170 @@ release	recipe	check	reason
 2023	1-hip-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
 2023	2-gable-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
 2023	2-gable-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2018	6-shed-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2018	6-shed-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2018	7-slope-arrow-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2018	7-slope-arrow-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2018	9-walls-attached-to-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2018	9-walls-attached-to-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2018	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2018	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
+2018	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2018	17-areas	area1:area	areas are not read: the schedule has no row for them
+2018	17-areas	area2:area	areas are not read: the schedule has no row for them
+2018	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2018	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2018	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2018	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2018	20-levels-grids-site	count:Topography	the site surface is not read: the schedule has no row for it
+2018	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2018	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2019	6-shed-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2019	6-shed-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2019	7-slope-arrow-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2019	7-slope-arrow-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2019	9-walls-attached-to-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2019	9-walls-attached-to-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2019	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2019	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
+2019	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2019	17-areas	area1:area	areas are not read: the schedule has no row for them
+2019	17-areas	area2:area	areas are not read: the schedule has no row for them
+2019	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2019	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2019	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2019	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2019	20-levels-grids-site	count:Topography	the site surface is not read: the schedule has no row for it
+2019	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2019	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2020	6-shed-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2020	6-shed-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2020	7-slope-arrow-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2020	7-slope-arrow-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2020	9-walls-attached-to-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2020	9-walls-attached-to-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2020	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2020	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
+2020	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2020	17-areas	area1:area	areas are not read: the schedule has no row for them
+2020	17-areas	area2:area	areas are not read: the schedule has no row for them
+2020	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2020	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2020	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2020	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2020	20-levels-grids-site	count:Topography	the site surface is not read: the schedule has no row for it
+2020	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2020	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2021	6-shed-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2021	6-shed-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2021	7-slope-arrow-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2021	7-slope-arrow-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2021	9-walls-attached-to-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2021	9-walls-attached-to-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2021	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2021	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
+2021	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2021	17-areas	area1:area	areas are not read: the schedule has no row for them
+2021	17-areas	area2:area	areas are not read: the schedule has no row for them
+2021	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2021	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2021	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2021	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
+2021	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2021	20-levels-grids-site	count:Topography	the site surface is not read: the schedule has no row for it
+2021	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2021	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2022	6-shed-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2022	6-shed-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2022	7-slope-arrow-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2022	7-slope-arrow-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2022	9-walls-attached-to-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2022	9-walls-attached-to-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2022	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2022	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
+2022	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2022	17-areas	area1:area	areas are not read: the schedule has no row for them
+2022	17-areas	area2:area	areas are not read: the schedule has no row for them
+2022	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2022	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2022	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2022	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
+2022	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2022	20-levels-grids-site	count:Topography	the site surface is not read: the schedule has no row for it
+2022	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2022	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2023	6-shed-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2023	6-shed-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2023	7-slope-arrow-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2023	7-slope-arrow-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2023	9-walls-attached-to-roof	roof1:slab-globalids	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2023	9-walls-attached-to-roof	roof1:slabs	roof slopes not read before 2024: the roof is drawn from its saved mesh, as one body
+2023	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2023	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
+2023	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2023	17-areas	area1:area	areas are not read: the schedule has no row for them
+2023	17-areas	area2:area	areas are not read: the schedule has no row for them
+2023	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2023	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2023	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2023	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
+2023	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2023	20-levels-grids-site	count:Topography	the site surface is not read: the schedule has no row for it
+2023	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2023	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2024	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2024	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2024	15-wall-profile-openings	wall1:axis	wall with an edited profile, 2024 to 2027: no Axis representation and no length
+2024	15-wall-profile-openings	wall1:length	wall with an edited profile, 2024 to 2027: no Axis representation and no length
+2024	17-areas	area1:area	areas are not read: the schedule has no row for them
+2024	17-areas	area2:area	areas are not read: the schedule has no row for them
+2024	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2024	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2024	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2024	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
+2024	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2024	20-levels-grids-site	count:Toposolid	the site surface is not read: the schedule has no row for it
+2024	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2024	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2025	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2025	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2025	15-wall-profile-openings	wall1:axis	wall with an edited profile, 2024 to 2027: no Axis representation and no length
+2025	15-wall-profile-openings	wall1:length	wall with an edited profile, 2024 to 2027: no Axis representation and no length
+2025	17-areas	area1:area	areas are not read: the schedule has no row for them
+2025	17-areas	area2:area	areas are not read: the schedule has no row for them
+2025	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2025	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2025	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2025	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
+2025	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2025	20-levels-grids-site	count:Toposolid	the site surface is not read: the schedule has no row for it
+2025	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2025	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2026	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2026	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2026	15-wall-profile-openings	wall1:axis	wall with an edited profile, 2024 to 2027: no Axis representation and no length
+2026	15-wall-profile-openings	wall1:length	wall with an edited profile, 2024 to 2027: no Axis representation and no length
+2026	17-areas	area1:area	areas are not read: the schedule has no row for them
+2026	17-areas	area2:area	areas are not read: the schedule has no row for them
+2026	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2026	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2026	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2026	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
+2026	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2026	20-levels-grids-site	count:Toposolid	the site surface is not read: the schedule has no row for it
+2026	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2026	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2027	10-floor-opening-slope	count:Shaft Openings	shaft openings are not read: the schedule has no row for them
+2027	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
+2027	15-wall-profile-openings	wall1:axis	wall with an edited profile, 2024 to 2027: no Axis representation and no length
+2027	15-wall-profile-openings	wall1:length	wall with an edited profile, 2024 to 2027: no Axis representation and no length
+2027	17-areas	area1:area	areas are not read: the schedule has no row for them
+2027	17-areas	area2:area	areas are not read: the schedule has no row for them
+2027	17-areas	count:Areas	areas are not read: the schedule has no row for them
+2027	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2027	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
+2027	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
+2027	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
+2027	20-levels-grids-site	count:Toposolid	the site surface is not read: the schedule has no row for it
+2027	20-levels-grids-site	site:position	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement
+2027	20-levels-grids-site	site:rotation	the project position (east/west, north/south, angle to true north) is not applied to the IfcSite placement

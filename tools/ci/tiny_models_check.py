@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check rvt-open's exports of the tiny reference models against their answer keys.
 
-Each model in the fixtures (fetched by tools/ci/fetch-tiny-models.sh) comes with
+Each model in the fixtures (sets 1 and 2, fetched by tools/ci/fetch-tiny-models.sh) comes with
 `<recipe>.answer.json`, read from the Revit API in the release that saved it.
 For every release and recipe this runs `rvt-ifc` and `rvt-schedule --format jsonl`,
 reads the IFC with IfcOpenShell, and compares both with the answer key.
@@ -32,6 +32,10 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 TOL_LEN, TOL_AREA, TOL_SLOPE = 0.001, 0.01, 0.1  # m, m2, degrees
+# Answer-key lists of elements checked by their bounding box (set 2). Openings and site surfaces are
+# only counted: Revit's export draws an opening where it cuts and a site surface without its Tag.
+BOX_KEYS = ("floors", "columns", "beams", "stairs", "mep", "instances")
+ITEM_KEYS = BOX_KEYS + ("openings_elems", "topo", "areas", "grids")
 GEOM = ifcopenshell.geom.settings()
 GEOM.set("use-world-coords", True)
 
@@ -135,6 +139,12 @@ def axis_error(ax, ends, verts):
     return max(off, abs(along[0] - float(body.min())), abs(along[1] - float(body.max())))
 
 
+def items(answer, key):
+    """The answer key's list under `key` (a lone object counts as a list of one)."""
+    v = answer.get(key) or []
+    return [v] if isinstance(v, dict) else v
+
+
 def near(a, b, tol):
     return a is not None and b is not None and abs(a - b) <= tol
 
@@ -143,9 +153,30 @@ def r4(x):
     return None if x is None else round(float(x), 4)
 
 
-def score(answer, ifc_path, jsonl_path):
-    """List of (check, ok, expected, got) for one model."""
+def param(elem, builtin):
+    return next((p.get("value") for p in elem.get("parameters") or [] if p.get("builtin") == builtin), None)
+
+
+def score(answer, ifc_path, jsonl_path, dump=None):
+    """List of (check, ok, expected, got) for one model.
+
+    `dump` (set 2: the model's api-dump.json, elements by id) was read after the steps done in
+    Revit's user interface, so it gives the current state where the answer key predates a step."""
     out = []
+    dump = dump or {}
+    phases = sorted((param(e, "PHASE_SEQUENCE_NUMBER") or 0, e["name"]) for e in dump.values() if e.get("category") == "Phases")
+    last_phase = phases[-1][1] if phases else None
+
+    def exported(item):
+        """Whether Revit's export holds the element: the last phase, the main model and primary options."""
+        if not dump:
+            return True
+        e = dump.get(item["id"])
+        if e is None:  # replaced since the answer was read (a copy moved into a design option)
+            return False
+        do = e.get("design_option")
+        return (e.get("phase_demolished", -1) == -1 and not (do and "<primary>" not in do.get("name", ""))
+                and (not item.get("phase") or item["phase"] == last_phase))
 
     def chk(name, ok, exp, got):
         out.append((name, bool(ok), exp, got))
@@ -161,9 +192,13 @@ def score(answer, ifc_path, jsonl_path):
     levels = {lv["id"]: lv for lv in answer["levels"]}
     unit = ifcopenshell.util.unit.calculate_unit_scale(f)
 
-    exp_c = collections.Counter(e["category"] for e in answer["elements"])
+    # Set 2's answer keys (they carry `pending_ui`) list only what each recipe built, so its counts
+    # cover the categories listed; set 1's list every element, so its counts cover every category.
+    listed = {x["id"]: x["category"] for k in ("elements",) + ITEM_KEYS for x in items(answer, k)}
+    listed.update({x["id"]: x["category"] for u in answer.get("ui_done") or [] for x in u["api_read_back"].get("in_place") or []})
+    exp_c = collections.Counter(listed.values())
     got_c = collections.Counter(r["category"] for r in rows)
-    for cat in sorted(set(exp_c) | set(got_c)):
+    for cat in sorted(set(exp_c) | (set() if "pending_ui" in answer else set(got_c))):
         chk(f"count:{cat}", exp_c[cat] == got_c[cat], exp_c[cat], got_c[cat])
 
     storeys = {s.Name: s for s in f.by_type("IfcBuildingStorey")}
@@ -173,12 +208,16 @@ def score(answer, ifc_path, jsonl_path):
         chk(f"level:{lv['name']}", near(lv["elevation"]["m"], got, TOL_LEN), r4(lv["elevation"]["m"]), r4(got))
 
     def gid(label, item):
+        if "unique_id" not in item:
+            return
         p = by_tag.get(str(item["id"]))
         exp = export_guid(item["unique_id"])
         chk(f"{label}:globalid", p is not None and p.GlobalId == exp, exp, p.GlobalId if p else None)
 
     walls = answer.get("walls", [])
     for i, w in enumerate(walls, 1):
+        if not exported(w):
+            continue
         label, wid = f"wall{i}", str(w["id"])
         p, pr = by_tag.get(wid), params.get(wid, {})
         gid(label, w)
@@ -188,10 +227,13 @@ def score(answer, ifc_path, jsonl_path):
         ax = wall_axis(p) if p is not None else None
         v = mesh(p)[0] if p is not None else None
         err = axis_error(ax, ends, v)
-        chk(f"{label}:axis", err is not None and err <= TOL_LEN, "Axis on the location line, end to end of the body",
-            "no Axis representation" if ax is None else "no body" if err is None else f"error {err:.4f} m")
+        if not (p is not None and p.is_a("IfcCurtainWall")):  # Revit's export gives a curtain wall no Axis
+            chk(f"{label}:axis", err is not None and err <= TOL_LEN, "Axis on the location line, end to end of the body",
+                "no Axis representation" if ax is None else "no body" if err is None else f"error {err:.4f} m")
         base = levels[w["level_id"]]["elevation"]["m"] + w["base_offset"]["m"]
         top = base + w["unconnected_height"]["m"]
+        if w["id"] in dump and param(dump[w["id"]], "WALL_TOP_IS_ATTACHED") == 1:
+            top = dump[w["id"]]["bbox"]["max"]["m"][2]  # attached: the top follows what it is attached to
         got = None if v is None else [r4(v[:, 2].min()), r4(v[:, 2].max())]
         chk(f"{label}:base-top", got is not None and near(base, got[0], TOL_LEN) and near(top, got[1], TOL_LEN),
             [r4(base), r4(top)], got)
@@ -207,20 +249,26 @@ def score(answer, ifc_path, jsonl_path):
                 chk(f"{label}:end{end}:join-type", exp_t == got_t, exp_t, got_t)
 
     for i, rf in enumerate(answer.get("roofs", []), 1):
+        if not exported(rf):
+            continue
         label = f"roof{i}"
         p = by_tag.get(str(rf["id"]))
         gid(label, rf)
         # Revit writes the roof as one IfcSlab .ROOF. per slope-defining edge, its sub-elements 2, 3, ...
         slabs = [s for r in (p.IsDecomposedBy if p is not None else []) or [] for s in r.RelatedObjects]
-        planes = sum(1 for e in rf["edges"] if e["defines_slope"])
+        rf = dict(rf, edges=rf.get("edges") or [])
+        # A footprint roof with no slope-defining edge (flat, or sloped by an arrow) is one slab; an extrusion roof none.
+        planes = max(1, sum(1 for e in rf["edges"] if e["defines_slope"])) if rf["edges"] else 0
         chk(f"{label}:slabs", len(slabs) == planes and all(s.is_a("IfcSlab") and s.PredefinedType == "ROOF" for s in slabs),
             planes, len(slabs))
-        exp = [sub_element_guid(export_guid(rf["unique_id"]), k + 2) for k in range(planes)]
-        got = [s.GlobalId for s in slabs]
-        chk(f"{label}:slab-globalids", exp == got, exp, got)
+        if "unique_id" in rf:
+            exp = [sub_element_guid(export_guid(rf["unique_id"]), k + 2) for k in range(planes)]
+            got = [s.GlobalId for s in slabs]
+            chk(f"{label}:slab-globalids", exp == got, exp, got)
         v, fc = mesh(p) if p is not None else (None, None)
         top = None if v is None else v[:, 2].max()
-        chk(f"{label}:top", near(rf["bbox_max"]["m"][2], top, TOL_LEN), r4(rf["bbox_max"]["m"][2]), r4(top))
+        exp = dump[rf["id"]]["bbox"]["max"]["m"][2] if rf["id"] in dump else rf["bbox_max"]["m"][2]
+        chk(f"{label}:top", near(exp, top, TOL_LEN), r4(exp), r4(top))
         slopes = roof_slopes(v, fc, rf["edges"]) if v is not None else [None] * len(rf["edges"])
         for j, (e, got) in enumerate(zip(rf["edges"], slopes)):
             exp = round(e["slope_degrees"], 2) if e["defines_slope"] else None
@@ -228,6 +276,8 @@ def score(answer, ifc_path, jsonl_path):
             chk(f"{label}:edge{j}:slope", ok, exp, None if got is None else round(got, 2))
 
     for rm in answer.get("rooms", []):
+        if not exported(rm):
+            continue
         label = f"room{rm['number']}"
         # IfcSpace has no Tag: find it by its number (IfcSpace.Name).
         p = next((s for s in f.by_type("IfcSpace") if s.Name == rm["number"]), None)
@@ -242,13 +292,15 @@ def score(answer, ifc_path, jsonl_path):
         chk(f"{label}:area", fp is not None and near(rm["area"]["m2"], fp.area, TOL_AREA), round(rm["area"]["m2"], 3),
             None if fp is None else round(fp.area, 3))
         loops = rm["boundary_loops"]
-        poly = Polygon([s["start"]["m"][:2] for s in loops[0]])
-        hd = None if fp is None else fp.boundary.hausdorff_distance(poly.boundary)
+        poly = Polygon([s["start"]["m"][:2] for s in loops[0]]) if loops and len(loops[0]) > 2 else None
+        hd = None if fp is None or poly is None else fp.boundary.hausdorff_distance(poly.boundary)
         chk(f"{label}:boundary", len(loops) == 1 and hd is not None and hd <= TOL_LEN, "outline within 1 mm",
             None if hd is None else f"Hausdorff {hd:.4f} m")
 
     counter = collections.Counter()
     for op in answer.get("openings", []):
+        if not exported(op):
+            continue
         kind = {"Doors": "door", "Windows": "window"}.get(op["category"], op["category"].lower())
         counter[kind] += 1
         label = kind if counter[kind] == 1 else f"{kind}{counter[kind]}"
@@ -275,6 +327,43 @@ def score(answer, ifc_path, jsonl_path):
         h = pr.get("Height")
         head = None if sill is None or h is None else sill + h
         chk(f"{label}:head", near(floor + op["head_height"]["m"], head, TOL_LEN), r4(floor + op["head_height"]["m"]), r4(head))
+
+    # Elements without a check of their own: their body's world bounding box. A beam's body stops at
+    # the columns it frames into, so its extent along a plan axis it runs along is not compared.
+    for key in BOX_KEYS:
+        for i, it in enumerate(items(answer, key), 1):
+            if not exported(it):
+                continue
+            label = f"{key.rstrip('s')}{i}"
+            p = by_tag.get(str(it["id"]))
+            v = mesh(p)[0] if p is not None else None
+            exp = [r4(x) for x in it["bbox_min"]["m"] + it["bbox_max"]["m"]]
+            got = None if v is None else [r4(x) for x in list(v.min(0)) + list(v.max(0))]
+            skip = set()
+            if key == "beams":
+                d = np.array(it["end"]["m"][:2]) - np.array(it["location"]["m"][:2] if "start" not in it else it["start"]["m"][:2])
+                skip = {k for k in (0, 1) if abs(d[k]) > 0.99 * np.linalg.norm(d)} | {k + 3 for k in (0, 1) if abs(d[k]) > 0.99 * np.linalg.norm(d)}
+            ok = got is not None and all(abs(a - b) <= TOL_LEN for k, (a, b) in enumerate(zip(exp, got)) if k not in skip)
+            chk(f"{label}:bbox", ok, exp, got if got is not None else "no IFC element with this Tag" if p is None else "no body")
+
+    rows_by_id = {str(r["element_id"]): r for r in rows}
+    for i, ar in enumerate(answer.get("areas") or [], 1):
+        got = rows_by_id.get(str(ar["id"]), {}).get("area_m2")
+        chk(f"area{i}:area", near(ar["area"]["m2"], got, TOL_AREA), round(ar["area"]["m2"], 3), r4(got))
+
+    # Project position: Revit's export (site placement Shared) puts IfcSite at the E/W, N/S and
+    # elevation of the internal origin, turned by the angle to True North.
+    pbp = answer.get("project_base_point")
+    if pbp:
+        site = next(iter(f.by_type("IfcSite")), None)
+        m = ifcopenshell.util.placement.get_local_placement(site.ObjectPlacement) if site and site.ObjectPlacement else None
+        exp = [r4(pbp[k] * 0.3048) for k in ("BASEPOINT_EASTWEST_PARAM", "BASEPOINT_NORTHSOUTH_PARAM", "BASEPOINT_ELEVATION_PARAM")]
+        got = None if m is None else [r4(x * unit) for x in m[:3, 3]]
+        chk("site:position", got is not None and all(abs(a - b) <= TOL_LEN for a, b in zip(exp, got)), exp, got)
+        exp_a = round((360 - np.degrees(pbp["BASEPOINT_ANGLETON_PARAM"])) % 360, 2)
+        got_a = None if m is None else round(float(np.degrees(np.arctan2(m[1, 0], m[0, 0]))) % 360, 2)
+        ok = got_a is not None and min(abs(exp_a - got_a), 360 - abs(exp_a - got_a)) <= TOL_SLOPE
+        chk("site:rotation", ok, exp_a, got_a)
 
     used = {o.id() for r in f.by_type("IfcRelDefinesByType") if r.RelatedObjects for o in [r.RelatingType]}
     unused = [t for t in f.by_type("IfcTypeObject") if t.id() not in used]
@@ -306,7 +395,9 @@ def main():
 
     results = []  # (release, recipe, check, status, expected, got)
     errors = []
-    answers = sorted(glob.glob(os.path.join(a.fixtures, "20[0-9][0-9]", "*.answer.json")))
+    # FIXTURES is one set's folder, or a folder holding several (recipe names differ between sets).
+    answers = sorted(glob.glob(os.path.join(a.fixtures, "20[0-9][0-9]", "*.answer.json"))
+                     + glob.glob(os.path.join(a.fixtures, "*", "20[0-9][0-9]", "*.answer.json")))
     if not answers:
         sys.exit(f"no answer keys under {a.fixtures}")
     for ans in answers:
@@ -318,7 +409,9 @@ def main():
             if not a.no_run:
                 run([os.path.join(a.bin_dir, "rvt-ifc"), rvt, "-o", ifc])
                 run([os.path.join(a.bin_dir, "rvt-schedule"), rvt, "--format", "jsonl", "-o", jsonl])
-            checks = score(json.load(open(ans)), ifc, jsonl)
+            dump_path = ans[: -len(".answer.json")] + ".api-dump.json"
+            dump = {e["id"]: e for e in json.load(open(dump_path))["elements"]} if os.path.exists(dump_path) else None
+            checks = score(json.load(open(ans)), ifc, jsonl, dump)
         except Exception as e:
             errors.append((release, recipe, f"{type(e).__name__}: {e}"))
             continue
