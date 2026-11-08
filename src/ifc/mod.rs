@@ -1755,8 +1755,9 @@ fn export_rvt_doc_reporting(
     // no-op once the storeys carry real, distinct elevations.
     let mut level_storey_bind = crate::level_bind::LevelStoreyBind::new();
     let mut storey_properties = std::collections::BTreeMap::new();
+    let mut storeys_from_levels = false;
     if let Some(revit_version) = layout {
-        apply_partition_level_storeys(
+        storeys_from_levels = apply_partition_level_storeys(
             rf,
             revit_version,
             &mut entities,
@@ -1776,9 +1777,6 @@ fn export_rvt_doc_reporting(
     if let Some(revit_version) = layout {
         let scan = rf.memoised_arc_wall_scan(revit_version, walker_limits);
         let level_names = collect_partition_building_storey_names(rf);
-        // ponytail: storeys still read every ArcWall's base, curtain panels'
-        // included (Einhoven: Level 1 plus a storey per panel row, where
-        // Revit has Level 1 only); its Level records do not decode.
         let recovery =
             crate::partition_arc_walls::recover_storeys_from_arc_walls(&scan.walls, &level_names);
         let walls = crate::partition_arc_walls::element_arc_walls(rf, revit_version, walker_limits);
@@ -1863,7 +1861,12 @@ fn export_rvt_doc_reporting(
     apply_space_predefined_types(&mut entities, convention, &spatial);
     // in Revit's export, so `revit` does not invent any from elevations.
     if !building_storeys.is_empty() || convention.invents_storeys_from_elevations() {
-        apply_element_record_storeys(&mut entities, &mut building_storeys, &mut storey_properties);
+        apply_element_record_storeys(
+            &mut entities,
+            &mut building_storeys,
+            &mut storey_properties,
+            storeys_from_levels,
+        );
     }
     // option.
     if convention.writes_every_design_option() {
@@ -3745,13 +3748,13 @@ fn apply_partition_level_storeys(
     building_storeys: &mut Vec<Storey>,
     level_storey_bind: &mut crate::level_bind::LevelStoreyBind,
     storey_properties: &mut std::collections::BTreeMap<usize, entities::StoreyProperties>,
-) {
+) -> bool {
     let Ok(levels) = crate::partition_level_records::recover_partition_levels(rf, revit_version)
     else {
-        return;
+        return false;
     };
     if levels.is_empty() {
-        return;
+        return false;
     }
     for level in &levels {
         level_storey_bind.record_elevation(Some(level.element_id), level.elevation_feet);
@@ -3786,6 +3789,7 @@ fn apply_partition_level_storeys(
     // to 2023 file's named parameters made the first. The definition
     // pass they shared is dropped so the rest of the export does not hold it.
     rf.forget_native_definitions();
+    true
 }
 
 /// Value of [`STOREY_BIND_SOURCE_PROPERTY`] for the join.
@@ -4736,7 +4740,10 @@ fn record_level_element_id(entity: &entities::IfcEntity) -> Option<u32> {
 ///   current corpora means every Level row defaulted to 0.0) and at
 ///   least `crate::element_record_storeys::MIN_DISTINCT_ELEVATIONS`
 ///   distinct elevations were measured. A file whose ArcWall trailers
-///   already gave real elevations keeps them.
+///   already gave real elevations keeps them, and so does a storey set
+///   read from the file's own Level records (`from_levels`), one Level
+///   included: Einhoven's one Level at 0 ft is its one storey, not a
+///   lack of evidence.
 /// - Binding is an exact elevation match, and an element whose base
 ///   matches no storey — or matches more than one — keeps
 ///   `storey_index: None` and falls to the writer's default container.
@@ -4749,6 +4756,7 @@ fn apply_element_record_storeys(
     entities: &mut [entities::IfcEntity],
     building_storeys: &mut Vec<Storey>,
     storey_properties: &mut std::collections::BTreeMap<usize, entities::StoreyProperties>,
+    from_levels: bool,
 ) {
     use crate::element_record_storeys as records;
 
@@ -4761,7 +4769,7 @@ fn apply_element_record_storeys(
         return;
     }
 
-    if records::storeys_lack_elevation_evidence(building_storeys) {
+    if !from_levels && records::storeys_lack_elevation_evidence(building_storeys) {
         let level_names: Vec<String> = building_storeys
             .iter()
             .map(|storey| storey.name.clone())
