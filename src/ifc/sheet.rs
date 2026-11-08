@@ -38,6 +38,11 @@ pub struct SheetOptions {
     /// DWG output in place of element names when labels are on.
     #[serde(default)]
     pub annotation: Option<PlanAnnotation>,
+    /// Each family instance's plan symbol in model feet, by its index in `model.entities`
+    /// ([`super::plan_maps::instance_plan_symbols`]): drawn in DXF and DWG output with the
+    /// instance's outline, on its layer.
+    #[serde(skip)]
+    pub symbols: std::collections::BTreeMap<usize, Vec<super::entities::PlanPolyline>>,
 }
 
 /// What a plan view shows, in model feet: the elements whose height range meets
@@ -53,6 +58,11 @@ pub struct ViewWindow {
     pub hidden_categories: Vec<String>,
     #[serde(default)]
     pub hidden_elements: Vec<i64>,
+    /// The view's right and up directions in model plan coordinates, when they are not the
+    /// model's axes (a site plan turned to true north): DXF and DWG output is drawn in the view's
+    /// own axes about the internal origin, as the view shows it.
+    #[serde(default)]
+    pub frame: Option<[[f64; 2]; 2]>,
 }
 
 /// A plan view's crop region: a rectangle `min..max` in the view's own axes, whose origin is
@@ -196,6 +206,7 @@ impl Default for SheetOptions {
             background: Some("#FFFFFF".into()),
             window: None,
             annotation: None,
+            symbols: Default::default(),
         }
     }
 }
@@ -333,6 +344,14 @@ struct Footprint {
     /// Index into `model.entities` (its layer in DXF and DWG output).
     #[cfg_attr(not(feature = "dwg"), allow(dead_code))]
     index: usize,
+    /// For an element wholly below the view's cut plane, the edges of its body seen from above
+    /// (projection lines), drawn in DXF and DWG output in place of its outline.
+    #[cfg_attr(not(feature = "dwg"), allow(dead_code))]
+    edges: Vec<((f64, f64), (f64, f64))>,
+    /// For a stair or railing the cut plane cuts, the edges of its body above the cut plane,
+    /// drawn as overhead lines on its layer's `-MBND` layer.
+    #[cfg_attr(not(feature = "dwg"), allow(dead_code))]
+    overhead: Vec<((f64, f64), (f64, f64))>,
 }
 
 fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Footprint> {
@@ -419,6 +438,23 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
             _ => vec![outer],
         };
         let whole = pieces.len() == 1;
+        // Below the cut plane an element is seen, not cut: its projection lines.
+        // A stair or railing the cut plane cuts: below it seen, above it overhead.
+        let (edges, overhead) = match window {
+            Some(w) if !is_underlay(ifc_type) => {
+                let below = height_range(body, &placement).1 <= w.top_feet + 1e-3;
+                let overhead = matches!(
+                    ifc_type.as_str(),
+                    "IFCSTAIR" | "IFCSTAIRFLIGHT" | "IFCRAILING"
+                );
+                if below || overhead {
+                    projected_edges(body, &placement, w.top_feet)
+                } else {
+                    (Vec::new(), Vec::new())
+                }
+            }
+            _ => (Vec::new(), Vec::new()),
+        };
         for outer in pieces {
             out.push(Footprint {
                 outer,
@@ -427,6 +463,8 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
                 ifc_type: ifc_type.clone(),
                 name: name.clone(),
                 index,
+                edges: edges.clone(),
+                overhead: overhead.clone(),
             });
         }
     }
@@ -449,6 +487,95 @@ fn height_range(body: Body<'_>, placement: &Placement) -> (f64, f64) {
                 })
         })
         .unwrap_or((placement.origin[2], placement.origin[2]))
+}
+
+/// The body's edges as a plan sees them from above, in model feet: its mesh's boundary edges and
+/// the edges where its faces meet at more than 30 degrees, projected, without the ones seen end on
+/// (vertical edges) and with each projected segment once.
+// ponytail: no hidden-line removal, so edges under an element's own faces are drawn too; add a
+// depth test against its faces if precision needs it.
+type Segments = Vec<((f64, f64), (f64, f64))>;
+/// An edge by its two quantised ends, and the normals of the faces that meet at it with its ends.
+type EdgeKey = ([i64; 3], [i64; 3]);
+type EdgeFaces = (Vec<[f64; 3]>, [f64; 3], [f64; 3]);
+
+fn projected_edges(body: Body<'_>, placement: &Placement, cut: f64) -> (Segments, Segments) {
+    let Some(mesh) = super::body_geometry::body_mesh(body) else {
+        return (Vec::new(), Vec::new());
+    };
+    let q = |p: [f64; 3]| p.map(|v| (v * 1e5).round() as i64);
+    let normal = |t: &[u32; 3]| -> Option<[f64; 3]> {
+        let [a, b, c] = t.map(|i| mesh.vertices.get(i as usize).copied());
+        let (a, b, c) = (a?, b?, c?);
+        let (u, v) = (
+            [0, 1, 2].map(|i| b[i] - a[i]),
+            [0, 1, 2].map(|i| c[i] - a[i]),
+        );
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        (l > 1e-12).then(|| n.map(|x| x / l))
+    };
+    let mut faces: std::collections::HashMap<EdgeKey, EdgeFaces> = Default::default();
+    for t in &mesh.triangles {
+        let Some(n) = normal(t) else { continue };
+        for k in 0..3 {
+            let (a, b) = (
+                mesh.vertices[t[k] as usize],
+                mesh.vertices[t[(k + 1) % 3] as usize],
+            );
+            let (ka, kb) = (q(a), q(b));
+            let key = if ka <= kb { (ka, kb) } else { (kb, ka) };
+            faces
+                .entry(key)
+                .or_insert_with(|| (Vec::new(), a, b))
+                .0
+                .push(n);
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    let (mut below, mut above) = (Vec::new(), Vec::new());
+    let k2 = |p: (f64, f64)| ((p.0 * 1e4).round() as i64, (p.1 * 1e4).round() as i64);
+    let mut push = |out: &mut Segments, p: [f64; 3], r: [f64; 3], tag: bool| {
+        let (p, r) = ((p[0], p[1]), (r[0], r[1]));
+        if (p.0 - r.0).hypot(p.1 - r.1) < 1e-4 {
+            return;
+        }
+        let key = if k2(p) <= k2(r) {
+            (k2(p), k2(r))
+        } else {
+            (k2(r), k2(p))
+        };
+        if seen.insert((key, tag)) {
+            out.push((p, r));
+        }
+    };
+    for (normals, a, b) in faces.into_values() {
+        let sharp = normals.len() != 2 || {
+            let (m, n) = (normals[0], normals[1]);
+            m[0] * n[0] + m[1] * n[1] + m[2] * n[2] < 0.866
+        };
+        if !sharp {
+            continue;
+        }
+        let (pa, pb) = (placement.apply(a), placement.apply(b));
+        // Split at the cut plane.
+        let (lo, hi) = if pa[2] <= pb[2] { (pa, pb) } else { (pb, pa) };
+        if hi[2] <= cut {
+            push(&mut below, lo, hi, false);
+        } else if lo[2] >= cut {
+            push(&mut above, lo, hi, true);
+        } else {
+            let t = (cut - lo[2]) / (hi[2] - lo[2]);
+            let m = [0, 1, 2].map(|i| lo[i] + t * (hi[i] - lo[i]));
+            push(&mut below, lo, m, false);
+            push(&mut above, m, hi, true);
+        }
+    }
+    (below, above)
 }
 
 /// Whether the body's height range meets the window's band.
@@ -635,8 +762,10 @@ fn xml_escape(s: &str) -> String {
 /// With `options.window`, only the elements in the view's height band are drawn, and outlines
 /// crossing its crop are cut at it (open polylines). With `options.annotation`, labels are the
 /// view's own annotation (text notes, room tags, grid lines and heads, dimensions) in place of
-/// element names. Outlines are still the elements' plan outlines, not Revit's cut and projection
-/// lines, and line styles are not drawn.
+/// element names. Elements wholly below the cut plane are drawn as their projection lines,
+/// stairs and railings above it as overhead lines (`-MBND`), `options.symbols` (family plan
+/// symbols) with their instances, and a view with turned axes (`ViewWindow::frame`) in its own
+/// axes. Line styles are not drawn.
 #[cfg(feature = "dwg")]
 pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawing2d {
     use rvt_dwg::{Drawing2d, Entity2d, Geom, Layer2d, Layout2d, MODEL_SPACE};
@@ -667,11 +796,78 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
         }
     };
     let sets = super::element_table::element_sets(model);
+    let mut symbol_drawn = std::collections::BTreeSet::new();
     for fp in collect_footprints(model, options.window.as_ref()) {
         let own = sets.get(&fp.index).map(Vec::as_slice).unwrap_or_default();
         let (layer, aci) = layer_for(own, &fp.ifc_type);
         ensure(&mut d, layer, aci);
-        for ring in std::iter::once(&fp.outer).chain(&fp.holes) {
+        if let Some(curves) = options.symbols.get(&fp.index) {
+            if symbol_drawn.insert(fp.index) {
+                for c in curves {
+                    let pts = symbol_points(c);
+                    for w in pts.windows(2) {
+                        let segment = match crop {
+                            Some(cr) => cr.clip(w[0], w[1]),
+                            None => Some((w[0], w[1])),
+                        };
+                        if let Some((p, q)) = segment {
+                            d.entities.push(Entity2d::new(
+                                "LINE",
+                                layer,
+                                Geom::Line {
+                                    a: [p.0 * MM_PER_FOOT, p.1 * MM_PER_FOOT, 0.0],
+                                    b: [q.0 * MM_PER_FOOT, q.1 * MM_PER_FOOT, 0.0],
+                                },
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        for &(p, q) in &fp.edges {
+            let segment = match crop {
+                Some(c) => c.clip(p, q),
+                None => Some((p, q)),
+            };
+            if let Some((p, q)) = segment {
+                d.entities.push(Entity2d::new(
+                    "LINE",
+                    layer,
+                    Geom::Line {
+                        a: [p.0 * MM_PER_FOOT, p.1 * MM_PER_FOOT, 0.0],
+                        b: [q.0 * MM_PER_FOOT, q.1 * MM_PER_FOOT, 0.0],
+                    },
+                ));
+            }
+        }
+        if !fp.overhead.is_empty() {
+            let overhead = format!("{layer}-MBND");
+            ensure(&mut d, &overhead, aci);
+            for &(p, q) in &fp.overhead {
+                let segment = match crop {
+                    Some(c) => c.clip(p, q),
+                    None => Some((p, q)),
+                };
+                if let Some((p, q)) = segment {
+                    d.entities.push(Entity2d::new(
+                        "LINE",
+                        &overhead,
+                        Geom::Line {
+                            a: [p.0 * MM_PER_FOOT, p.1 * MM_PER_FOOT, 0.0],
+                            b: [q.0 * MM_PER_FOOT, q.1 * MM_PER_FOOT, 0.0],
+                        },
+                    ));
+                }
+            }
+        }
+        let rings = if fp.edges.is_empty() && fp.overhead.is_empty() {
+            std::iter::once(&fp.outer)
+                .chain(&fp.holes)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        for ring in rings {
             let parts = match crop {
                 Some(c) => c.clip_ring(ring),
                 None => vec![(ring.clone(), true)],
@@ -761,7 +957,55 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
             ));
         }
     }
+    if let Some([h, v]) = options.window.as_ref().and_then(|w| w.frame) {
+        let t = rvt_dwg::Affine {
+            a: h[0],
+            b: v[0],
+            c: h[1],
+            d: v[1],
+            e: 0.0,
+            f: 0.0,
+        };
+        for e in &mut d.entities {
+            e.geom = e.geom.transformed(&t);
+        }
+    }
     d
+}
+
+/// A plan symbol curve's points in plan, an arc (start, a point on it, end) as 32 chords.
+#[cfg(feature = "dwg")]
+fn symbol_points(c: &super::entities::PlanPolyline) -> Vec<(f64, f64)> {
+    let p: Vec<(f64, f64)> = c.points_feet.iter().map(|p| (p[0], p[1])).collect();
+    if !c.arc || p.len() != 3 {
+        return p;
+    }
+    let (a, m, b) = (p[0], p[1], p[2]);
+    // The circle through the three points.
+    let d = 2.0 * (a.0 * (m.1 - b.1) + m.0 * (b.1 - a.1) + b.0 * (a.1 - m.1));
+    if d.abs() < 1e-12 {
+        return vec![a, b];
+    }
+    let sq = |q: (f64, f64)| q.0 * q.0 + q.1 * q.1;
+    let cx = (sq(a) * (m.1 - b.1) + sq(m) * (b.1 - a.1) + sq(b) * (a.1 - m.1)) / d;
+    let cy = (sq(a) * (b.0 - m.0) + sq(m) * (a.0 - b.0) + sq(b) * (m.0 - a.0)) / d;
+    let r = (a.0 - cx).hypot(a.1 - cy);
+    let angle = |q: (f64, f64)| (q.1 - cy).atan2(q.0 - cx);
+    let tau = std::f64::consts::TAU;
+    let (t0, tm, t1) = (angle(a), angle(m), angle(b));
+    // Sweep from a to b through m.
+    let ccw = |from: f64, to: f64| (to - from).rem_euclid(tau);
+    let sweep = if ccw(t0, tm) <= ccw(t0, t1) {
+        ccw(t0, t1)
+    } else {
+        ccw(t0, t1) - tau
+    };
+    (0..=32)
+        .map(|i| {
+            let t = t0 + sweep * f64::from(i) / 32.0;
+            (cx + r * t.cos(), cy + r * t.sin())
+        })
+        .collect()
 }
 
 /// The layer Revit's DWG export draws an element on, by its Revit category, with its default
