@@ -30,7 +30,7 @@ use crate::geometry::{
 };
 use crate::partition_area_boundaries::ArcMids;
 use crate::walker::{DecodedElement, InstanceField};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod column_quantities;
 mod wall_areas;
@@ -723,6 +723,9 @@ pub fn append_typed_production_elements(
     // end, in its order, for the ends drawn to the walls they meet.
     let mut pending_ends: Vec<wall_tops::PendingEnds> = Vec::new();
     let mut slab_shapes: HashMap<u32, wall_tops::SlabTop> = HashMap::new();
+    // Roofs with read slopes: drawn from them as a solid, or standing in as
+    // their record box for their saved mesh. Neither cuts a wall's top.
+    let mut sloped_roofs: HashSet<u32> = HashSet::new();
     let mut level_bind = crate::level_bind::LevelStoreyBind::new();
     // What each type object's common set holds, by type and type
     // entity; `None` once two of its elements disagree.
@@ -1588,6 +1591,12 @@ pub fn append_typed_production_elements(
         if policy.include_geometry && matches!(decoded.class.as_str(), "Floor" | "Roof" | "Ceiling")
         {
             if let Some(id) = decoded.id {
+                if decoded.class == "Roof"
+                    && !crate::partition_schema_mvp::roof_slopes_from_fields(&decoded.fields)
+                        .is_empty()
+                {
+                    sloped_roofs.insert(id);
+                }
                 let plane =
                     crate::partition_schema_mvp::slab_top_plane_from_fields(&decoded.fields);
                 let unread =
@@ -1920,7 +1929,16 @@ pub fn append_typed_production_elements(
         }
     }
 
-    // A wall's top is cut at the underside of the floor that covers it.
+    // A wall's top is cut at the underside of the floor that covers it. A
+    // roof with read slopes is left out: one they do not draw stands in as its
+    // record box, whose base is not its underside (`DACH_sample_project` saved
+    // by 2025 to 2027: roof 1164411's box would cut wall 1159470 to 1.77 m³,
+    // where Revit's export draws it at 5.61 m³).
+    for pending in &mut pending_tops {
+        pending.named.retain(|id| !sloped_roofs.contains(id));
+        pending.pair_only.retain(|id| !sloped_roofs.contains(id));
+    }
+    pending_tops.retain(|pending| !pending.named.is_empty());
     wall_tops::cut_wall_tops(entities, &pending_tops);
 
     // A wall with an edited elevation profile that stops short of the
