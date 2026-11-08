@@ -21,7 +21,8 @@
 - **A footprint roof with no slope-defining edge is its one slab on Revit
   2018 to 2023**, with Revit's GlobalId (the flat roof of the tiny reference
   models set 2 recipe 7, 2018 to 2020).
-- **Grids** are read from their records on Revit 2024 to 2027 and written as
+- **Grids** are read from their records (Revit 2023 to 2027 on the tiny
+  reference models; 2018 to 2022 not yet) and written as
   one `IfcGrid` of named `IfcGridAxis` lines on the first storey, a row per
   grid in the element table.
 - **A wall with an edited elevation profile** takes the location curve its

@@ -38,30 +38,17 @@ release	recipe	check	reason
 2023	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2023	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2023	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
-2023	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
-2024	15-wall-profile-openings	wall1:axis	wall with an edited profile, 2024 to 2027: no Axis representation and no length
-2024	15-wall-profile-openings	wall1:length	wall with an edited profile, 2024 to 2027: no Axis representation and no length
 2024	17-areas	area1:area	areas are not read: the schedule has no row for them
 2024	17-areas	area2:area	areas are not read: the schedule has no row for them
 2024	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2024	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2024	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
-2024	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
-2025	15-wall-profile-openings	wall1:axis	wall with an edited profile, 2024 to 2027: no Axis representation and no length
-2025	15-wall-profile-openings	wall1:length	wall with an edited profile, 2024 to 2027: no Axis representation and no length
 2025	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2025	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2025	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
-2025	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
-2026	15-wall-profile-openings	wall1:axis	wall with an edited profile, 2024 to 2027: no Axis representation and no length
-2026	15-wall-profile-openings	wall1:length	wall with an edited profile, 2024 to 2027: no Axis representation and no length
 2026	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2026	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2026	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
-2026	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
-2027	15-wall-profile-openings	wall1:axis	wall with an edited profile, 2024 to 2027: no Axis representation and no length
-2027	15-wall-profile-openings	wall1:length	wall with an edited profile, 2024 to 2027: no Axis representation and no length
 2027	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2027	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2027	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
-2027	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them

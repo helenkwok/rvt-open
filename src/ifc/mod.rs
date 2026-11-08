@@ -2394,6 +2394,14 @@ pub fn split_single_slab_roofs(model: &mut IfcModel) {
         }
         let part = model.entities.len();
         model.entities.push(slab);
+        // Revit's GlobalId of the roof's first slab, its sub-element 2.
+        if let Some(global_id) = model.global_ids.elements.get(&whole).and_then(|roof| {
+            u16::try_from(ROOF_FIRST_SLAB)
+                .ok()
+                .and_then(|index| crate::revit_global_ids::sub_element_global_id(roof, index))
+        }) {
+            model.global_ids.elements.insert(part, global_id);
+        }
         if let Some(body) = model.display_bodies.remove(&whole) {
             model.display_bodies.insert(part, body);
         }
