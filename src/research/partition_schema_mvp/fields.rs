@@ -1162,6 +1162,20 @@ pub const ROOF_EXTRUSION_BOTTOM_FIELD: &str = "m_roof_extrusion_bottom";
 /// 1 for y; `u` is the other horizontal axis.
 pub const ROOF_EXTRUSION_AXIS_FIELD: &str = "m_roof_extrusion_axis";
 
+/// Field holding the holes the doors and windows hosted in a roof by
+/// extrusion cut through it ([`super::RoofExtrusionCut`]), nine values each.
+pub const ROOF_EXTRUSION_CUTS_FIELD: &str = "m_roof_extrusion_cuts";
+
+/// How far off the roof's axis, as a share of a unit, a hosted cut's
+/// direction and its loop's sides may lean and still be square to it or
+/// along it.
+pub const ROOF_EXTRUSION_CUT_TOLERANCE: f64 = 1e-6;
+
+/// How far either side of its loop a hosted cut reaches through a roof by
+/// extrusion, in roof thicknesses: through the roof, and not into another
+/// part of its section.
+pub const ROOF_EXTRUSION_CUT_DEPTH_THICKNESSES: f64 = 4.0;
+
 /// How closely a roof by extrusion's section must reproduce its record box,
 /// feet.
 pub const ROOF_EXTRUSION_BOX_TOLERANCE_FEET: f64 = 1e-3;

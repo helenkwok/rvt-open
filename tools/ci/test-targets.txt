@@ -130,6 +130,7 @@ real      revit_global_ids
 real      revit_maps_and_types
 real      plan_maps_and_spaces
 real      rooms_floors_from_records_only
+real      roof_extrusion_holes
 real      samples
 real      saved_mesh_budget
 real      scan_limits
