@@ -15,7 +15,7 @@ set -euo pipefail
 TARGET="${1:?usage: fetch-tiny-models.sh TARGET_DIR}"
 REPO="${GITHUB_REPOSITORY:-helenkwok/rvt-open}"
 SETS=(
-  "fixtures-tiny-1 rvt-open-tiny-models-1 67f06a30110313174c16c6ea3a4e21c29d34a42a30afd51877d849199e843d33"
+  "fixtures-tiny-1 rvt-open-tiny-models-1 e9d0c7b18411eb75563086da9130146c6b199c1cffaaf09595375107866da748"
   "fixtures-tiny-2 rvt-open-tiny-models-2 9b312cb67db72b2b91c5d4bbaf93db206dfcd2f8f3c45bfa33ca1539bb037956"
 )
 
