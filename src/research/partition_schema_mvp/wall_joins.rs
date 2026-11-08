@@ -407,7 +407,7 @@ pub(super) fn attach_wall_corner_reaches(
             continue;
         };
         for (slot, cut) in reaches.iter().enumerate() {
-            let Some(cut) = *cut else {
+            let Some(cut) = cut.clone() else {
                 continue;
             };
             let replaced = [
@@ -447,6 +447,26 @@ pub(super) fn attach_wall_corner_reaches(
                             InstanceField::Vector(vec![float(reach); layers]),
                         ));
                     }
+                }
+                joins::CornerEnd::Layers {
+                    reach_feet,
+                    partner,
+                } => {
+                    wall.fields.push((
+                        WALL_JOIN_PARTNER_FIELDS[slot].into(),
+                        InstanceField::ElementId {
+                            tag: 0,
+                            id: partner,
+                        },
+                    ));
+                    wall.fields.push((
+                        WALL_JOIN_THROUGH_FIELDS[slot].into(),
+                        InstanceField::Bool(false),
+                    ));
+                    wall.fields.push((
+                        WALL_JOIN_LAYER_REACH_FIELDS[slot].into(),
+                        InstanceField::Vector(reach_feet.into_iter().map(float).collect()),
+                    ));
                 }
                 joins::CornerEnd::Mitre(edges) => {
                     wall.fields.push((
