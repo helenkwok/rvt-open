@@ -315,7 +315,7 @@ pub fn roof_extrusion_from_fields(fields: &[(String, InstanceField)]) -> Option<
                     _ => None,
                 })
                 .collect::<Option<_>>()?;
-            if values.len() % 9 != 0 {
+            if !values.len().is_multiple_of(9) {
                 return None;
             }
             values

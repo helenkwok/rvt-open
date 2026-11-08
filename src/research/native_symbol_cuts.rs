@@ -516,6 +516,9 @@ pub fn face_hosted_cuts(
         .collect())
 }
 
+/// An instance's host, the symbol drawing it, its axes and its origin.
+type PlacedSymbol = (u64, u64, [[f64; 3]; 3], [f64; 3]);
+
 /// A door or window whose symbol cuts a loop in the element hosting it
 /// directly (its `m_hostId`), and that loop placed in the model.
 #[derive(Debug, Clone, PartialEq)]
@@ -548,7 +551,7 @@ pub fn host_loop_cuts(
         return Ok(Vec::new());
     }
     // Each instance's host, symbol and axes and origin.
-    let mut named: BTreeMap<u64, (u64, u64, [[f64; 3]; 3], [f64; 3])> = BTreeMap::new();
+    let mut named: BTreeMap<u64, PlacedSymbol> = BTreeMap::new();
     let options = native_document::Options {
         selected_ids: instances.clone(),
         ..native_document::Options::default()

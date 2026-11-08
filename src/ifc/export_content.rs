@@ -5724,6 +5724,9 @@ fn roof_extrusion_solid(
     })
 }
 
+/// A band of a roof section, `low <= n · p <= high`: `(n, low, high)`.
+type CutBand = ((f64, f64), f64, f64);
+
 /// A roof by extrusion's body less the holes its hosted doors and windows
 /// cut ([`crate::partition_schema_mvp::RoofExtrusionCut`]). The section's
 /// triangles (`cap`, into `outline`) are split by every line that bounds a
@@ -5746,7 +5749,7 @@ fn roof_extrusion_cut_solid(
     let dot = |a: (f64, f64), b: (f64, f64)| a.0 * b.0 + a.1 * b.1;
     // Each cut as two bands, `low <= n · p <= high`: between its sides,
     // and within its depth of its loop.
-    let mut bands: Vec<[((f64, f64), f64, f64); 2]> = Vec::new();
+    let mut bands: Vec<[CutBand; 2]> = Vec::new();
     let mut breaks = vec![start, end];
     for cut in &extrusion.cuts {
         let (low, high) = (cut.along.0.max(start), cut.along.1.min(end));
@@ -5895,8 +5898,8 @@ fn roof_extrusion_cut_solid(
             let mut normal = [0.0; 3];
             normal[u_axis] = pb.1 - pa.1;
             normal[2] = pa.0 - pb.0;
-            for s in 0..stretches {
-                if solid[index][s] && !twin.is_some_and(|t| solid[t][s]) {
+            for (s, &here) in solid[index].iter().enumerate() {
+                if here && !twin.is_some_and(|t| solid[t][s]) {
                     let (a0, b0, b1, a1) = (
                         vertex(a, s),
                         vertex(b, s),
@@ -6475,7 +6478,7 @@ fn roof_arrow_planes_solid(
     let mut ends: Vec<[(f64, f64); 2]> = Vec::new();
     let mut probes: Vec<(f64, f64)> = Vec::new();
     // Each edge's unit direction into the roof, and along it.
-    let mut inward: Vec<((f64, f64), (f64, f64))> = Vec::new();
+    let mut inward: Vec<EdgeFrame> = Vec::new();
     for slope in slopes {
         let [sx, sy] = slope.edge_start;
         let [ex, ey] = slope.edge_end;
@@ -6603,7 +6606,7 @@ fn arrow_roof_closed(
 /// walls slope along the arms alone. `None` where an edge pairs with none.
 fn arrow_roof_gables(
     ends: &[[(f64, f64); 2]],
-    inward: &[((f64, f64), (f64, f64))],
+    inward: &[EdgeFrame],
     tops: &[super::body_geometry::PlanPlane],
     unders: &[super::body_geometry::PlanPlane],
 ) -> Option<Vec<GableDomain>> {
@@ -6764,6 +6767,9 @@ fn arrow_roof_gables(
     }
     Some(parts)
 }
+
+/// An edge's unit direction into the roof, and its unit direction along it.
+type EdgeFrame = ((f64, f64), (f64, f64));
 
 /// A gable's region, its top planes and its underside planes.
 type GableDomain = (
