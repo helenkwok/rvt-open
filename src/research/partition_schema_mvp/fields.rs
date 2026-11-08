@@ -525,6 +525,13 @@ pub const WALL_JOIN_REACH_FIELDS: [&str; 2] = ["m_wall_join_start_reach", "m_wal
 /// or the wall it stops against at a T joint.
 pub const WALL_JOIN_PARTNER_FIELDS: [&str; 2] = ["m_wall_join_start_wall", "m_wall_join_end_wall"];
 
+/// Fields holding every other wall in the join at a wall's start and at its
+/// end, in the record's order, where that join has two or more of them (a
+/// tee or cross of three or more walls meeting at one point): the Revit API's
+/// `LocationCurve.get_ElementsAtJoin` less the wall itself. A vector of
+/// ElementIds; absent where the join has one other wall or none.
+pub const WALL_JOIN_WALLS_FIELDS: [&str; 2] = ["m_wall_join_start_walls", "m_wall_join_end_walls"];
+
 /// Fields holding how each end of a wall's location curve is joined, as its
 /// native record gives it ([`crate::native_walls::wall_ends`]): one of
 /// [`WALL_JOIN_TYPE_NAMES`], or [`WALL_JOIN_DISALLOWED`] where joins are not

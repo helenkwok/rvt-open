@@ -631,6 +631,11 @@ pub fn attach_wall_end_records(
                 ];
                 wall.fields
                     .retain(|(name, _)| !dropped.contains(&name.as_str()));
+                undo_record_box_trim(
+                    &mut wall.fields,
+                    read.curve[curve_end],
+                    read.curve[1 - curve_end],
+                );
                 Some(WALL_JOIN_DISALLOWED)
             } else {
                 if named.is_some_and(|id| !joined.contains(&u64::from(id))) {
@@ -640,6 +645,18 @@ pub fn attach_wall_end_records(
                     ];
                     wall.fields
                         .retain(|(name, _)| !dropped.contains(&name.as_str()));
+                }
+                if joined.len() >= 2 {
+                    wall.fields.push((
+                        WALL_JOIN_WALLS_FIELDS[slot].into(),
+                        InstanceField::Vector(
+                            joined
+                                .iter()
+                                .filter_map(|other| u32::try_from(*other).ok())
+                                .map(|id| InstanceField::ElementId { tag: 0, id })
+                                .collect(),
+                        ),
+                    ));
                 }
                 if partner_of(&wall.fields).is_none() {
                     if let [other] = joined.as_slice() {
@@ -665,6 +682,49 @@ pub fn attach_wall_end_records(
                     InstanceField::String(kind.into()),
                 ));
             }
+        }
+    }
+}
+
+/// Give back the trim the record-box solver ([`apply_wall_join_trim`]) took
+/// from the end of a wall's body at `at`, the location curve's end where joins
+/// are disallowed (`other` is its other end), so the body runs to the end of
+/// its line, as Revit's does: on 2024's Core Interior a wall whose end allows
+/// no join was 0.25 ft short of Revit's body there. A body with no trim is
+/// left as it is.
+fn undo_record_box_trim(fields: &mut [(String, InstanceField)], at: [f64; 2], other: [f64; 2]) {
+    use crate::element_record_wall_joins as joins;
+    let axis = usize::from((other[1] - at[1]).abs() > (other[0] - at[0]).abs());
+    let at_low = at[axis] < other[axis];
+    let trim_field = if at_low {
+        joins::WALL_TRIM_START_FIELD
+    } else {
+        joins::WALL_TRIM_END_FIELD
+    };
+    let Some(trim) = fields.iter().find_map(|(name, value)| match value {
+        InstanceField::Float { value, .. } if name == trim_field => Some(*value),
+        _ => None,
+    }) else {
+        return;
+    };
+    if !(trim.is_finite() && trim > 0.0) {
+        return;
+    }
+    let (centre_field, extent_field) = if axis == 0 {
+        ("m_locationX", "m_bboxWidth")
+    } else {
+        ("m_locationY", "m_bboxDepth")
+    };
+    for (name, value) in fields.iter_mut() {
+        let InstanceField::Float { value: v, .. } = value else {
+            continue;
+        };
+        if name == trim_field {
+            *v = 0.0;
+        } else if name == extent_field {
+            *v += trim;
+        } else if name == centre_field {
+            *v += if at_low { -trim / 2.0 } else { trim / 2.0 };
         }
     }
 }
@@ -722,4 +782,80 @@ pub(super) fn apply_wall_join_trim(
             size: 8,
         },
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element_record_wall_joins as joins;
+
+    fn float(fields: &[(String, InstanceField)], wanted: &str) -> Option<f64> {
+        fields.iter().find_map(|(name, value)| match value {
+            InstanceField::Float { value, .. } if name == wanted => Some(*value),
+            _ => None,
+        })
+    }
+
+    /// A record-box wall along X from x = 0 to 10 ft, trimmed 0.25 ft at its
+    /// high end by the solver, whose record disallows joins at that end and
+    /// joins three other walls at its start.
+    fn wall() -> (DecodedElement, BTreeMap<u64, crate::native_walls::WallEnds>) {
+        let f = |value: f64| InstanceField::Float { value, size: 8 };
+        let wall = DecodedElement {
+            id: Some(7),
+            class: "Wall".into(),
+            fields: vec![
+                ("m_locationX".into(), f(4.875)),
+                ("m_bboxWidth".into(), f(9.75)),
+                (joins::WALL_TRIM_START_FIELD.into(), f(0.0)),
+                (joins::WALL_TRIM_END_FIELD.into(), f(0.25)),
+            ],
+            byte_range: 0..0,
+            provenance: Default::default(),
+        };
+        let ends = crate::native_walls::WallEnds {
+            curve: [[0.0, 0.0], [10.0, 0.0]],
+            joined: [vec![8, 9], vec![10]],
+            join_types: [Some(0), Some(0)],
+            disallowed: [false, true],
+        };
+        (wall, BTreeMap::from([(7, ends)]))
+    }
+
+    #[test]
+    fn a_disallowed_end_gets_back_its_trim() {
+        let (mut wall, ends) = wall();
+        attach_wall_end_records(std::slice::from_mut(&mut wall), &ends);
+        assert_eq!(float(&wall.fields, "m_bboxWidth"), Some(10.0));
+        assert_eq!(float(&wall.fields, "m_locationX"), Some(5.0));
+        assert_eq!(float(&wall.fields, joins::WALL_TRIM_END_FIELD), Some(0.0));
+    }
+
+    #[test]
+    fn a_join_of_three_walls_lists_both_others() {
+        let (mut wall, ends) = wall();
+        attach_wall_end_records(std::slice::from_mut(&mut wall), &ends);
+        let listed = wall.fields.iter().find_map(|(name, value)| match value {
+            InstanceField::Vector(items) if name == WALL_JOIN_WALLS_FIELDS[0] => {
+                Some(items.clone())
+            }
+            _ => None,
+        });
+        let ids: Vec<u32> = listed
+            .into_iter()
+            .flatten()
+            .filter_map(|item| match item {
+                InstanceField::ElementId { id, .. } => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, vec![8, 9]);
+        assert!(
+            !wall
+                .fields
+                .iter()
+                .any(|(name, _)| name == WALL_JOIN_WALLS_FIELDS[1]
+                    || name == WALL_JOIN_PARTNER_FIELDS[0])
+        );
+    }
 }
