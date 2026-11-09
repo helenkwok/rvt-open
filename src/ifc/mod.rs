@@ -5217,6 +5217,9 @@ fn append_production_walker_elements(
     walker_limits: crate::walker::WalkerLimits,
     control: &crate::control::WalkerControl,
 ) -> Result<WalkerElementData> {
+    // Topography surfaces Revit's export draws in another's body, or not at
+    // all, are no elements of their own.
+    let hidden_surfaces = symbol_meshes::hidden_site_surfaces(rf);
     // A failed walk leaves the metadata-only model; a cancelled one stops.
     let walk = crate::walker::iter_elements_with_control(
         rf,
@@ -5230,7 +5233,13 @@ fn append_production_walker_elements(
     if let Ok(decoded_iter) = walk {
         // Hide low-confidence rows from default IFC emission.
         let filtered = decoded_iter
-            .filter(|e| e.meets_confidence(crate::walker::DEFAULT_MIN_ELEMENT_CONFIDENCE));
+            .filter(|e| e.meets_confidence(crate::walker::DEFAULT_MIN_ELEMENT_CONFIDENCE))
+            .filter(|e| {
+                e.class != "Topography"
+                    || !e
+                        .id
+                        .is_some_and(|id| hidden_surfaces.contains(&u64::from(id)))
+            });
         let append = export_content::append_typed_production_elements(
             filtered,
             entities,
