@@ -13,9 +13,10 @@
   other wall's near side nests past that many of its layers.
   The wall's `Axis` ends where Revit's does at such joins, at the plain join
   (the other wall's far face where the wall runs through, its near face
-  where it stops), not where its layers end. Matched by
-  ElementId against Revit's own IFC4 export at 0.001 ft over 6,739 walls:
-  5,145 have both body ends within 0.001 ft, from 4,956 (239 go from wrong to
-  right, 50 from right to wrong, 24 of those in the advanced architectural
-  sample, which cannot be scored at 0.001 ft). The tiny reference models
-  still match on every wall.
+  where it stops), not where its layers end. Matched by ElementId against
+  Revit's own IFC4 export at 0.001 ft over 6,739 walls: 5,354 have both body
+  ends within 0.001 ft, from 4,925 (454 go from wrong to right, 25 from right
+  to wrong), and 5,673 have their `Axis` within 0.001 ft, from 3,950; walls
+  with the right body ends but another axis drop from 1,357 to 84. The tiny
+  reference models, the R2025 set and Core Interior still match on every
+  wall.
