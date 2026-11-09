@@ -380,12 +380,36 @@ def main(argv):
     # In a file whose length unit is the foot, a perimeter in feet is right.
     feet_file = abs(their_length_scale - FOOT_METRES) <= 1e-9
     our_types, their_types = wall_types(args[0]), wall_types(args[1])
+    # A key that more than one object of Revit's export holds keeps one
+    # object's quantities only. A wall it splits at its storeys keeps its
+    # ElementId as each piece's Tag, and a piece's Height, areas and volumes are
+    # not the whole wall's, which is all rvt-open writes for the element; two
+    # spaces with one Name share the key spaces are matched by, and the dict
+    # kept the last. A value on such a key is counted apart, and scored as
+    # neither equal, different nor missing. What it would have scored
+    # against the one object it holds is printed beside the count, not in the
+    # totals.
+    their_keys = collections.Counter(property_key_of(p) for p in open_ifc(args[1]).by_type("IfcObject"))
+    repeated = {key for key, n in their_keys.items() if key and n > 1}
+    apart = collections.Counter()
+    against_one = collections.defaultdict(lambda: [0, 0, 0])
     other_types = 0
     unconfirmed_types = 0
     for (key, qset, name), value in sorted(theirs.items()):
         if key not in our_objects:
             if key.startswith("opening:"):
                 unwritten_openings[(qset, name)] += 1
+            continue
+        if key in repeated:
+            apart[(qset, name)] += 1
+            held = against_one[(qset, name)]
+            mine = ours.get((key, qset, name))
+            if mine is None:
+                held[2] += 1
+            elif same(mine, value):
+                held[0] += 1
+            else:
+                held[1] += 1
             continue
         scope = REVIT_DEFECTS.get((qset, name))
         if scope is not None and scope in their_predefined.get(key, ()):
@@ -428,7 +452,14 @@ def main(argv):
             differences.append((relative(mine, value), key, qset, name, mine, value))
     totals = [sum(r[i] for r in rows.values()) for i in range(4)]
     extra = collections.Counter(
-        (qset, name) for key, qset, name in ours if key in their_objects and (key, qset, name) not in theirs
+        (qset, name)
+        for key, qset, name in ours
+        if key in their_objects and key not in repeated and (key, qset, name) not in theirs
+    )
+    # The same, on a repeated key: the one object held lacks it, which says
+    # nothing about the others.
+    extra_apart = sum(
+        1 for key, qset, name in ours if key in repeated and key in their_objects and (key, qset, name) not in theirs
     )
     setting_off = collections.Counter() if their_base else extra
     if not their_base:
@@ -467,6 +498,13 @@ def main(argv):
         print(f"quantities with their own unit, not scored: rvt-open {our_own}, Revit {their_own}")
     for (qset, name), (n, equal, different, missing) in sorted(rows.items()):
         print(f"  {qset}.{name}: {n}, equal {equal}, different {different}, missing {missing}")
+    print(
+        "values on a key that more than one object of Revit's export holds, counted apart: "
+        f"{sum(apart.values())} of Revit's on {len(repeated)} such keys, and {extra_apart} of rvt-open's with none in the object held"
+    )
+    for (qset, name), n in sorted(apart.items()):
+        equal, different, missing = against_one[(qset, name)]
+        print(f"  on a repeated key, {qset}.{name}: {n}; against the object held: equal {equal}, different {different}, missing {missing}")
     print("entities Revit writes each missing quantity on:")
     for (qset, name), classes in sorted(missing_classes.items(), key=lambda kv: -sum(kv[1].values())):
         on = ", ".join(f"{c} x{k}" for c, k in classes.most_common(4))
@@ -478,7 +516,9 @@ def main(argv):
     for (qset, name), n in sorted(extra.items()):
         print(f"  {qset}.{name}: {n}")
         keys = sorted(
-            key for key, s, q in ours if (s, q) == (qset, name) and key in their_objects and (key, s, q) not in theirs
+            key
+            for key, s, q in ours
+            if (s, q) == (qset, name) and key in their_objects and key not in repeated and (key, s, q) not in theirs
         )
         for key in keys[:10]:
             given = ", ".join(sorted(their_sets.get((key, qset), ()))) or "none"

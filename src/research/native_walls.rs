@@ -359,8 +359,10 @@ fn end_join_type(wall: u64, controls: &[Value], end: u32) -> Option<i64> {
 /// The curve, word, flip, end joins and type shells of each of `walls` from
 /// its native `SWall` record and its type's `BasicWallType` record, read in
 /// one pass: the current copy, the one the document routes to,
-/// whatever the partition data's copies say. A wall whose record has not
-/// exactly one curve, or whose curve is not a level line, is left out.
+/// whatever the partition data's copies say. A wall whose record holds the one
+/// level `GLine`, or a level `GLine` that `VWallDriver.m_pCrv` names and a
+/// previous location line (`WallRunTimeData.m_prevLocLine`), is read;
+/// any other wall is left out.
 pub fn native_walls(
     rf: &mut RevitFile,
     walls: &BTreeSet<u64>,
@@ -478,10 +480,10 @@ pub struct EndJoins {
     pub real: [Option<Vec<u64>>; 2],
 }
 
-/// The curve `VWallDriver.m_pCrv` of the record names, where it is one level
-/// `GLine`: a wall with an edited elevation profile holds more than one, and
-/// the pointer says which is its location curve.
-fn location_curve(graph: &crate::native_parameters::ObjectGraph) -> Option<([f64; 2], [f64; 2])> {
+/// The index of the object `VWallDriver.m_pCrv` of the record names, where it
+/// is one `GLine`: a wall with an edited elevation profile holds more than one
+/// curve, and the pointer says which is its location curve.
+fn location_curve_index(graph: &crate::native_parameters::ObjectGraph) -> Option<usize> {
     let token = graph
         .objects
         .iter()
@@ -492,12 +494,19 @@ fn location_curve(graph: &crate::native_parameters::ObjectGraph) -> Option<([f64
     let mut named = graph
         .objects
         .iter()
-        .filter(|object| u64::from(object.token) == token);
-    let curve = named.next()?;
+        .enumerate()
+        .filter(|(_, object)| u64::from(object.token) == token);
+    let (index, curve) = named.next()?;
     if named.next().is_some() || curve.class_name != "GLine" {
         return None;
     }
-    line_ends(&curve.fields)
+    Some(index)
+}
+
+/// The curve `VWallDriver.m_pCrv` of the record names, where it is one level
+/// `GLine`.
+fn location_curve(graph: &crate::native_parameters::ObjectGraph) -> Option<([f64; 2], [f64; 2])> {
+    line_ends(&graph.objects.get(location_curve_index(graph)?)?.fields)
 }
 
 /// `m_realJoined` of the one `JoinEndGStep` of the curve's start and of its end
@@ -657,6 +666,7 @@ impl WallReads {
             selected_ids: selected,
             releases: crate::native_document::NATIVE_RELEASES,
             graph_fields: Some(wall_read_fields),
+            value_source: Some("native_wall"),
             ..Options::default()
         };
         let mut type_ids: BTreeMap<u64, u64> = BTreeMap::new();
@@ -808,6 +818,7 @@ pub fn native_walls_and_top_joins_into(
     let options = Options {
         selected_ids: walls.clone(),
         selected_classes: BTreeSet::from(["BasicWallType".to_string()]),
+        releases: crate::native_document::NATIVE_RELEASES,
         // A wall whose data copies disagree on its line takes its location
         // curve from this record.
         value_source: Some("native_wall"),
@@ -1055,6 +1066,28 @@ pub fn native_walls_and_top_joins_into(
         }
         Ok(())
     })?;
+    // the native records of the walls each wall's `m_realJoined` lists
+    // name, where every one of them was read in this pass.
+    if rf.recording_value_sources() {
+        for (wall, joins) in &end_joins {
+            let partners: BTreeSet<u32> = joins
+                .real
+                .iter()
+                .flatten()
+                .flatten()
+                .filter_map(|partner| u32::try_from(*partner).ok())
+                .collect();
+            if let (Ok(owner), false) = (u32::try_from(*wall), partners.is_empty()) {
+                rf.attribute_value_sources(
+                    partners,
+                    "native_wall",
+                    owner,
+                    "native_wall_joined",
+                    crate::ifc::element_provenance::CopyRule::Native,
+                );
+            }
+        }
+    }
     reads.type_ids.extend(type_ids);
     reads.type_ids_read.extend(walls.iter().copied());
     reads.functions.extend(functions);

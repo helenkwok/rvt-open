@@ -15,6 +15,9 @@ pub struct WallAxis {
     /// How far past its start and its end the body reaches at a butt join,
     /// where the join lists decide it.
     pub join_reach_feet: [Option<f64>; 2],
+    /// Whether an angled wall's body must be the rectangle its box closes on:
+    /// on Revit 2015 to 2020 nothing marks a slanted wall.
+    pub box_must_close: bool,
 }
 
 /// The centreline and thickness [`WALL_AXIS_START_FIELDS`],
@@ -34,6 +37,9 @@ pub fn wall_axis_from_fields(fields: &[(String, InstanceField)]) -> Option<WallA
         end: [ex?, ey?],
         thickness_feet: float(WALL_TYPE_THICKNESS_FIELD)?,
         join_reach_feet: WALL_JOIN_REACH_FIELDS.map(float),
+        box_must_close: fields.iter().any(|(name, value)| {
+            name == WALL_AXIS_BOX_MUST_CLOSE_FIELD && matches!(value, InstanceField::Bool(true))
+        }),
     })
 }
 
@@ -282,6 +288,21 @@ const WALL_PROFILE_OPENING_REVIT_VERSIONS: &[u32] = &[2024];
 /// takes the rule only when it is added here.
 const WALL_END_JOIN_REVIT_VERSIONS: &[u32] = &[2024];
 
+/// Releases a wall is drawn along its location line and cut by its joins: 2024
+/// to 2027, and Revit 2015 to 2023 against the same Autodesk samples saved by
+/// Revit 2024. None of 2015 to 2023 is scored against a Revit export here.
+const WALL_CENTRELINE_REVIT_VERSIONS: std::ops::RangeInclusive<u32> = 2015..=2027;
+
+/// Releases the cut-out of a wall's elevation profile is carried on to the
+/// wall's end on: the BIM4LCA office (Revit 2024), whose Basement walls
+/// 2057668, 2057670, 2058499, 2058501, 2056705, 2056770, 2070689 and 2070691
+/// are the walls it rests on. Its own list, a decision of its own:
+/// the profile openings are read on
+/// [`WALL_PROFILE_OPENING_REVIT_VERSIONS`], and a release added to that list
+/// takes the rule only when it is added here. The walls the record joins at an
+/// end are read on [`WALL_END_JOIN_REVIT_VERSIONS`], which the rule asks for.
+const WALL_PROFILE_STUB_REVIT_VERSIONS: &[u32] = &[2024];
+
 /// Give each wall whose elevation profile was edited the openings that cuts
 /// (the 63rd opening).
 ///
@@ -356,21 +377,17 @@ pub(super) fn attach_wall_profile_openings(
         let Some(segments) = segments else {
             continue;
         };
-        for (k, (tag, outline)) in elevation_profile_cuts(&segments).into_iter().enumerate() {
-            let points = outline
-                .iter()
-                .map(|point| {
-                    InstanceField::Vector(
-                        point
-                            .iter()
-                            .map(|value| InstanceField::Float {
-                                value: *value,
-                                size: 8,
-                            })
-                            .collect(),
-                    )
-                })
-                .collect();
+        let cuts = elevation_profile_cuts(&segments);
+        if !cuts.is_empty() && WALL_PROFILE_STUB_REVIT_VERSIONS.contains(&revit_version) {
+            if let Some((low, high)) = profile_extent(&segments) {
+                wall.fields.push((
+                    PROFILE_EXTENT_FIELD.into(),
+                    InstanceField::Vector(vec![point_field(&low), point_field(&high)]),
+                ));
+            }
+        }
+        for (k, (tag, outline)) in cuts.into_iter().enumerate() {
+            let points = outline.iter().map(point_field).collect();
             wall.fields.push((
                 format!("{PROFILE_OPENING_FIELD}_{k}"),
                 InstanceField::Vector(points),
@@ -380,6 +397,77 @@ pub(super) fn attach_wall_profile_openings(
                 InstanceField::ElementId { tag: 0, id: tag },
             ));
         }
+    }
+}
+
+/// A model-feet point as a vector of three floats, as the openings' outlines
+/// and [`PROFILE_EXTENT_FIELD`] hold them.
+fn point_field(point: &[f64; 3]) -> InstanceField {
+    InstanceField::Vector(
+        point
+            .iter()
+            .map(|value| InstanceField::Float {
+                value: *value,
+                size: 8,
+            })
+            .collect(),
+    )
+}
+
+/// The lowest and highest points of an elevation profile's sketch lines along
+/// the profile's axis (the direction of the two points furthest apart in
+/// plan, as [`elevation_profile_cuts`] takes it), model feet. `None` where
+/// there are no lines or they never leave one point in plan.
+fn profile_extent(segments: &[SketchSegment]) -> Option<([f64; 3], [f64; 3])> {
+    let points: Vec<[f64; 3]> = segments.iter().flat_map(|(_, a, b)| [*a, *b]).collect();
+    let first = *points.first()?;
+    let mut far = (0.0_f64, first, first);
+    for a in &points {
+        for b in &points {
+            let distance = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+            if distance > far.0 {
+                far = (distance, *a, *b);
+            }
+        }
+    }
+    let (length, origin, toward) = far;
+    if length <= PROFILE_EPS_FEET {
+        return None;
+    }
+    let axis = [
+        (toward[0] - origin[0]) / length,
+        (toward[1] - origin[1]) / length,
+    ];
+    let along =
+        |point: &[f64; 3]| (point[0] - origin[0]) * axis[0] + (point[1] - origin[1]) * axis[1];
+    let low = points.iter().min_by(|a, b| along(a).total_cmp(&along(b)))?;
+    let high = points.iter().max_by(|a, b| along(a).total_cmp(&along(b)))?;
+    Some((*low, *high))
+}
+
+/// The two ends of the elevation profile a wall's openings are cut from
+/// ([`PROFILE_EXTENT_FIELD`]), model feet: the lowest and highest along the
+/// profile's axis. `None` for a wall that has none.
+pub fn profile_extent_from_fields(
+    fields: &[(String, InstanceField)],
+) -> Option<([f64; 3], [f64; 3])> {
+    let points = fields.iter().find_map(|(name, value)| match value {
+        InstanceField::Vector(points) if name == PROFILE_EXTENT_FIELD => Some(points),
+        _ => None,
+    })?;
+    let point = |field: &InstanceField| -> Option<[f64; 3]> {
+        let InstanceField::Vector(values) = field else {
+            return None;
+        };
+        let mut xyz = values.iter().map(|value| match value {
+            InstanceField::Float { value, .. } => Some(*value),
+            _ => None,
+        });
+        Some([xyz.next()??, xyz.next()??, xyz.next()??])
+    };
+    match points.as_slice() {
+        [low, high] => Some((point(low)?, point(high)?)),
+        _ => None,
     }
 }
 
@@ -691,10 +779,10 @@ pub(super) fn attach_wall_layers(
     {
         return;
     }
-    // A 2023 wall keeps its record body, cut back at its joins,
-    // and takes only its layers and exterior side: its location line is not
-    // read.
-    let centreline_bodies = !crate::partition_element_records_2023::is_32bit_release(revit_version);
+    // A wall before 2015 keeps its record body, cut back at its joins,
+    // and takes only its layers and exterior side.
+    let centreline_bodies = WALL_CENTRELINE_REVIT_VERSIONS.contains(&revit_version);
+    let narrow = crate::partition_element_records_2023::is_32bit_release(revit_version);
     let type_of = |element: &DecodedElement| {
         element.fields.iter().find_map(|(name, value)| match value {
             InstanceField::ElementId { id, .. } if name == TYPE_ID_FIELD => Some(*id),
@@ -775,6 +863,10 @@ pub(super) fn attach_wall_layers(
             wall.fields
                 .push((WALL_TOP_JOINED_FIELD.into(), InstanceField::Bool(*joined)));
         }
+        // on 2015 to 2023 a record's control joins read
+        // empty, but its steps do not, and every wall of Autodesk's samples
+        // holds the step classes, so the uncut flag, of its later save. Its
+        // Height is that save's on every wall both saves hold.
         if wall.id.is_some_and(|id| uncut.contains(&u64::from(id))) {
             wall.fields
                 .push((WALL_UNCUT_FIELD.into(), InstanceField::Bool(true)));
@@ -862,7 +954,12 @@ pub(super) fn attach_wall_layers(
                 ));
             }
         }
-        if wall.id.is_some_and(|id| whole.contains(&u64::from(id))) {
+        // the whole flag also reads as on the later save,
+        // but that save draws 25 of these walls from their centrelines and
+        // writes them no areas. Here they keep their record boxes, so the
+        // areas and volumes would be the boxes', and on all 203 of their old
+        // saves the box's volume differs from the later body's.
+        if !narrow && wall.id.is_some_and(|id| whole.contains(&u64::from(id))) {
             wall.fields
                 .push((WALL_WHOLE_FIELD.into(), InstanceField::Bool(true)));
         }
@@ -946,7 +1043,23 @@ pub(super) fn attach_wall_layers(
                 (first == 0.0 && third == 0.0 && exterior > 0.0 && exterior < FRAC_PI_4)
                     .then_some(exterior)
             });
-        let centred = centreline_bodies && measured && (word == 1 || taper.is_some());
+        // Revit 2015 to 2020 write no cross-section word, so
+        // nothing marks a slanted wall and each is drawn vertical.
+        let vertical = word == 1 || !pcs::wall_orientation_has_word(revit_version);
+        // on 2015 to 2023 a wall along a model axis keeps its record
+        // box cut back at its joins, whose ends Revit's own export of a 2018
+        // project confirms where the line's overrun them: its control joins,
+        // which tell a butt end, are not read there.
+        let along_a_model_axis = lines.get(&id).is_some_and(|line| {
+            let (start, end) = (line.start(), line.end());
+            let (dx, dy) = (end[0] - start[0], end[1] - start[1]);
+            let length = dx.hypot(dy);
+            (dx / length).abs() <= 1e-6 || (dy / length).abs() <= 1e-6
+        });
+        let centred = centreline_bodies
+            && measured
+            && (vertical || taper.is_some())
+            && !(narrow && along_a_model_axis);
         let float = |value: f64| InstanceField::Float { value, size: 8 };
         // The direction the exterior side is taken from: the line's, or the
         // arc's tangent at its middle.
@@ -955,18 +1068,19 @@ pub(super) fn attach_wall_layers(
         // that its body and the joins of the walls meeting it are read: on
         // the BIM4LCA models and Snowdon Towers, the walls joined to such a
         // wall were the ones whose partner had no centreline.
-        // The native record is the line's source only where the data gives none.
-        if lines.contains_key(&id) || arcs.contains_key(&id) {
-            rf.forget_value_source(id, "native_wall");
-        }
+        // The native record stays among the wall's value sources even where
+        // the data gives its line: its ends, top and base joins, and its doors'
+        // hosts, are read from that record too.
         let line = lines
             .get(&id)
             .map(|line| {
                 let (start, end) = (line.start(), line.end());
                 ([start[0], start[1]], [end[0], end[1]])
             })
+            // Revit 2024 to 2027 only: a 2015 to 2023 wall keeps the line its
+            // own join-list reader gives it.
             .or_else(|| {
-                let record = native.get(&u64::from(id))?;
+                let record = native.get(&u64::from(id)).filter(|_| !narrow)?;
                 (!arcs.contains_key(&id)).then_some((record.start, record.end))
             });
         let (dx, dy) = if let Some((start, end)) = line {
@@ -976,6 +1090,12 @@ pub(super) fn attach_wall_layers(
                 continue;
             }
             if centred {
+                if !pcs::wall_orientation_has_word(revit_version) {
+                    wall.fields.push((
+                        WALL_AXIS_BOX_MUST_CLOSE_FIELD.into(),
+                        InstanceField::Bool(true),
+                    ));
+                }
                 for (names, point) in [(WALL_AXIS_START_FIELDS, start), (WALL_AXIS_END_FIELDS, end)]
                 {
                     for (name, value) in names.iter().zip(point) {
@@ -1023,6 +1143,7 @@ pub(super) fn attach_wall_layers(
             if let Some(angle) = taper {
                 wall.fields
                     .push((WALL_EXTERIOR_FACE_ANGLE_FIELD.into(), float(angle)));
+                rf.attribute_value_source(type_id, "type_face_angles", id, "wall_type_face_angle");
             }
             rf.attribute_value_source(type_id, "type_layers", id, "wall_type_layers");
         }
@@ -1066,12 +1187,17 @@ pub(super) fn attach_wall_layers(
         attach_wall_butt_joins(rf, revit_version, walls, &layers, &native);
         attach_native_tee_reaches(walls, &native);
         attach_wall_corner_reaches(walls, &layers, &native);
-        let ends: BTreeMap<u64, crate::native_walls::WallEnds> = native
-            .iter()
-            .map(|(&id, wall)| (id, crate::native_walls::WallEnds::of(id, wall)))
-            .collect();
-        attach_wall_end_records(walls, &ends);
-        attach_wall_lengths(walls, &native);
+        // A 2015 to 2023 record is read without its control joins, and
+        // the rule takes a wall with none listed as joined to nothing, so its
+        // end records and `Length` are left out.
+        if !crate::partition_element_records_2023::is_32bit_release(revit_version) {
+            let ends: BTreeMap<u64, crate::native_walls::WallEnds> = native
+                .iter()
+                .map(|(&id, wall)| (id, crate::native_walls::WallEnds::of(id, wall)))
+                .collect();
+            attach_wall_end_records(walls, &ends);
+            attach_wall_lengths(walls, &native);
+        }
     }
 }
 

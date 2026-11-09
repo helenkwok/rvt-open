@@ -359,10 +359,13 @@ pub fn attach_scoped_in_batches(
         let profile_resolved = set.properties.iter().any(|p| {
             p.name == "ProfileResolved" && matches!(p.value, PropertyValue::Boolean(true))
         });
-        // A beam drawn as its box along its line is a stand-in for its saved
-        // mesh, as the record box is.
+        // A beam drawn as its box along its line, and a curtain part drawn as
+        // the box along its own axes, are stand-ins for their saved meshes, as
+        // the record box is.
         if !text("BodySource").is_some_and(|source| {
-            super::export_content::is_plan_box_source(source) || source == BEAM_BOX_BODY_SOURCE
+            super::export_content::is_plan_box_source(source)
+                || source == BEAM_BOX_BODY_SOURCE
+                || source == super::export_content::INSTANCE_ORIENTED_BODY_SOURCE
         }) || profile_resolved
         {
             continue;

@@ -5,7 +5,7 @@ Its 14 rooms are in Working Drawings, the second of three phases (Existing,
 Working Drawings, Learning Content), and the last phase holds none. A call with
 no phase writes the rooms of Working Drawings and raises a ``RuntimeWarning``
 that names it; a phase named, the last included, is exact. This is the Python
-twin of the Measure runs section 9.4 (the ``rvt-ifc`` side), and the
+twin of the Measure runs.4 (the ``rvt-ifc`` side), and the
 only place the warnings run against a real file. It runs where
 ``RVT_SAMPLE_PROJECTS_DIR`` holds ``2018-rac_basic_sample_project.rvt`` (the
 wheel job fetches it, pinned by sha256 as ``research/autodesk-sample-projects.tsv``

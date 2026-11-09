@@ -181,9 +181,12 @@ fn nordic_office_concrete_draws_shared_shapes_in_place() {
             // maps, 10,844 -> 10,842 mapped items and 1,628 -> 1,631 shapes:
             // walls whose data copies disagree on their line take their native
             // record's, and their bodies and their partners' layered ends are
-            // drawn as their own outlines.
-            maps: 739,
-            mapped_items: 10_842,
+            // drawn as their own outlines. 739 -> 744 maps and 10,842 ->
+            // 10,835 mapped items: the 9 doors set in no wall are placed at
+            // their stored origin, as Revit's export places them, and no
+            // longer share one map.
+            maps: 744,
+            mapped_items: 10_835,
             bodies: 12_803,
             shapes: 1_631,
         },

@@ -36,7 +36,7 @@ pub fn json_value(value: &PropertyValue) -> (Value, Option<&'static str>) {
             (json!(s), None)
         }
         PropertyValue::Integer(n) | PropertyValue::CountValue(n) => (json!(n), None),
-        PropertyValue::Real(v) => (number(*v), None),
+        PropertyValue::Real(v) | PropertyValue::Ratio(v) => (number(*v), None),
         PropertyValue::Boolean(b) => (json!(b), None),
         PropertyValue::Logical(b) => (json!(b), None),
         PropertyValue::LengthFeet(v) | PropertyValue::PositiveLengthFeet(v) => {

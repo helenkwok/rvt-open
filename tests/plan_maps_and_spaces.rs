@@ -85,8 +85,11 @@ fn nordic_office_concrete_plan_maps_and_spaces() {
 /// Level stopped drawing one, as in Revit's export), 138 plates' bases, 2
 // 241 -> 243 footprints and 16 -> 14 maps whose users differ: the walls that
 // embed a curtain wall, drawn from their saved mesh where Revit raised their
-// base, are no longer the plain prisms that shared those maps.
-const PINNED_PLAN: (usize, usize, usize, usize) = (243, 137, 2, 14);
+// base, are no longer the plain prisms that shared those maps. 243 -> 254
+// footprints and 14 -> 12 maps whose users differ: the 9 doors set in no wall
+// are placed at their stored origin, as Revit's export places them, and their
+// maps split by placement.
+const PINNED_PLAN: (usize, usize, usize, usize) = (254, 137, 2, 12);
 /// 306 spaces: 234 rooms, 30 areas and 42 family instances (`USERDEFINED`);
 /// 74 `NOTDEFINED`: the 30 areas and the 44 rooms whose "IFC Predefined
 /// Revit 2027.1 writes them).

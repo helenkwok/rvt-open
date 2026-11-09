@@ -30,10 +30,11 @@ use crate::geometry::{
 };
 use crate::partition_area_boundaries::ArcMids;
 use crate::walker::{DecodedElement, InstanceField};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod column_quantities;
 mod wall_areas;
+mod wall_profile;
 mod wall_tops;
 
 /// Result of folding production walker hits into an IFC draft.
@@ -94,6 +95,11 @@ pub struct TypedProductionAppend {
     /// [`CUT_LOOP_SIZE_PROPERTIES`], [`CUT_SOLID_SIZE_PROPERTIES`],
     /// [`INSTANCE_BOX_SIZE_PROPERTIES`] and [`SYMBOL_WIRE_WIDTH_PROPERTY`].
     pub record_handoffs: BTreeMap<usize, Vec<Property>>,
+    /// The joins between two connectors that the writer leaves out because a
+    /// connector of either end is named with two partners and the two sides'
+    /// lists do not settle which is real, by reason. Counted
+    /// in `exported.port_joins_left_out`.
+    pub port_joins_left_out: BTreeMap<String, usize>,
 }
 
 /// What a quality mode allows the document exporter to emit.
@@ -838,7 +844,13 @@ pub fn append_typed_production_elements(
     let mut curve_ends: Vec<(usize, u32, &'static str)> = Vec::new();
     // each pipe's two ends and the connector entry keys at each.
     let mut pipe_ends: BTreeMap<usize, PipeEnds> = BTreeMap::new();
-    // Each MEP system's name and members, by its ElementId.
+    // a pipe's connectors' directions, where its own record gave
+    // them.
+    let mut pipe_flows: BTreeMap<usize, BTreeMap<u32, i64>> = BTreeMap::new();
+    // each tap of a duct its own record drew along its line, a
+    // point along it.
+    let mut duct_taps: BTreeMap<usize, Vec<DuctTap>> = BTreeMap::new();
+    // each MEP system's name and members, by its ElementId.
     let mut pending_systems: BTreeMap<u32, (Option<String>, Vec<usize>)> = Default::default();
     // Bodies of aggregate wholes, held back until their parts are known: a
     // whole that no part names keeps its own body.
@@ -858,7 +870,16 @@ pub fn append_typed_production_elements(
     // Each wall's location curve and the walls its record joins at each
     // end, in its order, for the ends drawn to the walls they meet.
     let mut pending_ends: Vec<wall_tops::PendingEnds> = Vec::new();
+    // each profile-edited wall's entity index and the two ends of its
+    // profile, for the cut-out carried on to the wall's end.
+    let mut pending_profiles: Vec<wall_profile::Pending> = Vec::new();
     let mut slab_shapes: HashMap<u32, wall_tops::SlabTop> = HashMap::new();
+    // the roofs whose record box is exactly their type's layers and
+    // whose plan outline is read, the only roofs whose underside a wall's top
+    // may be cut at: the layers prove the underside level, and a roof without
+    // its outline is drawn over its box's rectangle, which an L-shaped roof
+    // does not fill.
+    let mut plate_roofs: HashSet<u32> = HashSet::new();
     let mut level_bind = crate::level_bind::LevelStoreyBind::new();
     // What each type object's common set holds, by type and type
     // entity; `None` once two of its elements disagree.
@@ -1009,14 +1030,6 @@ pub fn append_typed_production_elements(
         // walker still yields ArcWall `DecodedElement`s for API
         // consumers; skipping here avoids duplicate IFCWALL rows.
         if decoded.class == "ArcWall" {
-            continue;
-        }
-
-        // Opening-index rows are not typed Door/Window. Keep them in
-        // `iter_elements` / production_class_counts for File Status, but
-        // do not flood IFC with thousands of hostless IFCOPENINGELEMENT
-        // stubs — emit only once host Wall ElementIds join (still open).
-        if decoded.class == "ArcWallRectOpening" {
             continue;
         }
 
@@ -1434,6 +1447,36 @@ pub fn append_typed_production_elements(
             match decoded.class.as_str() {
                 "Duct" => {
                     curve_ends.push((entity_index, id, "DUCT"));
+                    if let Some([start, end]) =
+                        crate::partition_schema_mvp::duct_ends_from_fields(&decoded.fields)
+                    {
+                        // A tap's port is on the duct's line at its parameter,
+                        // its axis the line's, as Revit's export places all
+                        // 406 of Snowdon Towers HVAC's.
+                        let length = (0..3)
+                            .map(|axis| (end[axis] - start[axis]).powi(2))
+                            .sum::<f64>()
+                            .sqrt();
+                        let taps: Vec<DuctTap> =
+                            crate::partition_schema_mvp::duct_taps_from_fields(&decoded.fields)
+                                .into_iter()
+                                .filter(|_| length > 0.0)
+                                .map(|(index, at)| {
+                                    (
+                                        index,
+                                        std::array::from_fn(|axis| {
+                                            start[axis] + at * (end[axis] - start[axis])
+                                        }),
+                                        std::array::from_fn(|axis| {
+                                            (end[axis] - start[axis]) / length
+                                        }),
+                                    )
+                                })
+                                .collect();
+                        if !taps.is_empty() {
+                            duct_taps.insert(entity_index, taps);
+                        }
+                    }
                     if let Some(ends) =
                         crate::partition_schema_mvp::duct_ends_from_fields(&decoded.fields)
                     {
@@ -1450,6 +1493,12 @@ pub fn append_typed_production_elements(
                 }
                 "Pipe" => {
                     curve_ends.push((entity_index, id, "PIPE"));
+                    let flows = crate::partition_schema_mvp::pipe_flow_directions_from_fields(
+                        &decoded.fields,
+                    );
+                    if !flows.is_empty() {
+                        pipe_flows.insert(entity_index, flows);
+                    }
                     if let Some(body) =
                         crate::partition_schema_mvp::pipe_body_from_fields(&decoded.fields)
                     {
@@ -1752,6 +1801,17 @@ pub fn append_typed_production_elements(
                 });
             }
         }
+        if policy.include_geometry && decoded.class == "Wall" {
+            if let Some((low, high)) =
+                crate::partition_schema_mvp::profile_extent_from_fields(&decoded.fields)
+            {
+                pending_profiles.push(wall_profile::Pending {
+                    index: entity_index,
+                    low: [low[0], low[1]],
+                    high: [high[0], high[1]],
+                });
+            }
+        }
         // The wall pass knows the top of every floor, roof and ceiling: flat
         // where its record was read and holds no edit, the plane of a floor's
         // edited corners, and otherwise not known (a record that was not read,
@@ -1773,6 +1833,16 @@ pub fn append_typed_production_elements(
                     None => wall_tops::SlabTop::Flat,
                 };
                 slab_shapes.insert(id, top);
+                if decoded.class == "Roof"
+                    && crate::element_record_plan_profiles::plan_profile_from_fields(
+                        &decoded.fields,
+                    )
+                    .is_some()
+                    && crate::partition_schema_mvp::element_layers_from_fields(&decoded.fields)
+                        .is_some_and(|layers| layers.stacked)
+                {
+                    plate_roofs.insert(id);
+                }
             }
         }
         // A column whose type is a plain rectangle or round, with the elements its pairs name.
@@ -2108,8 +2178,8 @@ pub fn append_typed_production_elements(
         }
     }
 
-    // A wall's top is cut at the underside of the floor that covers it.
-    wall_tops::cut_wall_tops(entities, &pending_tops);
+    // a wall's top is cut at the underside of the floor that covers it.
+    wall_tops::cut_wall_tops(entities, &pending_tops, &plate_roofs);
 
     // A wall with an edited elevation profile that stops short of the
     // wall beneath it is drawn to that wall's face, where its base is still cut.
@@ -2127,7 +2197,12 @@ pub fn append_typed_production_elements(
     wall_tops::cut_wall_bases(entities, &pending_bases, &slab_shapes, &end_steps);
     wall_tops::finish_wall_ends(entities, &end_steps);
 
-    // The side areas and volumes of a wall joined to floors that
+    // the cut-out of an edited elevation profile goes on, a line along
+    // its slope and a notch straight out, to the end of a wall that goes on past
+    // the profile. After the ends, so that the wall has its final extent.
+    wall_profile::extend_profile_stubs(entities, &pending_profiles, &mut out.record_handoffs);
+
+    // the side areas and volumes of a wall joined to floors that
     // leave it as its record's box. It runs after the pass above, on purpose:
     // it reads each extrusion at its final height, and a wall that pass cut
     // has the underside of the floor that cut it for its top, which that
@@ -2217,8 +2292,19 @@ pub fn append_typed_production_elements(
             )
     };
     let mut connections: std::collections::BTreeSet<[(usize, u32, u32); 2]> = Default::default();
+    let mut conflicting: std::collections::BTreeSet<[(usize, u32, u32); 2]> = Default::default();
     // each connector's joins, read from either side's list.
     let mut joined: HashMap<(u32, u32), Vec<(u32, u32)>> = HashMap::new();
+    // each connector's partners, with how many of the two sides' lists
+    // name each (2 where both do). A connector has one physical partner, so a
+    // connector that two partners are named for has at least one that is not
+    // real: on the MEP samples of 2015 and 2019, each of five chains of three
+    // joins holds one that the 2024 save does not, a join of one element's
+    // connector to the other connector of an element it is joined to at its
+    // first. The partner both sides name is kept where there is exactly one;
+    // otherwise none is, and a join is written only where each of its ends
+    // keeps the other, so a join this cannot settle is counted, not guessed.
+    let mut named: BTreeMap<(u32, u32), BTreeMap<(u32, u32), usize>> = BTreeMap::new();
     for (_, id, joins) in &pending_joins {
         for &(index, other_id, other_index) in joins {
             joined
@@ -2229,8 +2315,32 @@ pub fn append_typed_production_elements(
                 .entry((other_id, other_index))
                 .or_default()
                 .push((*id, index));
+            *named
+                .entry((*id, index))
+                .or_default()
+                .entry((other_id, other_index))
+                .or_default() += 1;
+            *named
+                .entry((other_id, other_index))
+                .or_default()
+                .entry((*id, index))
+                .or_default() += 1;
         }
     }
+    let kept = |connector: (u32, u32)| -> Option<(u32, u32)> {
+        let partners = named.get(&connector)?;
+        if partners.len() == 1 {
+            return partners.keys().next().copied();
+        }
+        let mut both = partners
+            .iter()
+            .filter(|(_, sides)| **sides > 1)
+            .map(|(partner, _)| *partner);
+        match (both.next(), both.next()) {
+            (Some(partner), None) => Some(partner),
+            _ => None,
+        }
+    };
     for (entity, id, joins) in pending_joins {
         for (index, other_id, other_index) in joins {
             let Some(&other) = out.id_to_entity.get(&other_id) else {
@@ -2241,8 +2351,20 @@ pub fn append_typed_production_elements(
             }
             let mut ends = [(entity, id, index), (other, other_id, other_index)];
             ends.sort();
-            connections.insert(ends);
+            if kept((id, index)) == Some((other_id, other_index))
+                && kept((other_id, other_index)) == Some((id, index))
+            {
+                connections.insert(ends);
+            } else {
+                conflicting.insert(ends);
+            }
         }
+    }
+    if !conflicting.is_empty() {
+        out.port_joins_left_out.insert(
+            "connector_named_with_conflicting_partners".to_string(),
+            conflicting.len(),
+        );
     }
     let curve_ends: Vec<(usize, u32, &'static str)> = curve_ends
         .into_iter()
@@ -2269,9 +2391,28 @@ pub fn append_typed_production_elements(
                 id,
                 index,
                 predefined_type: Some(kind.to_string()),
-                flow_direction: None,
+                // direction, from the pipe's own record; a
+                // release whose connector pass reads it sets it there too.
+                flow_direction: pipe_flows
+                    .get(&element)
+                    .and_then(|flows| flows.get(&index))
+                    .and_then(|&direction| crate::native_connectors::flow_direction_of(direction))
+                    .map(str::to_string),
                 location_feet: place.map(|(point, _)| point),
                 direction: place.map(|(_, outward)| outward),
+                system_type: None,
+            });
+        }
+        for &(index, point, along) in duct_taps.get(&element).into_iter().flatten() {
+            entities.push(entities::IfcEntity::Port {
+                element,
+                id,
+                index,
+                predefined_type: Some(kind.to_string()),
+                flow_direction: None,
+                location_feet: Some(point),
+                direction: Some(along),
+                system_type: None,
             });
         }
     }
@@ -2354,75 +2495,6 @@ fn material_info_from_decoded(decoded: &DecodedElement) -> Option<MaterialInfo> 
     })
 }
 
-#[allow(dead_code)] // retained for when opening→host IFC emission lands
-fn opening_index_property_set(decoded: &DecodedElement) -> PropertySet {
-    let mut properties = vec![
-        Property {
-            name: "OpeningKindResolved".into(),
-            value: PropertyValue::Boolean(false),
-        },
-        Property {
-            name: "DoorWindowDiscriminated".into(),
-            value: PropertyValue::Boolean(false),
-        },
-        Property {
-            name: "Source".into(),
-            value: PropertyValue::Text("partition_rect_opening_index".into()),
-        },
-    ];
-    for (name, value) in &decoded.fields {
-        match (name.as_str(), value) {
-            ("m_related_id_a", InstanceField::ElementId { id, .. }) => {
-                properties.push(Property {
-                    name: "RelatedIdA".into(),
-                    value: PropertyValue::Integer(i64::from(*id)),
-                });
-            }
-            ("m_related_id_b", InstanceField::ElementId { id, .. }) => {
-                properties.push(Property {
-                    name: "RelatedIdB".into(),
-                    value: PropertyValue::Integer(i64::from(*id)),
-                });
-            }
-            ("m_host_id", InstanceField::ElementId { id, .. }) => {
-                properties.push(Property {
-                    name: "HostIdCandidate".into(),
-                    value: PropertyValue::Integer(i64::from(*id)),
-                });
-            }
-            ("m_related_id_a_in_elem_table", InstanceField::Bool(b)) => {
-                properties.push(Property {
-                    name: "RelatedIdAInElemTable".into(),
-                    value: PropertyValue::Boolean(*b),
-                });
-            }
-            ("m_related_id_b_in_elem_table", InstanceField::Bool(b)) => {
-                properties.push(Property {
-                    name: "RelatedIdBInElemTable".into(),
-                    value: PropertyValue::Boolean(*b),
-                });
-            }
-            ("m_host_elem_table_confirmed", InstanceField::Bool(b)) => {
-                properties.push(Property {
-                    name: "HostElemTableConfirmed".into(),
-                    value: PropertyValue::Boolean(*b),
-                });
-            }
-            ("m_index", InstanceField::Integer { value, .. }) => {
-                properties.push(Property {
-                    name: "Index".into(),
-                    value: PropertyValue::Integer(*value),
-                });
-            }
-            _ => {}
-        }
-    }
-    PropertySet {
-        name: "RvtArcWallRectOpening".into(),
-        properties,
-    }
-}
-
 struct RecoveredWallGeom {
     location_feet: [f64; 3],
     rotation_radians: f64,
@@ -2483,17 +2555,20 @@ fn wall_geometry_from_decoded(decoded: &DecodedElement) -> Option<RecoveredWallG
 }
 
 /// Revit's `Constraints` properties for the Level an element's association
-/// record names, under the names Revit's export uses for its class.
+/// record names, or on Revit 2015 to 2023 its own native record,
+/// under the names Revit's export uses for its class.
 fn level_parameter_property_set(decoded: &DecodedElement, ifc_type: &str) -> Option<PropertySet> {
     use crate::partition_level_parameters as lp;
     // The names Revit gives a conduit's, conduit fitting's or
     // gutter's Level parameter are not measured: the one export that holds
     // them, Revit 2018's IFC2X3, writes no Revit parameter-group set on any
-    // element. So none is written.
+    // element. So none is written.: nor is a Furniture Systems
+    // element's: the name of its Level parameter is not measured.
     if matches!(
         ifc_type,
         "IFCCABLECARRIERSEGMENT" | "IFCCABLECARRIERFITTING"
     ) || decoded.class == "Gutter"
+        || decoded.class == "FurnitureSystem"
     {
         return None;
     }
@@ -2513,8 +2588,10 @@ fn level_parameter_property_set(decoded: &DecodedElement, ifc_type: &str) -> Opt
         ),
         // The highest of several listed Levels is the Reference Level of a
         // beam or brace only.
+        // A beam's or brace's own record names it on Revit 2015 to 2023
         None if matches!(ifc_type, "IFCBEAM" | "IFCMEMBER") => (
-            text(crate::partition_schema_mvp::REFERENCE_LEVEL_FROM_LIST_FIELD)?,
+            text(crate::partition_schema_mvp::REFERENCE_LEVEL_FROM_LIST_FIELD)
+                .or_else(|| text(crate::partition_schema_mvp::REFERENCE_LEVEL_FIELD))?,
             true,
         ),
         None => return None,
@@ -2547,6 +2624,9 @@ fn level_parameter_property_set(decoded: &DecodedElement, ifc_type: &str) -> Opt
             }),
             _ => {}
         }
+    }
+    if ifc_type == "IFCDUCTSEGMENT" {
+        properties.extend(duct_elevation_properties(&decoded.fields));
     }
     Some(PropertySet {
         name: "Constraints".into(),
@@ -2584,6 +2664,72 @@ fn wall_dimensions_property_set(decoded: &DecodedElement, ifc_type: &str) -> Opt
             value: PropertyValue::LengthFeet(length),
         }],
     })
+}
+
+/// A duct's elevations and slope among Revit's `Constraints`, from
+/// its own record's Start and End Middle Elevation above its reference level
+/// and its line, where its justification is centred: on Snowdon Towers HVAC
+/// (2025) these are Revit's own on 1,053 of 1,053 ducts. `Middle Elevation`
+/// is the start's, as Revit gives it on every one, sloped ones included. A
+/// lower or upper end's bottom and top are its centreline less and plus half
+/// the section's height as it stands across the slope, the half-height times
+/// the cosine of the slope, so a vertical duct's are its centreline. `Slope`
+/// is its rise over its run, left out of a vertical duct's set as Revit
+/// leaves it; Revit writes it as an `IfcPositiveRatioMeasure`, 0 on a level
+/// duct, which that type does not allow, so it is an `IfcRatioMeasure`.
+fn duct_elevation_properties(fields: &[(String, InstanceField)]) -> Vec<Property> {
+    use crate::partition_schema_mvp as mvp;
+    let (Some([start_offset, end_offset]), Some([start, end]), Some((_, height))) = (
+        mvp::duct_offsets_from_fields(fields),
+        mvp::duct_ends_from_fields(fields),
+        mvp::curve_size_from_fields(fields),
+    ) else {
+        return Vec::new();
+    };
+    let length = (0..3)
+        .map(|axis| (end[axis] - start[axis]).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let run = (end[0] - start[0]).hypot(end[1] - start[1]);
+    if !(length.is_finite() && length > 0.0) {
+        return Vec::new();
+    }
+    let half = height / 2.0 * run / length;
+    let (lower, upper) = if start[2] <= end[2] {
+        (start_offset, end_offset)
+    } else {
+        (end_offset, start_offset)
+    };
+    let length_property = |name: &str, feet: f64| Property {
+        name: name.into(),
+        value: PropertyValue::LengthFeet(feet),
+    };
+    let mut properties = vec![
+        length_property("Start Middle Elevation", start_offset),
+        length_property("End Middle Elevation", end_offset),
+        length_property("Middle Elevation", start_offset),
+        length_property("Lower End Centerline Elevation", lower),
+        length_property("Lower End Bottom Elevation", lower - half),
+        length_property("Lower End Top Elevation", lower + half),
+        length_property("Upper End Centerline Elevation", upper),
+        length_property("Upper End Bottom Elevation", upper - half),
+        length_property("Upper End Top Elevation", upper + half),
+        Property {
+            name: "Horizontal Justification".into(),
+            value: PropertyValue::Identifier("Center".into()),
+        },
+        Property {
+            name: "Vertical Justification".into(),
+            value: PropertyValue::Identifier("Middle".into()),
+        },
+    ];
+    if run > PIPE_AXIS_TOLERANCE_FEET {
+        properties.push(Property {
+            name: "Slope".into(),
+            value: PropertyValue::Ratio((end[2] - start[2]).abs() / run),
+        });
+    }
+    properties
 }
 
 /// `Pset_StairCommon` for a stair and `Pset_StairFlightCommon` for a
@@ -2682,7 +2828,11 @@ fn reference_set_kinds(
     super::standard_property_sets::StandardPropertyKind,
 )> {
     use super::standard_property_sets::STANDARD_PROPERTY_SETS;
-    if ifc_type == "IFCSPACE" {
+    // Revit's IFC4 export of Autodesk's 2018 `rac_basic` writes no
+    // property set on its 3 system furniture elements, so no set holds a
+    // `Reference` for the class (the standing rule: a set is written only
+    // where a Revit export confirms it).
+    if ifc_type == "IFCSPACE" || ifc_type == "IFCSYSTEMFURNITUREELEMENT" {
         return Vec::new();
     }
     STANDARD_PROPERTY_SETS
@@ -3000,6 +3150,9 @@ fn add_load_bearing(
 #[derive(Clone, PartialEq)]
 struct TypeCommon {
     fire_rating: Option<String>,
+    /// The type's Manufacturer, which Revit's export writes in
+    /// `Pset_ManufacturerTypeInformation` on the type object alone.
+    manufacturer: Option<String>,
     load_bearing: Option<bool>,
     /// A stair type of a stair whose data is read: Revit's IFC exporter's stair
     /// calculators, run on the type itself, give 0.
@@ -3074,6 +3227,21 @@ impl TypeCommon {
                 });
             }
         }
+        if let Some(manufacturer) = self.manufacturer.filter(|_| {
+            super::standard_property_sets::applies_to(
+                "Pset_ManufacturerTypeInformation",
+                occurrence,
+                None,
+            )
+        }) {
+            sets.push(PropertySet {
+                name: "Pset_ManufacturerTypeInformation".into(),
+                properties: vec![Property {
+                    name: "Manufacturer".into(),
+                    value: PropertyValue::Label(manufacturer),
+                }],
+            });
+        }
         if let (true, Some(nosing)) = (occurrence == "IFCSTAIRFLIGHT", self.nosing_feet) {
             sets.push(PropertySet {
                 name: "Pset_StairFlightCommon".into(),
@@ -3124,7 +3292,24 @@ fn record_type_common(
 ) {
     use crate::partition_schema_mvp as mvp;
     let upper = ifc_type.to_ascii_uppercase();
-    if !TYPE_COMMON_ENTITIES.contains(&upper.as_str()) {
+    let type_text = |wanted: &str| {
+        decoded
+            .fields
+            .iter()
+            .find_map(|(field, value)| match value {
+                InstanceField::String(text)
+                    if field.strip_prefix(mvp::TYPE_PARAMETER_FIELD_PREFIX) == Some(wanted)
+                        && !text.is_empty() =>
+                {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+    };
+    let manufacturer = type_text("Manufacturer");
+    // An entity outside the list is here for its Manufacturer alone.
+    let common = TYPE_COMMON_ENTITIES.contains(&upper.as_str());
+    if !common && manufacturer.is_none() {
         return;
     }
     let Some(type_id) = decoded.fields.iter().find_map(|(name, value)| match value {
@@ -3133,36 +3318,30 @@ fn record_type_common(
     }) else {
         return;
     };
-    let fire_rating = decoded
-        .fields
-        .iter()
-        .find_map(|(field, value)| match value {
-            InstanceField::String(text)
-                if field.strip_prefix(mvp::TYPE_PARAMETER_FIELD_PREFIX) == Some("Fire Rating")
-                    && !text.is_empty() =>
-            {
-                Some(text.clone())
-            }
-            _ => None,
-        });
+    let fire_rating = type_text("Fire Rating").filter(|_| common);
     let found = TypeCommon {
         fire_rating,
-        load_bearing: LOAD_BEARING_TYPE_CLASSES
-            .contains(&decoded.class.as_str())
+        manufacturer,
+        load_bearing: (common && LOAD_BEARING_TYPE_CLASSES.contains(&decoded.class.as_str()))
             .then_some(true),
-        stair_type: decoded.class == "Stair"
+        stair_type: common
+            && decoded.class == "Stair"
             && decoded
                 .fields
                 .iter()
                 .any(|(name, _)| name == mvp::STAIR_RISER_COUNT_FIELD),
-        nosing_feet: decoded.fields.iter().find_map(|(name, value)| match value {
-            InstanceField::Float { value, .. }
-                if decoded.class == "StairsRun" && name == mvp::STAIR_NOSING_LENGTH_FIELD =>
-            {
-                Some(*value)
-            }
-            _ => None,
-        }),
+        nosing_feet: decoded
+            .fields
+            .iter()
+            .find_map(|(name, value)| match value {
+                InstanceField::Float { value, .. }
+                    if decoded.class == "StairsRun" && name == mvp::STAIR_NOSING_LENGTH_FIELD =>
+                {
+                    Some(*value)
+                }
+                _ => None,
+            })
+            .filter(|_| common),
     };
     commons
         .entry((type_id, format!("{upper}TYPE")))
@@ -3387,7 +3566,8 @@ fn add_railing_height(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &Dec
 
 /// Add a door's `Qto_DoorBaseQuantities` or a window's
 /// `Qto_WindowBaseQuantities` to `sets`: the Width and Height of the symbol
-/// that draws it, and their product as its Area. Revit's IFC exporter's
+/// that draws it, and their product as its Area (on 2024 to 2026 files, see
+/// `DOOR_WINDOW_AREA_REVIT_VERSIONS`). Revit's IFC exporter's
 /// `WidthCalculator`, `HeightCalculator` and `AreaCalculator` (CLEANROOM.md
 /// source 5) read a door's or window's Width and Height parameters, its own
 /// or its type's, where no opening profile gives them; an instance
@@ -3407,22 +3587,27 @@ fn add_door_window_quantities(
     let Some([width, height]) = mvp::drawn_size_from_fields(&decoded.fields) else {
         return;
     };
+    let mut properties = vec![
+        Property {
+            name: "Width".into(),
+            value: PropertyValue::PositiveLengthFeet(width),
+        },
+        Property {
+            name: "Height".into(),
+            value: PropertyValue::PositiveLengthFeet(height),
+        },
+    ];
+    // Revit 2027's export gives the Width and Height and an Area that is not
+    // their product.
+    if !mvp::drawn_area_left_out(&decoded.fields) {
+        properties.push(Property {
+            name: "Area".into(),
+            value: PropertyValue::AreaSquareFeet(width * height),
+        });
+    }
     sets.push(PropertySet {
         name: set.into(),
-        properties: vec![
-            Property {
-                name: "Width".into(),
-                value: PropertyValue::PositiveLengthFeet(width),
-            },
-            Property {
-                name: "Height".into(),
-                value: PropertyValue::PositiveLengthFeet(height),
-            },
-            Property {
-                name: "Area".into(),
-                value: PropertyValue::AreaSquareFeet(width * height),
-            },
-        ],
+        properties,
     });
 }
 
@@ -4676,8 +4861,9 @@ fn pipe_invert_height(fields: &[(String, InstanceField)]) -> Option<f64> {
 /// proxies, and no wall, door, slab, covering or curtain wall. On the
 /// BIM4LCA office Revit's export also puts its waste, fire
 /// suppression and air terminals and electric appliances in their rooms'
-/// spaces.
-const ROOM_CONTENT_TYPES: [&str; 7] = [
+/// spaces, and Revit's IFC4 export of Autodesk's 2018 `rac_basic`
+/// contains its 3 system furniture elements in a space (3 of 3).
+const ROOM_CONTENT_TYPES: [&str; 8] = [
     "IFCFURNITURE",
     "IFCSANITARYTERMINAL",
     "IFCBUILDINGELEMENTPROXY",
@@ -4685,6 +4871,7 @@ const ROOM_CONTENT_TYPES: [&str; 7] = [
     "IFCFIRESUPPRESSIONTERMINAL",
     "IFCAIRTERMINAL",
     "IFCELECTRICAPPLIANCE",
+    "IFCSYSTEMFURNITUREELEMENT",
 ];
 
 /// A closed plan loop, model feet.
@@ -4982,10 +5169,7 @@ fn space_by_export_value(decoded: &DecodedElement) -> bool {
 /// an element the export does not write, or writes as its value says.
 pub(crate) fn unapplied_export_value(decoded: &DecodedElement) -> Option<&str> {
     if is_misleading_proxy_class(&decoded.class)
-        || matches!(
-            decoded.class.as_str(),
-            "Material" | "ArcWall" | "ArcWallRectOpening"
-        )
+        || matches!(decoded.class.as_str(), "Material" | "ArcWall")
     {
         return None;
     }
@@ -5077,6 +5261,18 @@ pub const WALL_TOP_COVER_BODY_HEIGHT_SOURCE: &str = "wall_top_cut_at_covering_fl
 /// of the plan outside the element from there to the top.
 pub const WALL_TOP_STEPPED_BODY_HEIGHT_SOURCE: &str = "wall_top_stepped_at_covering_floor";
 
+/// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] on a wall cut whole
+/// (`BodyHeightSource` [`WALL_TOP_COVER_BODY_HEIGHT_SOURCE`]) by a floor that
+/// does not cover all of its plan: what the floor leaves is a stub, which Revit
+/// cuts with the rest of the wall. Its value says where the
+/// stub lies, [`WALL_TOP_STUB_INSIDE_WALL`]. Counted in
+/// `exported.wall_top_stubs_cut`.
+pub const WALL_TOP_STUB_PROPERTY: &str = "TopCoverStub";
+
+/// [`WALL_TOP_STUB_PROPERTY`] of a wall whose stub lies wholly inside the plan
+/// of another wall.
+pub const WALL_TOP_STUB_INSIDE_WALL: &str = "inside_another_wall";
+
 /// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] that says how an end
 /// of it was drawn where it is not the end its record's joins give. The wall's `EndCoverElementId` is the wall it reaches.
 pub const WALL_END_SOURCE_PROPERTY: &str = "BodyEndSource";
@@ -5111,6 +5307,30 @@ pub const WALL_END_ORDER_DEPENDENT_PROPERTY: &str = "EndOrderDependent";
 /// past those walls, so that the wall carries no `BodyEndRefusal`: counted in
 /// `exported.wall_end_reads_unmarked`.
 pub const WALL_END_NOT_MARKED_PROPERTY: &str = "EndNotMarked";
+
+/// Hand-off property of a wall (see [`TypedProductionAppend::record_handoffs`],
+/// not written in the file) that names how the line of a sloped end of its
+/// elevation profile, carried on to the wall's end, stands against the top of
+/// the wall's box, or that a level cut-out was carried: counted in
+/// `exported.wall_profile_height_checks`, a measurement and nothing the rule
+/// decides by.
+pub const WALL_PROFILE_CHECK_PROPERTY: &str = "ProfileStubHeightCheck";
+
+/// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] that says how the
+/// cut-out of its edited elevation profile was carried on where the wall goes
+/// on past the profile: `wall_profile_<what>_past_<where>`,
+/// `<what>` being `sloped` (a line carried along its slope), `level` (the cut-out
+/// of a notch carried straight out) or `sloped_and_level`, and `<where>` being
+/// `the_low_end`, `the_high_end` or `both_ends` of the profile along its own
+/// axis.
+pub const WALL_PROFILE_SOURCE_PROPERTY: &str = "ProfileStubSource";
+
+/// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] that says why the
+/// stretch of a wall that goes on past its edited elevation profile keeps the
+/// top the profile's cut gives it there. It holds the first
+/// reason only, and a wall carried at one end and refused at the other has it
+/// and `ProfileStubSource` both.
+pub const WALL_PROFILE_REFUSAL_PROPERTY: &str = "ProfileStubRefusal";
 
 /// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] that says how its base
 /// was cut. It is not `BodyHeightSource`, which says how the
@@ -5256,6 +5476,22 @@ pub const SPACE_OUTLINE_STORED_SOLID_FACES: &str = "stored_solid_faces";
 /// so read (4 as built, 11 at building permit), 5 are 0.45% to 0.68% under
 /// Revit's floor area (four rooms, 1671995 in both files) and 10 are equal.
 pub const SPACE_OUTLINE_STORED_SOLID_APPROXIMATE: &str = "stored_solid_approximate";
+
+/// [`SPACE_OUTLINE_SOURCE_PROPERTY`] of a room whose outline was read from the
+/// edges of its stored solid, where neither the walk nor the span of
+/// reads one: the outline of the solid's floor, which
+/// closes as the walk reads it and spans the record box, where the solid holds
+/// no face that is neither vertical nor horizontal, no edge its two planes
+/// place differently and no point between its floor and 4 ft above it but on
+/// a vertical edge. It reads two rooms of the
+/// models measured: the BIM4LCA office's room 3095831 at building permit,
+/// 1864.737 ft² against the 1864.74 of Revit's IFC4 export, and Snowdon
+/// Towers' room 830902, 304.059 ft², within 0.001 ft² of Revit's
+/// (`Vim.Room.Area` of the model's 2027 edition, a later save). On every room
+/// of Autodesk's samples, the office and the Revit 2025 models that the walk
+/// or the span reads and this rule accepts, it gives the same outline, to
+/// 0.01 ft² in area and 0.001 ft on its extent.
+pub const SPACE_OUTLINE_STORED_SOLID_EDGES: &str = "stored_solid_edges";
 
 /// [`SPACE_OUTLINE_SOURCE_PROPERTY`] of a space drawn as its record's bounding
 /// box (a room whose outline was not read, a Revit Space or a family instance
@@ -5404,6 +5640,19 @@ fn oriented_box_solid(axes: [[f64; 3]; 3], half: [f64; 3], height: f64) -> entit
 /// The name of each hand-off ([`TypedProductionAppend::record_handoffs`]) holding a
 /// turned family instance's plan origin from its transform, model feet.
 pub const INSTANCE_ORIGIN_PROPERTIES: [&str; 2] = ["InstanceOriginX", "InstanceOriginY"];
+
+/// The name of each hand-off holding the stored origin of a door set in no
+/// wall, model feet: the origin Revit's export gives its placement.
+pub const PLACEMENT_ORIGIN_PROPERTIES: [&str; 3] =
+    ["PlacementOriginX", "PlacementOriginY", "PlacementOriginZ"];
+
+/// The name of the property in [`ELEMENT_RECORD_PROPERTY_SET`] that says a
+/// door's placement origin is its stored one.
+pub const PLACEMENT_ORIGIN_SOURCE_PROPERTY: &str = "PlacementOriginSource";
+
+/// The [`PLACEMENT_ORIGIN_SOURCE_PROPERTY`] of a door set in no wall, which
+/// Revit's export gives no opening and places at its stored origin.
+pub const NO_OPENING_PLACEMENT_ORIGIN_SOURCE: &str = "stored_origin_no_opening";
 
 /// The name of each hand-off holding a window's opening from its type and
 /// transform (`crate::partition_schema_mvp::FillerOpening`): the plan
@@ -5631,6 +5880,60 @@ fn pipe_cylinder_solid(
             pipe.start[0] - location[0],
             pipe.start[1] - location[1],
             pipe.start[2] - location[2],
+        ],
+        axis,
+        ref_direction: x,
+        depth_feet: length,
+    }
+}
+
+/// A duct's tap: its connector's index, the point on the duct's
+/// line it is at, and the line's direction, its axis.
+type DuctTap = (u32, [f64; 3], [f64; 3]);
+
+/// `BodySource` of a duct drawn as its section along its own record's line.
+pub const DUCT_LINE_BODY_SOURCE: &str = "native_duct_line";
+
+/// A duct's body: a round section is its circle extruded from one
+/// end to the other, as a pipe's; a rectangular one its width by
+/// its height, the height along the record's normal and the width across the
+/// normal and the line. `location` is the element's placement.
+fn duct_swept_solid(
+    duct: &crate::partition_schema_mvp::DuctBody,
+    location: [f64; 3],
+) -> entities::SolidShape {
+    if duct.round {
+        return pipe_cylinder_solid(
+            &crate::partition_pipe_axes::PipeBody {
+                start: duct.start,
+                end: duct.end,
+                radius_feet: duct.width_feet / 2.0,
+            },
+            location,
+        );
+    }
+    let length = (0..3)
+        .map(|axis| (duct.end[axis] - duct.start[axis]).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let axis: [f64; 3] = std::array::from_fn(|i| (duct.end[i] - duct.start[i]) / length);
+    let n = crate::partition_schema_mvp::square_to(duct.normal, axis).unwrap_or(duct.normal);
+    // The profile's X axis is the width's direction, so its Y axis, the
+    // extrusion's axis crossed with it, is the normal.
+    let x = [
+        n[1] * axis[2] - n[2] * axis[1],
+        n[2] * axis[0] - n[0] * axis[2],
+        n[0] * axis[1] - n[1] * axis[0],
+    ];
+    entities::SolidShape::PlacedExtrusion {
+        profile: entities::ProfileDef::Rectangle {
+            width_feet: duct.width_feet,
+            depth_feet: duct.height_feet,
+        },
+        origin_feet: [
+            duct.start[0] - location[0],
+            duct.start[1] - location[1],
+            duct.start[2] - location[2],
         ],
         axis,
         ref_direction: x,
@@ -7193,6 +7496,11 @@ fn wall_centreline_body(
     {
         ([x, y], run_from_width)
     } else {
+        // where nothing marks a slanted wall, a box that does not
+        // close on the line's rectangle may be one.
+        if axis.box_must_close {
+            return None;
+        }
         // A box far wider than the line's own rectangle holds a body that
         // is not that rectangle: a leaning or profiled wall.
         let limit = 2.0 * thickness.max(1.0);
@@ -7835,7 +8143,14 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
     } else {
         None
     };
-    // A beam whose type is an I section, drawn as it where its body
+    // a duct its own record drew along its line is its section swept
+    // along it.
+    let duct = if class == "Duct" {
+        crate::partition_schema_mvp::duct_body_from_fields(&decoded.fields)
+    } else {
+        None
+    };
+    // a beam whose type is an I section, drawn as it where its body
     // along its line holds the section.
     let i_beam = beam_closed.and_then(|beam| {
         let section = crate::partition_schema_mvp::beam_i_section_from_fields(&decoded.fields)?;
@@ -8235,6 +8550,7 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                     .or_else(|| beam_longer.map(|_| BEAM_BOX_BODY_SOURCE.into()))
                     .or_else(|| beam.map(|_| BEAM_AXIS_BODY_SOURCE.into()))
                     .or_else(|| pipe.map(|_| PIPE_AXIS_BODY_SOURCE.into()))
+                    .or_else(|| duct.map(|_| DUCT_LINE_BODY_SOURCE.into()))
                     .or_else(|| stair_run.as_ref().map(|_| STAIR_RUN_BODY_SOURCE.into()))
                     .or_else(|| spiral_run.as_ref().map(|_| SPIRAL_RUN_BODY_SOURCE.into()))
                     .or_else(|| {
@@ -8267,6 +8583,7 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                     || type_section.is_some()
                     || beam_closed.is_some()
                     || pipe.is_some()
+                    || duct.is_some()
                     || stair_run.is_some()
                     || spiral_run.is_some()
                     || landing_tread.is_some()
@@ -8421,7 +8738,21 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
             }
         }
     }
-    // A window reports the opening its type and transform give it.
+    // a door set in no wall reports its stored origin, which Revit's
+    // export gives its placement.
+    if class == "Door" {
+        if let Some(origin) =
+            crate::partition_schema_mvp::opening_placement_origin_from_fields(&decoded.fields)
+        {
+            for (name, value) in PLACEMENT_ORIGIN_PROPERTIES.iter().zip(origin) {
+                handoffs.push(Property {
+                    name: (*name).into(),
+                    value: PropertyValue::LengthFeet(value),
+                });
+            }
+        }
+    }
+    // a window reports the opening its type and transform give it.
     if let Some(opening) = crate::partition_schema_mvp::filler_opening_from_fields(&decoded.fields)
     {
         let values = [
@@ -8696,6 +9027,9 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
             Some(crate::partition_room_boundaries::ROOM_OUTLINE_SOURCE_APPROXIMATE) => {
                 SPACE_OUTLINE_STORED_SOLID_APPROXIMATE
             }
+            Some(crate::partition_room_boundaries::ROOM_OUTLINE_SOURCE_EDGES) => {
+                SPACE_OUTLINE_STORED_SOLID_EDGES
+            }
             _ => SPACE_OUTLINE_RECORD_BOX,
         };
         properties.push(Property {
@@ -8887,6 +9221,11 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                     None,
                     record_body,
                     pipe.map(|body| pipe_cylinder_solid(&body, [x, y, z])),
+                ),
+                None if duct.is_some() => (
+                    None,
+                    record_body,
+                    duct.map(|body| duct_swept_solid(&body, [x, y, z])),
                 ),
                 None if oriented.is_some() => (
                     None,

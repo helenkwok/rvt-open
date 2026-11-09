@@ -371,5 +371,7 @@ pub fn build_ifc_model(inputs: &[ElementInput<'_>], options: BuilderOptions) -> 
         single_slab_roofs: Default::default(),
         wall_cut_openings_left_out: Default::default(),
         wall_end_reads_unmarked: Default::default(),
+        wall_profile_height_checks: Default::default(),
+        port_joins_left_out: Default::default(),
     }
 }

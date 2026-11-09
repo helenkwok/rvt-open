@@ -56,7 +56,7 @@ fn u64_at(buf: &[u8], at: usize) -> Option<u64> {
 }
 
 /// The reasons whose entries are frames of the element-record partitions.
-const FRAME_REASONS: [&str; 7] = [
+const FRAME_REASONS: [&str; 8] = [
     "element_record_without_element_id",
     "element_record_without_volume",
     "element_record_in_non_primary_design_option",
@@ -64,6 +64,7 @@ const FRAME_REASONS: [&str; 7] = [
     "room_not_in_export_phase",
     "element_record_empty_curtain_panel",
     "element_record_family_space_without_body",
+    "element_record_family_type_draws_nothing",
 ];
 
 /// One export of a model, and what its log must show.
@@ -134,14 +135,13 @@ const CASES: [Case; 5] = [
 
 /// The reasons made from the model, whose evidence the log reads from the
 /// provenance table.
-const MODEL_REASONS: [&str; 13] = [
+const MODEL_REASONS: [&str; 12] = [
     "unsupported_geometry_curve",
     "unsupported_geometry_profile",
     "unsupported_geometry_unresolved_host",
     "unsupported_geometry_missing_level",
     "unsupported_geometry_missing_dimensions",
     "floor_boundary_annotation_only",
-    "opening_index_without_host_geometry",
     "body_is_record_box",
     "space_outline_is_record_box",
     "area_body_refused",
@@ -276,6 +276,10 @@ fn check_model(model: &str, path: &Path, case: Option<&Case>) {
         ("slab_shape_refused", &exported.slab_shape_refusals),
         ("wall_base_cut_refused", &exported.wall_base_refusals),
         ("wall_end_extension_refused", &exported.wall_end_refusals),
+        (
+            "wall_profile_extension_refused",
+            &exported.wall_profile_refusals,
+        ),
     ] {
         aggregate.insert(reason.to_string(), refusals.values().sum());
         classes.insert(reason.to_string(), refusals.clone());
@@ -325,6 +329,7 @@ fn check_model(model: &str, path: &Path, case: Option<&Case>) {
                 | "slab_shape_refused"
                 | "wall_base_cut_refused"
                 | "wall_end_extension_refused"
+                | "wall_profile_extension_refused"
         ) {
             let found = counted(&entries, |entry| entry.detail.as_ref());
             assert_eq!(&found, &classes[reason], "{name}: {reason} by detail");

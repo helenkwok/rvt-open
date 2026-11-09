@@ -281,6 +281,10 @@ pub struct RevitFile {
     /// Doors and windows written as such though their type's record was not
     /// read.
     unread_type_doors_windows: BTreeSet<u32>,
+    /// Types and text parameters (Fire Rating, Manufacturer) left out because
+    /// the copies of a family type table's entry, or an entry and,
+    /// disagree.
+    disagreeing_type_texts: BTreeSet<(u32, &'static str)>,
     /// Memoised steps of the walls' native records that name a cutting element
     /// (`research::native_wall_cuts::wall_cut_steps`), by wall, and the walls
     /// whose record was looked for, found or not: the openings the walls
@@ -294,6 +298,11 @@ pub struct RevitFile {
     /// How many family instances written as spaces were not checked for a 3D
     /// body, and why, where the check could not run.
     bodiless_family_space_error: Option<(usize, String)>,
+    /// Family instances left out because their type draws nothing visible,
+    /// by class, and the error that stopped that check.
+    invisible_type_instances:
+        BTreeMap<String, Vec<crate::partition_element_records::LeftOutElement>>,
+    invisible_type_error: Option<(usize, String)>,
     /// The copy of an element's data each reader took a value from, by
     /// ElementId, noted where the reader chose it. `None` unless the
     /// export asked for the provenance table: the readers then note nothing.
@@ -664,10 +673,13 @@ impl RevitFile {
             family_documents: None,
             unread_streams: Vec::new(),
             unread_type_doors_windows: BTreeSet::new(),
+            disagreeing_type_texts: BTreeSet::new(),
             wall_cut_steps_memo: BTreeMap::new(),
             wall_cut_steps_asked: BTreeSet::new(),
             bodiless_family_spaces: BTreeMap::new(),
             bodiless_family_space_error: None,
+            invisible_type_instances: BTreeMap::new(),
+            invisible_type_error: None,
             value_sources: None,
         })
     }
@@ -690,6 +702,18 @@ impl RevitFile {
 
     pub(crate) fn note_unread_type_doors_windows(&mut self, ids: impl IntoIterator<Item = u32>) {
         self.unread_type_doors_windows.extend(ids);
+    }
+
+    /// The type text parameters left out for want of agreeing copies.
+    pub(crate) fn disagreeing_type_texts(&self) -> &BTreeSet<(u32, &'static str)> {
+        &self.disagreeing_type_texts
+    }
+
+    pub(crate) fn note_disagreeing_type_texts(
+        &mut self,
+        keys: impl IntoIterator<Item = (u32, &'static str)>,
+    ) {
+        self.disagreeing_type_texts.extend(keys);
     }
 
     /// What became of each frame at the markers of this Revit 2008 to 2023
@@ -750,6 +774,29 @@ impl RevitFile {
         self.bodiless_family_spaces = classes;
     }
 
+    /// The family instances left out because their type draws nothing visible,
+    /// by class.
+    pub(crate) fn invisible_type_instances(
+        &self,
+    ) -> &BTreeMap<String, Vec<crate::partition_element_records::LeftOutElement>> {
+        &self.invisible_type_instances
+    }
+
+    pub(crate) fn note_invisible_type_instances(
+        &mut self,
+        classes: BTreeMap<String, Vec<crate::partition_element_records::LeftOutElement>>,
+    ) {
+        self.invisible_type_instances = classes;
+    }
+
+    pub(crate) fn invisible_type_error(&self) -> Option<&(usize, String)> {
+        self.invisible_type_error.as_ref()
+    }
+
+    pub(crate) fn note_invisible_type_error(&mut self, checked: usize, error: String) {
+        self.invisible_type_error = Some((checked, error));
+    }
+
     /// Forget what an earlier production walk noted for its diagnostics: the
     /// Areas left unwritten, the family spaces left out for want of a body,
     /// the error that stopped that check, and the doors and windows written
@@ -762,7 +809,10 @@ impl RevitFile {
         self.dropped_chain_entries = 0;
         self.bodiless_family_spaces.clear();
         self.bodiless_family_space_error = None;
+        self.invisible_type_instances.clear();
+        self.invisible_type_error = None;
         self.unread_type_doors_windows.clear();
+        self.disagreeing_type_texts.clear();
         if let Some(noted) = self.value_sources.as_mut() {
             noted.clear();
         }
@@ -1498,12 +1548,12 @@ impl RevitFile {
     /// The project's phases in order, the last being the one an export shows
     /// unless [`Self::set_export_phase`] chooses another. Empty where the
     /// export applies no phase: a family, a release whose phases are not read
-    /// (Revit 2015 and earlier), or a file whose phases could not be read.
+    /// (Revit 2014 and earlier), or a file whose phases could not be read.
     /// Reads nothing the export does not.
     pub fn project_phases(&mut self) -> Vec<ProjectPhase> {
         if let Ok(release) = self.layout_release() {
             if crate::partition_element_records_2023::is_32bit_release(release)
-                && !crate::partition_element_records_2023::applies_export_filters(release)
+                && !crate::partition_element_records_2023::applies_phase_filter(release)
             {
                 return Vec::new();
             }
@@ -1534,7 +1584,7 @@ impl RevitFile {
     pub fn room_phase_fallback(&mut self) -> Option<ProjectPhase> {
         if let Ok(release) = self.layout_release() {
             if crate::partition_element_records_2023::is_32bit_release(release)
-                && !crate::partition_element_records_2023::applies_export_filters(release)
+                && !crate::partition_element_records_2023::applies_phase_filter(release)
             {
                 return None;
             }
@@ -1577,10 +1627,10 @@ impl RevitFile {
     pub fn set_export_phase(&mut self, phase: &str) -> Result<()> {
         if let Ok(release) = self.layout_release() {
             if crate::partition_element_records_2023::is_32bit_release(release)
-                && !crate::partition_element_records_2023::applies_export_filters(release)
+                && !crate::partition_element_records_2023::applies_phase_filter(release)
             {
                 return Err(Error::InvalidInput(format!(
-                    "the export phase is applied to Revit 2016 and later, and this file is \
+                    "the export phase is applied to Revit 2015 and later, and this file is \
                      Revit {release}: it writes every element and room whatever its phase"
                 )));
             }
