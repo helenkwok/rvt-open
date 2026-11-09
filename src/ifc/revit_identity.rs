@@ -21,6 +21,10 @@ use std::collections::BTreeMap;
 /// The set's name.
 pub const SET: &str = "Revit";
 
+/// The categories of elements that only cut openings: Shaft Openings and the
+/// rectangular wall, structural framing and roof opening cuts.
+const OPENING_CATEGORIES: [i64; 5] = [-2_000_996, -2_000_997, -2_000_999, -2_000_995, -2_000_897];
+
 /// What [`attach`] wrote.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -114,6 +118,7 @@ pub fn attach_with(categories: &BTreeMap<u32, i64>, model: &mut IfcModel) -> Rep
     for (index, entity) in model.entities.iter().enumerate() {
         let IfcEntity::BuildingElement {
             type_guid: Some(tag),
+            property_set,
             ..
         } = entity
         else {
@@ -122,7 +127,19 @@ pub fn attach_with(categories: &BTreeMap<u32, i64>, model: &mut IfcModel) -> Rep
         let Ok(id) = tag.parse::<u32>() else {
             continue;
         };
-        let set = identity(id, categories.get(&id).copied());
+        // An Area's record carries no box, so the record scan above does not
+        // find it; the area reader names it an Area.
+        let area = property_set.as_ref().is_some_and(|set| {
+            set.properties.iter().any(|p| {
+                p.name == super::export_content::SPATIAL_KIND_PROPERTY
+                    && matches!(&p.value, PropertyValue::Text(t) if t == "Area")
+            })
+        });
+        let category = categories
+            .get(&id)
+            .copied()
+            .or_else(|| area.then_some(crate::partition_area_records::OST_AREAS));
+        let set = identity(id, category);
         report.elements += 1;
         report.with_category += usize::from(set.properties.len() > 1);
         added.push(IfcEntity::ElementPropertySet {
@@ -131,6 +148,24 @@ pub fn attach_with(categories: &BTreeMap<u32, i64>, model: &mut IfcModel) -> Rep
         });
     }
     model.entities.extend(added);
+    // The elements that cut openings and are no building element themselves,
+    // each listed in the element table under its category.
+    for entity in &model.entities {
+        let tag = match entity {
+            IfcEntity::VoidOpening { tag, .. }
+            | IfcEntity::WallProfileOpening { tag, .. }
+            | IfcEntity::WallCutOpening { tag, .. }
+            | IfcEntity::HostedCutOpening { tag, .. } => tag,
+            _ => continue,
+        };
+        if let Ok(id) = tag.parse::<u32>()
+            && let Some(category) = categories.get(&id)
+            && OPENING_CATEGORIES.contains(category)
+            && let Some((name, _)) = crate::builtin_parameters::category_name_and_parent(*category)
+        {
+            model.opening_categories.insert(id, name.to_string());
+        }
+    }
     let types: std::collections::BTreeSet<u32> = model.element_type_ids.values().copied().collect();
     for type_id in types {
         let sets = model.type_property_sets.entry(type_id).or_default();

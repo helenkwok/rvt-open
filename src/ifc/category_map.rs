@@ -477,6 +477,20 @@ pub const MAPPINGS: &[Mapping] = &[
         ifc_type: "IFCGEOGRAPHICELEMENT",
         predefined_type: Some("USERDEFINED"),
     },
+    // Revit's export writes a toposolid as `IfcGeographicElement .TERRAIN.`
+    // (Revit 2024 to 2027, tiny reference models set 2, recipe 20: 4 of 4).
+    // A topography surface takes the same class here, where Revit 2018 to
+    // 2023 name the IfcSite after it.
+    Mapping {
+        revit_class: "Toposolid",
+        ifc_type: "IFCGEOGRAPHICELEMENT",
+        predefined_type: Some("TERRAIN"),
+    },
+    Mapping {
+        revit_class: "Topography",
+        ifc_type: "IFCGEOGRAPHICELEMENT",
+        predefined_type: Some("TERRAIN"),
+    },
     Mapping {
         revit_class: "Parking",
         ifc_type: "IFCBUILDINGELEMENTPROXY",

@@ -49,7 +49,8 @@ pub struct PlanView {
     pub top: Option<f64>,
     pub level_below: Option<f64>,
     pub crop: Option<CropBox>,
-    /// View scale (100 for 1:100): sheet sizes times this are model sizes.
+    /// View scale (100 for 1:100): sheet sizes times this are model sizes. Stored as its inverse
+    /// (`m_scale`, 0.01 for 1:100 and 1/96 for 1/8" = 1'-0").
     pub scale: Option<f64>,
     /// Categories the view hides (its visibility settings), as BuiltInCategory ids.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -85,6 +86,21 @@ pub struct Datum {
     pub name: String,
     /// A grid's line, its two ends (model feet).
     pub ends: Option<[[f64; 3]; 2]>,
+    /// The line's origin and unit direction: a view's extents of the grid are positions along it.
+    #[serde(skip)]
+    pub axis: Option<([f64; 3], [f64; 3])>,
+}
+
+/// A grid's extent in one view (`ExtentElem.m_idExtents`, a `DatumPlaneRec` per grid): its free
+/// and bubble ends as positions along the grid's line, and which ends show a head.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct GridExtent {
+    pub view: i64,
+    pub grid: i64,
+    pub free: f64,
+    pub bubble: f64,
+    pub free_head: bool,
+    pub bubble_head: bool,
 }
 
 /// A text a view owns, model feet.
@@ -122,14 +138,40 @@ pub struct RoomLabel {
     pub point: Option<[f64; 2]>,
 }
 
-/// A line of the project (not of a family): a model line, a room or area separation line, or a
-/// detail line a view owns (`view`). `category` is `CurveElemData.m_categoryId`: a built-in
-/// category (negative) or the line style's subcategory. Points in model feet; an arc as chords.
+/// A line of the project (not of a family): a model line, a room separation line, a property
+/// line, or a detail line or filled region edge a view owns (`view`). `category` is
+/// `CurveElemData.m_categoryId`: a built-in category (negative) or the line style. Points in model
+/// feet; an arc as chords.
+///
+/// A sketch's lines (`SketchMembership.m_groupId`) are kept where a plan draws its owner as its
+/// boundary: a filled region, a property, a floor, a toposolid, a building pad. Lines that only
+/// shape another element are left out: a family's (`m_famId` set), other sketches' (ceilings,
+/// roofs, railings, stairs, walls, openings, plan regions), a sweep's path (`Path3d`) and a
+/// profile's reference plane, and area boundaries (`m_areaSchemeId` set, drawn only in area plans).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct ViewCurve {
     pub view: Option<i64>,
     pub category: Option<i64>,
+    pub kind: LineKind,
     pub points: Vec<[f64; 3]>,
+}
+
+/// What a project line is, from the element that owns it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub enum LineKind {
+    /// A model or detail line, or a filled region's edge.
+    #[default]
+    Line,
+    /// A room separation line (`m_areaSeparation` with no area scheme).
+    RoomSeparation,
+    /// An edge of a property's sketch (`Property.m_sketchId`).
+    PropertyLine,
+    /// An edge of a floor's sketch, its boundary or an opening in it.
+    Floor,
+    /// An edge of a toposolid's sketch.
+    Toposolid,
+    /// An edge of a building pad's sketch.
+    BuildingPad,
 }
 
 /// Everything [`read`] finds.
@@ -143,6 +185,7 @@ pub struct ViewFacts {
     pub room_tags: Vec<ViewRoomTag>,
     pub rooms: BTreeMap<i64, RoomLabel>,
     pub curves: Vec<ViewCurve>,
+    pub grid_extents: Vec<GridExtent>,
 }
 
 fn id(f: &Fields, name: &str) -> Option<i64> {
@@ -290,6 +333,16 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
             "TextElement",
             "LinearDimString",
             "CurveElem",
+            "ContourLabelingElem",
+            "FilledRegion",
+            "Property",
+            "Floor",
+            "Ceiling",
+            "Toposolid",
+            "BuildingPad",
+            "Path3d",
+            "ProfileRefPlane",
+            "ExtentElem",
         ],
     );
     // Partition sections are the loaded families' own documents: a curve after a section start
@@ -309,6 +362,18 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
     };
     let mut out = ViewFacts::default();
     let mut crops: BTreeMap<i64, CropBox> = BTreeMap::new();
+    // Sketches whose lines are drawn (a filled region's, a property's), lines that only shape
+    // something else (a sweep path's, a profile plane's), and each candidate line's id and sketch.
+    let mut drawn_sketches: BTreeMap<i64, LineKind> = BTreeMap::new();
+    let mut shaping: std::collections::BTreeSet<i64> = Default::default();
+    let mut curve_owners: Vec<(i64, Option<i64>)> = Vec::new();
+    let sketch_of = |o: &SchemaObject| {
+        o.objects.iter().find_map(|f| {
+            (layouts.classes.get(&f.tag)?.name == "SketchMembership")
+                .then(|| id(f, "m_groupId"))
+                .flatten()
+        })
+    };
     for_each_object_where(
         rf,
         |f, _| wanted.contains_key(&f.header.tag),
@@ -333,7 +398,7 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                     top: float(root, "m_topClipElev"),
                     level_below: float(root, "m_levelBelowElev"),
                     crop: None,
-                    scale: float(root, "m_scale").filter(|s| *s > 0.0),
+                    scale: float(root, "m_scale").filter(|s| *s > 0.0).map(|s| 1.0 / s),
                     hidden_categories: ids_in(
                         o,
                         &layouts,
@@ -375,11 +440,63 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                         }
                     }
                 }
+                Some("ExtentElem") => {
+                    let (Some(view), Some(Value::List(items))) =
+                        (id(root, "m_dbViewId"), root.get("m_idExtents"))
+                    else {
+                        return;
+                    };
+                    for item in items {
+                        let Value::Object(pair) = item else { continue };
+                        let rec = match pair.get("second") {
+                            Some(Value::Object(f)) => pointee(o, f, "m_oExtentData"),
+                            _ => None,
+                        };
+                        let (Some(grid), Some(rec)) = (id(pair, "first"), rec) else {
+                            continue;
+                        };
+                        if layouts.classes.get(&rec.tag).map(|c| c.name.as_str())
+                            != Some("DatumPlaneRec")
+                        {
+                            continue;
+                        }
+                        // The view's own (2D) extents when set, else the grid's (3D) ones.
+                        let ends = match (float(rec, "m_freeEnd"), float(rec, "m_bubbleEnd")) {
+                            (Some(f), Some(b)) if f != 0.0 || b != 0.0 => Some((f, b)),
+                            _ => float(rec, "m_freeEnd3d").zip(float(rec, "m_bubbleEnd3d")),
+                        };
+                        if let Some((free, bubble)) = ends.filter(|(f, b)| (f - b).abs() > 1e-9) {
+                            // `m_endBubbleOverrides`: bit 1 shows a head at the free end, bit 8
+                            // hides the one at the bubble end (measured against the DWG exports
+                            // of rac_basic_sample_project's Level 2 and the Snowdon Towers
+                            // sample's L1).
+                            let flags = match rec.get("m_endBubbleOverrides") {
+                                Some(Value::Int(i)) => *i,
+                                _ => 0,
+                            };
+                            out.grid_extents.push(GridExtent {
+                                view,
+                                grid,
+                                free,
+                                bubble,
+                                free_head: flags & 1 != 0,
+                                bubble_head: flags & 8 == 0,
+                            });
+                        }
+                    }
+                }
                 Some(kind @ ("Level" | "Grid")) => {
+                    let axis = pointee(o, root, "m_pSurface").and_then(plane_axis);
                     let d = Datum {
                         id: element,
                         name: text(root, "m_text").unwrap_or_default(),
-                        ends: pointee(o, root, "m_pSurface").and_then(plane_line),
+                        ends: axis.map(|(origin, dir, lo, hi)| {
+                            [0, 1].map(|k| {
+                                let t = if k == 0 { lo } else { hi };
+                                [0, 1, 2].map(|i| origin[i] + t * dir[i])
+                            })
+                        }),
+                        axis: axis.map(|(origin, dir, _, _)| (origin, dir)),
                     };
                     if kind == "Level" {
                         out.levels.push(d);
@@ -466,20 +583,66 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                         }
                     }
                 }
-                Some("CurveElem") if !in_family(o) => {
+                Some(
+                    kind @ ("FilledRegion" | "Property" | "Floor" | "Toposolid" | "BuildingPad"),
+                ) if !in_family(o) => {
+                    let kind = match kind {
+                        "Property" => LineKind::PropertyLine,
+                        "Floor" => LineKind::Floor,
+                        "Toposolid" => LineKind::Toposolid,
+                        "BuildingPad" => LineKind::BuildingPad,
+                        _ => LineKind::Line,
+                    };
+                    // Its boundary sketch and those of the openings cut in it.
+                    for sketch in o.objects.iter().filter_map(|f| id(f, "m_sketchId")) {
+                        drawn_sketches.insert(sketch, kind);
+                    }
+                }
+                Some("Path3d" | "ProfileRefPlane") if !in_family(o) => {
+                    fn ids(v: &Value, out: &mut std::collections::BTreeSet<i64>) {
+                        match v {
+                            Value::Id(i) if *i >= 0 => {
+                                out.insert(*i);
+                            }
+                            Value::List(items) => items.iter().for_each(|i| ids(i, out)),
+                            Value::Object(f) => f.values.iter().for_each(|(_, v)| ids(v, out)),
+                            _ => {}
+                        }
+                    }
+                    for f in o.objects.iter().skip(1) {
+                        f.values.iter().for_each(|(_, v)| ids(v, &mut shaping));
+                    }
+                    if let Some(c) = id(root, "m_curveElemId") {
+                        shaping.insert(c);
+                    }
+                }
+                // A family's own line (in-place, or kept with a loaded family) and an area
+                // boundary (area plans only) are not the plan's.
+                Some("CurveElem")
+                    if !in_family(o)
+                        && id(root, "m_famId").is_none()
+                        && id(root, "m_areaSchemeId").is_none() =>
+                {
                     // `CurveElemData`'s fields are read inline with the element's.
                     let category = match root.get("m_categoryId") {
                         Some(Value::Id(i)) => Some(*i),
                         _ => None,
+                    };
+                    let kind = if flag(root, "m_areaSeparation") {
+                        LineKind::RoomSeparation
+                    } else {
+                        LineKind::Line
                     };
                     let points = pointee(o, root, "m_pCurveDriver")
                         .and_then(|d| pointee(o, d, "m_pCrv"))
                         .map(curve_points)
                         .unwrap_or_default();
                     if points.len() >= 2 {
+                        curve_owners.push((element, sketch_of(o)));
                         out.curves.push(ViewCurve {
                             view: owner,
                             category,
+                            kind,
                             points,
                         });
                     }
@@ -488,6 +651,23 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
             }
         },
     )?;
+    // A sketch's lines are drawn only where its owner is drawn as its boundary, as its kind.
+    let mut owners = curve_owners.into_iter();
+    out.curves.retain_mut(|c| {
+        let Some((element, sketch)) = owners.next() else {
+            return false;
+        };
+        if shaping.contains(&element) {
+            return false;
+        }
+        match sketch {
+            None => true,
+            Some(s) => drawn_sketches.get(&s).is_some_and(|k| {
+                c.kind = *k;
+                true
+            }),
+        }
+    });
     let level_names: BTreeMap<i64, String> =
         out.levels.iter().map(|l| (l.id, l.name.clone())).collect();
     for v in &mut out.views {
@@ -529,24 +709,35 @@ fn curve_points(c: &Fields) -> Vec<[f64; 3]> {
         .collect()
 }
 
-/// A datum's line: its plane's origin moved along the plane's x axis to the two ends of the
-/// plane's extent (`m_Envelope.m_corners`, in the plane's own coordinates).
-fn plane_line(plane: &Fields) -> Option<[[f64; 3]; 2]> {
+/// A datum's line: its plane's origin, its direction (the plane's normal, x cross y, crossed with
+/// up), and the range of the plane's extent (`m_Envelope.m_corners`, in the plane's x and y) along
+/// it, free end first: the view extents of grids (`DatumPlaneRec.m_freeEnd3d`, `m_bubbleEnd3d`)
+/// are positions along that direction, on rac_basic_sample_project (x horizontal) and the
+/// Snowdon Towers sample (x up) alike.
+fn plane_axis(plane: &Fields) -> Option<([f64; 3], [f64; 3], f64, f64)> {
     let origin = point(plane, "m_origin")?;
     let x = point(plane, "m_xVec")?;
-    let corners = floats(plane.get("m_Envelope")?);
-    if corners.len() != 4 {
+    let y = point(plane, "m_yVec")?;
+    let c = floats(plane.get("m_Envelope")?);
+    if c.len() != 4 {
         return None;
     }
-    let at = |u: f64| {
-        [
-            origin[0] + u * x[0],
-            origin[1] + u * x[1],
-            origin[2] + u * x[2],
-        ]
-    };
-    let (a, b) = (at(corners[0]), at(corners[2]));
-    ((a[0] - b[0]).hypot(a[1] - b[1]) > 1e-9).then_some([a, b])
+    let n = [
+        x[1] * y[2] - x[2] * y[1],
+        x[2] * y[0] - x[0] * y[2],
+        x[0] * y[1] - x[1] * y[0],
+    ];
+    // n x (0, 0, 1).
+    let (dx, dy) = (n[1], -n[0]);
+    let len = dx.hypot(dy);
+    if len < 1e-9 {
+        return None;
+    }
+    let dir = [dx / len, dy / len, 0.0];
+    let along = |u: f64, v: f64| (0..3).map(|i| (u * x[i] + v * y[i]) * dir[i]).sum::<f64>();
+    let (a, b) = (along(c[0], c[1]), along(c[2], c[3]));
+    let (lo, hi) = (a.min(b), a.max(b));
+    (hi - lo > 1e-9).then_some((origin, dir, lo, hi))
 }
 
 /// The plain text of a text element, from its saved rich text (`m_oSavedRtfData`), else its

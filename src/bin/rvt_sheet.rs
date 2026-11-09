@@ -32,6 +32,7 @@ use rvt::ifc::{
         CropRect, PlanAnnotation, PlanLine, PlanText, SheetOptions, ViewWindow, render_plan_svg,
     },
 };
+use rvt::plan_views::LineKind;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -393,29 +394,84 @@ fn view_window(
         }
     }
     let grids_hidden = facts.hidden_categories(view).contains(&GRIDS);
+    // A grid head's circle, sheet radius: 1/4" in a view at an imperial scale (1/8" = 1'-0" is
+    // 96), else 6.5 mm (the heads of the samples' DWG exports).
+    let imperial = (scale.round() - scale).abs() < 1e-6
+        && (scale.round() as i64 % 12 == 0 || (scale.round() as i64).count_ones() == 1);
+    let radius = if imperial {
+        0.25 / 12.0
+    } else {
+        6.5 / MM_PER_FOOT
+    } * scale;
     for g in facts
         .grids
         .iter()
         .filter(|g| !grids_hidden && !hidden_element(g.id))
     {
-        let Some([free, head]) = g.ends else { continue };
-        let (a2, b2) = ([free[0], free[1]], [head[0], head[1]]);
-        if !(in_crop(a2) || in_crop(b2)) && crop.is_some() {
-            continue;
-        }
+        // The view's extent of the grid when it has one, else the grid's own (free end first,
+        // the head at the bubble end).
+        let Some((o, dir)) = g.axis else { continue };
+        let at = |t: f64| [o[0] + t * dir[0], o[1] + t * dir[1]];
+        let extent = facts
+            .grid_extents
+            .iter()
+            .find(|e| e.view == view.id && e.grid == g.id);
+        let (free, head, free_head, bubble_head) = match (extent, g.ends) {
+            (Some(e), _) => (at(e.free), at(e.bubble), e.free_head, e.bubble_head),
+            (None, Some([f, b])) => ([f[0], f[1]], [b[0], b[1]], false, true),
+            (None, None) => continue,
+        };
+        // Grids run out to the annotation crop when it is on, else to the crop.
+        let (free, head) = match annotation_crop.or(crop) {
+            Some(c) => match c.clip((free[0], free[1]), (head[0], head[1])) {
+                Some((p, q)) => ([p.0, p.1], [q.0, q.1]),
+                None => continue,
+            },
+            None => (free, head),
+        };
         a.lines.push(PlanLine {
-            a: a2,
-            b: b2,
+            a: free,
+            b: head,
             layer: "S-GRID".into(),
+            outside_crop: true,
         });
-        if !g.name.is_empty() {
-            a.texts.push(PlanText {
-                at: b2,
-                value: g.name.clone(),
-                height_feet: 4.5 * scale / MM_PER_FOOT,
-                rotation: 0.0,
-                layer: "S-GRID-IDEN".into(),
-            });
+        // A head: a circle just beyond its end, the grid's name in it (placed where the export's
+        // text box starts, up and left of the centre).
+        let mut ends = Vec::new();
+        if bubble_head {
+            ends.push((head, free));
+        }
+        if free_head {
+            ends.push((free, head));
+        }
+        for (end, other) in ends {
+            let (dx, dy) = (end[0] - other[0], end[1] - other[1]);
+            let n = dx.hypot(dy);
+            if n < 1e-9 {
+                continue;
+            }
+            let centre = [end[0] + dx / n * radius, end[1] + dy / n * radius];
+            let on_circle = |k: usize| {
+                let t = std::f64::consts::TAU * k as f64 / 32.0;
+                [centre[0] + radius * t.cos(), centre[1] + radius * t.sin()]
+            };
+            for k in 0..32 {
+                a.lines.push(PlanLine {
+                    a: on_circle(k),
+                    b: on_circle(k + 1),
+                    layer: "S-GRID-IDEN".into(),
+                    outside_crop: true,
+                });
+            }
+            if !g.name.is_empty() {
+                a.texts.push(PlanText {
+                    at: [centre[0] - 0.28 * radius, centre[1] + 0.37 * radius],
+                    value: g.name.clone(),
+                    height_feet: 2.5 * scale / MM_PER_FOOT,
+                    rotation: 0.0,
+                    layer: "S-GRID-IDEN".into(),
+                });
+            }
         }
     }
     for d in facts.dimensions.iter().filter(|d| d.view == view.id) {
@@ -436,8 +492,10 @@ fn view_window(
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| {
                 (a.min(p[2]), b.max(p[2]))
             });
+        // Property lines show in every plan, whatever their height.
         let shown = match c.view {
             Some(v) => v == view.id,
+            None if c.kind == LineKind::PropertyLine => true,
             None => lo <= cut + 1e-3 && hi >= bottom - 1e-3,
         };
         // Most are stored with no category (-1); a hidden Lines category hides them all.
@@ -447,10 +505,15 @@ fn view_window(
         if !shown || hidden {
             continue;
         }
-        let layer = if c.view.is_some() {
-            "A-DETL"
-        } else {
-            "A-DETL-GENF"
+        // The export's layers: `Lines` on A-DETL, `<Room Separation>` on A-AREA, `Site: Property
+        // Lines` on C-PROP-LINE, a floor's, toposolid's or pad's boundary on its category's.
+        let layer = match c.kind {
+            LineKind::Line => "A-DETL",
+            LineKind::RoomSeparation => "A-AREA",
+            LineKind::PropertyLine => "C-PROP-LINE",
+            LineKind::Floor => "A-FLOR",
+            LineKind::Toposolid => "C-TOPO",
+            LineKind::BuildingPad => "C-BLDG-PADS",
         };
         for w in c.points.windows(2) {
             let (p, q) = ([w[0][0], w[0][1]], [w[1][0], w[1][1]]);
@@ -461,6 +524,7 @@ fn view_window(
                 a: p,
                 b: q,
                 layer: layer.into(),
+                outside_crop: false,
             });
         }
     }

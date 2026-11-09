@@ -1220,6 +1220,11 @@ pub const ROOF_TYPE_THICKNESS_FIELD: &str = "m_roof_type_thickness";
 /// `_<index>` ([`super::roof_slope_plate_offset_field`]).
 pub const ROOF_SLOPE_PLATE_OFFSET_FIELD: &str = "m_roof_slope_plate_offset";
 
+/// Field set on a footprint roof none of whose sketch lines defines a slope
+/// (flat, or sloped by a slope arrow), read on Revit 2018 to 2023: Revit's
+/// export writes it as its one slab.
+pub const ROOF_NO_SLOPE_EDGE_FIELD: &str = "m_roof_no_slope_edge";
+
 /// Field holding a roof's rafter cut, a [`crate::partition_roof_slopes::RafterCut`]
 /// name, where it is read.
 pub const ROOF_RAFTER_CUT_FIELD: &str = "m_roof_rafter_cut";

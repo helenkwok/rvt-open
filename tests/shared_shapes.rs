@@ -159,8 +159,10 @@ fn nordic_housing_terrain_draws_shared_shapes_in_place() {
         Pins {
             maps: 14,
             mapped_items: 433,
-            bodies: 507,
-            shapes: 69,
+            // + the 7 toposolids and 28 sub-divisions, each its own box, as
+            // the 35 `IfcGeographicElement .TERRAIN.` of Revit's export.
+            bodies: 542,
+            shapes: 104,
         },
     );
 }

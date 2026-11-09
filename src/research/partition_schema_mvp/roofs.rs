@@ -1284,7 +1284,16 @@ pub(super) fn attach_roofs_32(
             Vec<RoofEdgeSlope>,
         ),
     > = BTreeMap::new();
+    let mut no_slope_edge: BTreeSet<u32> = BTreeSet::new();
     for (&roof, curves) in &lists {
+        // Every sketch line with an edge entry, none defining a slope.
+        let defining: Vec<bool> = curves
+            .iter()
+            .filter_map(|id| slopes.get(id).map(|slope| slope.defines_slope))
+            .collect();
+        if !defining.is_empty() && !defining.contains(&true) {
+            no_slope_edge.insert(roof);
+        }
         let read: Option<Vec<[f64; 4]>> = curves
             .iter()
             .map(|id| {
@@ -1320,6 +1329,12 @@ pub(super) fn attach_roofs_32(
         };
         profile.segment_ids = ordered.into_iter().collect();
         found.insert(roof, (profile, edges));
+    }
+    for roof in products.iter_mut() {
+        if roof.class == "Roof" && roof.id.is_some_and(|id| no_slope_edge.contains(&id)) {
+            roof.fields
+                .push((ROOF_NO_SLOPE_EDGE_FIELD.into(), InstanceField::Bool(true)));
+        }
     }
     if found.is_empty() {
         return;

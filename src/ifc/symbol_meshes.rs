@@ -425,9 +425,13 @@ pub fn add_site_content(
             .get(stream)
             .is_some_and(|s| s.partition_point(|at| *at <= start) > 0)
     };
+    // A topography surface read from its element record has its record box
+    // for a body: its saved mesh replaces it below.
+    let terrain_record = |e: &IfcEntity| matches!(e, IfcEntity::BuildingElement { predefined_type: Some(p), .. } if p == "TERRAIN");
     let exported: BTreeSet<u64> = model
         .entities
         .iter()
+        .filter(|e| !terrain_record(e))
         .filter_map(|e| match e {
             IfcEntity::BuildingElement {
                 type_guid: Some(t), ..
@@ -586,7 +590,7 @@ pub fn add_site_content(
         let face_materials = super::saved_meshes::face_materials_of(&lookup, &vertices, &triangles);
         report.terrains += 1;
         report.terrain_triangles += triangles.len();
-        model.entities.push(site_entity(
+        let entity = site_entity(
             "IFCGEOGRAPHICELEMENT",
             format!("Surface:{id}"),
             id,
@@ -599,11 +603,25 @@ pub fn add_site_content(
                 triangles,
                 face_materials,
             }),
-        ));
+        );
+        let tag = id.to_string();
+        let at = match model.entities.iter().position(|e| {
+            terrain_record(e)
+                && matches!(e, IfcEntity::BuildingElement { type_guid: Some(t), .. } if *t == tag)
+        }) {
+            Some(at) => {
+                model.entities[at] = entity;
+                at
+            }
+            None => {
+                model.entities.push(entity);
+                model.entities.len() - 1
+            }
+        };
         if let Some(IfcEntity::BuildingElement {
             material_index: slot,
             ..
-        }) = model.entities.last_mut()
+        }) = model.entities.get_mut(at)
         {
             *slot = material_index;
         }

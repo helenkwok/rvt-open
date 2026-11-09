@@ -872,7 +872,14 @@ impl StepWriter<'_> {
     /// CRS the file names: the internal origin's shared coordinates and the
     /// internal X axis in map coordinates, in the CRS's unit (CS-MAP `FOOT`
     /// is the US survey foot; Revit's shared-coordinate feet are read as it).
-    fn map_conversion(&mut self, g: &crate::georeference::Georeference, context: usize) {
+    /// `shared_site`: the site already stands at the shared position, so the
+    /// context's coordinates are the shared ones.
+    fn map_conversion(
+        &mut self,
+        g: &crate::georeference::Georeference,
+        context: usize,
+        shared_site: bool,
+    ) {
         let Some(crs) = &g.crs else {
             return;
         };
@@ -907,8 +914,16 @@ impl StepWriter<'_> {
                 quoted_or_dollar(&escape(crs.description.as_deref().unwrap_or(&crs.name)))
             ),
         );
-        let (sin, cos) = g.true_north.to_radians().sin_cos();
-        let [e, n, h] = g.origin_shared;
+        let (sin, cos) = if shared_site {
+            (0.0, 1.0)
+        } else {
+            g.true_north.to_radians().sin_cos()
+        };
+        let [e, n, h] = if shared_site {
+            [0.0; 3]
+        } else {
+            g.origin_shared
+        };
         let id = self.id();
         self.emit_entity(
             id,
@@ -2201,8 +2216,19 @@ impl StepWriter<'_> {
         );
         // true north is the shared coordinates' north in the
         // model's internal frame, at Revit's Angle to True North.
+        // Under `revit` the site stands at the shared position, turned to
+        // True North, so the context's frame is the shared one.
+        let shared_site = model
+            .georeference
+            .as_ref()
+            .filter(|_| model.convention.site_at_shared_position());
         let true_north = model.georeference.as_ref().map(|g| {
-            let (sin, cos) = g.true_north.to_radians().sin_cos();
+            let turn = if shared_site.is_some() {
+                0.0
+            } else {
+                g.true_north
+            };
+            let (sin, cos) = turn.to_radians().sin_cos();
             let id = self.id();
             self.emit_entity(
                 id,
@@ -2219,7 +2245,7 @@ impl StepWriter<'_> {
             ),
         );
         if let Some(g) = &model.georeference {
-            self.map_conversion(g, geom_ctx);
+            self.map_conversion(g, geom_ctx, shared_site.is_some());
         }
         // the contexts of the 2D maps, as Revit's export writes
         // them: a family's plan symbol in the `Plan` context's `Annotation`
@@ -2294,11 +2320,37 @@ impl StepWriter<'_> {
         // the three (they're all identity), then chain the
         // placements via `PlacementRelTo` so the coordinate frames
         // compose correctly.
+        let site_axis = match shared_site {
+            Some(g) => {
+                let (sin, cos) = g.true_north.to_radians().sin_cos();
+                let [e, n, h] = g.origin_shared;
+                let at = self.id();
+                self.emit_entity(
+                    at,
+                    format!(
+                        "IFCCARTESIANPOINT(({},{},{}))",
+                        format_real(e),
+                        format_real(n),
+                        format_real(h)
+                    ),
+                );
+                let x = self.id();
+                self.emit_entity(
+                    x,
+                    format!(
+                        "IFCDIRECTION(({},{},0.))",
+                        format_real(cos),
+                        format_real(-sin)
+                    ),
+                );
+                let axis = self.id();
+                self.emit_entity(axis, format!("IFCAXIS2PLACEMENT3D(#{at},#{z_axis},#{x})"));
+                axis
+            }
+            None => axis_placement,
+        };
         let site_placement = self.id();
-        self.emit_entity(
-            site_placement,
-            format!("IFCLOCALPLACEMENT($,#{axis_placement})"),
-        );
+        self.emit_entity(site_placement, format!("IFCLOCALPLACEMENT($,#{site_axis})"));
         let site_id = self.id();
         let site_label = escape(model.site_name.as_deref().unwrap_or("Default Site"));
         let building_label = escape(model.building_name.as_deref().unwrap_or("Default Building"));
@@ -4969,6 +5021,69 @@ impl StepWriter<'_> {
             );
         }
 
+        // The grid lines, as one `IfcGrid` on the first storey: an
+        // `IfcGridAxis` per line, named after it, as Revit's export writes them.
+        if let (Some((u, v)), Some(&storey_placement)) =
+            (super::grids::axes(model), storey_placements.first())
+        {
+            let mut curves = Vec::new();
+            let mut axis = |line: &super::grids::GridLine| {
+                let points = self.id();
+                self.emit_entity(
+                    points,
+                    format!(
+                        "IFCCARTESIANPOINTLIST2D((({},{}),({},{})))",
+                        format_real(line.start[0] * 0.3048),
+                        format_real(line.start[1] * 0.3048),
+                        format_real(line.end[0] * 0.3048),
+                        format_real(line.end[1] * 0.3048)
+                    ),
+                );
+                let curve = self.id();
+                self.emit_entity(curve, format!("IFCINDEXEDPOLYCURVE(#{points},$,.F.)"));
+                let id = self.id();
+                self.emit_entity(
+                    id,
+                    format!("IFCGRIDAXIS('{}',#{curve},.T.)", escape(&line.name)),
+                );
+                curves.push(curve);
+                format!("#{id}")
+            };
+            let u: Vec<String> = u.iter().map(|&i| axis(&model.grids[i])).collect();
+            let v: Vec<String> = v.iter().map(|&i| axis(&model.grids[i])).collect();
+            let set = self.id();
+            let items = curves.iter().map(|c| format!("#{c}")).collect::<Vec<_>>();
+            self.emit_entity(set, format!("IFCGEOMETRICCURVESET(({}))", items.join(",")));
+            let rep = self.id();
+            self.emit_entity(
+                rep,
+                format!(
+                    "IFCSHAPEREPRESENTATION(#{geom_ctx},'FootPrint','GeometricCurveSet',(#{set}))"
+                ),
+            );
+            let shape = self.id();
+            self.emit_entity(shape, format!("IFCPRODUCTDEFINITIONSHAPE($,$,(#{rep}))"));
+            let grid_axis = self.id();
+            self.emit_entity(grid_axis, format!("IFCAXIS2PLACEMENT3D(#{origin},$,$)"));
+            let placement = self.id();
+            self.emit_entity(
+                placement,
+                format!("IFCLOCALPLACEMENT(#{storey_placement},#{grid_axis})"),
+            );
+            let grid = self.id();
+            self.emit_entity(
+                grid,
+                format!(
+                    "IFCGRID('{}',#{owner_hist},'Default Grid',$,$,#{placement},#{shape},({}),({}),$,$)",
+                    grid_global_id(model),
+                    u.join(","),
+                    v.join(",")
+                ),
+            );
+            if let Some(first) = per_storey_elements.first_mut() {
+                first.push(grid);
+            }
+        }
         for (idx, element_ids) in per_storey_elements
             .iter()
             .enumerate()
@@ -6021,6 +6136,50 @@ pub(super) fn building_element_global_ids(model: &IfcModel) -> Vec<Option<String
         element_gids[entity_idx] = Some(element_gid);
     }
     element_gids
+}
+
+/// The GlobalId the STEP writer gives the `IfcOpeningElement` of an opening
+/// entity, as it makes it below; `element_gids` are
+/// [`building_element_global_ids`]. `None` for any other entity or a host with
+/// no GlobalId.
+pub(super) fn opening_global_id(
+    model: &IfcModel,
+    element_gids: &[Option<String>],
+    entity: &super::entities::IfcEntity,
+) -> Option<String> {
+    use super::entities::IfcEntity;
+    let host = match entity {
+        IfcEntity::VoidOpening { host, .. }
+        | IfcEntity::HostedCutOpening { host, .. }
+        | IfcEntity::WallProfileOpening { host, .. }
+        | IfcEntity::WallCutOpening { host, .. } => element_gids.get(*host)?.as_deref()?,
+        _ => return None,
+    };
+    let gid = |key: &[&str]| generated_global_id(model, key);
+    Some(match entity {
+        IfcEntity::VoidOpening { tag, .. } => gid(&["void-opening", host, tag]),
+        IfcEntity::HostedCutOpening { number, .. } => {
+            crate::revit_global_ids::hashed_global_id(&format!("IfcOpeningElement:{number}:{host}"))
+        }
+        IfcEntity::WallProfileOpening { tag, .. } => gid(&["wall-profile-opening", host, tag]),
+        IfcEntity::WallCutOpening {
+            tag,
+            number,
+            cutter_global_id,
+            ..
+        } => match cutter_global_id {
+            Some(cutter) => crate::revit_global_ids::hashed_global_id(&format!(
+                "Opening:{number}Solid:1{host}{cutter}"
+            )),
+            None => gid(&["wall-cut-opening", host, tag]),
+        },
+        _ => return None,
+    })
+}
+
+/// The GlobalId of the model's `IfcGrid` ([`super::grids::axes`]).
+pub(super) fn grid_global_id(model: &IfcModel) -> String {
+    generated_global_id(model, &["grid"])
 }
 
 /// The GlobalId the STEP writer gives a generated entity: `key` under the

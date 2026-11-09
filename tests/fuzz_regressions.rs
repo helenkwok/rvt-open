@@ -853,6 +853,9 @@ fn step_writer_handles_adversarial_model_strings() {
             filler_sizes: Default::default(),
             wall_location_lines: Default::default(),
             wall_axis_ends: Default::default(),
+            opening_categories: Default::default(),
+            grids: Vec::new(),
+            single_slab_roofs: Default::default(),
             wall_cut_openings_left_out: Default::default(),
             wall_end_reads_unmarked: Default::default(),
         };

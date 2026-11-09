@@ -177,4 +177,20 @@ impl ExportConvention {
             Self::Open => true,
         }
     }
+    /// Switch point 9: where the `IfcSite` stands.
+    ///
+    /// - `Revit`: at the shared coordinates of the internal origin, turned by
+    ///   the angle to True North, as Revit's IFC4 Reference View export writes
+    ///   it: on the tiny reference models (fixtures-tiny-2, recipe 20) all 10
+    ///   of its exports, Revit 2018 to 2027, put the site at E/W 10 m, N/S
+    ///   20 m, turned 30 degrees. The context's True North is then the shared
+    ///   Y axis, (0, 1), as in its 2020 to 2027 exports.
+    /// - `Open`: at the internal origin, axes unchanged; the shared position
+    ///   is in the context's True North and the map conversion.
+    pub fn site_at_shared_position(self) -> bool {
+        match self {
+            Self::Revit => true,
+            Self::Open => false,
+        }
+    }
 }

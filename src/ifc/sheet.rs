@@ -100,7 +100,7 @@ impl CropRect {
     }
 
     /// The part of segment `a`-`b` inside the crop (Liang-Barsky), in model coordinates.
-    fn clip(&self, a: (f64, f64), b: (f64, f64)) -> Option<((f64, f64), (f64, f64))> {
+    pub fn clip(&self, a: (f64, f64), b: (f64, f64)) -> Option<((f64, f64), (f64, f64))> {
         let (p, q) = (self.local(a), self.local(b));
         let (dx, dy) = (q.0 - p.0, q.1 - p.1);
         let (mut t0, mut t1) = (0.0f64, 1.0f64);
@@ -194,6 +194,10 @@ pub struct PlanLine {
     pub a: [f64; 2],
     pub b: [f64; 2],
     pub layer: String,
+    /// Drawn where it is even outside the crop (a grid head beyond the model crop, inside the
+    /// annotation crop).
+    #[serde(default)]
+    pub outside_crop: bool,
 }
 
 impl Default for SheetOptions {
@@ -352,12 +356,18 @@ struct Footprint {
     /// drawn as overhead lines on its layer's `-MBND` layer.
     #[cfg_attr(not(feature = "dwg"), allow(dead_code))]
     overhead: Vec<((f64, f64), (f64, f64))>,
+    /// The body's height range, model feet.
+    heights: (f64, f64),
+    /// A roof, or one of a roof's slabs (category Roofs).
+    roof: bool,
+    /// Wholly hidden under a roof: neither its lines nor its outline are drawn.
+    #[cfg_attr(not(feature = "dwg"), allow(dead_code))]
+    covered: bool,
 }
 
 fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Footprint> {
     let mut out = Vec::new();
     let sets = window
-        .filter(|w| !w.hidden_categories.is_empty())
         .map(|_| super::element_table::element_sets(model))
         .unwrap_or_default();
     // What each element hosts (doors, windows, openings), for walls cut at the cut plane.
@@ -389,6 +399,7 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
         if ifc_type == "IFCOPENINGELEMENT" {
             continue;
         }
+        let mut roof = ifc_type == "IFCROOF";
         if let Some(w) = window {
             // `type_guid` holds the element's ElementId.
             let id = type_guid.as_deref().and_then(|t| t.parse::<i64>().ok());
@@ -398,6 +409,7 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
             let category = sets
                 .get(&index)
                 .and_then(|s| super::element_table::category_in(s));
+            roof |= category.as_deref() == Some("Roofs");
             if category.is_some_and(|c| w.hidden_categories.contains(&c)) {
                 continue;
             }
@@ -438,6 +450,7 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
             _ => vec![outer],
         };
         let whole = pieces.len() == 1;
+        let heights = height_range(body, &placement);
         // Below the cut plane an element is seen, not cut: its projection lines.
         // A stair or railing the cut plane cuts: below it seen, above it overhead.
         let (edges, overhead) = match window {
@@ -465,13 +478,91 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
                 index,
                 edges: edges.clone(),
                 overhead: overhead.clone(),
+                heights,
+                roof,
+                covered: false,
             });
         }
+    }
+    if window.is_some() {
+        hide_under_roofs(&mut out);
     }
     // Plates and spaces underlie the plan: drawn after the walls, their
     // fills would hide every wall, column and door on their storey.
     out.sort_by_key(|fp| !is_underlay(&fp.ifc_type));
     out
+}
+
+/// Hidden lines under roofs: a roof in the view hides the projection lines of what lies under it, as a site plan shows a building's roof and not its
+/// rooms. A line is hidden where it lies inside the roof's outline (and not in one of its holes)
+/// and the element it belongs to is no higher than the roof's lowest point.
+// ponytail: the roof's lowest point, not its surface above each line, so a gable wall reaching
+// above the eaves stays drawn; test each line's height against the roof's faces if that matters.
+fn hide_under_roofs(fps: &mut [Footprint]) {
+    let roofs: Vec<(Ring, Vec<Ring>, f64)> = fps
+        .iter()
+        .filter(|f| f.roof)
+        .map(|f| (f.outer.clone(), f.holes.clone(), f.heights.0))
+        .collect();
+    if roofs.is_empty() {
+        return;
+    }
+    let inside = |p: (f64, f64), ring: &[(f64, f64)]| {
+        let mut odd = false;
+        for i in 0..ring.len() {
+            let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+            if (a.1 > p.1) != (b.1 > p.1) && p.0 < a.0 + (p.1 - a.1) / (b.1 - a.1) * (b.0 - a.0) {
+                odd = !odd;
+            }
+        }
+        odd
+    };
+    for fp in fps.iter_mut() {
+        if fp.roof || fp.edges.is_empty() {
+            continue;
+        }
+        let over: Vec<&(Ring, Vec<Ring>, f64)> = roofs
+            .iter()
+            .filter(|r| fp.heights.1 <= r.2 + 1e-3)
+            .collect();
+        if over.is_empty() {
+            continue;
+        }
+        let hidden = |p: (f64, f64)| {
+            over.iter()
+                .any(|(o, holes, _)| inside(p, o) && !holes.iter().any(|h| inside(p, h)))
+        };
+        let mut kept = Vec::new();
+        for &(p, q) in &fp.edges {
+            // Where the line crosses a roof's outline or holes, then each piece by its middle.
+            let mut ts = vec![0.0, 1.0];
+            for (o, holes, _) in &over {
+                for ring in std::iter::once(o).chain(holes.iter()) {
+                    for i in 0..ring.len() {
+                        let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+                        let d = (q.0 - p.0) * (b.1 - a.1) - (q.1 - p.1) * (b.0 - a.0);
+                        if d.abs() < 1e-12 {
+                            continue;
+                        }
+                        let t = ((a.0 - p.0) * (b.1 - a.1) - (a.1 - p.1) * (b.0 - a.0)) / d;
+                        let u = ((a.0 - p.0) * (q.1 - p.1) - (a.1 - p.1) * (q.0 - p.0)) / d;
+                        if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+                            ts.push(t);
+                        }
+                    }
+                }
+            }
+            ts.sort_by(f64::total_cmp);
+            let at = |t: f64| (p.0 + t * (q.0 - p.0), p.1 + t * (q.1 - p.1));
+            for w in ts.windows(2) {
+                if w[1] - w[0] > 1e-9 && !hidden(at((w[0] + w[1]) / 2.0)) {
+                    kept.push((at(w[0]), at(w[1])));
+                }
+            }
+        }
+        fp.covered = kept.is_empty();
+        fp.edges = kept;
+    }
 }
 
 /// The body's height range, model feet. A body with no mesh is placed by its origin's height.
@@ -860,7 +951,7 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                 }
             }
         }
-        let rings = if fp.edges.is_empty() && fp.overhead.is_empty() {
+        let rings = if fp.edges.is_empty() && fp.overhead.is_empty() && !fp.covered {
             std::iter::once(&fp.outer)
                 .chain(&fp.holes)
                 .collect::<Vec<_>>()
@@ -909,7 +1000,7 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
     if let Some(a) = options.annotation.as_ref().filter(|_| options.show_labels) {
         let at = |p: [f64; 2]| [p[0] * MM_PER_FOOT, p[1] * MM_PER_FOOT, 0.0];
         for l in &a.lines {
-            let segment = match crop {
+            let segment = match crop.filter(|_| !l.outside_crop) {
                 Some(c) => c.clip((l.a[0], l.a[1]), (l.b[0], l.b[1])),
                 None => Some(((l.a[0], l.a[1]), (l.b[0], l.b[1]))),
             };
@@ -1092,7 +1183,8 @@ const CATEGORY_LAYERS: &[(&str, &str)] = &[
     ("Ramps", "A-FLOR-LEVL"),
     ("Roof Soffits", "A-ROOF-OTLN"),
     ("Roofs", "A-ROOF"),
-    ("Rooms", "A-AREA"),
+    // Rooms as the export's room polylines.
+    ("Rooms", "A-AREA-BNDY"),
     ("Security Devices", "E-SERT"),
     ("Signage", "A-SIGN"),
     ("Site", "L-SITE"),
@@ -1133,7 +1225,7 @@ fn layer_for_ifc_type(ifc_type: &str) -> (&'static str, i16) {
         "IFCSTAIR" | "IFCSTAIRFLIGHT" => ("S-STRS", 32),
         "IFCRAILING" => ("A-FLOR-HRAL", 32),
         "IFCFURNITURE" | "IFCFURNISHINGELEMENT" => ("I-FURN", 3),
-        "IFCSPACE" => ("A-AREA", 4),
+        "IFCSPACE" => ("A-AREA-BNDY", 4),
         "IFCPLATE" => ("A-GLAZ-CURT", 5),
         _ => ("A-GENM", 8),
     }
