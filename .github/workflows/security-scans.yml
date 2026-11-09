@@ -25,9 +25,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools4
+        continue-on-error: true
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with: { tool: cargo-deny@0.20.2 }
+      - if: steps.tools4.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "cargo-deny@0.20.2"
       # Policy is in deny.toml: a RustSec advisory, a disallowed licence or an unknown source fails the job.
       - run: cargo deny --locked check
 
@@ -52,7 +58,18 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           exit-code: "0"
-      - uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+      # A failed upload (the code scanning service refusing it for a moment) is
+      # tried once more, so that it does not turn the run red on its own.
+      - id: sarif
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+      - if: steps.sarif.outcome == 'failure'
+        run: sleep 30
+      - if: steps.sarif.outcome == 'failure'
+        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
         with:
           sarif_file: trivy-results.sarif
           category: trivy-fs

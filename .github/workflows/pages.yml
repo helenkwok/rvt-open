@@ -27,12 +27,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown
           rustup default "$RUST_VERSION"
           echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools3
+        continue-on-error: true
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with: { tool: "wasm-bindgen@${{ env.WB }}" }
+      - if: steps.tools3.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }}"
       - name: Build the wasm package into viewer/pkg
         run: |
           cargo build -p rvt-wasm --release --target wasm32-unknown-unknown

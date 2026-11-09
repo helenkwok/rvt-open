@@ -30,7 +30,18 @@ jobs:
           publish_results: true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: scorecard-results, path: results.sarif, retention-days: 5 }
-      - uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+      # A failed upload (the code scanning service refusing it for a moment) is
+      # tried once more, so that it does not turn the run red on its own.
+      - id: sarif
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        with:
+          sarif_file: results.sarif
+          category: scorecard
+      - if: steps.sarif.outcome == 'failure'
+        run: sleep 30
+      - if: steps.sarif.outcome == 'failure'
+        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
         with:
           sarif_file: results.sarif
           category: scorecard
