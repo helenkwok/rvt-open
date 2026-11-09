@@ -3,7 +3,7 @@
 the doors Revit gives no opening, where Revit places their origin, and what
 decides the axes it gives them.
 
-Research tool for `reports/element-framing/#361-doors-with-no-opening.md`.
+Research tool: doors set in no wall against Revit's export.
 For every door and window of `probe_re343_door_flips` whose stored transform
 the probe read and whose ElementId is the Tag of an `IfcDoor` or `IfcWindow` in
 both exports, it prints count lines beginning `door flips: unwalled`:

@@ -102,7 +102,7 @@ def revit_box(shape):
 
 
 def constraint_values(duct):
-    """#371's Constraints values for a duct, feet, or None."""
+    """The Constraints values for a duct, feet, or None."""
     if duct["offsets"] is None or duct["justify"] != "0,0" or duct["start"] is None:
         return None
     start, end = duct["start"], duct["end"]
