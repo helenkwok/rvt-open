@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
           # Bounded and retried: a hung Ubuntu mirror would otherwise use the whole job timeout.
           for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq time > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
       - id: samples
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, fetch-depth: 0 }
       - run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
           # Bounded and retried: a hung Ubuntu mirror would otherwise use the whole job timeout.
           for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq time > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
       - id: samples

@@ -100,9 +100,12 @@ value it does not know. A research module that moves into the stable modules is 
 4. **Update `CITATION.cff`** to the version and the date.
 5. **Open the release pull request,** `chore(release): prepare vX.Y.Z`, with
    steps 2 to 4, and merge it.
-6. **Tag and push.** `git tag -s vX.Y.Z -m "rvt-open X.Y.Z" origin/main`,
+6. **Dry-run the release** on `main`: `gh workflow run release.yml --ref main`.
+   It builds, packages and ClamAV-scans every archive and publishes nothing;
+   tag only once it is green.
+7. **Tag and push.** `git tag -s vX.Y.Z -m "rvt-open X.Y.Z" origin/main`,
    then `git push origin vX.Y.Z`, which runs `release.yml`.
-7. **Write the release page** from the version's `CHANGELOG.md` section
+8. **Write the release page** from the version's `CHANGELOG.md` section
    (`gh release edit vX.Y.Z --notes-file <file>`).
 
 ## Checking a release

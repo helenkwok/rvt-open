@@ -41,8 +41,36 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
           IDENTITY_DENYLIST: ${{ secrets.IDENTITY_DENYLIST }}
           IDENTITY_FORK_PR: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+  # What the change can affect (tools/ci/change-scope.sh): a pull request of
+  # prose alone runs no Rust job, and a push to main of a tree whose pull
+  # request already passed the full jobs runs none again. The changelog
+  # fragments are checked here, so a prose-only change still is.
+  scope:
+    name: what the change can affect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      skip: ${{ steps.scope.outputs.skip }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: python3 tools/release/changelog.py check
+      - id: scope
+        run: tools/ci/change-scope.sh >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
   samples:
     name: Fetch public samples
+    needs: scope
+    if: needs.scope.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -67,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: ci-profile }
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -82,12 +110,14 @@ jobs:
 
   fmt:
     name: cargo fmt
+    needs: scope
+    if: needs.scope.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal -c rustfmt && rustup default "$RUST_VERSION"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -c rustfmt && rustup default "$RUST_VERSION"
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -98,7 +128,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy && rustup default "$RUST_VERSION"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo check --lib --bins
@@ -119,7 +149,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "${{ env.RUST_VERSION }}" --profile minimal && rustup default "${{ env.RUST_VERSION }}"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "${{ env.RUST_VERSION }}" --profile minimal && rustup default "${{ env.RUST_VERSION }}"
+        shell: bash
       # The hosted Ubuntu image ships about 30 GB of SDKs this job never uses; the debug build of the
       # whole workspace plus the ClamAV image no longer fit beside them.
       - name: Free disk space (Linux)
@@ -147,7 +178,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: ci-profile }
       - id: dwg-samples
@@ -171,11 +202,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: ci-profile }
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools5
+        continue-on-error: true
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with: { tool: cargo-nextest@0.9.146 }
+      - if: steps.tools5.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "cargo-nextest@0.9.146"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
       - run: sed "s|^\([A-Z0-9_]*=\).*/_samples/|\1$GITHUB_WORKSPACE/_samples/|" _samples/env >> "$GITHUB_ENV"
@@ -192,13 +229,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy -t wasm32-unknown-unknown
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy -t wasm32-unknown-unknown
           rustup default "$RUST_VERSION"
-          rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
+          tools/ci/retry.sh 3 rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
           echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools6
+        continue-on-error: true
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with: { tool: "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9" }
+      - if: steps.tools6.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9"
       - run: cargo clippy -p rvt-wasm --all-targets -- -D warnings
       # The release's SBOMs for both browser targets, so a tag is never the first run of these commands.
       - name: SBOMs for the wasm package
@@ -222,7 +265,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy && rustup default "$RUST_VERSION"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: ci-profile }
       # A crate of its own (rmcp and tokio stay out of the core library), so
@@ -255,7 +298,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: ci-profile }
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -341,7 +384,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: ci-profile }
       # Small projects saved in every release from 2018 to 2027, each with an
@@ -370,8 +413,8 @@ jobs:
             ${{ runner.temp }}/ifcx-coverage/ifcx-coverage.tsv
           if-no-files-found: ignore
 
-  viewer:
-    name: viewer (Playwright)
+  viewer-wasm:
+    name: viewer wasm package
     needs: box-check
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
@@ -380,16 +423,46 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown
           rustup default "$RUST_VERSION"
           echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools7
+        continue-on-error: true
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with: { tool: "wasm-bindgen@${{ env.WB }}" }
+      - if: steps.tools7.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }}"
       - name: Build the wasm package into viewer/pkg
         run: |
           cargo build -p rvt-wasm --release --target wasm32-unknown-unknown
           wasm-bindgen --target web --out-dir viewer/pkg --out-name rvt target/wasm32-unknown-unknown/release/rvt_wasm.wasm
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: viewer-pkg, path: viewer/pkg, retention-days: 3 }
+
+  # The browser tests run in two legs on the one wasm package, split by the
+  # tests' measured times (2026-11-09: 237 s in all; the four Core Interior
+  # tests 40 to 60 s each, the rest under 15 s): leg 2 holds two of the long
+  # tests and the orbit, diagnostics and toast tests (about 110 s), leg 1 the
+  # rest (about 127 s). Re-balance when a leg runs much longer than the other.
+  viewer:
+    name: viewer (Playwright) / leg ${{ matrix.leg }}
+    needs: viewer-wasm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [1, 2]
+    env:
+      LEG2: "butt-joins|stops against at T joints|dragging to orbit|exposes geometry diagnostics|raises a toast"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: viewer-pkg, path: viewer/pkg }
       - name: Real sample projects for the demo gallery (MIT)
         uses: ./.github/actions/fetch-corpus
         with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }
@@ -403,9 +476,14 @@ jobs:
         run: |
           npm install -g pnpm@12.6.0
           pnpm install --frozen-lockfile
-          pnpm exec playwright install --with-deps chromium
+          ../tools/ci/retry.sh 3 pnpm exec playwright install --with-deps chromium
           pnpm run build
           for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt; do
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          pnpm exec playwright test tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts
+          specs=(tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts)
+          if [ "${{ matrix.leg }}" = 2 ]; then
+            pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
+          else
+            pnpm exec playwright test "${specs[@]}" --grep-invert "$LEG2"
+          fi

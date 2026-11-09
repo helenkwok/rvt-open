@@ -86,7 +86,7 @@ archive (the CLI archives and the WebAssembly tarball) comes with:
 | Asset | What it lets you check |
 |---|---|
 | Build provenance attestation | The archive was built by this repository's release workflow from the tagged commit. |
-| `SHA256SUMS` | The file you downloaded is the file that was published. |
+| `SHA256SUMS` | The file you downloaded is the file that was published. It has a build provenance attestation of its own, so verifying it covers every file on the release page. |
 | `<archive>.cdx.json` | A CycloneDX SBOM: every Rust crate compiled into that archive, with its version. |
 | `<archive>.trivy.txt` | A Trivy vulnerability report on that SBOM, made when the release was built. |
 | `scans.md` | Malware scan results for every archive, in one file: ClamAV, and the VirusTotal and MetaDefender Cloud report links. |

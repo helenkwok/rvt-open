@@ -5,9 +5,12 @@ name: Release
 # scanning service whose key is set (VirusTotal, MetaDefender Cloud, Hybrid Analysis), an upload. The
 # results are in the scans.md asset, except Hybrid Analysis's, which are printed to this workflow's log.
 # How to check them: SECURITY.md, "Verifying a release".
+# Run by hand (workflow_dispatch) on a branch, it is the release's dry run: every archive is built,
+# packaged and scanned with ClamAV, and nothing is attested, uploaded to a scanning service or published.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: read
 env:
@@ -29,9 +32,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: rustup toolchain install "${{ env.RUST_VERSION }}" --profile minimal -t ${{ matrix.target }} && rustup default "${{ env.RUST_VERSION }}"
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      - run: tools/ci/retry.sh 3 rustup toolchain install "${{ env.RUST_VERSION }}" --profile minimal -t ${{ matrix.target }} && rustup default "${{ env.RUST_VERSION }}"
+        shell: bash
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools1
+        continue-on-error: true
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with: { tool: cargo-cyclonedx@0.5.9 }
+      - if: steps.tools1.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "cargo-cyclonedx@0.5.9"
       - run: cargo build --release --locked --bins -p rvt-open -p rvt-dwg --features rvt-open/sqlite --target ${{ matrix.target }}
       - name: Package
         shell: bash
@@ -56,11 +66,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown && rustup default "$RUST_VERSION"
-          rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown && rustup default "$RUST_VERSION"
+          tools/ci/retry.sh 3 rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
           echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
-      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools2
+        continue-on-error: true
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with: { tool: "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9" }
+      - if: steps.tools2.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9"
       - run: |
           d=rvt-open-wasm-${GITHUB_REF_NAME}
           tools/ci/wasm-package.sh "$d"
@@ -79,6 +95,7 @@ jobs:
   attest:
     name: Build provenance
     needs: [cli, wasm]
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     permissions:
@@ -111,6 +128,7 @@ jobs:
   online-scans:
     name: Online scans (VirusTotal, MetaDefender, Hybrid Analysis)
     needs: [cli, wasm]
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     # Each service runs only when its secret exists, and never blocks the release (continue-on-error).
@@ -147,10 +165,13 @@ jobs:
         with: { name: scan-online, path: scan/, if-no-files-found: ignore }
   publish:
     needs: [attest, clamav, online-scans]
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { pattern: cli-*, path: dist, merge-multiple: true }
@@ -185,5 +206,10 @@ jobs:
             trivy sbom --cache-dir "$GITHUB_WORKSPACE/.cache/trivy" --scanners vuln --format table --exit-code 0 \
               --output "${s%.cdx.json}.trivy.txt" "$s"
           done
-      - run: (cd dist && sha256sum * > SHA256SUMS) && pre=(); case "$GITHUB_REF_NAME" in *-*) pre=(--prerelease --latest=false) ;; esac && gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes "${pre[@]}"
+      - run: cd dist && sha256sum * > SHA256SUMS
+      # SHA256SUMS has its own build provenance, so verifying it and then
+      # `sha256sum -c` checks every file on the release page.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: { subject-path: dist/SHA256SUMS }
+      - run: pre=(); case "$GITHUB_REF_NAME" in *-*) pre=(--prerelease --latest=false) ;; esac && gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes "${pre[@]}"
         env: { GH_TOKEN: "${{ github.token }}" }
