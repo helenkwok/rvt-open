@@ -9,9 +9,10 @@
   read.
 - **The IfcSite is placed relative to the survey point.** It stood at the
   shared coordinates of the internal origin, which is Revit's placement only
-  where the survey point is at the shared origin (the tiny reference models,
-  `rac_advanced_sample_project`, `DACH_sample_project` and the 12 BIM4LCA
-  models, all as Revit's own exports place them). Snowdon Towers' export
-  puts its site 12 ft higher, by its survey point's -12 ft. Where the survey
-  point is not read (Snowdon Towers), the site stays at the internal origin
-  instead of 417 km away.
+  where the survey point is at the shared origin. It now stands at the
+  internal origin's shared coordinates less the survey point's, as Revit
+  2024's own exports place it: `rac_basic_sample_project` at (9.234, -11.277)
+  m (it was at (-19.824, -18.808) m), Snowdon Towers Architectural at (0.68,
+  0.43, 241.554) m, and `rac_advanced_sample_project`, `DACH_sample_project`
+  and the BIM4LCA models unchanged. Where the survey point is not read the
+  site stays at the internal origin.

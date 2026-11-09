@@ -6149,14 +6149,13 @@ pub(super) fn opening_global_id(
 
 /// Where Revit's export places the `IfcSite` (site placement Shared): the
 /// shared coordinates of the internal origin less those of the survey point,
-/// metres. Where the survey point is at the shared origin its exports put the
-/// site at the internal origin's E/W, N/S and elevation (the tiny reference
-/// models set 2 recipe 20, `rac_advanced_sample_project`, the
-/// `DACH_sample_project` 500 m up and the 12 BIM4LCA models). Snowdon Towers
-/// (Revit 2024) puts it 12 ft above the internal origin's shared elevation,
-/// with an `IfcSite` `RefElevation` of -12 ft, which is the elevation of a
-/// survey point 12 ft below the shared origin taken off; its survey point is
-/// not read, so this reading of the plan offsets rests on that elevation.
+/// metres. Measured against Revit 2024's own IFC4 exports:
+/// `rac_basic_sample_project`, whose survey point is at shared E/W -29.06 m,
+/// N/S -7.53 m, at (9.234, -11.277) m; Snowdon Towers Architectural, 12 ft
+/// below the shared origin, at (0.68, 0.43, 241.554) m; and where the survey
+/// point is at the shared origin, at the internal origin's shared coordinates
+/// (`rac_advanced_sample_project`, `DACH_sample_project` 500 m up, the tiny
+/// reference models set 2 recipe 20 and the 12 BIM4LCA models of 2027).
 fn site_shared_offset(g: &crate::georeference::Georeference) -> [f64; 3] {
     let survey = g.survey_point.map_or([0.0; 3], |p| p.shared);
     [0, 1, 2].map(|k| g.origin_shared[k] - survey[k])
