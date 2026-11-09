@@ -387,14 +387,6 @@ fn site_entity(
     }
 }
 
-/// Site content the element walk does not yield (rac_basic: the
-/// toposurface and three wind turbines that Revit's own export writes):
-/// - every toposurface (`SiteSurface`) becomes an `IfcGeographicElement
-///   .TERRAIN.` drawn from its saved graphics' faceted mesh, on every
-///   release (model coordinates);
-/// - every Site-category family instance not already exported is added
-///   (Revit 2023 to 2027 only, where the saved-graphics pass then draws it),
-///   as `IfcGeographicElement .USERDEFINED.`, placed by its instance.
 /// The toposurfaces (`SiteSurface`) of a file, as Revit's export draws them.
 struct SiteSurfaces {
     /// Those it draws: not owned by another (`m_unplacedOwnerId` unset; a
@@ -487,6 +479,14 @@ pub fn hidden_site_surfaces(rf: &mut crate::RevitFile) -> BTreeSet<u64> {
     hidden
 }
 
+/// Site content the element walk does not yield (rac_basic: the
+/// toposurface and three wind turbines that Revit's own export writes):
+/// - every toposurface (`SiteSurface`) becomes an `IfcGeographicElement
+///   .TERRAIN.` drawn from its saved graphics' faceted mesh, on every
+///   release (model coordinates);
+/// - every Site-category family instance not already exported is added
+///   (Revit 2023 to 2027 only, where the saved-graphics pass then draws it),
+///   as `IfcGeographicElement .USERDEFINED.`, placed by its instance.
 pub fn add_site_content(
     rf: &mut crate::RevitFile,
     model: &mut IfcModel,
