@@ -919,8 +919,10 @@ impl StepWriter<'_> {
         } else {
             g.true_north.to_radians().sin_cos()
         };
+        // With the site placed relative to the survey point, the context's
+        // origin is the survey point.
         let [e, n, h] = if shared_site {
-            [0.0; 3]
+            g.survey_point.map_or([0.0; 3], |p| p.shared)
         } else {
             g.origin_shared
         };
@@ -2218,10 +2220,12 @@ impl StepWriter<'_> {
         // model's internal frame, at Revit's Angle to True North.
         // Under `revit` the site stands at the shared position, turned to
         // True North, so the context's frame is the shared one.
+        // Under `revit` the site stands at the shared position relative to the
+        // survey point, which must be read for it.
         let shared_site = model
             .georeference
             .as_ref()
-            .filter(|_| model.convention.site_at_shared_position());
+            .filter(|g| model.convention.site_at_shared_position() && g.survey_point.is_some());
         let true_north = model.georeference.as_ref().map(|g| {
             let turn = if shared_site.is_some() {
                 0.0
@@ -2323,7 +2327,7 @@ impl StepWriter<'_> {
         let site_axis = match shared_site {
             Some(g) => {
                 let (sin, cos) = g.true_north.to_radians().sin_cos();
-                let [e, n, h] = g.origin_shared;
+                let [e, n, h] = site_shared_offset(g);
                 let at = self.id();
                 self.emit_entity(
                     at,
@@ -6141,6 +6145,21 @@ pub(super) fn opening_global_id(
         },
         _ => return None,
     })
+}
+
+/// Where Revit's export places the `IfcSite` (site placement Shared): the
+/// shared coordinates of the internal origin less those of the survey point,
+/// metres. Where the survey point is at the shared origin its exports put the
+/// site at the internal origin's E/W, N/S and elevation (the tiny reference
+/// models set 2 recipe 20, `rac_advanced_sample_project`, the
+/// `DACH_sample_project` 500 m up and the 12 BIM4LCA models). Snowdon Towers
+/// (Revit 2024) puts it 12 ft above the internal origin's shared elevation,
+/// with an `IfcSite` `RefElevation` of -12 ft, which is the elevation of a
+/// survey point 12 ft below the shared origin taken off; its survey point is
+/// not read, so this reading of the plan offsets rests on that elevation.
+fn site_shared_offset(g: &crate::georeference::Georeference) -> [f64; 3] {
+    let survey = g.survey_point.map_or([0.0; 3], |p| p.shared);
+    [0, 1, 2].map(|k| g.origin_shared[k] - survey[k])
 }
 
 /// The GlobalId of the model's `IfcGrid` ([`super::grids::axes`]).
