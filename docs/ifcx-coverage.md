@@ -38,8 +38,11 @@ many parameter values an export carries.
   `LoadBearing` for Revit's `Structural`) is not counted, so the measure is a
   lower bound for every export alike.
 
+The public `fixtures-tiny-1` asset holds no `api-dump.json`, so CI measures
+set 2 only; the set 1 numbers below were measured once on the same models
+with their dumps, and set 1's floor rows apply where its dumps are present.
 CI runs it in the "tiny reference models" job on rvt-open's IFC4 and IFCX of
-every model, and fails when an IFCX total (per set, kind, objects or
+every model that has a dump, and fails when an IFCX total (per set, kind, objects or
 parameters) drops below [`tools/ifcx-coverage/floor.tsv`](../tools/ifcx-coverage/floor.tsv),
 or below IFC4's. Revit's own IFC4 Reference View exports of the same models are
 not public; the column below was measured once with `--revit-ifc`.

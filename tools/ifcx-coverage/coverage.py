@@ -454,9 +454,11 @@ def main():
         if t[2] is not None and t[3] is not None and t[3] < t[2]:
             failed.append("set %s, %s %s: IFCX carries %d, IFC4 %d" % (s, k, w, t[3], t[2]))
     if a.floor:
+        # A set whose fixtures hold no API dump is not measured (the public set 1 has none).
+        measured = {k[0] for k in totals}
         with open(a.floor) as fh:
             for row in csv.reader((ln for ln in fh if not ln.startswith("#")), delimiter="\t"):
-                if row[0] == "set":
+                if row[0] == "set" or row[0] not in measured:
                     continue
                 t = totals.get((row[0], row[1], row[2]))
                 got = (t[3] or 0) if t else 0
