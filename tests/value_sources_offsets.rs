@@ -857,6 +857,43 @@ const SOURCE_VALUES: &[(&str, &str, Row)] = &[
         "structural_framing_top_level",
         Gap { reason: BINDING },
     ),
+    // A beam's Reference Level and the storey it gives, read from its
+    // record's id lists (beam_reference_levels).
+    (
+        "LevelBindSource",
+        "partition_element_record_reference_level",
+        Gap { reason: BINDING },
+    ),
+    (
+        "StoreyBindSource",
+        "reference_level_story",
+        Gap { reason: BINDING },
+    ),
+    (
+        "ContainmentLevelBindSource",
+        "partition_element_record_reference_list",
+        Gap { reason: BINDING },
+    ),
+    (
+        "StoreyBindSource",
+        "beam_system_base",
+        Gap { reason: BINDING },
+    ),
+    (
+        "StoreyBindSource",
+        "reference_level_below_story",
+        Gap { reason: BINDING },
+    ),
+    (
+        "StoreyBindSource",
+        "containment_level_fallback",
+        Gap { reason: BINDING },
+    ),
+    (
+        "LevelBindSource",
+        "partition_association_record",
+        Gap { reason: BINDING },
+    ),
     (
         "ProfileSource",
         "partition_element_record_join_cut",
