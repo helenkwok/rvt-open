@@ -139,6 +139,11 @@ struct Placed<'a> {
     layer: String,
     kind: &'a str,
     geom: Geom,
+    /// The entity's own colour (ByLayer and ByBlock resolved by the reader of `Placed`).
+    colour: crate::Colour,
+    /// Only what lies in this box (min x, min y, max x, max y) counts: model space seen through
+    /// a viewport.
+    clip: Option<[f64; 4]>,
 }
 
 /// Every drawable entity of `block`, with inserts and dimensions expanded (bounded by `limits`).
@@ -208,6 +213,8 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                         layer: layer.into(),
                         kind: &e.kind,
                         geom: e.geom.transformed(t),
+                        colour: e.colour,
+                        clip: None,
                     });
                 }
                 Geom::Dimension { block, .. } => {
@@ -226,12 +233,16 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                         layer: layer.into(),
                         kind: &e.kind,
                         geom: e.geom.transformed(t),
+                        colour: e.colour,
+                        clip: None,
                     });
                 }
                 _ => out.push(Placed {
                     layer: layer.into(),
                     kind: &e.kind,
                     geom: e.geom.transformed(t),
+                    colour: e.colour,
+                    clip: None,
                 }),
             }
         }
@@ -248,6 +259,155 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
         &mut out,
     );
     out
+}
+
+/// Model space as a sheet shows it: for each viewport of paper block `block`, every model-space
+/// entity scaled and moved from the viewport's view centre to its centre, kept only inside its
+/// frame. `scale` turns model units into the sheet's.
+fn through_viewports<'a>(
+    d: &'a Drawing2d,
+    block: &str,
+    scale: f64,
+    limits: &Limits,
+) -> Vec<Placed<'a>> {
+    let viewports: Vec<(&Geom, [f64; 4])> = d
+        .entities
+        .iter()
+        .filter(|e| e.owner == block && Space::of(block) == Space::Paper)
+        .filter_map(|e| match &e.geom {
+            g @ Geom::Viewport {
+                center,
+                width,
+                height,
+                view_height,
+                id,
+                ..
+            } if *id != 1 && *view_height > 0.0 => Some((
+                g,
+                [
+                    center[0] - width / 2.0,
+                    center[1] - height / 2.0,
+                    center[0] + width / 2.0,
+                    center[1] + height / 2.0,
+                ],
+            )),
+            _ => None,
+        })
+        .collect();
+    if viewports.is_empty() {
+        return Vec::new();
+    }
+    let model = flatten(d, crate::MODEL_SPACE, 1.0, limits);
+    let mut out = Vec::new();
+    for (g, clip) in viewports {
+        let Geom::Viewport {
+            center,
+            height,
+            view_center,
+            view_height,
+            ..
+        } = g
+        else {
+            continue;
+        };
+        // ponytail: twisted views are taken as untwisted; add the twist when a sheet holds one.
+        let k = height / view_height;
+        let t = Affine {
+            a: k * scale,
+            b: 0.0,
+            c: 0.0,
+            d: k * scale,
+            e: (center[0] - k * view_center[0]) * scale,
+            f: (center[1] - k * view_center[1]) * scale,
+        };
+        let clip = clip.map(|v| v * scale);
+        for p in &model {
+            out.push(Placed {
+                layer: p.layer.clone(),
+                kind: p.kind,
+                geom: p.geom.transformed(&t),
+                colour: p.colour,
+                clip: Some(clip),
+            });
+        }
+    }
+    out
+}
+
+fn inside(clip: Option<[f64; 4]>, p: &[f64; 2]) -> bool {
+    clip.is_none_or(|c| p[0] >= c[0] && p[0] <= c[2] && p[1] >= c[1] && p[1] <= c[3])
+}
+
+/// An entity placed where it is drawn, with its colour resolved (its own, else its layer's,
+/// else black).
+pub(crate) struct Coloured {
+    pub rgb: [u8; 3],
+    pub geom: Geom,
+}
+
+/// Every drawable entity of `block`, inserts and dimensions expanded, with its colour.
+pub(crate) fn flatten_coloured(d: &Drawing2d, block: &str, limits: &Limits) -> Vec<Coloured> {
+    let layers: HashMap<&str, &crate::Layer2d> =
+        d.layers.iter().map(|l| (l.name.as_str(), l)).collect();
+    flatten(d, block, 1.0, limits)
+        .into_iter()
+        .filter(|p| {
+            layers
+                .get(p.layer.as_str())
+                .is_none_or(|l| l.on && !l.frozen)
+        })
+        .map(|p| Coloured {
+            rgb: p
+                .colour
+                .to_rgb()
+                .or_else(|| layers.get(p.layer.as_str()).and_then(|l| l.colour.to_rgb()))
+                .unwrap_or([0, 0, 0]),
+            geom: p.geom,
+        })
+        .collect()
+}
+
+/// The linework of `layout` (model space when `None`; on a sheet, model space as its viewports
+/// show it) sampled every `step`, for checking another rendering of the same drawing.
+pub(crate) fn linework_samples(
+    d: &Drawing2d,
+    layout: Option<&str>,
+    step: f64,
+    limits: &Limits,
+) -> Vec<[f64; 2]> {
+    let block = match layout {
+        None => crate::MODEL_SPACE.to_string(),
+        Some(name) => d
+            .layouts
+            .iter()
+            .find(|l| l.name == name)
+            .map(|l| l.block.clone())
+            .unwrap_or_default(),
+    };
+    let mut ents = flatten(d, &block, 1.0, limits);
+    if layout.is_some() {
+        ents.extend(through_viewports(d, &block, 1.0, limits));
+    }
+    ents.iter()
+        .filter(|p| {
+            matches!(
+                p.geom,
+                Geom::Line { .. }
+                    | Geom::Circle { .. }
+                    | Geom::Arc { .. }
+                    | Geom::Ellipse { .. }
+                    | Geom::Polyline { .. }
+                    | Geom::Path { .. }
+            )
+        })
+        .flat_map(|p| {
+            p.geom
+                .samples(step)
+                .into_iter()
+                .filter(|q| inside(p.clip, q))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// Points hashed on a grid of `cell`, for nearest-within-tolerance queries.
@@ -281,7 +441,7 @@ impl Grid {
     }
 }
 
-fn point_match(reference: &[[f64; 2]], candidate: &[[f64; 2]], tol: f64) -> Match {
+pub(crate) fn point_match(reference: &[[f64; 2]], candidate: &[[f64; 2]], tol: f64) -> Match {
     let (gr, gc) = (Grid::new(reference, tol), Grid::new(candidate, tol));
     let p_hit = candidate.iter().filter(|p| gr.near(p, tol)).count();
     let r_hit = reference.iter().filter(|p| gc.near(p, tol)).count();
@@ -345,8 +505,23 @@ pub fn compare(reference: &Drawing2d, candidate: &Drawing2d, o: &Options) -> Sco
             .map(|l| l.block.clone())
             .unwrap_or_default(),
     };
-    let r_ents = flatten(reference, &block(reference), 1.0, &o.limits);
-    let c_ents = flatten(candidate, &block(candidate), scale, &o.limits);
+    let mut r_ents = flatten(reference, &block(reference), 1.0, &o.limits);
+    let mut c_ents = flatten(candidate, &block(candidate), scale, &o.limits);
+    // A sheet is scored as it is seen: its paper space and model space through its viewports.
+    if o.layout.is_some() {
+        r_ents.extend(through_viewports(
+            reference,
+            &block(reference),
+            1.0,
+            &o.limits,
+        ));
+        c_ents.extend(through_viewports(
+            candidate,
+            &block(candidate),
+            scale,
+            &o.limits,
+        ));
+    }
     let map_layer = |l: &str| o.layer_map.get(l).cloned().unwrap_or_else(|| l.to_string());
 
     // Linework by layer (the reference's layer names, mapped).
@@ -368,10 +543,12 @@ pub fn compare(reference: &Drawing2d, candidate: &Drawing2d, o: &Options) -> Sco
     for p in &r_ents {
         let layer = map_layer(&p.layer);
         if line(&p.geom) {
-            r_pts
-                .entry(layer.clone())
-                .or_default()
-                .extend(p.geom.samples(step));
+            r_pts.entry(layer.clone()).or_default().extend(
+                p.geom
+                    .samples(step)
+                    .into_iter()
+                    .filter(|q| inside(p.clip, q)),
+            );
         }
         if matches!(p.geom, Geom::Hatch { .. }) {
             *hatch_r.entry(layer).or_default() += 1;
@@ -379,10 +556,12 @@ pub fn compare(reference: &Drawing2d, candidate: &Drawing2d, o: &Options) -> Sco
     }
     for p in &c_ents {
         if line(&p.geom) {
-            c_pts
-                .entry(p.layer.clone())
-                .or_default()
-                .extend(p.geom.samples(step));
+            c_pts.entry(p.layer.clone()).or_default().extend(
+                p.geom
+                    .samples(step)
+                    .into_iter()
+                    .filter(|q| inside(p.clip, q)),
+            );
         }
         if matches!(p.geom, Geom::Hatch { .. }) {
             *hatch_c.entry(p.layer.clone()).or_default() += 1;
@@ -418,7 +597,11 @@ pub fn compare(reference: &Drawing2d, candidate: &Drawing2d, o: &Options) -> Sco
     let texts = |ents: &[Placed]| -> Vec<(String, [f64; 2])> {
         ents.iter()
             .filter_map(|p| match &p.geom {
-                Geom::Text { value, at, .. } if !value.trim().is_empty() && p.kind != "ATTDEF" => {
+                Geom::Text { value, at, .. }
+                    if !value.trim().is_empty()
+                        && p.kind != "ATTDEF"
+                        && inside(p.clip, &[at[0], at[1]]) =>
+                {
                     Some((value.trim().to_string(), [at[0], at[1]]))
                 }
                 _ => None,
@@ -447,7 +630,9 @@ pub fn compare(reference: &Drawing2d, candidate: &Drawing2d, o: &Options) -> Sco
     let dims = |ents: &[Placed], k: f64| -> Vec<i64> {
         ents.iter()
             .filter_map(|p| match &p.geom {
-                Geom::Dimension { measurement, .. } => {
+                Geom::Dimension {
+                    measurement, at, ..
+                } if inside(p.clip, &[at[0], at[1]]) => {
                     Some((measurement * k * 1000.0).round() as i64)
                 }
                 _ => None,

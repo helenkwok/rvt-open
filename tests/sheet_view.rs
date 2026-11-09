@@ -23,6 +23,14 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// How far a drawn viewport's centre may lie from the export's: the viewport is drawn around
+/// what the view draws, while the authoring tool's frames its own extents.
+const VIEWPORT_CENTRE_MM: f64 = 10.0;
+
+/// The lowest wall edge in elevation North, millimetres: the foundation walls reach below
+/// Level 1.
+const ELEVATION_LOWEST_MM: f64 = -3000.0;
+
 fn sample() -> Option<PathBuf> {
     let Some(dir) = std::env::var_os("RVT_REVIT_2023_DIR").map(PathBuf::from) else {
         eprintln!("skipping: RVT_REVIT_2023_DIR is not set");
@@ -188,4 +196,121 @@ fn site_is_drawn_turned_to_true_north_with_its_property_lines_without_its_hidden
         .max_by(|a, b| a.1.total_cmp(b.1))
         .map(|(a, _)| *a);
     assert_eq!(main, Some(37), "{by_angle:?}");
+}
+
+/// Sheet A102 "Plans" holds plan views Level 1 and Level 2. Drawn with `--sheet`, it is a
+/// paper layout with one viewport per view, each centred where the view sits on the sheet (the
+/// authoring tool's DWG export of this sheet centres them at (227.4, 400.7) and (574.9, 404.2)
+/// mm), at 1:100, over model space that holds the views' linework; and its PDF draws the same
+/// linework.
+#[test]
+fn sheet_a102_places_its_two_plan_views_and_its_pdf_draws_them() {
+    let Some(rvt) = sample() else { return };
+    let sheets: Vec<serde_json::Value> =
+        serde_json::from_slice(&sheet(&[rvt.as_os_str(), "--list-sheets".as_ref()]).stdout)
+            .expect("sheets JSON");
+    let a102 = sheets
+        .iter()
+        .find(|s| s["number"] == "A102")
+        .expect("sheet A102");
+    assert_eq!(a102["name"], "Plans");
+    let views: Vec<&str> = a102["views"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["plan"] == true)
+        .filter_map(|v| v["name"].as_str())
+        .collect();
+    assert_eq!(views, ["Level 1", "Level 2"]);
+
+    let dir = std::env::temp_dir().join(format!("rvt-sheet-a102-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (dxf, pdf) = (dir.join("a102.dxf"), dir.join("a102.pdf"));
+    for (format, path) in [("dxf", &dxf), ("pdf", &pdf)] {
+        sheet(&[
+            rvt.as_os_str(),
+            "--sheet".as_ref(),
+            "A102".as_ref(),
+            "--format".as_ref(),
+            format.as_ref(),
+            "-o".as_ref(),
+            path.as_os_str(),
+        ]);
+    }
+    let read = rvt_dwg::read_file(&dxf, rvt_dwg::Limits::DEFAULT).expect("read back");
+    let pdf_bytes = std::fs::read(&pdf).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let d = read.drawing;
+    let layout = d
+        .layouts
+        .iter()
+        .find(|l| l.name == "Layout1")
+        .expect("Layout1");
+    let mut centres: Vec<[f64; 2]> = d
+        .entities
+        .iter()
+        .filter(|e| e.owner == layout.block)
+        .filter_map(|e| match e.geom {
+            // Id 1 is the sheet's own view; the others show the views placed on it.
+            rvt_dwg::Geom::Viewport {
+                center,
+                height,
+                view_height,
+                id,
+                ..
+            } if id != 1 => {
+                assert!((view_height / height - 100.0).abs() < 1e-6, "1:100");
+                Some([center[0], center[1]])
+            }
+            _ => None,
+        })
+        .collect();
+    centres.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    assert_eq!(centres.len(), 2, "{centres:?}");
+    for (got, want) in centres.iter().zip([[227.4, 400.7], [574.9, 404.2]]) {
+        let off = (got[0] - want[0]).hypot(got[1] - want[1]);
+        assert!(off < VIEWPORT_CENTRE_MM, "{got:?} vs {want:?}: {off:.1} mm");
+    }
+    assert!(
+        d.entities
+            .iter()
+            .any(|e| e.owner == "*Model_Space" && e.layer == "A-WALL")
+    );
+    let m = rvt_dwg::pdf::check(
+        &pdf_bytes,
+        &d,
+        Some("Layout1"),
+        None,
+        0.5,
+        &rvt_dwg::Limits::DEFAULT,
+    )
+    .expect("pdf check");
+    assert!(m.precision > 0.99 && m.recall > 0.99, "{m:?}");
+}
+
+/// Elevation "North" drawn alone: the walls' edges seen from the north, in the elevation's own
+/// axes (x along its right, which runs west, y up), millimetres. Its walls rise from Level 1
+/// (0 mm) to the roof; the drawing spans the house from side to side and none of it lies below
+/// the ground floor's slab.
+#[test]
+fn elevation_north_draws_the_walls_seen_from_the_north() {
+    let Some(rvt) = sample() else { return };
+    let d = draw(&rvt, "North");
+    let walls: Vec<[f64; 4]> = d
+        .entities
+        .iter()
+        .filter(|e| e.layer == "A-WALL")
+        .filter_map(|e| match e.geom {
+            rvt_dwg::Geom::Line { a, b } => Some([a[0], a[1], b[0], b[1]]),
+            _ => None,
+        })
+        .collect();
+    assert!(walls.len() > 20, "{} wall edges", walls.len());
+    let (lo, hi) = walls.iter().fold((f64::MAX, f64::MIN), |(lo, hi), w| {
+        (lo.min(w[1]).min(w[3]), hi.max(w[1]).max(w[3]))
+    });
+    assert!(
+        lo > ELEVATION_LOWEST_MM && hi > 6000.0,
+        "walls span {lo:.0} to {hi:.0} mm"
+    );
 }

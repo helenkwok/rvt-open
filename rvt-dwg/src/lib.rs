@@ -26,6 +26,7 @@
 #![forbid(unsafe_code)]
 
 pub mod compare;
+pub mod pdf;
 mod read;
 pub mod report;
 pub mod svg;

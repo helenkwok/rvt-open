@@ -216,6 +216,45 @@ fn build(d: &Drawing2d, version: DxfVersion) -> Result<(CadDocument, Vec<String>
         ));
     }
 
+    // A sheet's own (overall) viewport comes first in its layout: a DWG stores no viewport ids,
+    // and a reader numbers the first viewport of a layout 1, the sheet's own view. Without it the
+    // first view's viewport would read back as the sheet's view.
+    for layout in d.layouts.iter().filter(|l| !l.is_model) {
+        let Some(&owner) = owners.get(&layout.block) else {
+            continue;
+        };
+        let mine = |e: &&Entity2d| e.owner == layout.block;
+        if !d
+            .entities
+            .iter()
+            .filter(mine)
+            .any(|e| matches!(e.geom, Geom::Viewport { .. }))
+        {
+            continue;
+        }
+        let b = layout.limits.or_else(|| {
+            crate::bounds(
+                d.entities
+                    .iter()
+                    .filter(mine)
+                    .flat_map(|e| e.geom.samples(f64::MAX)),
+            )
+        });
+        let Some(b) = b else { continue };
+        let mut v = Viewport::new();
+        let centre = Vector3::new((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0, 0.0);
+        v.center = centre;
+        v.width = b[2] - b[0];
+        v.height = b[3] - b[1];
+        v.view_center = centre;
+        v.view_height = v.height;
+        v.id = 1;
+        let mut entity = EntityType::Viewport(Box::new(v));
+        entity.common_mut().owner_handle = owner;
+        doc.add_entity(entity)
+            .map_err(|err| Error(format!("the overall viewport of {}: {err}", layout.name)))?;
+    }
+
     let mut skipped: std::collections::BTreeMap<&str, usize> = Default::default();
     let mut orphans: std::collections::BTreeMap<&str, usize> = Default::default();
     let mut viewport_id = 2;

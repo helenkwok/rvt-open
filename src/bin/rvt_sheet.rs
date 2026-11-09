@@ -1,4 +1,4 @@
-//! `rvt-sheet` — render a 2D plan view of a Revit file as SVG, DXF or DWG.
+//! `rvt-sheet` — render a 2D plan view or a sheet of a Revit file as SVG, DXF, DWG or PDF.
 //!
 //! The command-line front end of the plan renderer, `rvt::ifc::sheet`. Useful for:
 //!
@@ -17,7 +17,15 @@
 //! rvt-sheet model.rvt --list-views                     # the plan views, as JSON
 //! rvt-sheet model.rvt --view "Level 1" --format dxf    # only what that plan view shows
 //! rvt-sheet model.rvt --level "Level 2" --cut-height 1200
+//! rvt-sheet model.rvt --view "Level 1" --format pdf    # vector PDF at the view's scale
+//! rvt-sheet model.rvt --list-sheets                    # the sheets and the views on them, as JSON
+//! rvt-sheet model.rvt --sheet A102 --format dxf        # a sheet: its plan views in viewports, title block, notes
 //! ```
+//!
+//! `--sheet` draws a sheet as the authoring tool's DWG export lays one out: each plan view on it
+//! drawn in model space (side by side, millimetres) and shown through a viewport placed where the
+//! view sits on the sheet, at the view's scale; the title block's lines, the sheet's own text
+//! notes and detail lines, and each view's title in paper space (layout `Layout1`, millimetres).
 //!
 //! `--view` draws what a plan view shows: the elements between its view depth and its cut plane,
 //! clipped to its crop region when the crop is on, with its room tags, grid heads, text notes and
@@ -40,7 +48,7 @@ use std::process::ExitCode;
 #[command(
     name = "rvt-sheet",
     version,
-    about = "Render a 2D plan view of a Revit file as SVG, DXF or DWG",
+    about = "Render a 2D plan view or a sheet of a Revit file as SVG, DXF, DWG or PDF",
     after_help = "Examples:\n  \
         rvt-sheet model.rvt                          writes model.svg next to the input\n  \
         rvt-sheet model.rvt -o plan.svg --width 2000 --height 1500 --no-labels\n  \
@@ -83,9 +91,10 @@ struct Cli {
     #[arg(long)]
     no_background: bool,
 
-    /// Output format: svg, dxf or dwg. DXF and DWG hold the same plan outlines as the SVG, in
-    /// millimetres, one layer per category.
-    #[arg(long, default_value = "svg", value_parser = ["svg", "dxf", "dwg"])]
+    /// Output format: svg, dxf, dwg or pdf. DXF and DWG hold the same plan outlines as the SVG, in
+    /// millimetres, one layer per category; PDF draws the DXF's drawing as vectors, a view at its
+    /// scale and a sheet at full size.
+    #[arg(long, default_value = "svg", value_parser = ["svg", "dxf", "dwg", "pdf"])]
     format: String,
 
     /// DXF version (2018, 2013, 2010, 2007, 2004, 2000, R14, R12).
@@ -100,9 +109,18 @@ struct Cli {
     #[arg(long)]
     verbose: bool,
 
-    /// Draw only what this plan view shows (its name; see `--list-views`).
+    /// Draw only what this view shows: a plan view (its name; see `--list-views`), or a section
+    /// or elevation by its name (DXF, DWG or PDF: its elements' edges in its crop box).
     #[arg(long, conflicts_with = "level")]
     view: Option<String>,
+
+    /// Draw this sheet (its number or name; see `--list-sheets`) as DXF, DWG or PDF.
+    #[arg(long, conflicts_with_all = ["view", "level"])]
+    sheet: Option<String>,
+
+    /// Print the sheets (number, name, the views placed on them) as JSON and exit.
+    #[arg(long)]
+    list_sheets: bool,
 
     /// Draw only the band from this level (its name, or its elevation in millimetres) to
     /// `--cut-height` above it.
@@ -168,7 +186,41 @@ fn run(cli: &Cli) -> Result<(), String> {
         );
         return Ok(());
     }
-    let facts = if cli.view.is_some() {
+    if cli.list_sheets {
+        let facts = rvt::plan_views::read(&mut rf).map_err(|e| e.to_string())?;
+        let sheets: Vec<serde_json::Value> = facts
+            .sheets
+            .iter()
+            .map(|s| {
+                let views: Vec<serde_json::Value> = facts
+                    .viewports
+                    .iter()
+                    .filter(|v| v.sheet == s.id)
+                    .map(|v| {
+                        let plan = facts.views.iter().find(|p| p.id == v.view);
+                        let section = facts.sections.iter().find(|p| p.id == v.view);
+                        serde_json::json!({
+                            "view": v.view,
+                            "name": plan.map(|p| p.name.clone()).or_else(|| section.map(|p| p.name.clone())),
+                            "plan": plan.is_some(),
+                            "section": section.is_some(),
+                            "offset": v.offset,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({"id": s.id, "number": s.number, "name": s.name, "views": views})
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&sheets).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    if cli.sheet.is_some() && cli.format == "svg" {
+        return Err("--sheet writes dxf, dwg or pdf: pass --format".into());
+    }
+    let facts = if cli.view.is_some() || cli.sheet.is_some() {
         Some(rvt::plan_views::read(&mut rf).map_err(|e| e.to_string())?)
     } else {
         None
@@ -177,7 +229,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         .export(&mut rf)
         .map_err(|e| format!("export {}: {e}", input.display()))?;
     // A plan view draws each family instance's plan symbol (door swings, window lines).
-    let symbols = if cli.view.is_some() && cli.format != "svg" {
+    let symbols = if (cli.view.is_some() || cli.sheet.is_some()) && cli.format != "svg" {
         rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model).unwrap_or_else(|e| {
             eprintln!("rvt-sheet: plan symbols not read: {e}");
             Default::default()
@@ -194,6 +246,43 @@ fn run(cli: &Cli) -> Result<(), String> {
         eprintln!(
             "rvt-sheet: the project's last phase holds no room, so the rooms of {phase:?}, the latest phase that holds any, are drawn; every other element is of the last phase"
         );
+    }
+    if let (Some(key), Some(facts)) = (&cli.sheet, &facts) {
+        let sheet = facts.find_sheet(key)?;
+        let drawing = sheet_drawing(&mut rf, &model, facts, sheet, &symbols)?;
+        let bytes = drawing_bytes(&drawing, Some("Layout1"), 1.0, &cli.format, cli)?;
+        rvt::cli::write_output(&output, &bytes)
+            .map_err(|e| format!("write {}: {e}", output.display()))?;
+        return Ok(());
+    }
+    // A section or elevation (a name no plan view has): its projection, DXF, DWG or PDF.
+    if let (Some(name), Some(facts)) = (&cli.view, &facts) {
+        if facts.find(name).is_err() {
+            if let Some(view) = facts
+                .sections
+                .iter()
+                .find(|v| !v.template && v.name.eq_ignore_ascii_case(name))
+            {
+                if cli.format == "svg" {
+                    return Err(format!(
+                        "{name:?} is a section or elevation: pass --format dxf, dwg or pdf"
+                    ));
+                }
+                let window = section_window(facts, view)
+                    .ok_or_else(|| format!("{name:?} has no crop box decoded"))?;
+                let drawing = projected_drawing_of(&model, &window)?;
+                let bytes = drawing_bytes(
+                    &drawing,
+                    None,
+                    view.scale.unwrap_or(100.0),
+                    &cli.format,
+                    cli,
+                )?;
+                rvt::cli::write_output(&output, &bytes)
+                    .map_err(|e| format!("write {}: {e}", output.display()))?;
+                return Ok(());
+            }
+        }
     }
     let (window, annotation) = match (&cli.view, &facts, &cli.level) {
         (Some(name), Some(facts), _) => {
@@ -218,9 +307,22 @@ fn run(cli: &Cli) -> Result<(), String> {
         annotation,
         symbols,
     };
+    // A view's PDF is drawn at the view's scale; a level band or the whole model at 1:100.
+    let pdf_scale = cli
+        .view
+        .as_ref()
+        .zip(facts.as_ref())
+        .and_then(|(name, f)| f.find(name).ok()?.scale)
+        .unwrap_or(100.0);
     let bytes = match cli.format.as_str() {
         "svg" => render_plan_svg(&model, &options).into_bytes(),
-        format => cad_bytes(&model, &options, format, cli)?,
+        format => drawing_bytes(
+            &plan_drawing_of(&model, &options)?,
+            None,
+            pdf_scale,
+            format,
+            cli,
+        )?,
     };
     rvt::cli::write_output(&output, &bytes)
         .map_err(|e| format!("write {}: {e}", output.display()))?;
@@ -549,35 +651,368 @@ fn view_window(
 }
 
 #[cfg(feature = "dwg")]
-fn cad_bytes(
+fn plan_drawing_of(
     model: &rvt::ifc::IfcModel,
     options: &SheetOptions,
+) -> Result<rvt_dwg::Drawing2d, String> {
+    Ok(rvt::ifc::sheet::plan_drawing(model, options))
+}
+
+#[cfg(feature = "dwg")]
+fn projected_drawing_of(
+    model: &rvt::ifc::IfcModel,
+    window: &rvt::ifc::sheet::ProjectedWindow,
+) -> Result<rvt_dwg::Drawing2d, String> {
+    Ok(rvt::ifc::sheet::projected_drawing(model, window))
+}
+
+/// A drawing as DXF, DWG or PDF (`layout` drawn by the PDF: a sheet; `None` for model space at
+/// 1:`scale`).
+#[cfg(feature = "dwg")]
+fn drawing_bytes(
+    drawing: &rvt_dwg::Drawing2d,
+    layout: Option<&str>,
+    scale: f64,
     format: &str,
     cli: &Cli,
 ) -> Result<Vec<u8>, String> {
     use rvt_dwg::write::{CadFormat, parse_version, write_drawing};
+    if format == "pdf" {
+        return rvt_dwg::pdf::render(drawing, layout, scale, &rvt_dwg::Limits::DEFAULT)
+            .map(|p| p.bytes)
+            .map_err(|e| e.to_string());
+    }
     let (format, version) = if format == "dwg" {
         (CadFormat::Dwg, &cli.dwg_version)
     } else {
         (CadFormat::Dxf, &cli.dxf_version)
     };
     let version = parse_version(version, format).map_err(|e| e.to_string())?;
-    let drawing = rvt::ifc::sheet::plan_drawing(model, options);
-    let (bytes, notes) = write_drawing(&drawing, format, version).map_err(|e| e.to_string())?;
+    let (bytes, notes) = write_drawing(drawing, format, version).map_err(|e| e.to_string())?;
     for n in notes {
         eprintln!("rvt-sheet: {n}");
     }
     Ok(bytes)
 }
 
+/// A sheet: each plan view on it drawn in model space, side by side, and shown through a
+/// viewport where the view sits on the sheet (its internal origin at the viewport's `offset`, at
+/// the view's scale); the title blocks' lines, the sheet's text notes and detail lines and each
+/// view's title in paper space (`Layout1`). Millimetres.
+#[cfg(feature = "dwg")]
+fn sheet_drawing(
+    rf: &mut RevitFile,
+    model: &rvt::ifc::IfcModel,
+    facts: &rvt::plan_views::ViewFacts,
+    sheet: &rvt::plan_views::Sheet,
+    symbols: &std::collections::BTreeMap<usize, Vec<rvt::ifc::entities::PlanPolyline>>,
+) -> Result<rvt_dwg::Drawing2d, String> {
+    use rvt_dwg::{Affine, Entity2d, Geom, Layer2d, Layout2d};
+    const PAPER: &str = "*Paper_Space";
+    let mm = |p: [f64; 2]| [p[0] * MM_PER_FOOT, p[1] * MM_PER_FOOT, 0.0];
+    let mut out = rvt_dwg::Drawing2d {
+        version: "AC1032".into(),
+        units: 4,
+        code_page: "ANSI_1252".into(),
+        layers: vec![Layer2d::new("0", 7)],
+        layouts: vec![
+            Layout2d {
+                name: "Model".into(),
+                block: rvt_dwg::MODEL_SPACE.into(),
+                tab_order: 0,
+                is_model: true,
+                limits: None,
+            },
+            Layout2d {
+                name: "Layout1".into(),
+                block: PAPER.into(),
+                tab_order: 1,
+                is_model: false,
+                limits: None,
+            },
+        ],
+        ..Default::default()
+    };
+    let ensure = |d: &mut rvt_dwg::Drawing2d, layer: &str, aci: i16| {
+        if !d.layers.iter().any(|l| l.name == layer) {
+            d.layers.push(Layer2d::new(layer, aci));
+        }
+    };
+    let paper = |kind: &str, layer: &str, geom: Geom| {
+        let mut e = Entity2d::new(kind, layer, geom);
+        e.owner = PAPER.into();
+        e
+    };
+    let mut next_x = 0.0;
+    let mut viewport_id = 2;
+    for vp in facts.viewports.iter().filter(|v| v.sheet == sheet.id) {
+        let plan = facts.views.iter().find(|v| v.id == vp.view && !v.template);
+        let section = facts
+            .sections
+            .iter()
+            .find(|v| v.id == vp.view && !v.template);
+        let (d, scale, name) = match (plan, section) {
+            (Some(view), _) => {
+                let (window, annotation) = view_window(model, facts, view)?;
+                let options = SheetOptions {
+                    window: Some(window),
+                    annotation: Some(annotation),
+                    symbols: symbols.clone(),
+                    ..SheetOptions::default()
+                };
+                (
+                    rvt::ifc::sheet::plan_drawing(model, &options),
+                    view.scale.unwrap_or(100.0),
+                    view.name.clone(),
+                )
+            }
+            (None, Some(view)) => {
+                let Some(window) = section_window(facts, view) else {
+                    eprintln!(
+                        "rvt-sheet: sheet {}: view {:?} has no crop box; not drawn",
+                        sheet.number, view.name
+                    );
+                    continue;
+                };
+                (
+                    rvt::ifc::sheet::projected_drawing(model, &window),
+                    view.scale.unwrap_or(100.0),
+                    view.name.clone(),
+                )
+            }
+            _ => {
+                eprintln!(
+                    "rvt-sheet: sheet {}: view {} is not a plan, section or elevation view; not drawn yet",
+                    sheet.number, vp.view
+                );
+                continue;
+            }
+        };
+        let Some(b) = rvt_dwg::bounds(d.entities.iter().flat_map(|e| e.geom.samples(f64::MAX)))
+        else {
+            continue;
+        };
+        // Model space holds the views side by side, each moved along x clear of the last.
+        let shift = next_x - b[0];
+        next_x += b[2] - b[0] + 10_000.0;
+        let t = Affine {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: shift,
+            f: 0.0,
+        };
+        for l in d.layers {
+            if !out.layers.iter().any(|x| x.name == l.name) {
+                out.layers.push(l);
+            }
+        }
+        for mut e in d.entities {
+            e.geom = e.geom.transformed(&t);
+            out.entities.push(e);
+        }
+        // Paper = offset + view coordinates / scale.
+        let c = [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0];
+        let o = mm(vp.offset);
+        let (w, h) = ((b[2] - b[0]) / scale, (b[3] - b[1]) / scale);
+        ensure(&mut out, "G-ANNO-NPLT", 7);
+        out.entities.push(paper(
+            "VIEWPORT",
+            "G-ANNO-NPLT",
+            Geom::Viewport {
+                center: [o[0] + c[0] / scale, o[1] + c[1] / scale, 0.0],
+                width: w,
+                height: h,
+                view_center: [c[0] + shift, c[1]],
+                view_height: h * scale,
+                id: viewport_id,
+            },
+        ));
+        viewport_id += 1;
+        // The view's title: its name at the title's origin, over a line of the title's length.
+        if vp.label_length > 0.0 {
+            ensure(&mut out, "G-ANNO-TTLB", 7);
+            let at = mm(vp.label_origin);
+            out.entities.push(paper(
+                "LINE",
+                "G-ANNO-TTLB",
+                Geom::Line {
+                    a: at,
+                    b: [at[0] + vp.label_length * MM_PER_FOOT, at[1], 0.0],
+                },
+            ));
+            out.entities.push(paper(
+                "TEXT",
+                "G-ANNO-TTLB",
+                Geom::Text {
+                    at: [at[0], at[1] + 2.0, 0.0],
+                    height: 3.5,
+                    rotation: 0.0,
+                    value: name,
+                },
+            ));
+        }
+    }
+    // Title blocks: their symbol's lines, placed by the instance.
+    let blocks: Vec<&rvt::plan_views::TitleBlock> = facts
+        .title_blocks
+        .iter()
+        .filter(|t| t.sheet == sheet.id)
+        .collect();
+    let wanted: std::collections::BTreeSet<u64> = blocks.iter().map(|t| t.symbol as u64).collect();
+    let graphics = if wanted.is_empty() {
+        Default::default()
+    } else {
+        rvt::ifc::plan_maps::symbol_sheet_graphics(rf, &wanted).unwrap_or_else(|e| {
+            eprintln!("rvt-sheet: title block lines not read: {e}");
+            Default::default()
+        })
+    };
+    for t in blocks {
+        let Some((cs, texts)) = u32::try_from(t.symbol).ok().and_then(|s| graphics.get(&s)) else {
+            eprintln!(
+                "rvt-sheet: sheet {}: title block {} drew nothing",
+                sheet.number, t.id
+            );
+            continue;
+        };
+        ensure(&mut out, "G-ANNO-TTLB", 7);
+        let [c, s] = t.x_dir;
+        let place = |p: (f64, f64)| {
+            mm([
+                t.origin[0] + p.0 * c - p.1 * s,
+                t.origin[1] + p.0 * s + p.1 * c,
+            ])
+        };
+        for curve in cs {
+            for w in rvt::ifc::sheet::symbol_points(curve).windows(2) {
+                out.entities.push(paper(
+                    "LINE",
+                    "G-ANNO-TTLB",
+                    Geom::Line {
+                        a: place(w[0]),
+                        b: place(w[1]),
+                    },
+                ));
+            }
+        }
+        for text in texts {
+            out.entities.push(paper(
+                "TEXT",
+                "G-ANNO-TTLB",
+                Geom::Text {
+                    at: place((text.at[0], text.at[1])),
+                    height: text.height_feet * MM_PER_FOOT,
+                    rotation: text.rotation + s.atan2(c),
+                    value: text.value.clone(),
+                },
+            ));
+        }
+    }
+    // The sheet's own text notes and detail lines, sheet sizes.
+    for t in facts.texts.iter().filter(|t| t.view == sheet.id) {
+        ensure(&mut out, "G-ANNO-TEXT", 7);
+        out.entities.push(paper(
+            "TEXT",
+            "G-ANNO-TEXT",
+            Geom::Text {
+                at: mm([t.at[0], t.at[1]]),
+                height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * MM_PER_FOOT,
+                rotation: t.rotation,
+                value: t.value.clone(),
+            },
+        ));
+    }
+    for c in facts.curves.iter().filter(|c| c.view == Some(sheet.id)) {
+        ensure(&mut out, "A-DETL", 7);
+        for w in c.points.windows(2) {
+            out.entities.push(paper(
+                "LINE",
+                "A-DETL",
+                Geom::Line {
+                    a: mm([w[0][0], w[0][1]]),
+                    b: mm([w[1][0], w[1][1]]),
+                },
+            ));
+        }
+    }
+    let limits = rvt_dwg::bounds(
+        out.entities
+            .iter()
+            .filter(|e| e.owner == PAPER)
+            .flat_map(|e| e.geom.samples(f64::MAX)),
+    );
+    out.layouts[1].limits = limits;
+    Ok(out)
+}
+
+/// A section or elevation's axes, crop box and hidden categories and elements.
+#[cfg(feature = "dwg")]
+fn section_window(
+    facts: &rvt::plan_views::ViewFacts,
+    view: &rvt::plan_views::SectionView,
+) -> Option<rvt::ifc::sheet::ProjectedWindow> {
+    let c = view.crop.as_ref()?;
+    Some(rvt::ifc::sheet::ProjectedWindow {
+        right: view.right,
+        up: view.up,
+        toward_viewer: view.toward_viewer,
+        crop_origin: c.origin,
+        crop_axes: c.axes,
+        crop_min: c.min,
+        crop_max: c.max,
+        hidden_categories: facts
+            .section_hidden_categories(view)
+            .iter()
+            .filter_map(|id| rvt::builtin_parameters::category_name(*id))
+            .map(String::from)
+            .collect(),
+        hidden_elements: view.hidden_elements.clone(),
+    })
+}
+
 #[cfg(not(feature = "dwg"))]
-fn cad_bytes(
+fn section_window(
+    _: &rvt::plan_views::ViewFacts,
+    _: &rvt::plan_views::SectionView,
+) -> Option<rvt::ifc::sheet::ProjectedWindow> {
+    None
+}
+
+#[cfg(not(feature = "dwg"))]
+fn projected_drawing_of(
     _: &rvt::ifc::IfcModel,
-    _: &SheetOptions,
+    _: &rvt::ifc::sheet::ProjectedWindow,
+) -> Result<(), String> {
+    Err("this build has no DWG/DXF support (feature `dwg`)".into())
+}
+
+#[cfg(not(feature = "dwg"))]
+fn plan_drawing_of(_: &rvt::ifc::IfcModel, _: &SheetOptions) -> Result<(), String> {
+    Err("this build has no DWG/DXF support (feature `dwg`)".into())
+}
+
+#[cfg(not(feature = "dwg"))]
+fn drawing_bytes(
+    _: &(),
+    _: Option<&str>,
+    _: f64,
     format: &str,
     _: &Cli,
 ) -> Result<Vec<u8>, String> {
     Err(format!(
         "{format}: this build has no DWG/DXF support (feature `dwg`)"
     ))
+}
+
+#[cfg(not(feature = "dwg"))]
+fn sheet_drawing(
+    _: &mut RevitFile,
+    _: &rvt::ifc::IfcModel,
+    _: &rvt::plan_views::ViewFacts,
+    _: &rvt::plan_views::Sheet,
+    _: &std::collections::BTreeMap<usize, Vec<rvt::ifc::entities::PlanPolyline>>,
+) -> Result<(), String> {
+    Err("--sheet: this build has no DWG/DXF support (feature `dwg`)".into())
 }

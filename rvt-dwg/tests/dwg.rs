@@ -184,7 +184,11 @@ fn fingerprint(d: &Drawing2d) -> (Counts, Vec<(i64, i64)>) {
 #[test]
 fn synthetic_drawing_round_trips_through_dxf_and_every_dwg_version() {
     let d = synthetic();
-    let want = fingerprint(&d);
+    let mut want = fingerprint(&d);
+    // The writer gives the sheet its own (overall) viewport ahead of the view's, as the authoring
+    // tool's sheet exports have: a DWG stores no viewport ids, and a reader takes the first
+    // viewport of a layout for the sheet's own.
+    *want.0.entry(("VIEWPORT".into(), "paper")).or_default() += 1;
     let mut cases = vec![
         (CadFormat::Dxf, "2018"),
         (CadFormat::DxfBinary, "2018"),
@@ -360,10 +364,17 @@ fn hostile_inputs_are_errors_not_crashes() {
         parse_version("2018", CadFormat::Dwg).unwrap(),
     )
     .unwrap();
+    let whole = read_bytes(&dwg, Limits::DEFAULT)
+        .unwrap()
+        .drawing
+        .entities
+        .len();
+    // Every entity, and the sheet's own viewport the writer adds.
+    assert_eq!(whole, synthetic().entities.len() + 1);
     for cut in [16, 128, dwg.len() / 3, dwg.len() / 2, dwg.len() - 7] {
         if let Ok(r) = read_bytes(&dwg[..cut], Limits::DEFAULT) {
             assert!(
-                !r.notes.is_empty() || r.drawing.entities.len() == synthetic().entities.len(),
+                !r.notes.is_empty() || r.drawing.entities.len() == whole,
                 "cut at {cut} read silently short"
             );
         }
