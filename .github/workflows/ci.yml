@@ -260,7 +260,7 @@ jobs:
         with: { shared-key: ci-profile }
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
-      - run: cargo build --profile ci --features sqlite --bin rvt-ifc --bin rvt-gltf --bin rvt-schedule
+      - run: cargo build --profile ci --features sqlite --bin rvt-ifc --bin rvt-gltf --bin rvt-schedule --bin rvt-sheet && cargo build --profile ci -p rvt-dwg --bin rvt-dwg
       - name: Export public samples and run each format's official validator
         run: |
           s=_samples/2024; n=_samples/bim4lca/ARCH/REVIT/ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt
@@ -329,6 +329,8 @@ jobs:
           # Bounded and retried: a hung Ubuntu mirror would otherwise use the whole job timeout.
           for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq qpdf poppler-utils > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
           tools/ci/pdf3d-check.sh target/ci _samples/2024/racbasicsampleproject.rvt _samples/2024/rstbasicsampleproject.rvt
+      - name: Sheet and plan view PDF (qpdf, poppler render, segments against the DXF)
+        run: tools/ci/sheet-pdf-check.sh target/ci _samples/2024/racbasicsampleproject.rvt A102 "Level 1"
 
   tiny-models:
     name: tiny reference models
@@ -353,9 +355,20 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt
           "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny target/ci "$RUNNER_TEMP/tiny-out"
+      # How much of what the Revit API reports (each model's api-dump.json) the
+      # IFC4 and IFCX exports carry, by kind; fails when an IFCX total drops
+      # below tools/ifcx-coverage/floor.tsv or below IFC4's (docs/ifcx-coverage.md).
+      - name: IFCX coverage of the Revit API's information
+        run: |
+          "$RUNNER_TEMP/ifc/bin/python" tools/ifcx-coverage/coverage.py _tiny "$RUNNER_TEMP/ifcx-coverage" --bin target/ci --floor tools/ifcx-coverage/floor.tsv
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: tiny-models-checks, path: "${{ runner.temp }}/tiny-out/tiny-models-checks.tsv", if-no-files-found: ignore }
+        with:
+          name: tiny-models-checks
+          path: |
+            ${{ runner.temp }}/tiny-out/tiny-models-checks.tsv
+            ${{ runner.temp }}/ifcx-coverage/ifcx-coverage.tsv
+          if-no-files-found: ignore
 
   viewer:
     name: viewer (Playwright)

@@ -359,6 +359,92 @@ impl IfcxGraph {
         b.finish(model)
     }
 
+    /// Add Revit's own elements ([`super::ifcx_revit_elements`]): an
+    /// element whose GlobalId is a node already gets each parameter neither
+    /// it nor its type holds; any other element becomes a node of its own,
+    /// with its ElementId (`ifc-src::attr::Tag`), its record's class
+    /// (`rvtopen::revit::Class`) and its name, under one `RevitElements`
+    /// node of the project. A value whose kind differs from the one its key
+    /// already has is left out. For IFCX: the IFC4, USD and .frag writers
+    /// leave these nodes out only if they read the graph before this.
+    pub fn add_revit_elements(&mut self, elements: &[super::ifcx_revit_elements::RevitElement]) {
+        let parent = uuid5(&format!("{}/revit-elements", self.root));
+        for e in elements {
+            let Ok(path) = ifc_guid_uuid(&e.global_id) else {
+                continue;
+            };
+            match self.nodes.get(&path) {
+                Some(n) if !n.ifcx => continue,
+                Some(_) => {}
+                None => {
+                    let mut attributes = Map::new();
+                    attributes.insert("ifc-src::attr::Tag".into(), json!(e.id.to_string()));
+                    attributes.insert("rvtopen::revit::Class".into(), json!(e.class));
+                    if let Some(name) = &e.name {
+                        attributes.insert("bsi::ifc::prop::Name".into(), json!(name));
+                    }
+                    for key in ["ifc-src::attr::Tag", "rvtopen::revit::Class"] {
+                        self.schemas.entry(key.into()).or_insert(Ty::Str);
+                    }
+                    self.nodes.insert(
+                        path.clone(),
+                        Node {
+                            attributes,
+                            ifcx: true,
+                            ..Node::default()
+                        },
+                    );
+                    let name = format!("{}_{}", e.class, e.id);
+                    self.nodes
+                        .entry(parent.clone())
+                        .or_insert_with(|| Node {
+                            ifcx: true,
+                            ..Node::default()
+                        })
+                        .children
+                        .insert(name, path.clone());
+                }
+            }
+            let inherited: BTreeSet<String> = self.nodes[&path]
+                .inherits
+                .iter()
+                .filter_map(|t| self.nodes.get(t))
+                .flat_map(|t| t.attributes.keys().cloned())
+                .collect();
+            for (label, properties) in &e.sets {
+                for p in properties {
+                    let key = property_key(label, &p.name);
+                    if inherited.contains(&key) || self.nodes[&path].attributes.contains_key(&key) {
+                        continue;
+                    }
+                    let Some((from, value)) = value_of(&p.value) else {
+                        continue;
+                    };
+                    let to = self
+                        .schemas
+                        .entry(key.clone())
+                        .or_insert(from.clone())
+                        .clone();
+                    // Only a widening (an integer to a real) is coerced: a number
+                    // is not written as text under a text key.
+                    if to.merge(&from) != to || (to == Ty::Str && from != Ty::Str) {
+                        continue;
+                    }
+                    let value = coerce(value, &from, &to);
+                    if let Some(n) = self.nodes.get_mut(&path) {
+                        n.attributes.insert(key, value);
+                    }
+                }
+            }
+        }
+        if self.nodes.contains_key(&parent) {
+            let project = self.project.clone();
+            if let Some(p) = self.nodes.get_mut(&project) {
+                p.children.insert("RevitElements".into(), parent);
+            }
+        }
+    }
+
     /// Fields of node `path` under the IFC4 prefix, as a JSON object.
     fn ifc4_object(&self, path: &str, skip: &[&str]) -> Value {
         let mut m = Map::new();

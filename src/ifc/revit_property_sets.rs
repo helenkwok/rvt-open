@@ -144,10 +144,12 @@ pub fn group_label(group_type_id: Option<&str>) -> Option<&'static str> {
 /// `unstable-research`, whose `ElementParameter` it takes.
 #[cfg(feature = "unstable-research")]
 pub fn property(parameter: &ElementParameter) -> Option<Property> {
-    revit_property(parameter)
+    revit_property(parameter, false)
 }
 
-fn revit_property(parameter: &ElementParameter) -> Option<Property> {
+/// With `raw_enums`, an enumeration whose text is not known is written as
+/// its integer instead of being left out (IFCX).
+fn revit_property(parameter: &ElementParameter, raw_enums: bool) -> Option<Property> {
     let name = parameter.name.clone()?;
     let spec = parameter.spec_type_id.as_deref().unwrap_or("");
     let spec_kind = |prefix: &str| spec.starts_with(prefix);
@@ -159,10 +161,14 @@ fn revit_property(parameter: &ElementParameter) -> Option<Property> {
         "Integer" => match &parameter.value {
             serde_json::Value::Bool(b) => PropertyValue::Boolean(*b),
             // No spec: an enumeration, written by its display text.
-            value if spec.is_empty() => PropertyValue::Label(
-                crate::builtin_parameters::enum_text(parameter.parameter_id, value.as_i64()?)?
-                    .to_string(),
-            ),
+            value if spec.is_empty() => {
+                let n = value.as_i64()?;
+                match crate::builtin_parameters::enum_text(parameter.parameter_id, n) {
+                    Some(text) => PropertyValue::Label(text.to_string()),
+                    None if raw_enums => PropertyValue::Integer(n),
+                    None => return None,
+                }
+            }
             value => PropertyValue::Integer(value.as_i64()?),
         },
         "Double" => {
@@ -222,9 +228,10 @@ fn revit_property(parameter: &ElementParameter) -> Option<Property> {
 /// `parameters` grouped into Revit's sets. In each group one parameter is
 /// kept per name with its spaces removed, the one of the lowest parameter id,
 /// whether or not it is written. Returns the sets and how many parameters
-/// were left out.
-fn grouped<'a>(
+/// were left out. `raw_enums`: see [`revit_property`].
+pub(crate) fn grouped<'a>(
     parameters: impl Iterator<Item = &'a ElementParameter>,
+    raw_enums: bool,
 ) -> (BTreeMap<&'static str, Vec<Property>>, usize) {
     let mut parameters: Vec<&ElementParameter> = parameters.collect();
     parameters.sort_by_key(|p| p.parameter_id);
@@ -260,7 +267,7 @@ fn grouped<'a>(
             left_out += 1;
             continue;
         }
-        match revit_property(parameter) {
+        match revit_property(parameter, raw_enums) {
             Some(property) => sets.entry(label).or_default().push(property),
             None => left_out += 1,
         }
@@ -307,6 +314,7 @@ pub fn attach(file: &mut RevitFile, model: &mut IfcModel) -> Result<Report> {
             named
                 .clone()
                 .filter(|p| p.level == ParameterLevel::Instance),
+            false,
         );
         report.left_out += left_out;
         if !instance.is_empty() {
@@ -324,7 +332,8 @@ pub fn attach(file: &mut RevitFile, model: &mut IfcModel) -> Result<Report> {
             .ok()
             .and_then(|id| model.element_type_ids.get(&id).copied())
         else {
-            let (types, left_out) = grouped(named.filter(|p| p.level == ParameterLevel::Type));
+            let (types, left_out) =
+                grouped(named.filter(|p| p.level == ParameterLevel::Type), false);
             report.left_out += left_out;
             if types.is_empty() {
                 continue;
@@ -342,9 +351,12 @@ pub fn attach(file: &mut RevitFile, model: &mut IfcModel) -> Result<Report> {
         if !typed.insert(type_id) {
             continue;
         }
-        let (types, left_out) = grouped(named.filter(|p| {
-            p.level == ParameterLevel::Type && p.source_element_id == i64::from(type_id)
-        }));
+        let (types, left_out) = grouped(
+            named.filter(|p| {
+                p.level == ParameterLevel::Type && p.source_element_id == i64::from(type_id)
+            }),
+            false,
+        );
         report.left_out += left_out;
         if types.is_empty() {
             continue;

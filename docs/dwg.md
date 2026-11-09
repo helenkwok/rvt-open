@@ -15,6 +15,10 @@ rvt-sheet model.rvt --format dwg                   # the whole model's plan as D
 rvt-sheet model.rvt --list-views                   # the plan views: name, level, view range, crop (JSON, feet)
 rvt-sheet model.rvt --view "Level 1" --format dxf  # only what that plan view shows, with its annotation
 rvt-sheet model.rvt --level "Level 2" --format dxf # a level's band up to --cut-height (default 1200 mm)
+rvt-sheet model.rvt --view "Level 1" --format pdf  # the same view as a vector PDF, at the view's scale
+rvt-sheet model.rvt --list-sheets                  # the sheets and the views on them (JSON)
+rvt-sheet model.rvt --sheet A102 --format dwg      # a sheet: its plan views in viewports, title block, notes
+rvt-dwg pdf-check sheet.pdf sheet.dxf --layout Layout1   # does the PDF draw the DXF's linework?
 ```
 
 ## Plan views (`rvt-sheet --view`, `--level`)
@@ -49,6 +53,40 @@ bubble end, and beyond the free end too where the view shows both. A roof seen f
 projection lines of what lies under it. A view whose axes are turned
 (a site plan set to true north) is drawn in its own axes about the internal origin. Line styles are not
 drawn.
+
+## Sheets (`rvt-sheet --sheet`)
+
+`--sheet <number or name>` draws a sheet the way the authoring tool's DWG export with views merged lays
+one out. Model space holds each plan, section and elevation placed on the sheet, drawn as `--view` draws
+it and moved along x so that the views do not overlap; paper space (layout `Layout1`, millimetres) holds one
+viewport per view, at the view's scale, framing what the view draws and centred so that the view's
+internal origin lands where the sheet places it (`Viewport.m_offset`, paper feet: the export's
+viewport of rac_basic_sample_project's Level 1 on sheet A102 shows model point (4690.2, -5211.3) mm at
+its centre, (227.4, 400.7) mm, which is that offset plus the point at 1:100). Paper space also holds
+the title block's lines and fixed labels (the curves and rich texts its family symbol's graphics hold,
+placed by the instance), the sheet's own text notes and detail lines, and under each view its title:
+the view's name over a line of the title's length. Views of other kinds on the sheet (schedules, 3D
+views, legends, drafting views, renderings) are reported on stderr and not drawn yet, nor are the title
+block's labels that show the sheet's values (number, name, drawn by, ...).
+
+## Sections and elevations
+
+`--view <name>` of a section or elevation (a `DBViewSection`: its right `m_horzDir`, up `m_vertDir`
+and toward-the-viewer `m_viewDir` directions, and its crop box from its `Viewer`) draws, in DXF, DWG or
+PDF, the sharp edges of every element's body inside the crop box, its depth included, projected onto
+the view's plane: x along the view's right and y up, about the internal origin, millimetres, on the
+element's layer. There is no hidden-line removal and no cut pattern yet, and no annotation (level
+heads, dimensions, tags).
+
+## PDF
+
+`--format pdf` writes the same drawing as a one-page vector PDF (`rvt_dwg::pdf`): a sheet at full
+size with model space drawn through each viewport and clipped to it, a view at its scale. Lines,
+arcs (as short segments), polylines, filled hatches and text in one of the PDF standard fonts, coloured
+by entity or layer; linetypes, lineweights and fonts are not written. `rvt-dwg pdf-check` maps the
+PDF's segments back to drawing units and scores them against the drawing's own linework (precision
+and recall within a tolerance), so a PDF that drifts from the DWG and DXF fails (CI checks a sheet and a plan view of a public
+sample this way, after `qpdf --check` and a render with poppler).
 
 Dimensions read from a DWG or DXF measure their definition points: the authoring tool's DWG export stores each
 dimension's measurement times its dimension style's linear factor (914400 for a 3000 mm distance under a
@@ -91,5 +129,6 @@ ends the process (allocation failure, stack overflow) costs only that file; `--n
 
 Linetype dashes, hatch patterns (a hatched area is tinted), fonts (one sans-serif face) and twisted viewports
 in the SVG; 3D solids, meshes, images, underlays, tables and multileaders are counted, not drawn; xref files
-are not opened. Revit sheets, and views other than plans, are not drawn yet. The scorer for the authoring
-tool's own DWG exports is `tools/dwg-oracle/`.
+are not opened. Legends, drafting, 3D and schedule views are not drawn yet. The scorer for the
+authoring tool's own DWG exports is `tools/dwg-oracle/`: plan rows against `--view`, sheet rows
+against `--sheet` (paper space with model space seen through each viewport), each in DXF and DWG.

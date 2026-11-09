@@ -387,6 +387,98 @@ fn site_entity(
     }
 }
 
+/// The toposurfaces (`SiteSurface`) of a file, as Revit's export draws them.
+struct SiteSurfaces {
+    /// Those it draws: not owned by another (`m_unplacedOwnerId` unset; a
+    /// graded copy is owned and not drawn).
+    drawn: BTreeSet<u64>,
+    /// Each subregion's surface: a subregion (whose id + 1 is in a surface's
+    /// `m_dividingBoundaries`) is part of that surface's body (rac_basic:
+    /// 607 + 144 + 160 points = Revit's 909).
+    parent_of: BTreeMap<u64, u64>,
+    /// The owned ones.
+    owned: BTreeSet<u64>,
+}
+
+fn site_surfaces(
+    rf: &mut crate::RevitFile,
+    site_surface: u16,
+    in_host: &dyn Fn(&str, usize) -> bool,
+) -> anyhow::Result<SiteSurfaces> {
+    let mut out = SiteSurfaces {
+        drawn: BTreeSet::new(),
+        parent_of: BTreeMap::new(),
+        owned: BTreeSet::new(),
+    };
+    for_each_object_where(
+        rf,
+        |frame, _| frame.header.tag == site_surface,
+        |x| {
+            if !in_host(&x.stream, x.frame.span.start) {
+                return;
+            }
+            let Some(root) = x.objects.first() else {
+                return;
+            };
+            if matches!(root.get("m_unplacedOwnerId"), Some(Value::Id(o)) if *o != -1) {
+                out.owned.insert(x.frame.header.id);
+                return;
+            }
+            out.drawn.insert(x.frame.header.id);
+            if let Some(Value::List(b)) = root.get("m_dividingBoundaries") {
+                for v in b {
+                    if let Value::Id(boundary) = v
+                        && let Ok(sub) = u64::try_from(*boundary - 1)
+                    {
+                        out.parent_of.insert(sub, x.frame.header.id);
+                    }
+                }
+            }
+        },
+    )?;
+    Ok(out)
+}
+
+/// The topography surfaces Revit's export writes no element of their own
+/// for: the owned ones (graded copies) and the subregions, which are part of
+/// their surface's body. Empty where the file names no toposurface class.
+pub fn hidden_site_surfaces(rf: &mut crate::RevitFile) -> BTreeSet<u64> {
+    let site_surface = rf.schema_layouts().ok().and_then(|layouts| {
+        layouts
+            .classes
+            .iter()
+            .find_map(|(t, c)| (c.name == "SiteSurface").then_some(*t))
+    });
+    let Some(site_surface) = site_surface else {
+        return BTreeSet::new();
+    };
+    let mut sections: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for name in rf.partition_stream_names() {
+        if let Ok(inflated) = rf.inflated_partition(&name) {
+            sections.insert(
+                name,
+                inflated.sections().iter().map(|(at, _)| *at).collect(),
+            );
+        }
+    }
+    let in_host = |stream: &str, start: usize| {
+        !sections
+            .get(stream)
+            .is_some_and(|s| s.partition_point(|at| *at <= start) > 0)
+    };
+    let Ok(site) = site_surfaces(rf, site_surface, &in_host) else {
+        return BTreeSet::new();
+    };
+    let mut hidden = site.owned;
+    hidden.extend(
+        site.parent_of
+            .into_iter()
+            .filter(|(sub, parent)| site.drawn.contains(parent) && site.drawn.contains(sub))
+            .map(|(sub, _)| sub),
+    );
+    hidden
+}
+
 /// Site content the element walk does not yield (rac_basic: the
 /// toposurface and three wind turbines that Revit's own export writes):
 /// - every toposurface (`SiteSurface`) becomes an `IfcGeographicElement
@@ -439,37 +531,18 @@ pub fn add_site_content(
             _ => None,
         })
         .collect();
-    // Toposurfaces: an owned one (`m_unplacedOwnerId` set, e.g. a graded
-    // copy) is not drawn by Revit's export; a subregion (whose id + 1 is in a
-    // surface's `m_dividingBoundaries`) is part of that surface's body
-    // (rac_basic: 607 + 144 + 160 points = Revit's 909).
-    let mut surfaces = BTreeSet::new();
-    let mut parent_of: BTreeMap<u64, u64> = BTreeMap::new();
-    for_each_object_where(
-        rf,
-        |frame, _| frame.header.tag == site_surface,
-        |x| {
-            if !in_host(&x.stream, x.frame.span.start) || exported.contains(&x.frame.header.id) {
-                return;
-            }
-            let Some(root) = x.objects.first() else {
-                return;
-            };
-            if matches!(root.get("m_unplacedOwnerId"), Some(Value::Id(o)) if *o != -1) {
-                return;
-            }
-            surfaces.insert(x.frame.header.id);
-            if let Some(Value::List(b)) = root.get("m_dividingBoundaries") {
-                for v in b {
-                    if let Value::Id(boundary) = v
-                        && let Ok(sub) = u64::try_from(*boundary - 1)
-                    {
-                        parent_of.insert(sub, x.frame.header.id);
-                    }
-                }
-            }
-        },
-    )?;
+    let site = site_surfaces(rf, site_surface, &in_host)?;
+    let surfaces: BTreeSet<u64> = site
+        .drawn
+        .iter()
+        .copied()
+        .filter(|id| !exported.contains(id))
+        .collect();
+    let parent_of: BTreeMap<u64, u64> = site
+        .parent_of
+        .into_iter()
+        .filter(|(_, parent)| surfaces.contains(parent))
+        .collect();
     let docs = crate::family_documents::read_memoised(rf)?;
     let missing: BTreeMap<u64, &crate::family_documents::InstancePose> = docs
         .instances

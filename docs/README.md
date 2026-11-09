@@ -11,6 +11,7 @@ The pages under `docs/` are of two kinds. The user pages say what rvt-open does 
 - [Supported profile](supported-profile.md): the inputs rvt-open is measured on.
 - [Evidence](evidence.md): the measured figures behind the README, by input, by element category and by known gap.
 - [Library and tools](library.md): the command-line tools, the Rust modules and the browser viewer in more detail.
+- [IFCX coverage](ifcx-coverage.md): how much of what the Revit API reports the IFCX and IFC4 exports carry, by kind.
 - [Rooms](rooms.md): what an exported `IfcSpace` holds for each release, and whether to trust its area.
 - [MCP server](mcp.md): `rvt-open-mcp`, the local, read-only server an agent asks about a file.
 - [Export diagnostics](export-diagnostics.md) and [diagnostic semantics](diagnostic-semantics.md): what an export says it approximated or left out.
