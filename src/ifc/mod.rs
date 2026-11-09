@@ -102,6 +102,7 @@ pub mod gltf;
 pub mod graph;
 pub mod grids;
 pub mod ifc_options;
+pub mod ifcx_revit_elements;
 pub mod ifcx_writer;
 pub mod instancing;
 pub mod meshopt;

@@ -181,13 +181,18 @@ fn ifcx_diagnostics_are_a_layer_of_their_own() {
     .model;
     // As rvt-ifc does by default.
     rvt::ifc::body_geometry::share_shapes_by_convention(&mut model);
-    let graph = IfcxGraph::from_model(
+    let mut graph = IfcxGraph::from_model(
         &model,
         GraphOptions {
             meshes: true,
             shared_shapes: true,
         },
     );
+    // As rvt-ifc does for IFCX: the file's other elements and the parameters
+    // the exported ones lack.
+    let revit_elements = rvt::ifc::ifcx_revit_elements::read(&mut rf).unwrap();
+    assert!(!revit_elements.is_empty(), "no other elements read");
+    graph.add_revit_elements(&revit_elements);
     let mut composed: std::collections::BTreeMap<String, Map<String, Value>> = main["data"]
         .as_array()
         .unwrap()

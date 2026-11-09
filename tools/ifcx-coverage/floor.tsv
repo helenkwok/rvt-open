@@ -1,0 +1,42 @@
+# rvt-open's IFCX totals over every release of the tiny models: tools/ifcx-coverage/coverage.py fails when one drops. Raise them when a change carries more.
+set	kind	what	ifcx
+1	element instances	objects	240
+1	element instances	parameters	2442
+1	type objects	objects	90
+1	type objects	parameters	524
+1	unused type objects	objects	26205
+1	levels and grids	objects	100
+1	levels and grids	parameters	250
+1	site and location	objects	0
+1	site and location	parameters	0
+1	project info	objects	50
+1	project info	parameters	350
+1	materials	objects	4745
+1	materials	parameters	32655
+1	phases	objects	100
+1	phases	parameters	200
+1	views	objects	1100
+1	views	parameters	2200
+1	revisions	objects	0
+1	revisions	parameters	0
+2	element instances	objects	1327
+2	element instances	parameters	7250
+2	type objects	objects	310
+2	type objects	parameters	1633
+2	unused type objects	objects	89354
+2	levels and grids	objects	350
+2	levels and grids	parameters	875
+2	site and location	objects	0
+2	site and location	parameters	0
+2	project info	objects	170
+2	project info	parameters	1190
+2	materials	objects	16133
+2	materials	parameters	111027
+2	phases	objects	340
+2	phases	parameters	680
+2	design options	objects	14
+2	design options	parameters	28
+2	views	objects	3765
+2	views	parameters	7530
+2	revisions	objects	0
+2	revisions	parameters	0
