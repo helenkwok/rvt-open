@@ -15,8 +15,8 @@
 //! phase also gets its name and its place in the project's order (`Sequence
 //! Number`), and a design option its name and its set (`Design Option Set
 //! Id`), which the file keeps outside its parameters.
-//! Its node's path is the GlobalId Revit's IFC exporter gives it
-//! ([`crate::revit_global_ids::revit_global_ids`]), so an element an IFC
+//! Its node's path is the GlobalId Revit's IFC exporter gives it (as the
+//! research module `revit_global_ids` rebuilds it), so an element an IFC
 //! export holds has the same id in both.
 
 use super::entities::{Property, PropertyValue};
