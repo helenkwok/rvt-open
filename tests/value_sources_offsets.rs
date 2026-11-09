@@ -76,7 +76,7 @@
 //!   sources cannot pass;
 //! - looks up every `*Source` text property the export writes on an element's
 //!   own property set (`BodyHeightSource`, `BodyBaseSource`, `BodyEndSource`,
-//! `PlacementAxesSource`, `ThicknessSource` and the rest) in
+//!   `PlacementAxesSource`, `ThicknessSource` and the rest) in
 //!   `SOURCE_VALUES`: a value with neither a source nor a declared gap fails the
 //!   test, and a sourced one must have the sources its row names on every
 //!   element that carries it.

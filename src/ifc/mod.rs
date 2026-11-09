@@ -7877,6 +7877,8 @@ mod tests {
             file_types: Vec::new(),
             wall_cut_openings_left_out: BTreeMap::new(),
             wall_end_reads_unmarked: BTreeMap::new(),
+            wall_profile_height_checks: BTreeMap::new(),
+            port_joins_left_out: BTreeMap::new(),
         };
 
         // 2. STEP export: byte-identical across two runs

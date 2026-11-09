@@ -5,7 +5,7 @@
 //!   production path).
 //! - Optional magnetar project corpus: ArcWalls, Levels and Materials
 //!   when `RVT_PROJECT_CORPUS_DIR` is set, and no 2024 opening-index rows,
-//! which name system elements, not openings.
+//!   which name system elements, not openings.
 //!   Floors and rooms come from element records only, so a 2023 file
 //!   yields none.
 
