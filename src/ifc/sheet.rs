@@ -590,6 +590,204 @@ type Segments = Vec<((f64, f64), (f64, f64))>;
 type EdgeKey = ([i64; 3], [i64; 3]);
 type EdgeFaces = (Vec<[f64; 3]>, [f64; 3], [f64; 3]);
 
+/// The body's sharp edges in model feet: its mesh's boundary edges and the edges where its faces
+/// meet at more than 30 degrees.
+#[cfg(feature = "dwg")]
+fn sharp_edges(body: Body<'_>, placement: &Placement) -> Vec<([f64; 3], [f64; 3])> {
+    let Some(mesh) = super::body_geometry::body_mesh(body) else {
+        return Vec::new();
+    };
+    let q = |p: [f64; 3]| p.map(|v| (v * 1e5).round() as i64);
+    let normal = |t: &[u32; 3]| -> Option<[f64; 3]> {
+        let [a, b, c] = t.map(|i| mesh.vertices.get(i as usize).copied());
+        let (a, b, c) = (a?, b?, c?);
+        let (u, v) = (
+            [0, 1, 2].map(|i| b[i] - a[i]),
+            [0, 1, 2].map(|i| c[i] - a[i]),
+        );
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        (l > 1e-12).then(|| n.map(|x| x / l))
+    };
+    let mut faces: std::collections::HashMap<EdgeKey, EdgeFaces> = Default::default();
+    for t in &mesh.triangles {
+        let Some(n) = normal(t) else { continue };
+        for k in 0..3 {
+            let (a, b) = (
+                mesh.vertices[t[k] as usize],
+                mesh.vertices[t[(k + 1) % 3] as usize],
+            );
+            let (ka, kb) = (q(a), q(b));
+            let key = if ka <= kb { (ka, kb) } else { (kb, ka) };
+            faces
+                .entry(key)
+                .or_insert_with(|| (Vec::new(), a, b))
+                .0
+                .push(n);
+        }
+    }
+    let mut out: Vec<([f64; 3], [f64; 3])> = faces
+        .into_values()
+        .filter(|(normals, _, _)| {
+            normals.len() != 2 || {
+                let (m, n) = (normals[0], normals[1]);
+                m[0] * n[0] + m[1] * n[1] + m[2] * n[2] < 0.866
+            }
+        })
+        .map(|(_, a, b)| (placement.apply(a), placement.apply(b)))
+        .collect();
+    // HashMap order is not stable: sort so the drawing is reproducible.
+    out.sort_by(|a, b| {
+        a.0.iter()
+            .chain(&a.1)
+            .zip(b.0.iter().chain(&b.1))
+            .map(|(x, y)| x.total_cmp(y))
+            .find(|o| o.is_ne())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
+/// A section or elevation view to draw: its axes and crop box, model feet. The drawing is in
+/// the view's own axes about the internal origin: x along `right`, y along `up`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProjectedWindow {
+    pub right: [f64; 3],
+    pub up: [f64; 3],
+    pub toward_viewer: [f64; 3],
+    /// The crop box: its origin and its x, y, z axes, with each axis's range.
+    pub crop_origin: [f64; 3],
+    pub crop_axes: [[f64; 3]; 3],
+    pub crop_min: [f64; 3],
+    pub crop_max: [f64; 3],
+    pub hidden_categories: Vec<String>,
+    pub hidden_elements: Vec<i64>,
+}
+
+/// A section or elevation as DXF/DWG entities, millimetres: every element's sharp body edges
+/// inside the view's crop box (its depth too), projected onto the view's plane and drawn on the
+/// element's layer. No hidden-line removal and no cut patterns yet.
+#[cfg(feature = "dwg")]
+pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow) -> rvt_dwg::Drawing2d {
+    use rvt_dwg::{Drawing2d, Entity2d, Geom, Layer2d, Layout2d, MODEL_SPACE};
+    const MM_PER_FOOT: f64 = 304.8;
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let mut d = Drawing2d {
+        version: "AC1032".into(),
+        units: 4,
+        code_page: "ANSI_1252".into(),
+        layers: vec![Layer2d::new("0", 7)],
+        layouts: vec![Layout2d {
+            name: "Model".into(),
+            block: MODEL_SPACE.into(),
+            tab_order: 0,
+            is_model: true,
+            limits: None,
+        }],
+        ..Default::default()
+    };
+    let sets = super::element_table::element_sets(model);
+    // A point in crop-box coordinates.
+    let local = |p: [f64; 3]| {
+        let r = [0, 1, 2].map(|i| p[i] - w.crop_origin[i]);
+        [0, 1, 2].map(|k| dot(r, w.crop_axes[k]))
+    };
+    // The part of segment a-b inside the crop box (Liang-Barsky in 3D).
+    let clip = |a: [f64; 3], b: [f64; 3]| -> Option<([f64; 3], [f64; 3])> {
+        let (p, q) = (local(a), local(b));
+        let (mut t0, mut t1) = (0.0f64, 1.0f64);
+        for k in 0..3 {
+            let dk = q[k] - p[k];
+            for (num, den) in [(p[k] - w.crop_min[k], -dk), (w.crop_max[k] - p[k], dk)] {
+                if den.abs() < 1e-15 {
+                    if num < 0.0 {
+                        return None;
+                    }
+                } else {
+                    let t = num / den;
+                    if den < 0.0 {
+                        t0 = t0.max(t);
+                    } else {
+                        t1 = t1.min(t);
+                    }
+                }
+            }
+        }
+        (t0 < t1).then(|| {
+            let at = |t: f64| [0, 1, 2].map(|i| a[i] + t * (b[i] - a[i]));
+            (at(t0), at(t1))
+        })
+    };
+    for (index, ent) in model.entities.iter().enumerate() {
+        let IfcEntity::BuildingElement {
+            ifc_type,
+            type_guid,
+            location_feet,
+            rotation_radians,
+            ..
+        } = ent
+        else {
+            continue;
+        };
+        if ifc_type == "IFCOPENINGELEMENT" || is_underlay(ifc_type) {
+            continue;
+        }
+        let id = type_guid.as_deref().and_then(|t| t.parse::<i64>().ok());
+        if id.is_some_and(|id| w.hidden_elements.contains(&id)) {
+            continue;
+        }
+        let own = sets.get(&index).map(Vec::as_slice).unwrap_or_default();
+        if super::element_table::category_in(own).is_some_and(|c| w.hidden_categories.contains(&c))
+        {
+            continue;
+        }
+        let (Some(location), Some(body)) =
+            (location_feet, element_body(ent, &model.representation_maps))
+        else {
+            continue;
+        };
+        let placement = Placement::new(Some(*location), *rotation_radians);
+        let (layer, aci) = layer_for(own, ifc_type);
+        let mut seen = std::collections::HashSet::new();
+        for (a, b) in sharp_edges(body, &placement) {
+            let Some((a, b)) = clip(a, b) else { continue };
+            let pa = [
+                dot(a, w.right) * MM_PER_FOOT,
+                dot(a, w.up) * MM_PER_FOOT,
+                0.0,
+            ];
+            let pb = [
+                dot(b, w.right) * MM_PER_FOOT,
+                dot(b, w.up) * MM_PER_FOOT,
+                0.0,
+            ];
+            // Edges seen end on, and an edge drawn twice (front and back), once.
+            if (pa[0] - pb[0]).hypot(pa[1] - pb[1]) < 0.5 {
+                continue;
+            }
+            let k = |p: [f64; 3]| ((p[0] * 10.0).round() as i64, (p[1] * 10.0).round() as i64);
+            let key = if k(pa) <= k(pb) {
+                (k(pa), k(pb))
+            } else {
+                (k(pb), k(pa))
+            };
+            if !seen.insert(key) {
+                continue;
+            }
+            if !d.layers.iter().any(|l| l.name == layer) {
+                d.layers.push(Layer2d::new(layer, aci));
+            }
+            d.entities
+                .push(Entity2d::new("LINE", layer, Geom::Line { a: pa, b: pb }));
+        }
+    }
+    d
+}
+
 fn projected_edges(body: Body<'_>, placement: &Placement, cut: f64) -> (Segments, Segments) {
     let Some(mesh) = super::body_geometry::body_mesh(body) else {
         return (Vec::new(), Vec::new());
@@ -1066,7 +1264,7 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
 
 /// A plan symbol curve's points in plan, an arc (start, a point on it, end) as 32 chords.
 #[cfg(feature = "dwg")]
-fn symbol_points(c: &super::entities::PlanPolyline) -> Vec<(f64, f64)> {
+pub fn symbol_points(c: &super::entities::PlanPolyline) -> Vec<(f64, f64)> {
     let p: Vec<(f64, f64)> = c.points_feet.iter().map(|p| (p[0], p[1])).collect();
     if !c.arc || p.len() != 3 {
         return p;

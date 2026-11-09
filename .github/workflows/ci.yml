@@ -260,7 +260,7 @@ jobs:
         with: { shared-key: ci-profile }
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
-      - run: cargo build --profile ci --features sqlite --bin rvt-ifc --bin rvt-gltf --bin rvt-schedule
+      - run: cargo build --profile ci --features sqlite --bin rvt-ifc --bin rvt-gltf --bin rvt-schedule --bin rvt-sheet && cargo build --profile ci -p rvt-dwg --bin rvt-dwg
       - name: Export public samples and run each format's official validator
         run: |
           s=_samples/2024; n=_samples/bim4lca/ARCH/REVIT/ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt
@@ -329,6 +329,8 @@ jobs:
           # Bounded and retried: a hung Ubuntu mirror would otherwise use the whole job timeout.
           for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq qpdf poppler-utils > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
           tools/ci/pdf3d-check.sh target/ci _samples/2024/racbasicsampleproject.rvt _samples/2024/rstbasicsampleproject.rvt
+      - name: Sheet and plan view PDF (qpdf, poppler render, segments against the DXF)
+        run: tools/ci/sheet-pdf-check.sh target/ci _samples/2024/racbasicsampleproject.rvt A102 "Level 1"
 
   tiny-models:
     name: tiny reference models

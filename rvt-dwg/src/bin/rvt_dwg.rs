@@ -6,7 +6,9 @@
 //! rvt-dwg drawings/ -o out --format csv,svg,report  # every .dwg/.dxf under drawings/
 //! rvt-dwg sheet.dwg --all-layouts --format svg      # one SVG per layout
 //! rvt-dwg plan.dwg --format dwg --dwg-version 2004  # re-save as DWG 2004
+//! rvt-dwg sheet.dwg --layout Layout1 --format pdf    # a sheet as a vector PDF
 //! rvt-dwg compare reference.dwg candidate.dxf --tolerance 0.5 -o score
+//! rvt-dwg pdf-check sheet.pdf sheet.dxf --layout Layout1  # does the PDF draw the DXF's linework?
 //! ```
 //!
 //! Each file is read in a child copy of this program, so a file that crashes the reader (an
@@ -43,7 +45,8 @@ struct Cli {
     #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
 
-    /// Outputs, comma separated: csv, jsonl, dxf, dwg, svg, report, xlsx.
+    /// Outputs, comma separated: csv, jsonl, dxf, dwg, svg, pdf, report, xlsx. The PDF draws
+    /// `--layout` at full size, else model space at 1:100.
     #[arg(
         long,
         value_delimiter = ',',
@@ -101,6 +104,26 @@ enum Cmd {
         #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
     },
+    /// Check a PDF written by rvt-open against the drawing it was written from: its segments,
+    /// mapped back to drawing units, against the drawing's linework (precision and recall within
+    /// the tolerance). Exits 1 when either is under `--min`.
+    PdfCheck {
+        pdf: PathBuf,
+        drawing: PathBuf,
+        /// The sheet layout the PDF draws; model space when left out.
+        #[arg(long)]
+        layout: Option<String>,
+        /// Model space scale the PDF was drawn at (1:scale); found from the page width when left
+        /// out.
+        #[arg(long)]
+        scale: Option<f64>,
+        /// Match distance in drawing units.
+        #[arg(long, default_value_t = 1.0)]
+        tolerance: f64,
+        /// Smallest precision and recall accepted.
+        #[arg(long, default_value_t = 0.99)]
+        min: f64,
+    },
 }
 
 fn main() -> ExitCode {
@@ -121,6 +144,14 @@ fn main() -> ExitCode {
             layer_map.as_deref(),
             output.as_deref(),
         ),
+        Some(Cmd::PdfCheck {
+            pdf,
+            drawing,
+            layout,
+            scale,
+            tolerance,
+            min,
+        }) => run_pdf_check(pdf, drawing, layout.as_deref(), *scale, *tolerance, *min),
         None => run(&cli),
     };
     match result {
@@ -132,7 +163,7 @@ fn main() -> ExitCode {
     }
 }
 
-const FORMATS: &[&str] = &["csv", "jsonl", "dxf", "dwg", "svg", "report", "xlsx"];
+const FORMATS: &[&str] = &["csv", "jsonl", "dxf", "dwg", "svg", "pdf", "report", "xlsx"];
 
 fn run(cli: &Cli) -> Result<(), String> {
     for f in &cli.format {
@@ -364,6 +395,18 @@ fn convert(cli: &Cli, file: &Path, out_dir: &Path) -> Result<(), String> {
         }
         timings.push(("svg", t.elapsed()));
     }
+    if want("pdf") {
+        // A sheet at full size, model space at 1:100.
+        let t = Instant::now();
+        let p = rvt_dwg::pdf::render(&read.drawing, cli.layout.as_deref(), 100.0, &limits)
+            .map_err(|e| e.0)?;
+        let suffix = match &cli.layout {
+            Some(l) => format!(".{}.pdf", safe(l)),
+            None => ".pdf".into(),
+        };
+        write(&path(&suffix), &p.bytes, &mut outputs)?;
+        timings.push(("pdf", t.elapsed()));
+    }
     for (format, flag, version, ext) in [
         (CadFormat::Dxf, "dxf", &cli.dxf_version, "dxf".to_string()),
         (
@@ -407,6 +450,45 @@ fn convert(cli: &Cli, file: &Path, out_dir: &Path) -> Result<(), String> {
         read.notes.len(),
         outputs.join(" ")
     );
+    Ok(())
+}
+
+fn run_pdf_check(
+    pdf: &Path,
+    drawing: &Path,
+    layout: Option<&str>,
+    scale: Option<f64>,
+    tolerance: f64,
+    min: f64,
+) -> Result<(), String> {
+    let bytes = std::fs::read(pdf).map_err(|e| format!("{}: {e}", pdf.display()))?;
+    if !bytes.starts_with(b"%PDF-") || !bytes.ends_with(b"%%EOF\n") {
+        return Err(format!("{}: not a complete PDF", pdf.display()));
+    }
+    let d = rvt_dwg::read_file(drawing, Limits::DEFAULT)
+        .map_err(|e| format!("{}: {e}", drawing.display()))?;
+    let c = rvt_dwg::pdf::check(
+        &bytes,
+        &d.drawing,
+        layout,
+        scale,
+        tolerance,
+        &Limits::DEFAULT,
+    )
+    .map_err(|e| e.to_string())?;
+    let m = &c.matched;
+    println!(
+        "pdf-check: {} PDF samples, {} drawing samples, precision {:.4}, recall {:.4}",
+        m.candidate, m.reference, m.precision, m.recall
+    );
+    for p in &c.misses {
+        println!("  on no linework: ({:.3}, {:.3})", p[0], p[1]);
+    }
+    if m.precision < min || m.recall < min {
+        return Err(format!(
+            "the PDF does not draw the drawing's linework (under {min})"
+        ));
+    }
     Ok(())
 }
 

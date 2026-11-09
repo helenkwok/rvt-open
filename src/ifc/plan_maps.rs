@@ -422,6 +422,105 @@ pub fn instance_plan_symbols(
     Ok(out)
 }
 
+/// A text a family symbol draws (a title block's fixed labels), in the symbol's frame: where the
+/// text's box starts on the left of its base line, feet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SymbolText {
+    pub at: [f64; 2],
+    pub height_feet: f64,
+    pub rotation: f64,
+    pub value: String,
+}
+
+/// A symbol's sheet curves and texts, see [`symbol_sheet_graphics`].
+pub type SymbolGraphics = (Vec<PlanPolyline>, Vec<SymbolText>);
+
+/// What a family symbol draws on a sheet: the curves it shows in a plan view and its texts
+/// (`GRichText`: rich text at `m_modelOrigin`, moved right by `m_textHorzOffsetHimetric` and up by
+/// `m_textVertOffsetHimetric`, both 1/100 mm, `m_defaultFontSize` high, along `m_modelXUnitVec`).
+/// A title block's border, lines and fixed labels, by its symbol id.
+pub fn symbol_sheet_graphics(
+    rf: &mut crate::RevitFile,
+    symbols: &BTreeSet<u64>,
+) -> anyhow::Result<BTreeMap<u32, SymbolGraphics>> {
+    let mut read = 0;
+    let (mut curves, _) = read_symbols(
+        rf,
+        &PlanView::default(),
+        symbols.clone(),
+        &BTreeSet::new(),
+        &mut read,
+    )?;
+    let mut opts = crate::native_document::Options {
+        selected_ids: symbols.clone(),
+        max_graph_values: 1_000_000,
+        max_graph_objects: 1_000_000,
+        ..Default::default()
+    };
+    opts.channels = BTreeSet::from([103]);
+    let mut texts: BTreeMap<u32, Vec<SymbolText>> = BTreeMap::new();
+    crate::native_document::extract(rf, &opts, |r| {
+        if let (Some(g), Ok(id)) = (&r.graph, u32::try_from(r.identity.element_id)) {
+            for o in g.objects.iter().filter(|o| o.class_name == "GRichText") {
+                if let Some(t) = rich_text(&o.fields) {
+                    texts.entry(id).or_default().push(t);
+                }
+            }
+        }
+        Ok(())
+    })?;
+    let ids: BTreeSet<u32> = curves.keys().chain(texts.keys()).copied().collect();
+    Ok(ids
+        .into_iter()
+        .map(|id| {
+            (
+                id,
+                (
+                    curves.remove(&id).unwrap_or_default(),
+                    texts.remove(&id).unwrap_or_default(),
+                ),
+            )
+        })
+        .collect())
+}
+
+/// A `GRichText` graphics object as a text, see [`symbol_sheet_graphics`].
+fn rich_text(f: &serde_json::Value) -> Option<SymbolText> {
+    let xyz = |name: &str| -> Option<[f64; 3]> {
+        let v = f.get(name)?.get("m_xyz")?.as_array()?;
+        let p: Vec<f64> = v.iter().filter_map(|x| x.as_f64()).collect();
+        (p.len() == 3).then(|| [p[0], p[1], p[2]])
+    };
+    let num = |name: &str| f.get(name).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let raw: Vec<u8> = f
+        .get("m_arrRtfRawData")?
+        .as_array()?
+        .iter()
+        .filter_map(|x| x.as_u64())
+        .map(|x| x as u8)
+        .take_while(|b| *b != 0)
+        .collect();
+    let value = crate::plan_views::rtf_plain(&String::from_utf8_lossy(&raw));
+    if value.trim().is_empty() {
+        return None;
+    }
+    let origin = xyz("m_modelOrigin")?;
+    let x = xyz("m_modelXUnitVec").unwrap_or([1.0, 0.0, 0.0]);
+    let (dx, dy) = (
+        num("m_textHorzOffsetHimetric") / 100.0 / 304.8,
+        num("m_textVertOffsetHimetric") / 100.0 / 304.8,
+    );
+    Some(SymbolText {
+        at: [
+            origin[0] + dx * x[0] - dy * x[1],
+            origin[1] + dx * x[1] + dy * x[0],
+        ],
+        height_feet: num("m_defaultFontSize"),
+        rotation: x[1].atan2(x[0]),
+        value,
+    })
+}
+
 /// A model point in an element's frame: its location, turned by its rotation.
 fn to_local(w: [f64; 3], location: &[f64; 3], rotation: f64) -> [f64; 3] {
     let (sin, cos) = (-rotation).sin_cos();

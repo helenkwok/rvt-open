@@ -14,10 +14,19 @@ RVT_BIN=target/release tools/dwg-oracle/score.sh <exports dir> <samples dir> <ou
   exports (template: `manifest.example.tsv`) or pass its path, and, optionally, a `layer-map.tsv` (export
   layer, rvt-open layer) when the export used a layer standard rvt-open does not write: beside the exports,
   or passed as the fifth argument.
-- Today only `plan` rows get a score: each is drawn with `rvt-sheet --view <the plan view>` (the view named
-  in the manifest's sixth column, else taken from the export's file name), labels on, so linework, text and
-  dimensions are all scored. A view `*` draws the whole model. `sheet` and `view` rows record the reference's inventory (tables, SVG of each
-  layout, `report.json`) until rvt-open writes sheets and views.
+- `plan` rows are drawn with `rvt-sheet --view <the plan view>` (the view named in the manifest's sixth
+  column, else taken from the export's file name), labels on, so linework, text and dimensions are all
+  scored. A view `*` draws the whole model.
+- `sheet` rows are drawn with `rvt-sheet --sheet <number>` (the export's file name up to ` - `) and
+  compared on the layout named in the manifest (the export's is `Layout1`): paper space plus model space
+  seen through each viewport, both clipped to the viewport frames, so how each side arranges model space
+  does not matter. The summary adds the viewport counts (candidate/reference) and how many reference viewports
+  have a candidate viewport at their scale within 10 mm of their centre (the largest such distance in
+  brackets). An export may draw a view straight into paper space instead of through a viewport.
+- Every candidate is written and scored in each format of `FORMATS` (default `dxf dwg`, one summary row
+  per format). With `pdf` in `FORMATS` a PDF is written too and checked against the DXF drawing with
+  `rvt-dwg pdf-check`. `view` rows record the reference's inventory (tables, SVG of each layout,
+  `report.json`) until rvt-open draws sections, elevations and other views.
 - Exports of sample files keep the samples' terms: they stay local, are never committed, and write-ups
   give counts only.
 - Ask for exports at the internal origin, in millimetres, true colour, paper-space linetype scaling, with

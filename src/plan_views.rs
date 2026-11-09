@@ -19,6 +19,11 @@
 //!   head, `m_oTagOrientationCell.m_headLocation`, text from the tagged room's Name and Number),
 //!   text notes (`TextElement`, text from its saved rich text) and linear dimensions
 //!   (`LinearDimString`: its `m_refPnts` projected onto its dimension line, `m_pDimLine`).
+//! - A sheet is a view with a sheet number (`m_sheetNumber`; its name is `m_viewName`). What it
+//!   shows: the `Viewport`s it owns, each naming a view (`m_dbViewId`) and where that view's
+//!   internal origin lies on the sheet (`m_offset`, paper feet), and the title blocks it owns
+//!   (`FamilyInstance`s holding a `FamInstTitleBlock`, by symbol `m_masterSymbolId` and origin
+//!   `m_instOrigin`). Its text notes and detail lines are the annotation it owns, in paper feet.
 
 use crate::schema_objects::{Fields, ParamValue, SchemaObject, Value, for_each_object_where};
 use crate::{Result, RevitFile};
@@ -174,6 +179,59 @@ pub enum LineKind {
     BuildingPad,
 }
 
+/// A section or elevation view (`DBViewSection`): its axes on the sheet, right (`m_horzDir`) and up
+/// (`m_vertDir`), the direction toward its viewer (`m_viewDir`), and, as for a plan, its crop box,
+/// scale and what it hides. Model feet.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct SectionView {
+    pub id: i64,
+    pub name: String,
+    pub template: bool,
+    pub right: [f64; 3],
+    pub up: [f64; 3],
+    pub toward_viewer: [f64; 3],
+    pub crop: Option<CropBox>,
+    pub scale: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_categories: Vec<i64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_elements: Vec<i64>,
+    pub template_id: Option<i64>,
+}
+
+/// A sheet.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct Sheet {
+    pub id: i64,
+    pub number: String,
+    pub name: String,
+}
+
+/// A view placed on a sheet.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct SheetViewport {
+    pub id: i64,
+    pub sheet: i64,
+    pub view: i64,
+    /// Where the view's internal origin lies on the sheet, paper feet (`m_offset`).
+    pub offset: [f64; 2],
+    /// The view title's origin on the sheet, paper feet, and the length of its line.
+    pub label_origin: [f64; 2],
+    pub label_length: f64,
+    pub detail_number: String,
+}
+
+/// A title block placed on a sheet.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct TitleBlock {
+    pub id: i64,
+    pub sheet: i64,
+    pub symbol: i64,
+    /// Origin on the sheet and x direction, paper feet.
+    pub origin: [f64; 2],
+    pub x_dir: [f64; 2],
+}
+
 /// Everything [`read`] finds.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct ViewFacts {
@@ -186,6 +244,10 @@ pub struct ViewFacts {
     pub rooms: BTreeMap<i64, RoomLabel>,
     pub curves: Vec<ViewCurve>,
     pub grid_extents: Vec<GridExtent>,
+    pub sections: Vec<SectionView>,
+    pub sheets: Vec<Sheet>,
+    pub viewports: Vec<SheetViewport>,
+    pub title_blocks: Vec<TitleBlock>,
 }
 
 fn id(f: &Fields, name: &str) -> Option<i64> {
@@ -343,6 +405,10 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
             "Path3d",
             "ProfileRefPlane",
             "ExtentElem",
+            "DBView",
+            "DBViewSection",
+            "Viewport",
+            "FamilyInstance",
         ],
     );
     // Partition sections are the loaded families' own documents: a curve after a section start
@@ -414,6 +480,78 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                     template_id: id(root, "m_viewTemplateId"),
                     on_sheet: id(root, "m_sheetViewportElemId").is_some(),
                 }),
+                Some("DBViewSection") => {
+                    let dir = |name: &str| point(root, name).unwrap_or_default();
+                    out.sections.push(SectionView {
+                        id: element,
+                        name: text(root, "m_viewName").unwrap_or_default(),
+                        template: flag(root, "m_isTemplate"),
+                        right: dir("m_horzDir"),
+                        up: dir("m_vertDir"),
+                        toward_viewer: dir("m_viewDir"),
+                        crop: None,
+                        scale: float(root, "m_scale").filter(|s| *s > 0.0).map(|s| 1.0 / s),
+                        hidden_categories: ids_in(
+                            o,
+                            &layouts,
+                            "IckyExcludedCategoriesSetPtrWrapper",
+                            "m_categoryIds",
+                        ),
+                        hidden_elements: ids_in(
+                            o,
+                            &layouts,
+                            "HiddenElementsViewSettings",
+                            "m_hiddenElements",
+                        ),
+                        template_id: id(root, "m_viewTemplateId"),
+                    });
+                }
+                Some("DBView") => {
+                    if let Some(number) = text(root, "m_sheetNumber").filter(|n| !n.is_empty()) {
+                        out.sheets.push(Sheet {
+                            id: element,
+                            number,
+                            name: text(root, "m_viewName").unwrap_or_default(),
+                        });
+                    }
+                }
+                Some("Viewport") => {
+                    let xy = |name: &str| point(root, name).map(|p| [p[0], p[1]]);
+                    if let (Some(sheet), Some(view), Some(offset)) =
+                        (owner, id(root, "m_dbViewId"), xy("m_offset"))
+                    {
+                        out.viewports.push(SheetViewport {
+                            id: element,
+                            sheet,
+                            view,
+                            offset,
+                            label_origin: xy("m_labelOrigin").unwrap_or_default(),
+                            label_length: float(root, "m_labelLength").unwrap_or(0.0),
+                            detail_number: text(root, "m_detailNumber").unwrap_or_default(),
+                        });
+                    }
+                }
+                Some("FamilyInstance") if !in_family(o) => {
+                    let title_block = o.objects.iter().skip(1).any(|f| {
+                        layouts
+                            .classes
+                            .get(&f.tag)
+                            .is_some_and(|c| c.name == "FamInstTitleBlock")
+                    });
+                    if let (true, Some(sheet), Some(symbol)) =
+                        (title_block, owner, id(root, "m_masterSymbolId"))
+                    {
+                        let origin = point(root, "m_instOrigin").unwrap_or_default();
+                        let x = point(root, "m_RefDir").unwrap_or([1.0, 0.0, 0.0]);
+                        out.title_blocks.push(TitleBlock {
+                            id: element,
+                            sheet,
+                            symbol,
+                            origin: [origin[0], origin[1]],
+                            x_dir: [x[0], x[1]],
+                        });
+                    }
+                }
                 Some("Viewer") => {
                     if let (Some(view), Some(b)) =
                         (id(root, "m_dbViewId"), root.get("m_boundedSpace"))
@@ -674,6 +812,9 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
         v.level = v.level_id.and_then(|l| level_names.get(&l).cloned());
         v.crop = crops.remove(&v.id);
     }
+    for v in &mut out.sections {
+        v.crop = crops.remove(&v.id);
+    }
     Ok(out)
 }
 
@@ -915,6 +1056,45 @@ impl ViewFacts {
         view.template_id
             .and_then(|t| self.views.iter().find(|v| v.id == t && v.template))
             .map_or(&view.hidden_categories, |t| &t.hidden_categories)
+    }
+
+    /// The categories section or elevation `view` hides: its template's when one controls it.
+    pub fn section_hidden_categories<'a>(&'a self, view: &'a SectionView) -> &'a [i64] {
+        let t = view.template_id;
+        self.views
+            .iter()
+            .find(|v| Some(v.id) == t && v.template)
+            .map(|v| v.hidden_categories.as_slice())
+            .or_else(|| {
+                self.sections
+                    .iter()
+                    .find(|v| Some(v.id) == t && v.template)
+                    .map(|v| v.hidden_categories.as_slice())
+            })
+            .unwrap_or(&view.hidden_categories)
+    }
+
+    /// The sheet numbered `key`, else the one named `key` (ignoring case).
+    pub fn find_sheet(&self, key: &str) -> std::result::Result<&Sheet, String> {
+        self.sheets
+            .iter()
+            .find(|s| s.number == key)
+            .or_else(|| self.sheets.iter().find(|s| s.name == key))
+            .or_else(|| {
+                self.sheets.iter().find(|s| {
+                    s.number.eq_ignore_ascii_case(key)
+                        || s.name.eq_ignore_ascii_case(key)
+                        || format!("{} - {}", s.number, s.name).eq_ignore_ascii_case(key)
+                })
+            })
+            .ok_or_else(|| {
+                let names: Vec<String> = self
+                    .sheets
+                    .iter()
+                    .map(|s| format!("{} - {}", s.number, s.name))
+                    .collect();
+                format!("no sheet {key:?}; the sheets are: {}", names.join(", "))
+            })
     }
 
     /// The plan view called `name`, not a template: an exact match first, then one ignoring case,
