@@ -1006,7 +1006,7 @@ pub(super) const LOAD_BEARING_CLASSES: &[&str] = &["StructuralColumn", "Structur
 
 /// Releases where the calculation's last step, not external, is measured.
 /// The parameters and a type's Function are read on every release
-/// from 2024, as read a door's and a floor's. 2026 and 2027 
+/// from 2024, as read a door's and a floor's. 2026 and 2027
 /// as Autodesk's samples saved by 2025 read them.
 pub const IS_EXTERNAL_LAST_STEP_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 

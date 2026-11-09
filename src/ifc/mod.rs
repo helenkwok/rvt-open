@@ -3825,7 +3825,7 @@ fn apply_partner_systems(entities: &mut [entities::IfcEntity]) {
 
 /// Releases a family instance's unjoined ports are placed on: 2025,
 /// the RE1 models', and 2024, the BIM4LCA office's, where all 43 such ports
-/// are within 0.01 ft of Revit's with its axis. 2026 and 2027 
+/// are within 0.01 ft of Revit's with its axis. 2026 and 2027
 /// write 2025's records, and Autodesk's samples saved by them place every
 /// port as their 2025 saves do.
 const PORT_PLACEMENT_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
@@ -5500,7 +5500,22 @@ fn append_production_walker_elements(
             append.port_joins_left_out,
         ));
     }
-    Ok(Default::default())
+    // A tuple of more than 12 has no Default of its own.
+    Ok((
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+            Default::default(),
+    ))
 }
 
 fn append_diagnostic_walker_proxy_candidates(

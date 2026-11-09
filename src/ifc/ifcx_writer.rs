@@ -554,7 +554,7 @@ pub(super) fn value_of(v: &PropertyValue) -> Option<(Ty, Value)> {
             Some((Ty::Str, json!(s)))
         }
         PropertyValue::Integer(n) | PropertyValue::CountValue(n) => Some((Ty::Int, json!(n))),
-        PropertyValue::Real(x) => real(*x, None),
+        PropertyValue::Real(x) | PropertyValue::Ratio(x) => real(*x, None),
         PropertyValue::Boolean(b) => Some((Ty::Bool, json!(b))),
         PropertyValue::Logical(b) => b.map(|b| (Ty::Bool, json!(b))),
         PropertyValue::LengthFeet(x) | PropertyValue::PositiveLengthFeet(x) => {
