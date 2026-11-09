@@ -467,7 +467,7 @@ fn run_pdf_check(
     }
     let d = rvt_dwg::read_file(drawing, Limits::DEFAULT)
         .map_err(|e| format!("{}: {e}", drawing.display()))?;
-    let m = rvt_dwg::pdf::check(
+    let c = rvt_dwg::pdf::check(
         &bytes,
         &d.drawing,
         layout,
@@ -476,10 +476,14 @@ fn run_pdf_check(
         &Limits::DEFAULT,
     )
     .map_err(|e| e.to_string())?;
+    let m = &c.matched;
     println!(
         "pdf-check: {} PDF samples, {} drawing samples, precision {:.4}, recall {:.4}",
         m.candidate, m.reference, m.precision, m.recall
     );
+    for p in &c.misses {
+        println!("  on no linework: ({:.3}, {:.3})", p[0], p[1]);
+    }
     if m.precision < min || m.recall < min {
         return Err(format!(
             "the PDF does not draw the drawing's linework (under {min})"

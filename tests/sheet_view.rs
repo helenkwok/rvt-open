@@ -284,7 +284,8 @@ fn sheet_a102_places_its_two_plan_views_and_its_pdf_draws_them() {
         0.5,
         &rvt_dwg::Limits::DEFAULT,
     )
-    .expect("pdf check");
+    .expect("pdf check")
+    .matched;
     assert!(m.precision > 0.99 && m.recall > 0.99, "{m:?}");
 }
 

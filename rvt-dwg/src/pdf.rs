@@ -469,7 +469,7 @@ pub fn check(
     scale: Option<f64>,
     tolerance: f64,
     limits: &Limits,
-) -> Result<crate::compare::Match, Error> {
+) -> Result<PdfCheck, Error> {
     // Model space drawn at an unknown scale: the scale that gives the PDF's page width (the
     // drawing's width at the scale plus the two margins).
     let scale = match (scale, layout) {
@@ -506,7 +506,18 @@ pub fn check(
         }
     }
     let want = crate::compare::linework_samples(d, layout, step, limits);
-    Ok(crate::compare::point_match(&want, &got, tolerance))
+    Ok(PdfCheck {
+        matched: crate::compare::point_match(&want, &got, tolerance),
+        misses: crate::compare::unmatched(&want, &got, tolerance, 5),
+    })
+}
+
+/// What [`check`] found: the match, and up to five PDF points (drawing units) that lie on none
+/// of the drawing's linework.
+#[derive(Debug, Clone)]
+pub struct PdfCheck {
+    pub matched: crate::compare::Match,
+    pub misses: Vec<[f64; 2]>,
 }
 
 #[cfg(test)]
@@ -558,7 +569,9 @@ mod tests {
             "{s:?}"
         );
         assert_eq!((p.paths, p.texts), (2, 1));
-        let m = check(&p.bytes, &d, None, None, 5.0, &Limits::DEFAULT).unwrap();
+        let m = check(&p.bytes, &d, None, None, 5.0, &Limits::DEFAULT)
+            .unwrap()
+            .matched;
         assert!(m.precision > 0.999 && m.recall > 0.999, "{m:?}");
     }
 
@@ -608,7 +621,9 @@ mod tests {
             "{x:?}"
         );
         assert!(s[0].1.is_some());
-        let m = check(&p.bytes, &d, Some("A101"), None, 0.1, &Limits::DEFAULT).unwrap();
+        let m = check(&p.bytes, &d, Some("A101"), None, 0.1, &Limits::DEFAULT)
+            .unwrap()
+            .matched;
         assert!(m.precision > 0.999 && m.recall > 0.999, "{m:?}");
     }
 }

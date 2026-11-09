@@ -448,6 +448,22 @@ pub(crate) fn point_match(reference: &[[f64; 2]], candidate: &[[f64; 2]], tol: f
     ratio(reference.len(), candidate.len(), p_hit, r_hit)
 }
 
+/// Up to `n` points of `candidate` with no point of `reference` within `tol`.
+pub(crate) fn unmatched(
+    reference: &[[f64; 2]],
+    candidate: &[[f64; 2]],
+    tol: f64,
+    n: usize,
+) -> Vec<[f64; 2]> {
+    let grid = Grid::new(reference, tol);
+    candidate
+        .iter()
+        .filter(|p| !grid.near(p, tol))
+        .take(n)
+        .copied()
+        .collect()
+}
+
 fn ratio(reference: usize, candidate: usize, p_hit: usize, r_hit: usize) -> Match {
     let precision = if candidate == 0 {
         0.0

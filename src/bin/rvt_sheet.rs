@@ -794,7 +794,7 @@ fn sheet_drawing(
         };
         // Model space holds the views side by side, each moved along x clear of the last.
         let shift = next_x - b[0];
-        next_x += b[2] - b[0] + 10_000.0;
+        next_x += b[2] - b[0] + (20.0 * scale).max(10_000.0);
         let t = Affine {
             a: 1.0,
             b: 0.0,
@@ -815,7 +815,8 @@ fn sheet_drawing(
         // Paper = offset + view coordinates / scale.
         let c = [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0];
         let o = mm(vp.offset);
-        let (w, h) = ((b[2] - b[0]) / scale, (b[3] - b[1]) / scale);
+        // The frame holds what the view draws with 2 mm to spare, so nothing lies on its edge.
+        let (w, h) = ((b[2] - b[0]) / scale + 4.0, (b[3] - b[1]) / scale + 4.0);
         ensure(&mut out, "G-ANNO-NPLT", 7);
         out.entities.push(paper(
             "VIEWPORT",
