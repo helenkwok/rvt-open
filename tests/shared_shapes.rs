@@ -177,9 +177,12 @@ fn nordic_office_concrete_draws_shared_shapes_in_place() {
             // their saved mesh, and floors along their shape-edited tops,
             // share no map; the bodies are the same 12,803. 1,626 -> 1,628
             // shapes: walls whose layered ends now nest at their joins, as
-            // Revit's bodies do, are drawn as their own outlines.
-            maps: 740,
-            mapped_items: 10_844,
+            // Revit's bodies do, are drawn as their own outlines. 740 -> 745
+            // maps and 10,844 -> 10,837 mapped items: the 9 doors set in no
+            // wall are placed at their stored origin, as Revit's export
+            // places them, and no longer share one map.
+            maps: 745,
+            mapped_items: 10_837,
             bodies: 12_803,
             shapes: 1_628,
         },

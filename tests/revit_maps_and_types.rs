@@ -162,7 +162,11 @@ fn nordic_office_concrete_maps_family_instances_and_writes_used_types() {
 // IfcFlowTerminal; the same three gained plan footprints in plan_maps_and_spaces.
 // against the 340 pin, measured by the gate.
 // The revit convention writes no unplaced type (34 before it left them out).
-const PINS: (usize, usize, usize, usize, usize) = (1_935, 11_691, 2_226, 2_226, 0);
+// 1,935 -> 1,944 maps and 2,226 -> 2,235 type objects: the 9 doors set in no
+// wall, placed at their stored origin, each hold a map of their own, so the
+// export writes 16 `O-13:O-13` door types where it wrote 7, as many as Revit's
+// own export of this file.
+const PINS: (usize, usize, usize, usize, usize) = (1_944, 11_691, 2_235, 2_235, 0);
 
 /// Under `open`: type objects are one per Revit type, not split by map
 /// (1,302 typing elements), plus the 34 types no element uses.
