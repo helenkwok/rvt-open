@@ -694,7 +694,7 @@ fn entry_of(
             entry.offset = provenance.source_offset;
             entry.record_offset = provenance.source_offset;
         }
-        Some("partition_materials" | "partition_schema_mvp" | "partition_rect_opening_index") => {
+        Some("partition_materials" | "partition_schema_mvp") => {
             entry.carrier = ElementCarrier::PartitionDerived;
         }
         _ => {}
@@ -938,11 +938,26 @@ fn body_readers(body: &str) -> &'static [&'static str] {
         | crate::element_record_wall_joins::WALL_BODY_JOIN_TRIMMED
         | crate::element_record_column_cuts::COLUMN_BODY_JOIN_CUT
         | crate::element_record_beam_cuts::BEAM_BODY_COLUMN_CUT => &[SELECTED_FRAME_READER],
-        ec::WALL_CENTRELINE_BODY_SOURCE
-        | ec::WALL_TAPERED_BODY_SOURCE
-        | ec::WALL_LAYER_JOIN_BODY_SOURCE => &["bounded_line", "wall_type_layers"],
+        ec::WALL_CENTRELINE_BODY_SOURCE | ec::WALL_LAYER_JOIN_BODY_SOURCE => &[
+            "bounded_line",
+            "wall_type_layers",
+            "wall_orientation",
+            "native_wall",
+        ],
+        ec::WALL_TAPERED_BODY_SOURCE => &[
+            "bounded_line",
+            "wall_type_layers",
+            "wall_orientation",
+            "wall_type_face_angle",
+            "native_wall",
+        ],
         ec::BEAM_AXIS_BODY_SOURCE | ec::BEAM_BOX_BODY_SOURCE => &["bounded_line"],
-        ec::WALL_ARC_BODY_SOURCE => &["bounded_arc", "wall_type_layers"],
+        ec::WALL_ARC_BODY_SOURCE => &[
+            "bounded_arc",
+            "wall_type_layers",
+            "wall_orientation",
+            "native_wall",
+        ],
         ec::INSTANCE_TURNED_BODY_SOURCE | ec::INSTANCE_ORIENTED_BODY_SOURCE => {
             &["instance_transform"]
         }
@@ -972,6 +987,10 @@ fn body_readers(body: &str) -> &'static [&'static str] {
             "type_i_section",
         ],
         ec::PIPE_AXIS_BODY_SOURCE => &[SELECTED_FRAME_READER, "pipe_connectors"],
+        ec::DUCT_LINE_BODY_SOURCE => &[
+            crate::partition_schema_mvp::DUCT_RECORD_READER,
+            crate::partition_schema_mvp::DUCT_TYPE_READER,
+        ],
         ec::ROOF_SLOPE_BODY_SOURCE => &[
             SELECTED_FRAME_READER,
             "sketch_lines",
@@ -1027,11 +1046,132 @@ fn profile_readers(profile: Option<&str>) -> &'static [&'static str] {
     }
 }
 
+/// The readers behind a wall's top cut at a covering floor: the wall's
+/// own native record, which names the elements its top join and cut pairs
+/// cover it with, and the frames of those covers.
+const WALL_TOP_READERS: &[&str] = &["native_wall", "wall_top_covers"];
+
+/// The readers behind a wall's base cut at a covering floor: the wall's
+/// own native record, which names the element its base join covers it with,
+/// and that element's frame.
+const WALL_BASE_READERS: &[&str] = &["native_wall", "wall_base_cover"];
+
+/// The readers behind a wall end drawn to the walls its record joins there:
+/// the wall's own native record, which holds the join lists
+/// (`m_realJoined`), and the native records of the walls the lists name.
+const WALL_END_READERS: &[&str] = &["native_wall", "native_wall_joined"];
+
+/// The readers behind the placement of a door or window set in a plain wall:
+/// its stored transform, its own native record (the two flips) and
+/// its host wall's native record (the wall's line).
+const PLACEMENT_READERS: &[&str] = &["instance_transform", "native_opening", "opening_host_wall"];
+
+/// The readers whose value a written value of the `*Source` property `name`
+/// is drawn from, beside the readers of the element's `BodySource` and
+/// `ProfileSource` ([`body_readers`], [`profile_readers`]): an element lists a
+/// noted source whose reader is one of them for any of its property values, so
+/// a value that a rule other than the body's drew from a record other than the
+/// body's frame is listed from that property. A `(name, value)` with no
+/// reader here is a declared gap or a value another row covers: the offsets
+/// test (`tests/value_sources_offsets.rs`, `SOURCE_VALUES`) fails on a written
+/// value that is in neither.
+fn property_readers(name: &str, value: &str) -> &'static [&'static str] {
+    use super::export_content as ec;
+    match name {
+        "BodyHeightSource" => match value {
+            ec::AREA_BODY_HEIGHT_SOURCE => &[crate::partition_area_records::AREA_LEVELS_READER],
+            ec::LANDING_SLAB_BODY_HEIGHT_SOURCE => &["native_landing", "native_landing_type"],
+            ec::WALL_TOP_COVER_BODY_HEIGHT_SOURCE | ec::WALL_TOP_STEPPED_BODY_HEIGHT_SOURCE => {
+                WALL_TOP_READERS
+            }
+            _ => &[],
+        },
+        ec::WALL_BASE_SOURCE_PROPERTY => match value {
+            ec::WALL_BASE_COVER_BODY_BASE_SOURCE
+            | ec::WALL_BASE_SLOPED_BODY_BASE_SOURCE
+            | ec::WALL_BASE_COVER_IN_PART_BODY_BASE_SOURCE
+            | ec::WALL_BASE_SLOPED_IN_PART_BODY_BASE_SOURCE => WALL_BASE_READERS,
+            _ => &[],
+        },
+        ec::WALL_END_SOURCE_PROPERTY => match value {
+            ec::WALL_END_AT_JOINED_WALLS_BODY_END_SOURCE => WALL_END_READERS,
+            _ => &[],
+        },
+        // a wall's elevation profile carried on to its end is drawn
+        // from the profile's sketch, its lines and its Sketch's curve list.
+        ec::WALL_PROFILE_SOURCE_PROPERTY => &["sketch_lines", "sketch_list"],
+        ec::PLACEMENT_AXES_SOURCE_PROPERTY => match value {
+            ec::OPENING_PLACEMENT_AXES_SOURCE => PLACEMENT_READERS,
+            _ => &[],
+        },
+        // a door set in no wall is placed at its stored transform's
+        // origin, which the transform scan notes.
+        ec::PLACEMENT_ORIGIN_SOURCE_PROPERTY => match value {
+            ec::NO_OPENING_PLACEMENT_ORIGIN_SOURCE => &["instance_transform"],
+            _ => &[],
+        },
+        "ThicknessSource" => match value {
+            ec::WALL_TYPE_THICKNESS_SOURCE => &["wall_type_layers"],
+            crate::element_record_wall_joins::WALL_THICKNESS_SOURCE
+            | ec::RECORD_BBOX_THICKNESS_SOURCE => &[SELECTED_FRAME_READER],
+            _ => &[],
+        },
+        ec::SPACE_OUTLINE_SOURCE_PROPERTY => match value {
+            ec::SPACE_OUTLINE_STORED_SOLID
+            | ec::SPACE_OUTLINE_STORED_SOLID_FACES
+            | ec::SPACE_OUTLINE_STORED_SOLID_APPROXIMATE
+            | ec::SPACE_OUTLINE_STORED_SOLID_EDGES => &["room_solid_faces"],
+            ec::SPACE_OUTLINE_RECORD_BOX => &[SELECTED_FRAME_READER],
+            ec::SPACE_OUTLINE_SAVED_MESH => &["saved_graphics"],
+            ec::SPACE_OUTLINE_AREA_BOUNDARY | ec::SPACE_OUTLINE_AREA_BOUNDARY_JOINED => &[
+                crate::partition_area_records::AREA_LINES_READER,
+                crate::partition_area_records::AREA_LEVELS_READER,
+            ],
+            ec::SPACE_OUTLINE_AREA_PLAN_TOPOLOGY
+            | ec::SPACE_OUTLINE_AREA_PLAN_TOPOLOGY_UNCHECKED => &[
+                crate::partition_area_records::AREA_TOPOLOGY_READER,
+                crate::partition_area_records::AREA_LEVELS_READER,
+            ],
+            _ => &[],
+        },
+        _ => &[],
+    }
+}
+
+/// The ElementIds of the elements a wall's own properties name as the ones its
+/// top, base or end was drawn against: `TopCoverElementIds` (or the one
+/// `TopCoverElementId`) and `BaseCoverElementId`. Empty where the wall
+/// names none.
+fn named_covers(
+    property_set: Option<&super::entities::PropertySet>,
+    single: &str,
+    list: Option<&str>,
+) -> Vec<u32> {
+    let mut found: Vec<u32> = Vec::new();
+    for property in property_set.iter().flat_map(|set| &set.properties) {
+        match (&property.value, property.name.as_str()) {
+            (PropertyValue::Text(text), name) if list == Some(name) => {
+                found = text
+                    .split(',')
+                    .filter_map(|id| id.trim().parse::<u32>().ok())
+                    .collect();
+                break;
+            }
+            (PropertyValue::Integer(id), name) if name == single => {
+                found.extend(u32::try_from(*id).ok());
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
 /// Give each listed element the value sources the readers noted on `rf` while
 /// the export ran with `RevitFile::record_value_sources` on, and the frame
 /// itself as the source of a body read from it, each only where the final
 /// `model`'s `BodySource` or `ProfileSource` for the element is drawn from that
-/// reader ([`body_readers`], [`profile_readers`]); then count them by reader.
+/// reader ([`body_readers`], [`profile_readers`]), or one of its `*Source`
+/// property values is ([`property_readers`]); then count them by reader.
 /// Call it once the model is final: the saved graphics and the family
 /// extrusions replace bodies after the table is built.
 pub(crate) fn attach_value_sources(
@@ -1056,6 +1196,7 @@ pub(crate) fn attach_value_sources(
         let mut profile_source = None;
         let mut profile_resolved = false;
         let mut i_section = false;
+        let mut property_list: Vec<&'static str> = Vec::new();
         for property in property_set.iter().flat_map(|set| &set.properties) {
             match (property.name.as_str(), &property.value) {
                 ("BodySource", PropertyValue::Text(text)) => body = Some(text.as_str()),
@@ -1064,29 +1205,77 @@ pub(crate) fn attach_value_sources(
                     profile_source = Some(text.as_str())
                 }
                 ("ProfileResolved", PropertyValue::Boolean(true)) => profile_resolved = true,
+                (name, PropertyValue::Text(text)) if name.ends_with("Source") => {
+                    property_list.extend_from_slice(property_readers(name, text));
+                }
                 _ => {}
             }
         }
-        let Some(body) = body else {
-            continue;
-        };
-        let body_list = body_readers(body);
+        let body_list: &[&str] = body.map_or(&[][..], body_readers);
         let profile_list: &[&str] = if profile_resolved
-            && (body_list.contains(&SELECTED_FRAME_READER) || profile_source == Some(body))
+            && (body_list.contains(&SELECTED_FRAME_READER)
+                || (body.is_some() && profile_source == body))
         {
             profile_readers(profile_source)
         } else {
             &[]
         };
+        if body.is_none() && property_list.is_empty() {
+            continue;
+        }
+        // The frames of the elements a wall's top and base were drawn against:
+        // each cover's own frame, from its entry, where every one the
+        // wall names has one.
+        let cover_frames = |single: &str, list: Option<&str>| -> Option<Vec<SourcePart>> {
+            let named = named_covers(property_set.as_ref(), single, list);
+            let parts: Option<Vec<SourcePart>> = named
+                .iter()
+                .map(|cover| {
+                    let held = table.elements.get(cover)?;
+                    Some(SourcePart {
+                        element_id: *cover,
+                        stream: held.stream.clone()?,
+                        offset: held.offset?,
+                    })
+                })
+                .collect();
+            parts.filter(|parts| !parts.is_empty())
+        };
+        let top_covers = property_list
+            .contains(&"wall_top_covers")
+            .then(|| cover_frames("TopCoverElementId", Some("TopCoverElementIds")))
+            .flatten();
+        let base_covers = property_list
+            .contains(&"wall_base_cover")
+            .then(|| cover_frames("BaseCoverElementId", None))
+            .flatten();
         let Some(entry) = table.elements.get_mut(&id) else {
             continue;
         };
+        for (reader, parts) in [
+            ("wall_top_covers", top_covers),
+            ("wall_base_cover", base_covers),
+        ] {
+            let Some(parts) = parts else {
+                continue;
+            };
+            let copies = parts.len();
+            let mut source = ValueSource::from_parts(reader, CopyRule::Frame, copies, parts);
+            source.differs_from_frame = match &entry.stream {
+                Some(frame) => !source.held_in(frame),
+                None => false,
+            };
+            entry.value_sources.push(source);
+        }
         for source in noted.and_then(|noted| noted.get(&id)).into_iter().flatten() {
             let reader = source.reader.as_str();
             // A beam or column whose body is its type's I section (`SectionShape`
             // is written only then) is drawn from the type's parameters.
             let drawn_i_section = i_section && reader == "type_i_section";
-            if !(body_list.contains(&reader) || profile_list.contains(&reader) || drawn_i_section)
+            if !(body_list.contains(&reader)
+                || profile_list.contains(&reader)
+                || property_list.contains(&reader)
+                || drawn_i_section)
                 || entry
                     .value_sources
                     .iter()
@@ -1122,8 +1311,9 @@ pub(crate) fn attach_value_sources(
         // A box whose profile was read from sketch lines or the type's section
         // takes only its box and placement from the frame, unless a reader
         // noted the profile's records.
-        let profile_elsewhere = profile_resolved && profile_source != Some(body);
-        if body_list.contains(&SELECTED_FRAME_READER)
+        let profile_elsewhere = profile_resolved && body.is_some() && profile_source != body;
+        if (body_list.contains(&SELECTED_FRAME_READER)
+            || property_list.contains(&SELECTED_FRAME_READER))
             && !entry
                 .value_sources
                 .iter()

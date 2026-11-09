@@ -19,10 +19,16 @@
 //! A duct or pipe joins a family instance at every
 //! end, so the instances' connectors hold every join.
 
-use crate::native_json::{element_id, element_id_i64, finite_triple};
+use crate::native_json::{finite_triple, identifier_i64};
 use crate::partition_connector_pairs::ConnectorPair;
 use crate::{RevitFile, native_document};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// An `Identifier` as an ElementId, read as 8 bytes from Revit 2024 and 4
+/// before.
+fn element_id(value: &serde_json::Value) -> Option<u64> {
+    identifier_i64(value).and_then(|id| u64::try_from(id).ok())
+}
 
 /// The domains whose connectors Revit's export writes ports for: HVAC,
 /// electrical and piping.
@@ -68,18 +74,46 @@ const DUCT_FLOW_DIRECTION: i64 = -1_140_219;
 /// needed value is not read. An electrical connector whose description sets
 /// `Flow=Source` or `Flow=Sink` is exported with that direction by Revit;
 /// rvt-open does not read the description, so such a port is written
-/// `SOURCEANDSINK`.
+/// `SOURCEANDSINK`. A connector in an Exhaust Air system (`system`, its
+/// calculation's `m_eSystemType`) is `SOURCEANDSINK` whatever its
+/// direction: every one of the 1,004 Exhaust Air ports of Revit's export of
+/// Snowdon Towers HVAC is.
 pub fn port_flow_direction(
     domain: i64,
     family: Option<i64>,
     calculated: Option<i64>,
+    system: Option<i64>,
 ) -> Option<&'static str> {
-    if !matches!(domain, 1 | 3) {
+    if !matches!(domain, 1 | 3) || system == Some(EXHAUST_AIR) {
         return Some("SOURCEANDSINK");
     }
     match family? {
         0 => flow_direction_of(calculated?),
         direction => flow_direction_of(direction),
+    }
+}
+
+/// The system classification of a connector in an Exhaust Air system, as a
+/// connector calculation's `m_eSystemType` numbers it.
+pub const EXHAUST_AIR: i64 = 3;
+
+/// The IFC4 `SystemType` of a port (`IfcDistributionSystemEnum`) whose
+/// connector calculation's `m_eSystemType` is `system`: the
+/// system's classification, numbered as a system type's own
+/// `m_basicSystemType`, and named as Revit's IFC exporter maps a
+/// classification (CLEANROOM.md source 5). Only the classifications Revit's
+/// own IFC4 export is measured on are named: Supply Air (1) and Return Air
+/// (2) `VENTILATION` and Exhaust Air (3) `EXHAUST` on Snowdon Towers HVAC,
+/// Supply Hydronic (7) `HEATING` on the BIM4LCA office. Others, among them
+/// RE1 Plumbing's Sanitary (16), Domestic Hot Water (19) and Domestic Cold
+/// Water (20), whose Revit export is IFC2X3 and writes no `SystemType`, give
+/// `None`.
+pub fn distribution_system_of(system: i64) -> Option<&'static str> {
+    match system {
+        1 | 2 => Some("VENTILATION"),
+        EXHAUST_AIR => Some("EXHAUST"),
+        7 => Some("HEATING"),
+        _ => None,
     }
 }
 
@@ -105,6 +139,9 @@ pub struct InstancePort {
     /// The port's IFC4 `FlowDirection` ([`port_flow_direction`]), `None`
     /// where it is not read.
     pub flow_direction: Option<&'static str>,
+    /// The classification of the system its calculation names
+    /// (`m_eSystemType`), where read.
+    pub system_type: Option<i64>,
     /// Where the connector is in the symbol that draws the instance
     /// (`InstanceInfo.m_symbolId`), `None` where it is not read.
     pub frame: Option<ConnectorFrame>,
@@ -185,7 +222,7 @@ fn family_flow_directions(graph: &crate::native_parameters::ObjectGraph) -> BTre
                 .get("m_params")?
                 .as_array()?
                 .iter()
-                .find(|param| param.get("m_paramId").and_then(element_id_i64) == Some(wanted))?
+                .find(|param| param.get("m_paramId").and_then(identifier_i64) == Some(wanted))?
                 .get("m_int")?
                 .as_i64()?;
             Some((index, value))
@@ -193,12 +230,20 @@ fn family_flow_directions(graph: &crate::native_parameters::ObjectGraph) -> BTre
         .collect()
 }
 
-/// Each connector's calculated direction in a family instance's or a duct's
-/// or pipe's record graph, by connector index: the `m_eDirection`
-/// of the `MEPFamilyConnectorCalculation*` or `SegmentConnectorCalculation`
-/// object whose `m_pConnector` names the connector's object, numbered as a
-/// family's Flow Direction.
-fn calculated_directions(graph: &crate::native_parameters::ObjectGraph) -> BTreeMap<u32, i64> {
+/// What a connector's calculation holds: its direction (`m_eDirection`)
+/// and its system's classification (`m_eSystemType`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Calculation {
+    pub direction: Option<i64>,
+    pub system_type: Option<i64>,
+}
+
+/// Each connector's calculation in a family instance's or a duct's or pipe's
+/// record graph, by connector index: the `m_eDirection`, numbered
+/// as a family's Flow Direction, and `m_eSystemType` of the
+/// `MEPFamilyConnectorCalculation*` or `SegmentConnectorCalculation` object
+/// whose `m_pConnector` names the connector's object.
+fn calculations(graph: &crate::native_parameters::ObjectGraph) -> BTreeMap<u32, Calculation> {
     let index_of_token: BTreeMap<u64, u32> = graph
         .objects
         .iter()
@@ -223,8 +268,14 @@ fn calculated_directions(graph: &crate::native_parameters::ObjectGraph) -> BTree
                 .get("m_pConnector")?
                 .get("pointer_token")?
                 .as_u64()?;
-            let direction = calculation.fields.get("m_eDirection")?.as_i64()?;
-            Some((*index_of_token.get(&token)?, direction))
+            let value = |name: &str| calculation.fields.get(name).and_then(|v| v.as_i64());
+            Some((
+                *index_of_token.get(&token)?,
+                Calculation {
+                    direction: value("m_eDirection"),
+                    system_type: value("m_eSystemType"),
+                },
+            ))
         })
         .collect()
 }
@@ -237,10 +288,11 @@ pub struct ConnectorPorts {
     /// outside the cable tray and conduit domain, with its domain and flow
     /// direction.
     pub instances: BTreeMap<u64, Vec<InstancePort>>,
-    /// Each duct's and pipe's connector's calculated direction, by ElementId
-    /// and connector index, numbered as a family's Flow Direction: 1 In,
-    /// 2 Out, 0 bidirectional.
-    pub segments: BTreeMap<(u64, u32), i64>,
+    /// Each duct's and pipe's connector's calculation, by ElementId and
+    /// connector index: its direction, numbered as a family's Flow
+    /// Direction, 1 In, 2 Out, 0 bidirectional, and its system's
+    /// classification.
+    pub segments: BTreeMap<(u64, u32), Calculation>,
 }
 
 /// The ports of `instances` (a family instance's ElementId and its
@@ -257,8 +309,8 @@ pub fn connector_ports(
     let mut drawn_by: BTreeMap<u64, u64> = BTreeMap::new();
     let mut cells: BTreeMap<u64, BTreeMap<i64, i64>> = BTreeMap::new();
     let mut family_directions: BTreeMap<u64, BTreeMap<i64, i64>> = BTreeMap::new();
-    let mut calculated: BTreeMap<u64, BTreeMap<u32, i64>> = BTreeMap::new();
-    let mut segment_directions: BTreeMap<(u64, u32), i64> = BTreeMap::new();
+    let mut calculated: BTreeMap<u64, BTreeMap<u32, Calculation>> = BTreeMap::new();
+    let mut segment_calculations: BTreeMap<(u64, u32), Calculation> = BTreeMap::new();
     // One pass reads the instances, their symbols, the segments and every
     // family:
     // which families the symbols name is known only once they are read, and
@@ -270,6 +322,9 @@ pub fn connector_ports(
     let options = native_document::Options {
         selected_ids: selected,
         selected_classes: BTreeSet::from(["Family".to_string(), "FamilySymbol".to_string()]),
+        // Revit 2015 to 2027: measured on Autodesk's MEP samples of
+        // 2015 and 2019 against the same projects saved by 2024.
+        releases: native_document::NATIVE_RELEASES,
         ..native_document::Options::default()
     };
     native_document::extract_graphs(rf, &options, |record| {
@@ -325,7 +380,7 @@ pub fn connector_ports(
                 family_directions.insert(id, family_flow_directions(graph));
             }
             Some("FamilyInstance") if instances.contains_key(&id) => {
-                calculated.insert(id, calculated_directions(graph));
+                calculated.insert(id, calculations(graph));
                 // The symbol that draws the instance, whose
                 // connectors are where the instance's are.
                 if let Some(symbol) = graph
@@ -339,8 +394,8 @@ pub fn connector_ports(
                 }
             }
             _ if segments.contains(&id) => {
-                for (index, direction) in calculated_directions(graph) {
-                    segment_directions.insert((id, index), direction);
+                for (index, calculation) in calculations(graph) {
+                    segment_calculations.insert((id, index), calculation);
                 }
             }
             _ => {}
@@ -363,14 +418,19 @@ pub fn connector_ports(
                     let domain = *domains.get(&index)?;
                     PORT_DOMAINS.contains(&domain).then_some(())?;
                     let index_u32 = u32::try_from(index).ok()?;
+                    let calculation = calculations
+                        .and_then(|c| c.get(&index_u32).copied())
+                        .unwrap_or_default();
                     Some(InstancePort {
                         index: index_u32,
                         domain,
                         flow_direction: port_flow_direction(
                             domain,
                             directions.and_then(|d| d.get(&index).copied()),
-                            calculations.and_then(|c| c.get(&index_u32).copied()),
+                            calculation.direction,
+                            calculation.system_type,
                         ),
+                        system_type: calculation.system_type,
                         frame: drawn_frames.and_then(|f| f.get(&index)).copied(),
                     })
                 })
@@ -380,13 +440,14 @@ pub fn connector_ports(
         .collect();
     Ok(ConnectorPorts {
         instances: instance_ports,
-        segments: segment_directions,
+        segments: segment_calculations,
     })
 }
 
 /// Every join the connectors of `instances` (family instances' ElementIds)
 /// list, one per connector and element joined to it, sorted. Errs
-/// where the native record path does not read the file's release.
+/// where the native record path does not read the file's release (2015 to
+/// 2027).
 pub fn family_instance_joins(
     rf: &mut RevitFile,
     instances: &BTreeSet<u64>,
@@ -397,6 +458,8 @@ pub fn family_instance_joins(
     }
     let options = native_document::Options {
         selected_ids: instances.clone(),
+        // Revit 2015 to 2027, as [`connector_ports`].
+        releases: native_document::NATIVE_RELEASES,
         ..native_document::Options::default()
     };
     native_document::extract_graphs(rf, &options, |record| {

@@ -49,7 +49,7 @@ You need stable Rust 1.89 or newer (`rustup` installs it) and git.
    request against `main`. The pull-request template asks what changed and
    what you ran — fill in what applies and write "N/A" for the rest.
 
-7. A maintainer reviews and squash-merges. GitHub holds the checks of a
+7. A maintainer reviews, approves and squash-merges. GitHub holds the checks of a
    first-time contributor's pull request until a maintainer has looked at the
    proposed change and approved the workflow run, so a pull request whose
    checks say they are awaiting approval is waiting on us, not on you. Approval to run

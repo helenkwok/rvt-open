@@ -1317,8 +1317,7 @@ pub(crate) fn walk_shared(
         }
 
         // Partition schema MVP: Level / Material / Room / Floor plan
-        // loops / 2024 ArcWallRectOpening index. Fail closed — no
-        // invented Door/Window typed success.
+        // loops. Fail closed — no invented Door/Window typed success.
         if let Ok(mvp) =
             crate::partition_schema_mvp::recover_partition_schema_mvp(rf, version, limits)
         {

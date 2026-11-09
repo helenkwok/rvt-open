@@ -334,6 +334,20 @@ pub struct IfcModel {
     /// `exported.wall_end_reads_unmarked`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub wall_end_reads_unmarked: std::collections::BTreeMap<String, usize>,
+    /// The ends of walls with an edited elevation profile that go on past it, by
+    /// how the line of a sloped end, carried on to the wall's end, stands
+    /// against the top of the wall's box, and the level cut-outs carried.
+    /// Counted in `exported.wall_profile_height_checks`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub wall_profile_height_checks: std::collections::BTreeMap<String, usize>,
+    /// The joins between two connectors that the writer leaves out because a
+    /// connector of either end is named with two partners that the two sides'
+    /// lists do not settle, by why: the partner both sides
+    /// name is kept where there is exactly one, and a join is written only
+    /// where each of its ends keeps the other. Counted in
+    /// `exported.port_joins_left_out`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub port_joins_left_out: std::collections::BTreeMap<String, usize>,
 }
 
 /// A layered element's layers across its thickness.
@@ -954,6 +968,13 @@ pub struct ExportedModelDiagnostics {
     /// record joins there, by the `BodyEndSource` property of each: `wall_end_stepped_to_joined_walls`. Empty when no wall does.
     #[serde(default)]
     pub wall_end_sources: std::collections::BTreeMap<String, usize>,
+    /// Of the exported walls cut whole at the floor, roof or footing that
+    /// covers all of their plan but a stub, how many, by where the stub lies:
+    /// the `TopCoverStub` property of each,
+    /// `inside_another_wall`. Revit cuts such a stub with the rest of the wall.
+    /// Empty when no wall is.
+    #[serde(default)]
+    pub wall_top_stubs_cut: std::collections::BTreeMap<String, usize>,
     /// Of the exported walls, how many have their base cut at an element their
     /// base join names, by the `BodyBaseSource` property of each (): `wall_base_sloped_at_covering_floor`,
     /// `wall_base_cut_at_covering_floor`, and the two `_in_part` values of a
@@ -967,6 +988,28 @@ pub struct ExportedModelDiagnostics {
     /// would be the same in any order.
     #[serde(default)]
     pub wall_ends_order_dependent: usize,
+    /// Of the exported walls with an edited elevation profile that go on past
+    /// it, how many have the profile's cut-out carried on to the wall's end, by
+    /// the `ProfileStubSource` property of each:
+    /// `wall_profile_<what>_past_<where>`, `<what>` being `sloped` (a line
+    /// carried along its slope), `level` (a notch's cut-out carried straight
+    /// out) or `sloped_and_level`, and `<where>` `the_low_end`, `the_high_end`
+    /// or `both_ends` of the profile along its own axis. Empty when no wall
+    /// does.
+    #[serde(default)]
+    pub wall_profile_sources: std::collections::BTreeMap<String, usize>,
+    /// Of the exported walls with an edited elevation profile that go on past
+    /// it and keep, past it, what the profile's opening gives them at an end,
+    /// why, by reason: the `ProfileStubRefusal` property of each:
+    /// `profile_cut_not_read_at_the_wall_end`,
+    /// `profile_level_cut_between_two_lines`,
+    /// `profile_level_cut_spans_the_wall`,
+    /// `profile_stub_longer_than_the_wall_is_thick` or
+    /// `profile_slope_leaves_the_cut`. A wall holds its first reason only, and
+    /// one carried at one end and refused at the other is counted here and in
+    /// `wall_profile_sources`.
+    #[serde(default)]
+    pub wall_profile_refusals: std::collections::BTreeMap<String, usize>,
     /// Of the exported `IfcSpace`s, the rooms whose outline was read from the
     /// faces their stored solid lists, up to the solid's own end, where the
     /// exact walk did not close them (`SpaceOutlineSource` is
@@ -976,6 +1019,13 @@ pub struct ExportedModelDiagnostics {
     /// read as the room's.
     #[serde(default)]
     pub resolved_outline_spaces: usize,
+    /// Of the exported `IfcSpace`s, the rooms whose outline was read from the
+    /// edges of their stored solid, where neither the walk nor the
+    /// span reads one (`SpaceOutlineSource` is
+    /// `stored_solid_edges`): the outline of the solid's floor,
+    /// read only where the solid is a prism of it up to 4 ft above the floor.
+    #[serde(default)]
+    pub edge_outline_spaces: usize,
     /// Of the exported `IfcSpace`s, the rooms whose resolved outline is the
     /// boundary of a region, a column overlapping a wall having been taken
     /// off it, or falls up to 0.02 ft short of their record box on a side
@@ -1017,6 +1067,25 @@ pub struct ExportedModelDiagnostics {
     /// and the refusals of `wall_end_refusals` that are not marked.
     #[serde(default)]
     pub wall_end_reads_unmarked: std::collections::BTreeMap<String, usize>,
+    /// The ends of exported walls with an edited elevation profile that go on
+    /// past it, by key: `<carried|kept>_sloped_<low|high>_<rising|falling|level>_<equal|below|above>`
+    /// for a sloped end, by whether the end was carried, which end of the
+    /// profile it is, whether the line rises or falls towards the wall's end,
+    /// and how the line's height there stands against the top of the wall's
+    /// box (equal within 0.001 ft, the box above it, the box below it), and
+    /// `carried_level_<low|high>` for a level cut-out carried. A measurement:
+    /// nothing is carried or kept by it.
+    #[serde(default)]
+    pub wall_profile_height_checks: std::collections::BTreeMap<String, usize>,
+    /// The joins between two connectors that the export leaves out because a
+    /// connector of either end is named with two partners that the two sides'
+    /// lists do not settle, by reason:
+    /// `connector_named_with_conflicting_partners`. A connector has one
+    /// physical partner, so one of two is not real; the partner both sides
+    /// name is kept where there is exactly one. Empty where no connector is
+    /// named with two.
+    #[serde(default)]
+    pub port_joins_left_out: std::collections::BTreeMap<String, usize>,
     /// The further pieces of an element of separate loops that the STEP
     /// writer folds into the body of the element that owns them instead of
     /// writing each as an element, by IFC entity. They are the
@@ -1310,6 +1379,8 @@ impl Exporter for PlaceholderExporter {
             single_slab_roofs: Default::default(),
             wall_cut_openings_left_out: Default::default(),
             wall_end_reads_unmarked: Default::default(),
+            wall_profile_height_checks: Default::default(),
+            port_joins_left_out: Default::default(),
         })
     }
 }
@@ -1750,6 +1821,7 @@ fn export_rvt_doc_reporting(
         body_pieces,
         type_entity_sets,
         record_handoffs,
+        port_joins_left_out,
     ) = append_production_walker_elements(
         rf,
         &mut entities,
@@ -1958,6 +2030,18 @@ fn export_rvt_doc_reporting(
         }
     }
 
+    if policy.include_geometry {
+        apply_placement_origins(&mut entities, &record_handoffs, &opening_cuts);
+    }
+    let mut wall_profile_height_checks = std::collections::BTreeMap::<String, usize>::new();
+    for property in record_handoffs.values().flatten() {
+        if let (export_content::WALL_PROFILE_CHECK_PROPERTY, entities::PropertyValue::Text(key)) =
+            (property.name.as_str(), &property.value)
+        {
+            *wall_profile_height_checks.entry(key.clone()).or_insert(0) += 1;
+        }
+    }
+
     Ok(IfcModel {
         project_name,
         site_name,
@@ -1997,7 +2081,74 @@ fn export_rvt_doc_reporting(
         single_slab_roofs,
         wall_cut_openings_left_out,
         wall_end_reads_unmarked,
+        wall_profile_height_checks,
+        port_joins_left_out,
     })
+}
+
+/// a door set in no wall is placed at its stored origin, as
+/// Revit's export places it, where its hand-offs hold one
+/// ([`export_content::PLACEMENT_ORIGIN_PROPERTIES`]). Its record box stays where
+/// it is in the world: the body becomes the box's rectangle placed at the old
+/// centre, turned with the element, so a saved mesh, which is taken in the
+/// element's frame after this, is in the new frame. Run last, after the
+/// storeys are bound by the element's base and the openings are cut, which
+/// read the box's centre and base. A door that has gained a host, an opening,
+/// a shape of its own or a representation map keeps its placement.
+fn apply_placement_origins(
+    entities: &mut [entities::IfcEntity],
+    record_handoffs: &std::collections::BTreeMap<usize, Vec<entities::Property>>,
+    opening_cuts: &std::collections::BTreeMap<usize, entities::OpeningCut>,
+) {
+    for (&index, handoffs) in record_handoffs {
+        let [Some(ox), Some(oy), Some(oz)] =
+            export_content::PLACEMENT_ORIGIN_PROPERTIES.map(|name| handoff_length(handoffs, name))
+        else {
+            continue;
+        };
+        if opening_cuts.contains_key(&index) {
+            continue;
+        }
+        let Some(entities::IfcEntity::BuildingElement {
+            ifc_type,
+            location_feet: Some(location),
+            rotation_radians,
+            extrusion: Some(body),
+            solid_shape,
+            host_element_index: None,
+            representation_map_index: None,
+            property_set: Some(set),
+            ..
+        }) = entities.get_mut(index)
+        else {
+            continue;
+        };
+        if !ifc_type.eq_ignore_ascii_case("IfcDoor")
+            || solid_shape.is_some()
+            || body.profile_override.is_some()
+        {
+            continue;
+        }
+        let (sin, cos) = rotation_radians.unwrap_or(0.0).sin_cos();
+        let (dx, dy) = (location[0] - ox, location[1] - oy);
+        *solid_shape = Some(entities::SolidShape::PlacedExtrusion {
+            profile: entities::ProfileDef::Rectangle {
+                width_feet: body.width_feet,
+                depth_feet: body.depth_feet,
+            },
+            origin_feet: [dx * cos + dy * sin, dy * cos - dx * sin, location[2] - oz],
+            axis: [0.0, 0.0, 1.0],
+            ref_direction: [1.0, 0.0, 0.0],
+            depth_feet: body.height_feet,
+        });
+        *location = [ox, oy, oz];
+        set.properties.push(entities::Property {
+            name: export_content::PLACEMENT_ORIGIN_SOURCE_PROPERTY.into(),
+            value: entities::PropertyValue::Text(
+                export_content::NO_OPENING_PLACEMENT_ORIGIN_SOURCE.into(),
+            ),
+        });
+    }
 }
 
 /// each door or window whose body is a plain rectangular extrusion
@@ -3506,27 +3657,48 @@ fn attach_family_instance_ports(
             id,
             index,
             flow_direction,
+            system_type,
             ..
         } = entity
         else {
             continue;
         };
-        if let Some(&direction) = read.segments.get(&(u64::from(*id), *index)) {
-            *flow_direction =
-                crate::native_connectors::flow_direction_of(direction).map(str::to_string);
+        if let Some(calculation) = read.segments.get(&(u64::from(*id), *index)) {
+            // An Exhaust Air connector is SOURCEANDSINK.
+            if calculation.system_type == Some(crate::native_connectors::EXHAUST_AIR) {
+                *flow_direction = Some("SOURCEANDSINK".to_string());
+            } else if let Some(direction) = calculation.direction {
+                *flow_direction =
+                    crate::native_connectors::flow_direction_of(direction).map(str::to_string);
+            }
+            *system_type = calculation
+                .system_type
+                .and_then(crate::native_connectors::distribution_system_of)
+                .map(str::to_string);
         }
     }
     // a connector no placed duct or pipe port joins is at its point in
     // its symbol, through the instance's transform.
+    // A duct's tap is on its axis, not where the element tapped into
+    // it puts its own connector: it places none.
     let placed: std::collections::BTreeSet<(u32, u32)> = entities
         .iter()
         .filter_map(|entity| match entity {
             entities::IfcEntity::Port {
+                element,
                 id,
                 index,
                 location_feet: Some(_),
                 ..
-            } => Some((*id, *index)),
+            } if !(*index >= 2
+                && matches!(
+                    entities.get(*element),
+                    Some(entities::IfcEntity::BuildingElement { ifc_type, .. })
+                        if ifc_type == "IFCDUCTSEGMENT"
+                )) =>
+            {
+                Some((*id, *index))
+            }
             _ => None,
         })
         .collect();
@@ -3582,16 +3754,81 @@ fn attach_family_instance_ports(
                 flow_direction: port.flow_direction.map(str::to_string),
                 location_feet: place.map(|(point, _)| point),
                 direction: place.map(|(_, axis)| axis),
+                system_type: port
+                    .system_type
+                    .and_then(crate::native_connectors::distribution_system_of)
+                    .map(str::to_string),
             });
         }
     }
     apply_partner_directions(entities);
+    apply_partner_systems(entities);
+}
+
+/// A duct or pipe port whose own system is not read (a family instance
+/// whose record the native path does not decode, on 2015 to 2022) takes the
+/// system of the port joined to it: every one of the 2,634 joins of
+/// Revit's export of Snowdon Towers HVAC joins two ports of the same
+/// `SystemType`.
+fn apply_partner_systems(entities: &mut [entities::IfcEntity]) {
+    let mut systems: std::collections::BTreeMap<(u32, u32), String> =
+        std::collections::BTreeMap::new();
+    for entity in entities.iter() {
+        if let entities::IfcEntity::Port {
+            id,
+            index,
+            system_type: Some(system),
+            ..
+        } = entity
+        {
+            systems.insert((*id, *index), system.clone());
+        }
+    }
+    let mut taken: std::collections::BTreeMap<(u32, u32), String> =
+        std::collections::BTreeMap::new();
+    for entity in entities.iter() {
+        if let entities::IfcEntity::PortConnection {
+            a_id,
+            a_index,
+            b_id,
+            b_index,
+            ..
+        } = entity
+        {
+            for (own, other) in [
+                ((*a_id, *a_index), (*b_id, *b_index)),
+                ((*b_id, *b_index), (*a_id, *a_index)),
+            ] {
+                if let (false, Some(system)) = (systems.contains_key(&own), systems.get(&other)) {
+                    taken.entry(own).or_insert_with(|| system.clone());
+                }
+            }
+        }
+    }
+    for entity in entities.iter_mut() {
+        if let entities::IfcEntity::Port {
+            id,
+            index,
+            predefined_type,
+            system_type: system_type @ None,
+            ..
+        } = entity
+        {
+            if matches!(predefined_type.as_deref(), Some("DUCT" | "PIPE")) {
+                if let Some(system) = taken.get(&(*id, *index)) {
+                    *system_type = Some(system.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Releases a family instance's unjoined ports are placed on: 2025,
 /// the RE1 models', and 2024, the BIM4LCA office's, where all 43 such ports
-/// are within 0.01 ft of Revit's with its axis.
-const PORT_PLACEMENT_REVIT_VERSIONS: &[u32] = &[2024, 2025];
+/// are within 0.01 ft of Revit's with its axis. 2026 and 2027 
+/// write 2025's records, and Autodesk's samples saved by them place every
+/// port as their 2025 saves do.
+const PORT_PLACEMENT_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 
 /// A duct, pipe or fitting connector that is bidirectional, joined to one
 /// with a direction, takes the opposite direction. Revit's IFC exporter writes
@@ -3649,13 +3886,21 @@ fn apply_partner_directions(entities: &mut [entities::IfcEntity]) {
             index,
             predefined_type,
             flow_direction,
+            system_type,
             ..
         } = entity
         else {
             continue;
         };
+        // An Exhaust Air connector stays SOURCEANDSINK.
+        // A connector whose direction is not read is treated as bidirectional
+        // on every release. On the samples measured only a file of
+        // 2015 to 2022 has one, a family instance whose record the native
+        // path does not decode; no sample of 2024 or later has a port with no
+        // direction.
         if !matches!(predefined_type.as_deref(), Some("DUCT" | "PIPE"))
-            || flow_direction.as_deref() != Some("SOURCEANDSINK")
+            || !matches!(flow_direction.as_deref(), Some("SOURCEANDSINK") | None)
+            || system_type.as_deref() == Some("EXHAUST")
         {
             continue;
         }
@@ -5206,6 +5451,7 @@ type WalkerElementData = (
     std::collections::BTreeMap<usize, Vec<usize>>,
     std::collections::BTreeMap<u32, std::collections::BTreeMap<String, Vec<entities::PropertySet>>>,
     std::collections::BTreeMap<usize, Vec<entities::Property>>,
+    std::collections::BTreeMap<String, usize>,
 );
 
 fn append_production_walker_elements(
@@ -5251,6 +5497,7 @@ fn append_production_walker_elements(
             append.body_pieces,
             append.type_entity_sets,
             append.record_handoffs,
+            append.port_joins_left_out,
         ));
     }
     Ok(Default::default())
@@ -5778,6 +6025,16 @@ pub(crate) fn build_export_diagnostics_and_decisions(
              opening in Revit is its opening alone in Revit's export."
         ));
     }
+    // A type whose family type table entries for a Fire Rating or a
+    // Manufacturer disagree gets neither copy.
+    let disagreeing_type_texts = rf.disagreeing_type_texts().len();
+    if disagreeing_type_texts > 0 && mode != ExportDiagnosticsMode::Placeholder {
+        warnings.push(format!(
+            "{disagreeing_type_texts} type text parameter(s) (Fire Rating or Manufacturer) are left \
+             out because the copies of a family type table's entry, or an entry and the id-first \
+             form, give different values."
+        ));
+    }
     // A family instance written as a space whose family draws no
     // model form has no 3D body, and is left out as Revit's own export leaves
     // it out. A check that could not run keeps every instance.
@@ -5800,6 +6057,29 @@ pub(crate) fn build_export_diagnostics_and_decisions(
             "{checked} family instance(s) written as spaces could not be checked for a 3D body \
              ({error}); they are written, though Revit's export leaves out one whose family draws \
              no model form."
+        ));
+    }
+    // a plumbing fixture whose type draws nothing visible has no body
+    // for Revit's exporter to write. A check that could not run keeps them all.
+    let invisible_types: Vec<crate::partition_element_records::LeftOutElement> = rf
+        .invisible_type_instances()
+        .values()
+        .flatten()
+        .cloned()
+        .collect();
+    record_left_out(
+        &mut skipped,
+        &mut decisions,
+        "element_record_family_type_draws_nothing",
+        None,
+        invisible_types,
+        ClassesBy::Class,
+    );
+    if let Some((checked, error)) = rf.invisible_type_error() {
+        warnings.push(format!(
+            "{checked} plumbing fixture type(s) could not be checked for visible geometry \
+             ({error}); their instances are written, though Revit's export leaves out one whose \
+             type draws nothing visible."
         ));
     }
     if !empty_panels.types_with_material.is_empty() {
@@ -5834,21 +6114,50 @@ pub(crate) fn build_export_diagnostics_and_decisions(
         layout.filter(|&version| crate::partition_element_records_2023::is_32bit_release(version))
     {
         // What a
-        // 2008 to 2023 export carries, and what it does not. The
-        // export phase and design options are applied on 2016 to 2023 only.
+        // 2008 to 2023 export carries, and what it does not. Design
+        // options are applied on 2016 to 2023, the export phase on
+        // 2015 to 2023.
         let filters = if crate::partition_element_records_2023::applies_export_filters(version) {
             format!(
                 "The export phase and design options are applied for {version}: elements that \
                  do not exist in the last phase or are in a non-primary design option are left \
                  out."
             )
+        } else if crate::partition_element_records_2023::applies_phase_filter(version) {
+            format!(
+                "The export phase is applied for {version}: elements that do not exist in the \
+                 last phase are left out. Design options are not (they are on 2016 to 2023): \
+                 an element in a non-primary design option is written."
+            )
         } else {
             format!(
-                "Neither the export phase nor design options are applied for {version} (they \
-                 are on 2016 to 2023): elements outside the last phase or in a non-primary \
-                 design option are written."
+                "Neither the export phase nor design options are applied for {version} (the \
+                 phase is from 2015, design options from 2016): elements outside the last \
+                 phase or in a non-primary design option are written."
             )
         };
+        // a wall at an angle can follow its line from 2015, but nothing on
+        // 2015 to 2020 marks a slanted one, and a wall along a model axis keeps its box.
+        let (walls, wall_gaps) =
+            if crate::partition_compound_structure::WALL_JOIN_32BIT_REVIT_VERSIONS
+                .contains(&version)
+            {
+                (
+                    if crate::partition_compound_structure::wall_orientation_has_word(version) {
+                        "a wall at an angle is drawn along its location line and joined by its \
+                         join lists where those are read, and any other wall keeps its record \
+                         box, cut back at its joins"
+                    } else {
+                        "a wall at an angle is drawn along its location line and joined by its \
+                         join lists where those are read and its record box closes on the \
+                         line's rectangle, and any other wall keeps its record box, cut back at \
+                         its joins"
+                    },
+                    "A wall's joined-wall lists, end steps, profile openings and `Length`",
+                )
+            } else {
+                ("walls keep their record box", "Wall joins and profiles")
+            };
         warnings.push(format!(
             "Revit {version}: elements come from their records with their ElementId, category and \
              bounding box, doors and windows with their host wall, rooms with their outline, \
@@ -5856,8 +6165,8 @@ pub(crate) fn build_export_diagnostics_and_decisions(
              record names; family instances, walls, floors and roofs carry their family and \
              type names, and family instances their type's materials. Layers become \
              material layer sets where their materials are named, a layer that takes its \
-             category's material taking the object styles' one, and walls keep their record box. \
-             {filters} Wall joins and profiles, parameters and \
+             category's material taking the object styles' one, and {walls}. \
+             {filters} {wall_gaps}, parameters and \
              \"Export to IFC As\" overrides are not read for {version}, and components \
              nested in doors and windows are left out."
         ));
@@ -6369,9 +6678,13 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
     let mut wall_base_refusals = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_end_refusals = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_end_sources = std::collections::BTreeMap::<String, usize>::new();
+    let mut wall_top_stubs_cut = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_base_sources = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_ends_order_dependent = 0usize;
+    let mut wall_profile_sources = std::collections::BTreeMap::<String, usize>::new();
+    let mut wall_profile_refusals = std::collections::BTreeMap::<String, usize>::new();
     let mut resolved_outline_spaces = 0usize;
+    let mut edge_outline_spaces = 0usize;
     let mut approximate_outline_spaces = 0usize;
     let mut space_kinds = std::collections::BTreeMap::<String, usize>::new();
     let mut spaces_without_kind = 0usize;
@@ -6433,9 +6746,21 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
                         entities::PropertyValue::Text(text),
                     ) => *wall_end_sources.entry(text.clone()).or_insert(0) += 1,
                     (
+                        export_content::WALL_TOP_STUB_PROPERTY,
+                        entities::PropertyValue::Text(text),
+                    ) => *wall_top_stubs_cut.entry(text.clone()).or_insert(0) += 1,
+                    (
                         export_content::WALL_BASE_SOURCE_PROPERTY,
                         entities::PropertyValue::Text(text),
                     ) => *wall_base_sources.entry(text.clone()).or_insert(0) += 1,
+                    (
+                        export_content::WALL_PROFILE_SOURCE_PROPERTY,
+                        entities::PropertyValue::Text(text),
+                    ) => *wall_profile_sources.entry(text.clone()).or_insert(0) += 1,
+                    (
+                        export_content::WALL_PROFILE_REFUSAL_PROPERTY,
+                        entities::PropertyValue::Text(text),
+                    ) => *wall_profile_refusals.entry(text.clone()).or_insert(0) += 1,
                     (
                         export_content::WALL_END_ORDER_DEPENDENT_PROPERTY,
                         entities::PropertyValue::Integer(count),
@@ -6486,6 +6811,9 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
                     }
                     Some(export_content::SPACE_OUTLINE_STORED_SOLID_APPROXIMATE) => {
                         approximate_outline_spaces += 1;
+                    }
+                    Some(export_content::SPACE_OUTLINE_STORED_SOLID_EDGES) => {
+                        edge_outline_spaces += 1;
                     }
                     _ => {}
                 }
@@ -6544,14 +6872,20 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
         wall_base_refusals,
         wall_end_refusals,
         wall_end_sources,
+        wall_top_stubs_cut,
         wall_base_sources,
         wall_ends_order_dependent,
+        wall_profile_sources,
+        wall_profile_refusals,
         resolved_outline_spaces,
+        edge_outline_spaces,
         approximate_outline_spaces,
         space_kinds,
         spaces_without_kind,
         wall_cut_openings_left_out: model.wall_cut_openings_left_out.clone(),
         wall_end_reads_unmarked: model.wall_end_reads_unmarked.clone(),
+        wall_profile_height_checks: model.wall_profile_height_checks.clone(),
+        port_joins_left_out: model.port_joins_left_out.clone(),
         body_pieces_folded,
     }
 }
@@ -6643,10 +6977,6 @@ fn geometry_gap_skipped_items(
         "floor_boundary_annotation_only",
         DecisionStage::OutlineNotRead,
     );
-    let mut opening_index_only = GeometryGapBucket::new(
-        "opening_index_without_host_geometry",
-        DecisionStage::OpeningNotCut,
-    );
 
     let placements = step_writer::placements(model);
     for (index, entity) in model.entities.iter().enumerate() {
@@ -6679,18 +7009,11 @@ fn geometry_gap_skipped_items(
         let floor_annotation = property_set
             .as_ref()
             .is_some_and(|p| p.name == "RvtFloorGeometry");
-        let opening_annotation = property_set
-            .as_ref()
-            .is_some_and(|p| p.name == "RvtArcWallRectOpening");
 
         // Honest partial recovers: do not dump them into the hard
         // "unsupported_geometry_*" buckets used for walls missing curves.
         if floor_annotation && !has_body_shape {
             floor_boundary_only.add(ifc_type, name, id);
-            continue;
-        }
-        if opening_annotation {
-            opening_index_only.add(ifc_type, name, id);
             continue;
         }
 
@@ -6720,7 +7043,6 @@ fn geometry_gap_skipped_items(
         missing_level,
         missing_dimensions,
         floor_boundary_only,
-        opening_index_only,
     ] {
         let (item, made) = bucket.into_parts();
         items.extend(item);
@@ -6731,8 +7053,9 @@ fn geometry_gap_skipped_items(
 
 /// The decisions behind `exported.bounding_box_bodies`,
 /// `exported.bounding_box_spaces`, `exported.area_body_refusals`,
-/// `exported.slab_shape_refusals`, `exported.wall_base_refusals` and
-/// `exported.wall_end_refusals`, read from `model` as
+/// `exported.slab_shape_refusals`, `exported.wall_base_refusals`,
+/// `exported.wall_end_refusals` and `exported.wall_profile_refusals`,
+/// read from `model` as
 /// [`exported_model_diagnostics`] counts them: a body that is only its
 /// record's box, a room or space whose outline is its record's box, an Area
 /// with no body, a shape-edited floor kept as its box, a wall that keeps its
@@ -6766,6 +7089,7 @@ pub(crate) fn model_decisions(model: &IfcModel) -> Vec<export_decisions::ExportD
         let mut slab_refusals: Vec<&String> = Vec::new();
         let mut base_refusals: Vec<&String> = Vec::new();
         let mut end_refusals: Vec<&String> = Vec::new();
+        let mut profile_refusals: Vec<&String> = Vec::new();
         let mut profile_resolved = false;
         for property in property_set.iter().flat_map(|set| &set.properties) {
             match (property.name.as_str(), &property.value) {
@@ -6785,6 +7109,10 @@ pub(crate) fn model_decisions(model: &IfcModel) -> Vec<export_decisions::ExportD
                     export_content::WALL_END_REFUSAL_PROPERTY,
                     entities::PropertyValue::Text(text),
                 ) => end_refusals.push(text),
+                (
+                    export_content::WALL_PROFILE_REFUSAL_PROPERTY,
+                    entities::PropertyValue::Text(text),
+                ) => profile_refusals.push(text),
                 ("BodySource", entities::PropertyValue::Text(text)) => source = Some(text),
                 (
                     export_content::SPACE_OUTLINE_SOURCE_PROPERTY,
@@ -6828,6 +7156,13 @@ pub(crate) fn model_decisions(model: &IfcModel) -> Vec<export_decisions::ExportD
             push(
                 DecisionStage::BodyLeftAsBox,
                 "wall_end_extension_refused",
+                Some(text),
+            );
+        }
+        for text in profile_refusals {
+            push(
+                DecisionStage::BodyLeftAsBox,
+                "wall_profile_extension_refused",
                 Some(text),
             );
         }
@@ -6954,9 +7289,14 @@ fn unsupported_export_features(model: &IfcModel) -> Vec<String> {
         // landed IFCCOLUMN bodies while Floors/Rooms stay annotations).
         features.push("partial_element_geometry".into());
     }
-    // Compound assemblies (layer widths) remain open even when display
-    // Material names are recovered into IfcMaterial.
-    features.push("revit_compound_assemblies_and_walltype_widths".into());
+    // A host element's layers, each with its material and width, are read
+    // from its type's compound structure and written as an
+    // `IfcMaterialLayerSetUsage` (: Revit's on 88 of 88 sets on Core
+    // Interior and 15 of 15 on RE1 Architecture). The gap is a host element
+    // written without them.
+    if model.entities.iter().any(host_element_without_layers) {
+        features.push("revit_compound_assemblies_and_walltype_widths".into());
+    }
     if model.materials.is_empty() {
         features.push("revit_material_display_names".into());
     }
@@ -6988,9 +7328,6 @@ fn unsupported_export_features(model: &IfcModel) -> Vec<String> {
         // closed, the host-binding half is not.
         features.push("door_window_host_wall_binding".into());
     }
-    // Opening-index rows may be present in production_class_counts without
-    // IFC emission until host Wall ElementIds join.
-    features.push("opening_index_to_ifc_openingelement_host_join".into());
     // An `IFCWALL` recovered from a partition element record
     // is not a schema-field wall decode. Only a wall carrying a
     // non-element-record body clears this feature.
@@ -7146,6 +7483,28 @@ pub(crate) fn host_references(model: &IfcModel) -> std::collections::HashMap<usi
         }
     }
     out
+}
+
+/// A wall, a slab other than a stair landing, a roof or a ceiling written
+/// with no material layer set: an element of a host type, whose layers the
+/// type's compound structure holds, whose layers were not read.
+fn host_element_without_layers(entity: &entities::IfcEntity) -> bool {
+    let entities::IfcEntity::BuildingElement {
+        ifc_type,
+        predefined_type,
+        material_layer_set_index: None,
+        ..
+    } = entity
+    else {
+        return false;
+    };
+    let predefined = predefined_type.as_deref();
+    match ifc_type.to_ascii_uppercase().as_str() {
+        "IFCWALL" | "IFCWALLSTANDARDCASE" | "IFCROOF" => true,
+        "IFCSLAB" => predefined != Some("LANDING"),
+        "IFCCOVERING" => predefined == Some("CEILING"),
+        _ => false,
+    }
 }
 
 /// The property values `write_step` writes in `Pset_` sets, counted as it

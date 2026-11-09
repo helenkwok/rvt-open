@@ -283,6 +283,10 @@ pub const NESTED_COMPONENT_CATEGORIES: [i64; 3] = [
 pub const OST_FURNITURE: i64 = -2_000_080;
 /// Autodesk `BuiltInCategory.OST_Casework`.
 pub const OST_CASEWORK: i64 = -2_001_000;
+/// Autodesk `BuiltInCategory.OST_FurnitureSystems`: system furniture
+/// (workstations, wardrobes, kitchen units), which Revit's own IFC4 export
+/// writes as `IfcSystemFurnitureElement`.
+pub const OST_FURNITURE_SYSTEMS: i64 = -2_001_100;
 /// Autodesk `BuiltInCategory.OST_PlumbingFixtures`.
 pub const OST_PLUMBING_FIXTURES: i64 = -2_001_160;
 /// Autodesk `BuiltInCategory.OST_SpecialityEquipment`.
@@ -470,9 +474,16 @@ pub const OST_SECURITY_DEVICES: i64 = -2_008_079;
 /// Gutters: on BIM-Speed Vitoria `ALD26 Before` (Revit 2018) both
 /// instances the rule selects are `Tag`s of Revit's own export, written there
 /// as `IfcFlowSegment`.
-pub const PRODUCT_RECORD_CATEGORIES: [(i64, &str); 57] = [
+///
+/// Furniture Systems: on Autodesk's `rac_basic` sample of 2018,
+/// the one file with a Revit export that holds any, the 3 instances the rule
+/// selects are all in Revit's own IFC4 export, written there as
+/// `IfcSystemFurnitureElement`, and none the export lacks is selected. It is
+/// one project and 3 elements.
+pub const PRODUCT_RECORD_CATEGORIES: [(i64, &str); 58] = [
     (OST_FURNITURE, "Furniture"),
     (OST_CASEWORK, "Casework"),
+    (OST_FURNITURE_SYSTEMS, "FurnitureSystem"),
     (OST_PLUMBING_FIXTURES, "PlumbingFixture"),
     (OST_SPECIALITY_EQUIPMENT, "SpecialtyEquipment"),
     (OST_CEILINGS, "Ceiling"),
@@ -1502,7 +1513,7 @@ pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// The categories the exporter recovers instances of, with the class name
 /// each is decoded as: the architectural core plus
 /// [`PRODUCT_RECORD_CATEGORIES`].
-pub const RECOVERED_CATEGORIES: [(i64, &str); 66] = [
+pub const RECOVERED_CATEGORIES: [(i64, &str); 67] = [
     (OST_WALLS, "Wall"),
     (OST_DOORS, "Door"),
     (OST_WINDOWS, "Window"),
@@ -1514,6 +1525,7 @@ pub const RECOVERED_CATEGORIES: [(i64, &str); 66] = [
     (OST_MEP_SPACES, "Space"),
     (OST_FURNITURE, "Furniture"),
     (OST_CASEWORK, "Casework"),
+    (OST_FURNITURE_SYSTEMS, "FurnitureSystem"),
     (OST_PLUMBING_FIXTURES, "PlumbingFixture"),
     (OST_SPECIALITY_EQUIPMENT, "SpecialtyEquipment"),
     (OST_CEILINGS, "Ceiling"),

@@ -15,7 +15,7 @@ pub(super) fn recover_2023_records(
     rf: &mut RevitFile,
     revit_version: u32,
     out: &mut PartitionSchemaMvp,
-) {
+) -> BTreeMap<u32, Vec<u64>> {
     use crate::partition_element_records as per;
     // The frames that stop are listed only for the log of decisions.
     let want_frames = rf.recording_frame_decisions();
@@ -39,8 +39,8 @@ pub(super) fn recover_2023_records(
     let mut selected = select_newest_instance_records(records, &mut stages);
     // Revit's export leaves out an element that does not exist in the export
     // phase, as on 2024, and a room by its own phase.
-    // Applied on the releases measured only.
-    if crate::partition_element_records_2023::applies_export_filters(revit_version) {
+    // Applied on the releases measured only (2015 to 2023).
+    if crate::partition_element_records_2023::applies_phase_filter(revit_version) {
         let phases = rf.memoised_phase_filter();
         selected.retain(|_, record| {
             if phases.excludes(record) {
@@ -187,6 +187,11 @@ pub(super) fn recover_2023_records(
     );
     bind_opening_hosts(&out.walls, &mut out.doors);
     bind_opening_hosts(&out.walls, &mut out.windows);
+    // Each record's reference list, as read, for the readers it names.
+    selected
+        .into_iter()
+        .map(|(id, record)| (id, record.references))
+        .collect()
 }
 
 /// Autodesk `BuiltInCategory.OST_CurtainGridsWall`: a curtain wall's grid

@@ -1,8 +1,7 @@
 //! Schema / partition MVP recovers for production `iter_elements`.
 //!
 //! Extends the ArcWall-only partition merge with fail-closed recovers
-//! for Level and Material, and (on Revit 2024) ArcWallRectOpening index
-//! rows, plus `OST_Columns` / `OST_Walls` / `OST_Doors` /
+//! for Level and Material, plus `OST_Columns` / `OST_Walls` / `OST_Doors` /
 //! `OST_Windows` element records
 //! ([`instances_from_partition_category_records`]),
 //! `OST_Floors` / `OST_BuildingPad` slab instances
@@ -11,34 +10,30 @@
 //! ([`rooms_from_partition_category_records`]) on the
 //! releases whose element records decode.
 //!
-//! Semantic `Door` / `Window` classes are still **not** invented from
-//! opening-index rows — those keep surfacing as `ArcWallRectOpening`
-//! with related-id provenance only, and the negative (no
-//! discriminator in the opening-index bytes, no schema-field Wall)
-//! stands untouched. Typed `Wall` / `Door` / `Window` come from a
-//! different carrier: the element record's own `BuiltInCategory`
-//! field, which names the category outright. Opening-index
-//! related ids are cross-checked against `Global/ElemTable` when
-//! present; a hit confirms the id is declared, not that it is a host
-//! Wall or a Door/Window family instance.
+//! Typed `Wall` / `Door` / `Window` come from the element record's own
+//! `BuiltInCategory` field, which names the category outright.
+//! The 2024 rows [`crate::rect_opening_index`] decodes are not merged:
+//! they are not wall openings. Every id they name is a system
+//! element (`ConceptualConstructionType`, `GStyleElem`,
+//! `FillPatternElem`, ...), none is an element that cuts a wall, and
+//! a 2024 file's rectangular wall openings (`SWallRectOpening`) give
+//! none of them. Wall openings are written from the walls' own records
 //!
 //! # Version guard
 //!
 //! Partition byte scans reuse [`crate::partition_scanner`] /
-//! [`crate::partition_arc_walls`] / [`crate::rect_opening_index`]
-//! version gates. Unsupported releases yield empty lists.
+//! [`crate::partition_arc_walls`] version gates. Unsupported releases yield empty lists.
 //!
 //! # Honesty
 //!
 //! - Never invent ElementIds, host walls, elevations, or geometry.
 //! - Tier1 synthetics have no partition building elements — callers
-//!   must observe zero Level/Material/Floor/opening hits there.
+//!   must observe zero Level/Material/Floor hits there.
 //! - Rooms and floors come from element records or not at all. The
 //!   name-only rooms and plan-loop floors that once filled in were
 //!   removed after they matched nothing in Revit's own exports.
 
 use crate::partition_name_candidates::{building_storey_name_candidates, collect_name_candidates};
-use crate::rect_opening_index::ArcWallRectOpeningIndex;
 use crate::walker::{DecodedElement, ElementProvenance, InstanceField, WalkerLimits};
 use crate::{Result, RevitFile};
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,6 +48,7 @@ mod mep;
 mod mullion_ends;
 mod openings;
 mod parameters;
+mod placement_origins;
 mod records;
 mod records_2023;
 mod roofs;
@@ -74,6 +70,7 @@ pub use mep::*;
 pub use mullion_ends::*;
 pub use openings::*;
 use parameters::*;
+pub use placement_origins::*;
 pub use records::*;
 use records_2023::*;
 pub use roofs::*;
@@ -94,8 +91,6 @@ pub struct PartitionSchemaMvp {
     /// Placed Areas from their partition chain records, written as
     /// `IfcSpace` ([`crate::partition_area_records`]).
     pub areas: Vec<DecodedElement>,
-    /// 2024 ArcWallRectOpening index rows — not typed Door/Window.
-    pub rect_openings: Vec<DecodedElement>,
     /// 2024 `OST_Columns` partition element records.
     pub columns: Vec<DecodedElement>,
     /// 2024 `OST_Walls` partition element records.
@@ -121,7 +116,6 @@ impl PartitionSchemaMvp {
                 + self.materials.len()
                 + self.rooms.len()
                 + self.areas.len()
-                + self.rect_openings.len()
                 + self.columns.len()
                 + self.walls.len()
                 + self.doors.len()
@@ -133,7 +127,6 @@ impl PartitionSchemaMvp {
         out.extend(self.materials);
         out.extend(self.rooms);
         out.extend(self.areas);
-        out.extend(self.rect_openings);
         out.extend(self.columns);
         out.extend(self.walls);
         out.extend(self.doors);
@@ -176,17 +169,21 @@ pub fn recover_partition_schema_mvp(
     // exports hold none, and no 2023 plan loop (mostly triangles) came
     // within 10% of the plan area of a slab in two paired exports.
 
-    // --- 2024 opening index (not Door/Window) ---
-    if ArcWallRectOpeningIndex::supports_revit_version(revit_version) {
-        out.rect_openings = rect_openings_from_partitions(rf, revit_version, limits)?;
-    }
-
     // --- Revit 2015 to 2023 element records:
-    // identity, category and box only; nothing else 2024 decodes on top of
-    // records is read. ---
+    // identity, category, box and the readers called here; nothing else 2024
+    // decodes on top of records is read. ---
     if crate::partition_element_records_2023::is_32bit_release(revit_version) {
-        recover_2023_records(rf, revit_version, &mut out);
+        let references = recover_2023_records(rf, revit_version, &mut out);
         attach_room_outlines(rf, revit_version, &mut out.rooms);
+        // --- Pipes' types and centrelines, from their own native record
+        // ---
+        attach_native_pipes(rf, revit_version, &mut out.products);
+        // --- Ducts' types, lines and sections, from their own native record
+        // ---
+        attach_native_ducts(rf, revit_version, &mut out.products);
+        // --- Which element each connector of a family instance is joined to,
+        // on 2015 to 2023 too ---
+        attach_connector_pairs(rf, revit_version, &mut out.products);
         // --- Storeys from the Levels the records name, by the
         // same rules as 2024's ---
         let levels = crate::partition_level_records::recover_partition_levels(rf, revit_version)
@@ -227,6 +224,37 @@ pub fn recover_partition_schema_mvp(
             &level_elevations,
         );
         bind_beam_reference_levels(&beam_levels, &mut record_backed);
+        // --- Curtain walls' parts' axes, types and families (the
+        // curtain walls themselves come from the records' own lists) ---
+        if CURTAIN_32BIT_REVIT_VERSIONS.contains(&revit_version) {
+            attach_curtain_axes(rf, revit_version, &mut out.products);
+            attach_curtain_part_types_32(rf, revit_version, &references, &mut out.products);
+        }
+        // --- The Level parameters each element's own native record names
+        // ---
+        attach_levels_32(
+            rf,
+            revit_version,
+            &levels,
+            [
+                &mut out.walls,
+                &mut out.columns,
+                &mut out.doors,
+                &mut out.windows,
+                &mut out.slabs,
+                &mut out.products,
+            ],
+        );
+        // --- Beams along their location lines, the rotation first.
+        // A beam a named column trims keeps its cut box: both
+        // readers skip it, since the trim rewrote the record box they would test
+        // a line against. ---
+        if crate::partition_beam_axes::beam_axis_read_on(revit_version) {
+            attach_beam_rotations(rf, &mut out.products);
+            attach_beam_axes(rf, revit_version, &mut out.products);
+        }
+        // --- A steel beam's I section from its type ---
+        attach_beam_sections(rf, revit_version, &mut out.products);
         // --- System families' names; a wall's, roof's or
         // ceiling's needs its type's layers, not read on 2023 ---
         attach_system_family_names(
@@ -263,7 +291,10 @@ pub fn recover_partition_schema_mvp(
                 InstanceField::ElementId { id, .. } if name == TYPE_ID_FIELD => Some(*id),
                 _ => None,
             });
-            if let (true, Some(type_id)) = (system, type_id) {
+            // A curtain part's type holds no such map: its material is its
+            // `m_renderStyleId`.
+            let part = CURTAIN_AXES_CLASSES.contains(&element.class.as_str());
+            if let (true, Some(type_id)) = (system || part, type_id) {
                 type_materials.remove(&type_id);
             }
         }
@@ -289,6 +320,8 @@ pub fn recover_partition_schema_mvp(
                 &mut out.rooms,
             ],
         );
+        // --- Curtain mullions' and panels' materials, from their types ---
+        attach_curtain_materials(rf, revit_version, &mut out.products);
         // --- A wall's type Function from its native type record,
         // the parameters named for IsExternal or a standard property from the
         // saved parameters, and the IsExternal Revit's
@@ -317,6 +350,8 @@ pub fn recover_partition_schema_mvp(
                 .chain(out.rooms.iter_mut())
                 .chain(out.products.iter_mut()),
         );
+        // --- A curtain mullion's or panel's IsExternal: its curtain wall's ---
+        attach_curtain_member_is_external(&out.walls, &mut out.products);
         // --- Whether a wall's top is joined to a roof or floor, from its
         // native record ---
         attach_wall_top_joins(rf, revit_version, &mut out.walls, &mut wall_reads);
@@ -327,6 +362,20 @@ pub fn recover_partition_schema_mvp(
         // --- A structural beam's or column's LoadBearing is its category's,
         // unless a parameter named for it says otherwise ---
         attach_load_bearing(out.columns.iter_mut().chain(out.products.iter_mut()));
+        // --- The phase each element was created in, from its own body
+        // ---
+        attach_phases_created_32(
+            rf,
+            revit_version,
+            [
+                &mut out.walls,
+                &mut out.columns,
+                &mut out.doors,
+                &mut out.windows,
+                &mut out.slabs,
+                &mut out.products,
+            ],
+        );
         return Ok(out);
     }
 
@@ -502,8 +551,6 @@ pub fn recover_partition_schema_mvp(
     attach_curtain_axes(rf, revit_version, &mut out.products);
     // --- Each door's and window's facing, for its type's flip ---
     attach_opening_facings(rf, revit_version, [&mut out.doors, &mut out.windows]);
-    // --- Each door's and window's hand flip and facing flip ---
-    attach_opening_flips(rf, revit_version, [&mut out.doors, &mut out.windows]);
     // --- Each family instance's original symbol, whose GlobalId Revit's
     // export gives its type ---
     attach_original_symbols(
@@ -543,6 +590,9 @@ pub fn recover_partition_schema_mvp(
     );
     // --- Pipes' types, which have no name entry ---
     attach_pipe_type_names(rf, &mut out.products);
+    // --- Ducts' types, lines and sections, from their own native record,
+    // before scan ---
+    attach_native_ducts(rf, revit_version, &mut out.products);
     // --- Ducts' and pipes' sizes, and ducts' types ---
     attach_curve_fields(rf, revit_version, &mut out.products);
     // --- Ducts' system families, from their types' shapes ---
@@ -682,6 +732,9 @@ pub fn recover_partition_schema_mvp(
     // --- Empty curtain panels are left out, as Revit leaves them out ---
     out.products
         .retain(|product| !is_empty_curtain_panel(product));
+    // --- Plumbing fixtures whose type draws nothing visible are left out, as
+    // Revit leaves them out ---
+    without_invisible_plumbing_fixture_types(rf, revit_version, &mut out.products);
     // --- Curtain panels that are walls export as curtain walls ---
     // Last, so every step above still sees them as panels.
     for product in &mut out.products {
@@ -910,6 +963,9 @@ pub fn recover_partition_schema_mvp(
         &out.walls,
         [&mut out.doors, &mut out.windows],
     );
+    // --- The origin of the placement Revit gives a door set in no wall,
+    // after the host is final ---
+    attach_opening_placement_origins(rf, revit_version, &mut out.doors);
     // --- Steel beams' and columns' I sections from their type ---
     attach_beam_sections(rf, revit_version, &mut out.products);
     // --- Hollow structural sections from their type's family parameters (W6) ---
@@ -1170,149 +1226,4 @@ fn element_record_decoded(
                 .saturating_add(crate::partition_element_records::RECORD_MIN_LEN),
         provenance,
     }
-}
-
-fn partition_streams_largest_first(rf: &mut RevitFile) -> Vec<String> {
-    let mut streams: Vec<(usize, String)> = rf
-        .stream_names()
-        .into_iter()
-        .filter(|s| s.starts_with("Partitions/"))
-        .filter_map(|s| {
-            let raw = rf.read_stream(&s).ok()?;
-            Some((raw.len(), s))
-        })
-        .collect();
-    streams.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    streams.into_iter().map(|(_, s)| s).collect()
-}
-
-fn rect_openings_from_partitions(
-    rf: &mut RevitFile,
-    revit_version: u32,
-    limits: WalkerLimits,
-) -> Result<Vec<DecodedElement>> {
-    let mut out = Vec::new();
-    let opening_cap = limits.max_candidates.min(5_000);
-
-    // Confirm related ids against ElemTable when available — never invent
-    // Door/Window classes from the index alone.
-    let elem_ids: BTreeSet<u32> = match crate::elem_table::parse_records(rf) {
-        Ok(records) => crate::elem_table::declared_ids(&records),
-        Err(_) => BTreeSet::new(),
-    };
-
-    // Largest partition first — 2024 Core Interior openings live in
-    // the ~98 MiB Partitions/46 stream.
-    for stream in partition_streams_largest_first(rf) {
-        let Ok(inflated) = rf.inflated_partition(&stream) else {
-            continue;
-        };
-        let concat = inflated.bytes();
-        let offsets = ArcWallRectOpeningIndex::find_all_for_revit_version(revit_version, concat);
-        for off in offsets {
-            if out.len() >= opening_cap {
-                break;
-            }
-            let Ok(rec) = ArcWallRectOpeningIndex::decode(concat, off) else {
-                continue;
-            };
-            let a_in = elem_ids.contains(&rec.related_id_a);
-            let b_in = elem_ids.contains(&rec.related_id_b);
-            // related_id_a is the historical host *candidate*;
-            // ElemTable confirmation only proves the id is declared —
-            // not that it is a Wall host or a Door/Window instance.
-            let host_confirmed = a_in;
-            out.push(DecodedElement {
-                id: None,
-                class: "ArcWallRectOpening".into(),
-                fields: vec![
-                    (
-                        "m_index".into(),
-                        InstanceField::Integer {
-                            value: i64::from(rec.index),
-                            signed: false,
-                            size: 4,
-                        },
-                    ),
-                    (
-                        "m_related_id_a".into(),
-                        InstanceField::ElementId {
-                            tag: 0,
-                            id: rec.related_id_a,
-                        },
-                    ),
-                    (
-                        "m_related_id_b".into(),
-                        InstanceField::ElementId {
-                            tag: 0,
-                            id: rec.related_id_b,
-                        },
-                    ),
-                    (
-                        "m_related_id_a_in_elem_table".into(),
-                        InstanceField::Bool(a_in),
-                    ),
-                    (
-                        "m_related_id_b_in_elem_table".into(),
-                        InstanceField::Bool(b_in),
-                    ),
-                    (
-                        "m_host_id".into(),
-                        InstanceField::ElementId {
-                            tag: 0,
-                            id: rec.related_id_a,
-                        },
-                    ),
-                    (
-                        "m_host_elem_table_confirmed".into(),
-                        InstanceField::Bool(host_confirmed),
-                    ),
-                    (
-                        "m_host_provenance".into(),
-                        InstanceField::String(if host_confirmed {
-                            "related_id_a_in_elem_table".into()
-                        } else {
-                            "related_id_a_unvalidated".into()
-                        }),
-                    ),
-                    (
-                        "m_source_stream".into(),
-                        InstanceField::String(stream.clone()),
-                    ),
-                    (
-                        "m_source_offset".into(),
-                        InstanceField::Integer {
-                            value: off as i64,
-                            signed: false,
-                            size: 8,
-                        },
-                    ),
-                    (
-                        "m_source".into(),
-                        InstanceField::String("partition_rect_opening_index".into()),
-                    ),
-                ],
-                byte_range: off..off
-                    .saturating_add(crate::rect_opening_index::OPENING_INDEX_STRIDE),
-                provenance: ElementProvenance::partition(
-                    &stream,
-                    off,
-                    "partition_rect_opening_index",
-                    "partition_schema_mvp::arcwall_rect_opening",
-                    if host_confirmed { 0.7 } else { 0.55 },
-                    if host_confirmed {
-                        None
-                    } else {
-                        Some("related_id_a_unvalidated")
-                    },
-                ),
-            });
-        }
-        // Openings concentrate in one large partition; stop once we
-        // found any validated index rows.
-        if !out.is_empty() {
-            break;
-        }
-    }
-    Ok(out)
 }

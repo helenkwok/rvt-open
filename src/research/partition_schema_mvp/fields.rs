@@ -105,6 +105,10 @@ pub const CURTAIN_AXES_FIELDS: [&str; 9] = [
 /// Classes whose turned or tilted instances carry [`CURTAIN_AXES_FIELDS`].
 pub const CURTAIN_AXES_CLASSES: [&str; 2] = ["CurtainWallMullion", "CurtainWallPanel"];
 
+/// The class of a curtain wall panel, whose material is not read on
+/// Revit 2015 to 2023.
+pub const CURTAIN_WALL_PANEL_CLASS: &str = "CurtainWallPanel";
+
 /// Field holding the model axis (0 for X, 1 for Y, 2 for Z) a curtain
 /// mullion on the model's axes runs along: the one its transform's Z axis
 /// lies on. A turned or tilted mullion carries
@@ -298,6 +302,19 @@ pub const DOOR_TYPE_SIZE_FIELDS: [&str; 2] = ["m_door_type_width", "m_door_type_
 /// and `AreaCalculator` read for its base quantities, feet.
 pub const DRAWN_SIZE_FIELDS: [&str; 2] = ["m_drawn_symbol_width", "m_drawn_symbol_height"];
 
+/// Releases a door's or window's `Area` quantity is written on, its Width
+/// times its Height: measured against Revit's own exports of 2024 and 2025
+/// files and of the held-out 2026 ones (a house and a second project's
+/// 2026 pair: none different). Revit 2027's export gives the same Width and
+/// Height and an Area that is not their product (the second project's 2027 pair: every
+/// window's and door's differs), so a 2027 door or window gets its
+/// Width and Height and no Area.
+pub const DOOR_WINDOW_AREA_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026];
+
+/// Field marking a door or window whose `Area` is left out
+/// ([`DOOR_WINDOW_AREA_REVIT_VERSIONS`]).
+pub const DRAWN_AREA_LEFT_OUT_FIELD: &str = "m_drawn_area_left_out";
+
 /// Fields carrying the extent along X and along Z of the outline a door's
 /// or window's symbol cuts in its host, feet.
 pub const CUT_LOOP_SIZE_FIELDS: [&str; 2] = ["m_cut_loop_width", "m_cut_loop_height"];
@@ -320,8 +337,10 @@ pub const CUT_SOLID_SIZE_FIELDS: [&str; 3] = [
 ];
 
 /// Releases a door's or window's cut loop is measured on: 2024
-/// (Core Interior) and 2025 (RE1 Architecture, the R2025 models).
-pub const CUT_LOOP_REVIT_VERSIONS: &[u32] = &[2024, 2025];
+/// (Core Interior) and 2025 (RE1 Architecture, the R2025 models). 2026 and
+/// 2027: Autodesk's samples saved by them cut their walls as their
+/// 2025 saves do.
+pub const CUT_LOOP_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 
 /// How closely an instance's plan X axis must lie along a model axis for
 /// its record box to be along its own axes.
@@ -434,6 +453,14 @@ pub const AGGREGATE_WHOLE_CLASSES: &[&str] = &["Stair", CURTAIN_WALL_CLASS];
 /// Class of a wall that is a curtain wall: one a curtain-wall
 /// mullion names in its reference list.
 pub const CURTAIN_WALL_CLASS: &str = "CurtainWall";
+
+/// Releases a curtain wall is told by its parts in the 32-bit records, against
+/// the same Autodesk samples saved by Revit 2024.
+pub const CURTAIN_32BIT_REVIT_VERSIONS: std::ops::RangeInclusive<u32> = 2015..=2023;
+
+/// Where a curtain mullion or panel type's data names its family on a 32-bit
+/// release, as a `u32` past the data's ElementId and four bytes.
+pub const CURTAIN_TYPE_FAMILY_OFFSET_32: usize = 265;
 
 /// Classes that are parts of a curtain wall when their reference list names
 /// exactly one.
@@ -681,6 +708,12 @@ pub const SYSTEM_FAMILY_SOURCE: &str = "system_family_by_category";
 /// ElementId it is tagged with.
 pub const PROFILE_OPENING_FIELD: &str = "m_profile_opening";
 
+/// The field holding the two ends of the elevation profile the openings of
+/// [`PROFILE_OPENING_FIELD`] are cut from, as model-feet points: the profile's
+/// lowest and highest along its own axis, which are where its edge runs and a
+/// wall that goes on past them can be told apart.
+pub const PROFILE_EXTENT_FIELD: &str = "m_profile_extent";
+
 /// How far apart two sketch points may lie and still meet, and how far off a
 /// plane or a side a point may lie and still be on it, feet.
 pub(super) const PROFILE_EPS_FEET: f64 = 1e-3;
@@ -836,6 +869,12 @@ pub const PIPE_RADIUS_FIELD: &str = "m_pipe_radius";
 /// second end, each a vector of `[element, connector index]` pairs.
 pub const PIPE_END_KEYS_FIELDS: [&str; 2] = ["m_pipe_start_keys", "m_pipe_end_keys"];
 
+/// Field holding the direction Revit calculated for each of a pipe's
+/// connectors, read from its own record where nothing else reads it:
+/// a vector of `[connector index, direction]` pairs, the direction numbered
+/// as a family's Flow Direction (1 In, 2 Out, 0 bidirectional).
+pub const PIPE_FLOW_DIRECTIONS_FIELD: &str = "m_pipe_flow_directions";
+
 /// Fields holding a duct's two ends, model feet: the centres of the faces of
 /// its record box across its length.
 pub const DUCT_ENDS_FIELDS: [[&str; 3]; 2] = [
@@ -857,6 +896,34 @@ pub const DUCT_LENGTH_FIELD: &str = "m_duct_length";
 
 /// Field holding a pipe's inner diameter, feet, from its curve object.
 pub const PIPE_INNER_DIAMETER_FIELD: &str = "m_pipe_inner_diameter";
+
+/// Releases whose pipes take their type, centreline and outside radius from
+/// their own `RbsPipeCurve` record where nothing else gives them:
+/// those the native record path reads, Revit 2015 to 2027. Measured on
+/// Autodesk's MEP samples of 2015, 2019 and 2024 to 2027 against the same
+/// projects saved by 2024.
+pub const NATIVE_PIPE_REVIT_VERSIONS: std::ops::RangeInclusive<u32> = 2015..=2027;
+
+/// Fields holding the direction across a duct's section its height lies
+/// along (`m_vNormal`), where its own record draws it along its line:
+/// the width lies across both it and the line.
+pub const DUCT_NORMAL_FIELDS: [&str; 3] = ["m_duct_normal_x", "m_duct_normal_y", "m_duct_normal_z"];
+
+/// Fields holding a duct's Start and End Middle Elevation, feet above its
+/// reference level (`m_dOffsetStart`, `m_dOffsetEnd`), where its own record
+/// gives them and its justification is centred.
+pub const DUCT_OFFSET_FIELDS: [&str; 2] = ["m_duct_offset_start", "m_duct_offset_end"];
+
+/// Field holding a duct's taps, where its own record drew it along its line:
+/// a vector of `[connector index, parameter]` pairs, each a
+/// connector its `SegmentConnectorPosition` puts between the line's start
+/// (0) and end (1), where another duct is tapped into it.
+pub const DUCT_TAPS_FIELD: &str = "m_duct_taps";
+
+/// Releases whose ducts take their type, line, section and ports from their
+/// own `RbsDuctCurve` record: those the native record path reads,
+/// Revit 2015 to 2027.
+pub const NATIVE_DUCT_REVIT_VERSIONS: std::ops::RangeInclusive<u32> = 2015..=2027;
 
 /// How closely a duct's width and height must match two of its box's
 /// dimensions, feet.
@@ -939,8 +1006,9 @@ pub(super) const LOAD_BEARING_CLASSES: &[&str] = &["StructuralColumn", "Structur
 
 /// Releases where the calculation's last step, not external, is measured.
 /// The parameters and a type's Function are read on every release
-/// from 2024, as read a door's and a floor's.
-pub const IS_EXTERNAL_LAST_STEP_REVIT_VERSIONS: &[u32] = &[2024, 2025];
+/// from 2024, as read a door's and a floor's. 2026 and 2027 
+/// as Autodesk's samples saved by 2025 read them.
+pub const IS_EXTERNAL_LAST_STEP_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 
 /// Give each element of `groups` the values of the project or shared
 /// parameters named `<property set>.<property>` for a property of a standard
@@ -983,6 +1051,10 @@ pub const WALL_TOP_JOIN_RECORD_REVIT_VERSIONS: &[u32] =
 /// is as tall as Revit's, and Revit's export writes that as its `Height`.
 pub const WALL_UNCUT_FIELD: &str = "m_wall_uncut";
 
+/// Field marking a wall whose angled body must be the rectangle its record box
+/// closes on, on the releases with no cross-section word.
+pub const WALL_AXIS_BOX_MUST_CLOSE_FIELD: &str = "m_wall_axis_box_must_close";
+
 /// Field holding, as a vector of ElementIds, the elements a wall's top join
 /// (`JoinToRoofGStep` with `m_baseOrTop` 1) and its `CutPairGStep`s name
 /// ([`crate::native_walls::WallRecords::top_cutters`]): the floors,
@@ -1007,6 +1079,12 @@ pub const WALL_BOUNDED_FIELD: &str = "m_wall_bounded";
 /// Field carrying the name of the phase an element was created in
 /// ([`crate::partition_phases`]).
 pub const PHASE_CREATED_FIELD: &str = "m_phase_created";
+
+/// The 32-bit releases whose elements take their Phase Created from their own
+/// body's `m_createdPhaseId`: Revit 2015 to 2023, the 32-bit releases
+/// whose phases [`crate::native_phases`] reads. On Autodesk's sample projects
+/// of each, every element's phase is the one its 2024 save gives it.
+pub const PHASE_CREATED_32BIT_REVIT_VERSIONS: std::ops::RangeInclusive<u32> = 2015..=2023;
 
 /// Field carrying an element's value of the shared parameter `Serial Number`.
 pub const SERIAL_NUMBER_FIELD: &str = "m_serial_number";
@@ -1062,8 +1140,9 @@ pub(super) const CURTAIN_PART_BOX_TOLERANCE_FEET: f64 = 0.05;
 /// Field carrying a room's Floor Finish.
 pub const ROOM_FLOOR_FINISH_FIELD: &str = "m_room_floor_finish";
 
-/// Releases a room's `Qto_SpaceBaseQuantities.Height` is read on.
-pub const ROOM_HEIGHT_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026];
+/// Releases a room's `Qto_SpaceBaseQuantities.Height` is read on;
+/// 2027 as Autodesk's samples saved by 2025 read it.
+pub const ROOM_HEIGHT_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 
 /// Field holding a room's height, feet.
 pub const ROOM_HEIGHT_FIELD: &str = "m_room_height";
@@ -1076,8 +1155,9 @@ pub const ROOM_PRISM_FIELD: &str = "m_room_prism";
 
 /// Releases a room is marked a prism on, and so gets its `NetVolume`:
 /// the only exports it is measured against are the BIM4LCA office's (Revit
-/// 2024) and the R2025 models' (Revit 2025).
-pub const ROOM_PRISM_REVIT_VERSIONS: &[u32] = &[2024, 2025];
+/// 2024) and the R2025 models' (Revit 2025), and on 2026 and 2027,
+/// Autodesk's samples saved by 2025.
+pub const ROOM_PRISM_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 
 /// Field carrying a recovered room number.
 pub const ROOM_NUMBER_FIELD: &str = "m_number";
@@ -1274,6 +1354,17 @@ pub const LEVEL_FROM_LIST_FIELD: &str = "m_level_parameter_from_list";
 /// Field naming the highest of the several Levels an element's record names
 /// in its id lists: a beam's or brace's Reference Level.
 pub const REFERENCE_LEVEL_FROM_LIST_FIELD: &str = "m_reference_level_from_list";
+
+/// Field naming a beam's or brace's Reference Level where its own record
+/// names it (`FamInstCurveDriver.m_refLevelId`), on Revit 2015 to
+/// 2023.
+pub const REFERENCE_LEVEL_FIELD: &str = "m_reference_level";
+
+/// The 32-bit releases whose elements take their Level parameters from their
+/// own native record: Revit 2015 to 2023, which the native record
+/// path reads. On Autodesk's sample projects of each, every Level so read is
+/// the one the same project's 2024 save gives.
+pub const LEVEL_32BIT_REVIT_VERSIONS: std::ops::RangeInclusive<u32> = 2015..=2023;
 
 /// Field recording where a column's bottom came from, when not its record.
 pub const COLUMN_Z_SOURCE_FIELD: &str = "m_column_z_source";

@@ -97,12 +97,6 @@ pub const MAPPINGS: &[Mapping] = &[
         ifc_type: "IFCWINDOW",
         predefined_type: Some("WINDOW"),
     },
-    // 2024 ArcWallRectOpening index rows — not typed Door/Window.
-    Mapping {
-        revit_class: "ArcWallRectOpening",
-        ifc_type: "IFCOPENINGELEMENT",
-        predefined_type: None,
-    },
     // Architectural — horizontal elements.
     Mapping {
         revit_class: "Floor",
@@ -271,9 +265,12 @@ pub const MAPPINGS: &[Mapping] = &[
         ifc_type: "IFCFURNITURE",
         predefined_type: None,
     },
+    // system furniture is `IfcSystemFurnitureElement`, with no
+    // `PredefinedType`, in Revit's own IFC4 export of Autodesk's 2018
+    // `rac_basic` sample, for all 3 the sweep selects there.
     Mapping {
         revit_class: "FurnitureSystem",
-        ifc_type: "IFCFURNITURE",
+        ifc_type: "IFCSYSTEMFURNITUREELEMENT",
         predefined_type: None,
     },
     Mapping {

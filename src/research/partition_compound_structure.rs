@@ -480,6 +480,8 @@ pub fn scan_wall_orientations(
     let header = layout.header;
     let has_word = wall_orientation_has_word(revit_version);
     let mut found: BTreeMap<u32, Option<WallOrientation>> = BTreeMap::new();
+    let recording = rf.recording_value_sources();
+    let mut trail = crate::ifc::element_provenance::CopyTrail::default();
     for stream in rf.partition_stream_names() {
         let Ok(inflated) = rf.inflated_partition(&stream) else {
             continue;
@@ -499,12 +501,22 @@ pub fn scan_wall_orientations(
                 .unwrap_or(buf.len())
                 .min(hit.saturating_add(LAYER_WINDOW))
                 .min(buf.len());
+            if recording {
+                trail.named(
+                    id,
+                    crate::partition_room_parameters::partition_number(&stream),
+                );
+            }
             let Some(orientation) = buf
                 .get(id_at + 8..end)
                 .and_then(|data| wall_orientation_with(data, has_word))
             else {
                 continue;
             };
+            if recording {
+                let partition = crate::partition_room_parameters::partition_number(&stream);
+                trail.gave(id, partition, hit);
+            }
             match found.get_mut(&id) {
                 None => {
                     found.insert(id, Some(orientation));
@@ -517,10 +529,14 @@ pub fn scan_wall_orientations(
             }
         }
     }
-    Ok(found
+    let kept: BTreeMap<u32, WallOrientation> = found
         .into_iter()
         .filter_map(|(id, orientation)| orientation.map(|o| (id, o)))
-        .collect())
+        .collect();
+    if recording {
+        trail.note(rf, "wall_orientation", kept.keys().copied());
+    }
+    Ok(kept)
 }
 
 /// The one tag whose lists name walls, across every wall's copies; `None`
@@ -787,6 +803,8 @@ pub fn scan_wall_type_face_angles(
         return Ok(BTreeMap::new());
     };
     let mut found: BTreeMap<u32, Option<[f64; 3]>> = BTreeMap::new();
+    let recording = rf.recording_value_sources();
+    let mut trail = crate::ifc::element_provenance::CopyTrail::default();
     for stream in rf.partition_stream_names() {
         let Ok(inflated) = rf.inflated_partition(&stream) else {
             continue;
@@ -809,12 +827,22 @@ pub fn scan_wall_type_face_angles(
                 .unwrap_or(buf.len())
                 .min(hit.saturating_add(LAYER_WINDOW))
                 .min(buf.len());
+            if recording {
+                trail.named(
+                    id,
+                    crate::partition_room_parameters::partition_number(&stream),
+                );
+            }
             let Some(angles) = buf
                 .get(id_at + 8..end)
                 .and_then(|data| wall_type_face_angles_after(data, frame))
             else {
                 continue;
             };
+            if recording {
+                let partition = crate::partition_room_parameters::partition_number(&stream);
+                trail.gave(id, partition, hit);
+            }
             match found.get_mut(&id) {
                 None => {
                     found.insert(id, Some(angles));
@@ -827,10 +855,14 @@ pub fn scan_wall_type_face_angles(
             }
         }
     }
-    Ok(found
+    let kept: BTreeMap<u32, [f64; 3]> = found
         .into_iter()
         .filter_map(|(id, angles)| angles.map(|a| (id, a)))
-        .collect())
+        .collect();
+    if recording {
+        trail.note(rf, "type_face_angles", kept.keys().copied());
+    }
+    Ok(kept)
 }
 
 /// Where a join list's count sits past its opening word on
@@ -859,6 +891,54 @@ pub const WALL_JOIN_WINDOW: usize = 0x1_0000;
 
 /// A wall's join lists, each as its tag and the ElementIds it names.
 pub type WallJoinLists = Vec<(u32, Vec<u32>)>;
+
+/// Releases a join list is read on in its 32-bit layout
+/// ([`wall_join_lists_32`]), against the same Autodesk samples saved by Revit
+/// 2024.
+pub const WALL_JOIN_32BIT_REVIT_VERSIONS: std::ops::RangeInclusive<u32> = 2015..=2023;
+
+/// Where a join list's count sits past its opening word on
+/// [`WALL_JOIN_32BIT_REVIT_VERSIONS`].
+pub const WALL_JOIN_COUNT_AT_32: usize = 29;
+
+/// Bytes per join-list entry on [`WALL_JOIN_32BIT_REVIT_VERSIONS`]:
+/// `u32 · u32 ElementId · u32`.
+pub const WALL_JOIN_ENTRY_LEN_32: usize = 12;
+
+/// [`wall_join_lists`] in the 32-bit layout: `07 00 00 00 · u32 tag ·
+/// 02 00 00 00 · u32`, 13 zero bytes, a `u32` count at
+/// [`WALL_JOIN_COUNT_AT_32`] and that many [`WALL_JOIN_ENTRY_LEN_32`]-byte
+/// entries.
+pub fn wall_join_lists_32(data: &[u8], walls: &BTreeSet<u32>) -> Vec<(u32, Vec<u32>)> {
+    let mut out = Vec::new();
+    for at in memchr::memmem::find_iter(data, &WALL_JOIN_LIST_WORD) {
+        let (Some(tag), Some(2), Some(count), Some(gap)) = (
+            le_bytes::u32_at(data, at + 4),
+            le_bytes::u32_at(data, at + 8),
+            le_bytes::u32_at(data, at + WALL_JOIN_COUNT_AT_32),
+            data.get(at + 16..at + WALL_JOIN_COUNT_AT_32),
+        ) else {
+            continue;
+        };
+        let count = count as usize;
+        if count == 0 || count > MAX_WALL_JOIN_ENTRIES || gap.iter().any(|byte| *byte != 0) {
+            continue;
+        }
+        let named: Option<Vec<u32>> = (0..count)
+            .map(|index| {
+                le_bytes::u32_at(
+                    data,
+                    at + WALL_JOIN_COUNT_AT_32 + 8 + index * WALL_JOIN_ENTRY_LEN_32,
+                )
+                .filter(|id| walls.contains(id))
+            })
+            .collect();
+        if let Some(named) = named {
+            out.push((tag, named));
+        }
+    }
+    out
+}
 
 /// Every join list in a wall's `data` that names at least one wall and
 /// only walls in `walls`, as its tag and the ElementIds it names.
@@ -916,12 +996,14 @@ pub fn scan_wall_join_partners(
     walls: &BTreeSet<u32>,
     read: &BTreeSet<u32>,
 ) -> Result<BTreeMap<u32, BTreeSet<u32>>> {
-    let (Some(header), Some(count_at)) = (
-        crate::partition_names::element_data_header(revit_version),
-        wall_join_count_offset(revit_version),
-    ) else {
+    let narrow = WALL_JOIN_32BIT_REVIT_VERSIONS.contains(&revit_version);
+    let count_at = wall_join_count_offset(revit_version);
+    let Some(layout) = crate::partition_names::element_data_layout(revit_version)
+        .filter(|_| narrow || count_at.is_some())
+    else {
         return Ok(BTreeMap::new());
     };
+    let header = layout.header;
     let mut found: BTreeMap<u32, Option<WallJoinLists>> = BTreeMap::new();
     for stream in rf.partition_stream_names() {
         let Ok(inflated) = rf.inflated_partition(&stream) else {
@@ -933,10 +1015,7 @@ pub fn scan_wall_join_partners(
         };
         for (index, &hit) in hits.iter().enumerate() {
             let id_at = hit + header.len();
-            let Some(id) = le_bytes::u64_at(buf, id_at)
-                .and_then(|id| u32::try_from(id).ok())
-                .filter(|id| read.contains(id))
-            else {
+            let Some(id) = layout.id_at(buf, id_at).filter(|id| read.contains(id)) else {
                 continue;
             };
             let end = hits
@@ -948,7 +1027,10 @@ pub fn scan_wall_join_partners(
             let Some(data) = buf.get(id_at + 8..end) else {
                 continue;
             };
-            let lists = wall_join_lists(data, count_at, walls);
+            let lists = match count_at {
+                Some(count_at) => wall_join_lists(data, count_at, walls),
+                None => wall_join_lists_32(data, walls),
+            };
             match found.get_mut(&id) {
                 None => {
                     found.insert(id, Some(lists));

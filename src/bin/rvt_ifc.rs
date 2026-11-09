@@ -611,7 +611,11 @@ fn run(args: Args) -> anyhow::Result<()> {
     // truncated IFC under the output's name.
     let mut observed_step = None;
     let written = if args.observation.is_some() || !ifc_options.is_default() {
-        let mut step = rvt::convert::ifc4_step(&graph, timestamp);
+        // Built through the streaming writer, which refuses a model holding a
+        // non-finite number rather than write a file no IFC reader opens.
+        let mut bytes = Vec::new();
+        rvt::convert::ifc4_step_to(&graph, timestamp, &mut bytes)?;
+        let mut step = String::from_utf8(bytes)?;
         if !ifc_options.is_default() {
             rvt::control::stage("ifc options");
             let (edited, options_report) =
@@ -1347,6 +1351,13 @@ fn export_summary(diagnostics: &ExportDiagnostics, has_sidecar: bool, family: bo
                 exported.resolved_outline_spaces
             ));
         }
+        // rooms read from their solid's edges.
+        if exported.edge_outline_spaces > 0 {
+            lines.push(format!(
+                "  {} rooms take the outline of their stored solid's floor, read from its edges where neither the walk nor the span closed it (SpaceOutlineSource stored_solid_edges)",
+                exported.edge_outline_spaces
+            ));
+        }
         if exported.approximate_outline_spaces > 0 {
             lines.push(format!(
                 "  {} rooms take an approximate outline, a column that overlaps a wall taken off it or up to 0.02 ft short of their record box on a side: the area is within about 1% of the space's, not 0.1% (SpaceOutlineSource stored_solid_approximate)",
@@ -1364,6 +1375,9 @@ fn export_summary(diagnostics: &ExportDiagnostics, has_sidecar: bool, family: bo
                 "element_record_not_in_export_phase" => "not in the export phase",
                 "element_record_empty_curtain_panel" => "empty curtain panels",
                 "room_not_in_export_phase" => "rooms in a phase other than the export phase",
+                "element_record_family_type_draws_nothing" => {
+                    "plumbing fixtures whose type draws nothing visible"
+                }
                 "element_record_family_space_without_body" => {
                     "family instances written as spaces whose family draws no model form"
                 }
@@ -1444,6 +1458,7 @@ fn ifc_type_display(upper: &str) -> String {
         "IfcSpace",
         "IfcStair",
         "IfcStairFlight",
+        "IfcSystemFurnitureElement",
         "IfcTransportElement",
         "IfcWall",
         "IfcWindow",

@@ -208,6 +208,10 @@ pub enum IfcEntity {
         location_feet: Option<[f64; 3]>,
         #[serde(default)]
         direction: Option<[f64; 3]>,
+        /// The IFC4 `SystemType` (`IfcDistributionSystemEnum`), where its
+        /// connector's system is read.
+        #[serde(default)]
+        system_type: Option<String>,
     },
     /// An MEP system: the Revit system element `id`, named
     /// `name`, grouping the building elements at `members` (indices into
@@ -1583,6 +1587,8 @@ pub enum PropertyValue {
     ElectricVoltage(f64),
     /// An electric current in amperes. Maps to `IfcElectricCurrentMeasure`.
     ElectricCurrent(f64),
+    /// A ratio. Maps to `IfcRatioMeasure`, as a duct's `Slope`.
+    Ratio(f64),
     /// A list of values: the writer emits an `IfcPropertyListValue`, as
     /// standard property sets declare for some properties.
     List(Vec<PropertyValue>),
@@ -1656,6 +1662,7 @@ impl PropertyValue {
             PropertyValue::Power(w) => format!("IFCPOWERMEASURE({w:.6})"),
             PropertyValue::ElectricVoltage(v) => format!("IFCELECTRICVOLTAGEMEASURE({v:.6})"),
             PropertyValue::ElectricCurrent(i) => format!("IFCELECTRICCURRENTMEASURE({i:.6})"),
+            PropertyValue::Ratio(r) => format!("IFCRATIOMEASURE({r:.6})"),
             PropertyValue::List(items) => format!(
                 "({})",
                 items

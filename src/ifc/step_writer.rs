@@ -16,7 +16,7 @@
 //! Design principle: string-based emission, no external IFC library
 //! dependency, fully `#![deny(unsafe_code)]`-clean.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::IfcModel;
 use super::entities::{Extrusion, OpeningCut, PropertySet, SolidShape};
@@ -50,6 +50,9 @@ pub struct StepOptions {
 /// assert!(ifc.starts_with("ISO-10303-21;"));
 /// # Ok::<(), rvt::Error>(())
 /// ```
+///
+/// A model holding a non-finite number is written as given, which no IFC
+/// reader opens; [`write_step_to`] refuses it with an error instead.
 pub fn write_step(model: &IfcModel) -> String {
     write_step_with_options(model, &StepOptions::default())
 }
@@ -84,6 +87,9 @@ pub fn write_step_graph_to<W: std::io::Write>(
 /// When `options.timestamp = Some(t)`, the emitted STEP is a pure
 /// function of `(model, t)` — no wall-clock access. Use this in
 /// tests and regression fixtures.
+///
+/// A model holding a non-finite number is written as given, which no IFC
+/// reader opens; [`write_step_to`] refuses it with an error instead.
 pub fn write_step_with_options(model: &IfcModel, options: &StepOptions) -> String {
     write_step_string(model, options, false)
 }
@@ -93,6 +99,9 @@ pub fn write_step_with_options(model: &IfcModel, options: &StepOptions) -> Strin
 /// --revit-set-placement`). IFC4's `IfcRelAssociatesMaterial.AllowedElements`
 /// takes no `IfcSpace`, so this output breaks that rule, as Revit's does;
 /// [`write_step_with_options`] leaves those associations out.
+///
+/// A model holding a non-finite number is written as given, which no IFC
+/// reader opens; [`write_step_to`] refuses it with an error instead.
 pub fn write_step_with_space_materials(model: &IfcModel, options: &StepOptions) -> String {
     write_step_string(model, options, true)
 }
@@ -327,6 +336,9 @@ const PORT_FLOW_DIRECTIONS: [&str; 4] = ["SOURCE", "SINK", "SOURCEANDSINK", "NOT
 /// `ObjectType` a port is written without: the values a port's
 /// `PredefinedType` is written with.
 const PORT_TYPES: [&str; 5] = ["CABLE", "CABLECARRIER", "DUCT", "PIPE", "NOTDEFINED"];
+/// The values of IFC4's `IfcDistributionSystemEnum` a port's `SystemType`
+/// is written with.
+const PORT_SYSTEM_TYPES: [&str; 3] = ["VENTILATION", "EXHAUST", "HEATING"];
 
 /// `raw` as a token of `allowed`, an IFC4 enumeration, or `None`.
 fn step_enum_of(raw: &str, allowed: &[&str]) -> Option<String> {
@@ -697,6 +709,10 @@ struct StepWriter<'a> {
     /// `IfcRelAssociatesMaterial.AllowedElements` does not allow and Revit's
     /// export writes: [`write_step_with_space_materials`].
     space_materials: bool,
+    /// The first entity whose attributes hold a non-finite number, which
+    /// ISO 10303-21's REAL cannot express: [`write_step_to`] refuses the
+    /// model rather than write a file no IFC reader opens.
+    non_finite: Option<usize>,
 }
 
 /// A writer [`write_step_to`] streams to, the bytes it took and its first
@@ -865,6 +881,7 @@ impl StepWriter<'_> {
             timestamp,
             material_colours: Vec::new(),
             space_materials: false,
+            non_finite: None,
         }
     }
 
@@ -953,6 +970,9 @@ impl StepWriter<'_> {
     }
 
     fn emit_entity<S: AsRef<str>>(&mut self, id: usize, body: S) {
+        if self.non_finite.is_none() && holds_non_finite(body.as_ref()) {
+            self.non_finite = Some(id);
+        }
         self.out.push_str(&format!("#{id}={};\n", body.as_ref()));
         if self.out.len() >= SPILL_BYTES {
             self.spill();
@@ -3506,11 +3526,25 @@ impl StepWriter<'_> {
                         })
                     })
                 };
+                // not on a stair, a flight or a stringer from 2026, where
+                // Revit's own export does not write it.
+                let stair_part_class = ["IFCSTAIR", "IFCSTAIRFLIGHT", "IFCMEMBER"]
+                    .iter()
+                    .any(|class| ifc_type.eq_ignore_ascii_case(class));
+                let stair_part_family = property_text(super::export_content::FAMILY_NAME_PROPERTY)
+                    .is_some_and(|family| {
+                        crate::native_stairs::NATIVE_STAIR_FAMILIES.contains(&family.as_str())
+                    });
+                let object_type_left_out = model.global_ids.revit_version.is_some_and(|version| {
+                    version >= crate::native_stairs::STAIR_OBJECT_TYPE_LEFT_OUT_FROM
+                });
+                let stair_part_without_object_type =
+                    stair_part_class && stair_part_family && object_type_left_out;
                 let object_type_quoted = match (
                     property_text(super::export_content::FAMILY_NAME_PROPERTY),
                     property_text(super::export_content::TYPE_NAME_PROPERTY),
                 ) {
-                    (Some(family), Some(type_name)) => {
+                    (Some(family), Some(type_name)) if !stair_part_without_object_type => {
                         quoted_or_dollar(&escape(&format!("{family}:{type_name}")))
                     }
                     _ => "$".into(),
@@ -4347,11 +4381,12 @@ impl StepWriter<'_> {
                     index,
                     predefined_type,
                     flow_direction,
+                    system_type,
                     ..
                 } => Some((
                     (*id, *index),
                     format!(
-                        ".{}.,{}",
+                        ".{}.,{},{}",
                         flow_direction
                             .as_deref()
                             .and_then(|flow| step_enum_of(flow, &PORT_FLOW_DIRECTIONS))
@@ -4359,7 +4394,12 @@ impl StepWriter<'_> {
                         predefined_type
                             .as_deref()
                             .and_then(|kind| step_enum_of(kind, &PORT_TYPES))
-                            .map_or("$".to_string(), |kind| format!(".{kind}."))
+                            .map_or("$".to_string(), |kind| format!(".{kind}.")),
+                        // the connector's system's classification.
+                        system_type
+                            .as_deref()
+                            .and_then(|system| step_enum_of(system, &PORT_SYSTEM_TYPES))
+                            .map_or("$".to_string(), |system| format!(".{system}."))
                     ),
                 )),
                 _ => None,
@@ -4368,7 +4408,7 @@ impl StepWriter<'_> {
         let port_attribute = |id: u32, index: u32| {
             port_attributes
                 .get(&(id, index))
-                .map_or(".NOTDEFINED.,$", String::as_str)
+                .map_or(".NOTDEFINED.,$,$", String::as_str)
                 .to_string()
         };
         // Revit names a port by its flow, `InPort_` for a sink,
@@ -4426,9 +4466,47 @@ impl StepWriter<'_> {
             })
             .collect();
         // a connector joined to a placed connector of a duct or pipe is
-        // at the same point, with the same axis, as Revit's export writes
-        // every port joined to a segment's (RE1: 118 of 118 on Plumbing, 59
-        // of 59 on Mechanical, at the point).
+        // at the same point, as Revit's export writes every port joined to a
+        // segment's (RE1: 118 of 118 on Plumbing, 59 of 59 on Mechanical, at
+        // the point). Its own axis points out of its element, the other's
+        // reversed, and Revit's export turns a sink's axis round, so the axis
+        // written is the other port's where exactly one of the two is a sink,
+        // as on every one of RE1's, and reversed where neither or both are
+        // (Snowdon Towers HVAC's bidirectional pairs). A duct's tap
+        // (a connector of a duct segment past its two ends) is on its
+        // axis, where the element tapped into it does not put its own: it
+        // places no other.
+        let sinks: HashSet<(u32, u32)> = model
+            .entities
+            .iter()
+            .filter_map(|entity| match entity {
+                super::entities::IfcEntity::Port {
+                    id,
+                    index,
+                    flow_direction: Some(flow),
+                    ..
+                } if flow.eq_ignore_ascii_case("SINK") => Some((*id, *index)),
+                _ => None,
+            })
+            .collect();
+        let taps: HashSet<(u32, u32)> = model
+            .entities
+            .iter()
+            .filter_map(|entity| match entity {
+                super::entities::IfcEntity::Port {
+                    element, id, index, ..
+                } if *index >= 2
+                    && matches!(
+                        model.entities.get(*element),
+                        Some(super::entities::IfcEntity::BuildingElement { ifc_type, .. })
+                            if ifc_type == "IFCDUCTSEGMENT"
+                    ) =>
+                {
+                    Some((*id, *index))
+                }
+                _ => None,
+            })
+            .collect();
         for entity in &model.entities {
             let super::entities::IfcEntity::PortConnection {
                 a,
@@ -4445,10 +4523,13 @@ impl StepWriter<'_> {
                 ((*a_id, *a_index), *b, (*b_id, *b_index)),
                 ((*b_id, *b_index), *a, (*a_id, *a_index)),
             ] {
-                if port_points.contains_key(&open) {
+                if port_points.contains_key(&open) || taps.contains(&placed) {
                     continue;
                 }
                 if let Some(&(_, point, direction)) = port_points.get(&placed) {
+                    let turned = sinks.contains(&placed) == sinks.contains(&open);
+                    // `0.0 - v` keeps an exact zero unsigned.
+                    let direction = direction.map(|d| if turned { d.map(|v| 0.0 - v) } else { d });
                     port_points.insert(open, (element, point, direction));
                 }
             }
@@ -4505,7 +4586,7 @@ impl StepWriter<'_> {
                 self.emit_entity(
                     port,
                     format!(
-                        "IFCDISTRIBUTIONPORT('{}',#{owner_hist},'{}','Flow',$,{placement},$,{},$)",
+                        "IFCDISTRIBUTIONPORT('{}',#{owner_hist},'{}','Flow',$,{placement},$,{})",
                         gid(&["port", &id_text, &index_text]),
                         port_name(id, index),
                         port_attribute(id, index),
@@ -4566,7 +4647,7 @@ impl StepWriter<'_> {
             self.emit_entity(
                 port,
                 format!(
-                    "IFCDISTRIBUTIONPORT('{}',#{owner_hist},'{}','Flow',$,{placement},$,{},$)",
+                    "IFCDISTRIBUTIONPORT('{}',#{owner_hist},'{}','Flow',$,{placement},$,{})",
                     gid(&["port", &id_text, &index_text]),
                     port_name(*id, *index),
                     port_attribute(*id, *index),
@@ -5153,12 +5234,21 @@ impl StepWriter<'_> {
     fn finish_to_sink(mut self) -> std::io::Result<u64> {
         self.out.push_str("END-ISO-10303-21;\n");
         self.spill();
-        match self.sink {
+        let written = match self.sink {
             Some(Sink {
                 error: Some(error), ..
-            }) => Err(error),
-            Some(Sink { written, .. }) => Ok(written),
-            None => Ok(0),
+            }) => return Err(error),
+            Some(Sink { written, .. }) => written,
+            None => 0,
+        };
+        match self.non_finite {
+            Some(id) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "entity #{id} holds a number that is not finite (NaN or infinity), which an IFC file cannot hold"
+                ),
+            )),
+            None => Ok(written),
         }
     }
 }
@@ -5334,6 +5424,38 @@ fn compound_angle(degrees: f64) -> String {
         sign * sec,
         sign * millionths
     )
+}
+
+/// Whether `body`, an entity's attribute list, holds a number formatted from
+/// a non-finite `f64` (`NaN`, `inf`, `-inf`). ISO 10303-21's REAL has no such
+/// form, and IfcOpenShell refuses the file. Text inside a STEP string literal
+/// (single quotes, a quote doubled within) is skipped, so a name that reads
+/// `NaN` is not one.
+fn holds_non_finite(body: &str) -> bool {
+    let bad = |token: &str| matches!(token, "NaN" | "inf" | "-inf" | "+inf");
+    let mut in_string = false;
+    let mut start: Option<usize> = None;
+    for (at, byte) in body.bytes().enumerate() {
+        if in_string {
+            // A doubled quote ends the literal and opens it again at once.
+            in_string = byte != b'\'';
+            continue;
+        }
+        match byte {
+            b'\'' | b'(' | b')' | b',' | b' ' => {
+                if start.take().is_some_and(|from| bad(&body[from..at])) {
+                    return true;
+                }
+                in_string = byte == b'\'';
+            }
+            _ => {
+                if start.is_none() {
+                    start = Some(at);
+                }
+            }
+        }
+    }
+    start.is_some_and(|from| bad(&body[from..]))
 }
 
 /// STEP-style string escape per ISO-10303-21:
@@ -6529,5 +6651,58 @@ mod wall_axis_tests {
         ]);
         let axis = wall_axis_local(line, [2.0, 0.0, 0.0], None, &solid_plan_points(&steps));
         assert!(close(axis.unwrap(), [[-1.0, 0.0], [2.5, 0.0]]));
+    }
+}
+
+// The pure-helper exception to the ban on unit tests: `holds_non_finite` reads
+// no file, and these are the ways it can be wrong, written before it.
+#[cfg(test)]
+mod tests {
+    use super::holds_non_finite;
+
+    #[test]
+    fn a_nan_attribute_is_found() {
+        assert!(holds_non_finite(
+            "IFCCARTESIANPOINT((0.000000,NaN,1.000000))"
+        ));
+    }
+
+    #[test]
+    fn an_infinity_of_either_sign_is_found() {
+        assert!(holds_non_finite("IFCCARTESIANPOINT((inf,0.,0.))"));
+        assert!(holds_non_finite("IFCCARTESIANPOINT((0.,-inf,0.))"));
+    }
+
+    #[test]
+    fn a_typed_value_holding_infinity_is_found() {
+        assert!(holds_non_finite(
+            "IFCPROPERTYSINGLEVALUE('Width',$,IFCLENGTHMEASURE(inf),$)"
+        ));
+    }
+
+    #[test]
+    fn the_last_attribute_with_no_delimiter_after_it_is_read() {
+        assert!(holds_non_finite("NaN"));
+    }
+
+    #[test]
+    fn a_name_that_reads_nan_is_not_a_number() {
+        assert!(!holds_non_finite(
+            "IFCWALL('2a',#5,'NaN',$,'inf wall',#7,#8,'1')"
+        ));
+    }
+
+    #[test]
+    fn a_doubled_quote_keeps_the_literal_open() {
+        assert!(!holds_non_finite("IFCWALL('2a',#5,'it''s NaN',$)"));
+        assert!(holds_non_finite("IFCWALL('2a',#5,'it''s',NaN)"));
+    }
+
+    #[test]
+    fn enumerations_and_finite_numbers_are_not_flagged() {
+        assert!(!holds_non_finite(
+            "IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.),IFCREAL(1.000000),#12,$,*,.INFORMATION."
+        ));
+        assert!(!holds_non_finite(""));
     }
 }

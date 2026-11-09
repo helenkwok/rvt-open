@@ -733,6 +733,7 @@ fn format_property_value(v: &super::entities::PropertyValue) -> String {
         PropertyValue::Power(w) => format!("{w:.1} W"),
         PropertyValue::ElectricVoltage(v) => format!("{v:.1} V"),
         PropertyValue::ElectricCurrent(i) => format!("{i:.2} A"),
+        PropertyValue::Ratio(r) => format!("{r:.4}"),
         PropertyValue::List(items) => items
             .iter()
             .map(format_property_value)
@@ -776,6 +777,7 @@ fn property_value_kind(v: &super::entities::PropertyValue) -> &'static str {
         PropertyValue::Power(_) => "power",
         PropertyValue::ElectricVoltage(_) => "electric_voltage",
         PropertyValue::ElectricCurrent(_) => "electric_current",
+        PropertyValue::Ratio(_) => "ratio",
         PropertyValue::List(_) => "list",
         PropertyValue::Enumerated(_) => "text",
         PropertyValue::PhysicalComplex { .. } => "complex_quantity",
