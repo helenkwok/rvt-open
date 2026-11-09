@@ -1063,8 +1063,28 @@ pub(super) fn attach_wall_layers(
         let float = |value: f64| InstanceField::Float { value, size: 8 };
         // The direction the exterior side is taken from: the line's, or the
         // arc's tangent at its middle.
-        let (dx, dy) = if let Some(line) = lines.get(&id) {
-            let (start, end) = (line.start(), line.end());
+        // A wall whose data copies disagree on its line takes its native
+        // record's location line (the curve its wall driver points to), so
+        // that its body and the joins of the walls meeting it are read: on
+        // the BIM4LCA models and Snowdon Towers, the walls joined to such a
+        // wall were the ones whose partner had no centreline.
+        // The native record is the line's source only where the data gives none.
+        if lines.contains_key(&id) || arcs.contains_key(&id) {
+            rf.forget_value_source(id, "native_wall");
+        }
+        let line = lines
+            .get(&id)
+            .map(|line| {
+                let (start, end) = (line.start(), line.end());
+                ([start[0], start[1]], [end[0], end[1]])
+            })
+            // Revit 2024 to 2027 only: a 2015 to 2023 wall keeps the line its
+            // own join-list reader gives it.
+            .or_else(|| {
+                let record = native.get(&u64::from(id)).filter(|_| !narrow)?;
+                (!arcs.contains_key(&id)).then_some((record.start, record.end))
+            });
+        let (dx, dy) = if let Some((start, end)) = line {
             let (dx, dy) = (end[0] - start[0], end[1] - start[1]);
             let length = dx.hypot(dy);
             if !length.is_finite() || length <= 1e-9 {

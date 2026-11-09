@@ -299,6 +299,7 @@ fn synthetic_structural_ifc_has_expected_entity_counts() {
         storey_properties: Default::default(),
         filler_sizes: Default::default(),
         wall_location_lines: Default::default(),
+        wall_axis_ends: Default::default(),
         opening_categories: Default::default(),
         grids: Vec::new(),
         single_slab_roofs: Default::default(),

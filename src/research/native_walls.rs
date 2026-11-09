@@ -819,6 +819,8 @@ pub fn native_walls_and_top_joins_into(
         selected_ids: walls.clone(),
         selected_classes: BTreeSet::from(["BasicWallType".to_string()]),
         releases: crate::native_document::NATIVE_RELEASES,
+        // A wall whose data copies disagree on its line takes its location
+        // curve from this record.
         value_source: Some("native_wall"),
         ..Options::default()
     };

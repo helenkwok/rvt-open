@@ -3362,9 +3362,14 @@ impl StepWriter<'_> {
                         location_feet,
                     ) {
                         let points = solid_plan_points(shape);
-                        if let Some(ends) =
-                            wall_axis_local(*line, *location, *rotation_radians, &points)
-                        {
+                        let plain = model.wall_axis_ends.get(&entity_idx);
+                        if let Some(ends) = wall_axis_local(
+                            *line,
+                            *location,
+                            *rotation_radians,
+                            &points,
+                            plain.map_or(&[][..], Vec::as_slice),
+                        ) {
                             reps.push(format!("#{}", self.emit_wall_axis(axis_ctx, ends)));
                         }
                     }
@@ -3475,8 +3480,15 @@ impl StepWriter<'_> {
                         plan_ctx_ids.get("Axis"),
                         location_feet,
                     ) {
+                        let plain = model.wall_axis_ends.get(&entity_idx);
                         if let Some(ends) = extrusion_plan_points(ex).and_then(|points| {
-                            wall_axis_local(*line, *location, *rotation_radians, &points)
+                            wall_axis_local(
+                                *line,
+                                *location,
+                                *rotation_radians,
+                                &points,
+                                plain.map_or(&[][..], Vec::as_slice),
+                            )
                         }) {
                             reps.push(format!("#{}", self.emit_wall_axis(axis_ctx, ends)));
                         }
@@ -5279,11 +5291,18 @@ fn site_reference(g: Option<&crate::georeference::Georeference>) -> String {
 /// on its location line and runs from end to end of its body along it (past
 /// the line's end where the body runs through a join, short of it where it
 /// stops at one). `None` without points, or where the line has no length.
+///
+/// Where a wall's layers end apart at a layered join, Revit's axis ends at
+/// the plain join instead (the other wall's far face where the wall runs
+/// through, its near face where it stops), not where the layers end:
+/// each point of `plain` (plan model feet, on the line) replaces the body's
+/// end on its side of the body's middle.
 fn wall_axis_local(
     line: [[f64; 2]; 2],
     location: [f64; 3],
     rotation: Option<f64>,
     points: &[(f64, f64)],
+    plain: &[[f64; 2]],
 ) -> Option<[[f64; 2]; 2]> {
     let [[sx, sy], [ex, ey]] = line;
     let length = (ex - sx).hypot(ey - sy);
@@ -5299,10 +5318,25 @@ fn wall_axis_local(
         );
         (wx - sx) * ux + (wy - sy) * uy
     });
-    let (low, high) = along.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
+    let (mut low, mut high) = along.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
         (lo.min(t), hi.max(t))
     });
     if !(low.is_finite() && high.is_finite() && high - low > 1e-9) {
+        return None;
+    }
+    let middle = (low + high) / 2.0;
+    for point in plain {
+        let t = (point[0] - sx) * ux + (point[1] - sy) * uy;
+        if !t.is_finite() {
+            continue;
+        }
+        if t < middle {
+            low = t;
+        } else {
+            high = t;
+        }
+    }
+    if high - low <= 1e-9 {
         return None;
     }
     let local = |t: f64| {
@@ -6577,6 +6611,7 @@ mod wall_axis_tests {
             location,
             rotation,
             &extrusion_plan_points(body).unwrap_or_default(),
+            &[],
         )
     }
 
@@ -6637,7 +6672,7 @@ mod wall_axis_tests {
             face_materials: Vec::new(),
         };
         let line = [[0.0, 0.0], [4.0, 0.0]];
-        let axis = wall_axis_local(line, [2.0, 0.0, 0.0], None, &solid_plan_points(&mesh));
+        let axis = wall_axis_local(line, [2.0, 0.0, 0.0], None, &solid_plan_points(&mesh), &[]);
         assert!(close(axis.unwrap(), [[-2.0, 0.0], [2.1, 0.0]]));
         // A stepped body of two extrusions: both count.
         let steps = SolidShape::Compound(vec![
@@ -6649,7 +6684,7 @@ mod wall_axis_tests {
                 ..Extrusion::rectangle(0.0, 0.0, 1.0)
             }),
         ]);
-        let axis = wall_axis_local(line, [2.0, 0.0, 0.0], None, &solid_plan_points(&steps));
+        let axis = wall_axis_local(line, [2.0, 0.0, 0.0], None, &solid_plan_points(&steps), &[]);
         assert!(close(axis.unwrap(), [[-1.0, 0.0], [2.5, 0.0]]));
     }
 }

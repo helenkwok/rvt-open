@@ -464,6 +464,9 @@ impl IfcxGraph {
             if let Some(v) = self.ifc4(p, "wallLocationLine") {
                 model.wall_location_lines.insert(i, de(v.clone()));
             }
+            if let Some(v) = self.ifc4(p, "wallAxisEnds") {
+                model.wall_axis_ends.insert(i, de(v.clone()));
+            }
             if let Some(v) = self.ifc4(p, "mapTarget") {
                 model.instancing.targets.insert(i, de(v.clone()));
             }
@@ -1395,6 +1398,9 @@ impl Builder {
             }
             if let Some(line) = model.wall_location_lines.get(&i) {
                 self.attr4(&p, "wallLocationLine", json!(line));
+            }
+            if let Some(ends) = model.wall_axis_ends.get(&i) {
+                self.attr4(&p, "wallAxisEnds", json!(ends));
             }
             if let Some(c) = model.opening_cuts.get(&i) {
                 self.attr4(&p, "openingCut", json!(c));

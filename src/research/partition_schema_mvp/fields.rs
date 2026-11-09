@@ -586,6 +586,14 @@ pub const WALL_JOIN_LAYER_REACH_FIELDS: [&str; 2] = [
     "m_wall_join_end_layer_reaches",
 ];
 
+/// Fields holding, where a wall's layers end apart at a layered join, how
+/// far past the start and the end of its centreline the plain join lies, feet:
+/// the other wall's far face where this wall runs through, its near face
+/// where it stops. Revit's export ends the wall's `Axis` there, not where its
+/// layers end.
+pub const WALL_JOIN_AXIS_REACH_FIELDS: [&str; 2] =
+    ["m_wall_join_start_axis_reach", "m_wall_join_end_axis_reach"];
+
 /// Fields holding, at an angled join, how far past the start and the end of
 /// its centreline each of a wall's layers reaches along its exterior-side
 /// and its interior-side edge, exterior first, two values per layer, feet.

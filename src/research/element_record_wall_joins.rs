@@ -399,8 +399,9 @@ pub struct ButtJoin {
 /// the wall that runs through reaches the outer edge of the partner's layer
 /// `i`, and layer `i` of the wall that stops, its inner edge. That holds
 /// where both walls show the same layer functions in the same order from
-/// the corner, and those ends get `layer_reach_feet`; for walls of
-/// different heights see [`layer_reaches`].
+/// the corner, and those ends get `layer_reach_feet`; for walls whose
+/// layer functions differ and walls of different heights see
+/// [`layer_reaches`].
 ///
 /// An end no other wall's centreline ends at is read as a T joint where it
 /// lies part way along another wall's centreline ([`tee_join`]). A wall
@@ -598,6 +599,13 @@ fn joined_stop(
 /// measured against Revit's IFC4 bodies; 16 of the rest Revit draws as a
 /// clean stop at the face, as it does at all three on RE1 (Revit 2025).
 ///
+/// A layer outside `wall`'s core, `k` layers in from its face, whose face
+/// side shows the same functions, layer for layer, as the other wall's near
+/// side does over its first `k + 1` layers outside the core, nests past the
+/// first `k` of them, as layered walls do at an L joint: where both walls'
+/// layers outside the core are all structure, as on the BIM4LCA office, the
+/// layers step into each other.
+///
 /// `None` unless exactly one other wall overlapping it in elevation has
 /// `point` on its centreline, at 45 to 135 degrees to `wall` (a slanted
 /// end below a right angle, [`angled_tee_edges`]), far enough from its ends
@@ -684,11 +692,31 @@ pub fn tee_join(
             interior
         }
     });
+    // How many of a run of layers, from its face, lie within that face's
+    // layers outside the core.
+    let in_shell = |layers: &mut dyn Iterator<Item = &(f64, u32)>, shell: f64| {
+        let mut depth = 0.0;
+        layers
+            .take_while(|(width, _)| {
+                depth += width;
+                depth <= shell + JOIN_EPS_FEET
+            })
+            .count()
+    };
+    let near_count = near_shell.map_or(0, |shell| in_shell(&mut near_first.iter(), shell));
+    let [exterior_count, interior_count] = wall.shells.map_or([0, 0], |[exterior, interior]| {
+        [
+            in_shell(&mut wall.layers.iter(), exterior),
+            in_shell(&mut wall.layers.iter().rev(), interior),
+        ]
+    });
+    let count = wall.layers.len();
     let mut from_exterior = 0.0;
     let reaches: Vec<f64> = wall
         .layers
         .iter()
-        .map(|(width, function)| {
+        .enumerate()
+        .map(|(index, (width, function))| {
             let by_priority = -half
                 + near_first
                     .iter()
@@ -700,10 +728,42 @@ pub fn tee_join(
                     && from_exterior + width <= wall.thickness_feet - interior + JOIN_EPS_FEET
             });
             from_exterior += width;
-            match near_shell {
-                Some(shell) if core => by_priority.max(shell - half),
-                _ => by_priority,
+            if core {
+                return match near_shell {
+                    Some(shell) => by_priority.max(shell - half),
+                    None => by_priority,
+                };
             }
+            // A layer outside the core, `depth` layers in from its face, whose
+            // face side shows the same functions as the other wall's near
+            // side: it nests past that many of the other wall's layers.
+            let (depth, side): (usize, Vec<u32>) = if index < exterior_count {
+                (
+                    index,
+                    wall.layers[..=index].iter().map(|layer| layer.1).collect(),
+                )
+            } else if count - 1 - index < interior_count {
+                let depth = count - 1 - index;
+                (
+                    depth,
+                    wall.layers[index..]
+                        .iter()
+                        .rev()
+                        .map(|layer| layer.1)
+                        .collect(),
+                )
+            } else {
+                return by_priority;
+            };
+            let nests = depth < near_count
+                && near_first[..=depth]
+                    .iter()
+                    .map(|layer| layer.1)
+                    .eq(side.iter().copied());
+            if !nests {
+                return by_priority;
+            }
+            by_priority.max(-half + near_first[..depth].iter().map(|layer| layer.0).sum::<f64>())
         })
         .collect();
     Some(ButtJoin {
@@ -905,8 +965,16 @@ pub fn angled_tee_edges(
 /// first, where `wall` meets `other` at a layered butt join.
 /// `into` points from the joint along `wall`.
 ///
-/// `None` unless both walls have several layers and both show the same layer
-/// functions in the same order counted from the outside of the corner.
+/// `None` unless both walls have several layers. Where both show the same
+/// layer functions in the same order counted from the outside of the corner,
+/// every layer nests against its like. Where they do not, the layers of like
+/// function are paired, the cores first ([`paired_layers`]), and each pair
+/// nests; a layer outside the first pair of the wall that runs through stops
+/// at its partner's first paired layer, while the stopping wall's wraps the
+/// corner to the other's outer face (a finish on one wall against a
+/// different finish on the other); a layer inside the last pair runs to the
+/// stopping wall's inner face, or stops at the through wall's last paired
+/// layer. `None` where a layer lies between two pairs.
 /// Walls of different heights nest the same way, except that a wall that
 /// runs through a lower one, whose height range holds the other's, reaches
 /// the other's far face with every layer. Against Revit's IFC4 bodies of the
@@ -920,7 +988,7 @@ pub fn layer_reaches(
     into: [f64; 2],
     runs_through: bool,
 ) -> Option<Vec<f64>> {
-    if wall.layers.len() < 2 || other.layers.len() != wall.layers.len() {
+    if wall.layers.len() < 2 || other.layers.len() < 2 {
         return None;
     }
     let same_height = (wall.base_feet - other.base_feet).abs() <= LAYER_JOIN_HEIGHT_EPS_FEET
@@ -966,21 +1034,93 @@ pub fn layer_reaches(
     } else {
         other.layers.iter().rev().map(|(_, f)| *f).collect()
     };
-    if ours != theirs {
-        return None;
-    }
     bounds.sort_by(|a, b| b.total_cmp(a));
     if over {
         return Some(vec![bounds[0]; wall.layers.len()]);
     }
-    let reaches: Vec<f64> = (0..wall.layers.len())
-        .map(|rank| bounds[if runs_through { rank } else { rank + 1 }])
-        .collect();
+    // Pair the layers of like function, the core's first
+    // ([`paired_layers`]). A pair nests as at walls layered alike: the
+    // layer of the wall that runs through reaches the outer edge of its
+    // partner, the layer of the wall that stops the inner edge of its own.
+    let pairs = if runs_through {
+        paired_layers(&ours, &theirs)
+    } else {
+        paired_layers(&theirs, &ours)
+            .into_iter()
+            .map(|(theirs, ours)| (ours, theirs))
+            .collect()
+    };
+    let (&(first, first_partner), &(last, last_partner)) = (pairs.first()?, pairs.last()?);
+    let reaches: Vec<f64> = (0..ours.len())
+        .map(|rank| {
+            if let Some(&(_, partner)) = pairs.iter().find(|(layer, _)| *layer == rank) {
+                return Some(bounds[if runs_through { partner } else { partner + 1 }]);
+            }
+            // A layer outside the first pair: the wall that runs through
+            // stops it at the partner's first paired layer, and the wall
+            // that stops wraps it round the corner to the other's outer face.
+            // One inside the last pair: the wall that runs through takes it to
+            // the partner's inner face, and the wall that stops ends it
+            // against the other's last paired layer.
+            if rank < first {
+                Some(if runs_through {
+                    bounds[first_partner]
+                } else {
+                    bounds[0]
+                })
+            } else if rank > last {
+                Some(if runs_through {
+                    bounds[bounds.len() - 1]
+                } else {
+                    bounds[last_partner + 1]
+                })
+            } else {
+                None
+            }
+        })
+        .collect::<Option<_>>()?;
     Some(if partner_on_exterior {
         reaches.into_iter().rev().collect()
     } else {
         reaches
     })
+}
+
+/// The pairs of like function between the layers of the wall that runs
+/// through and those of the wall that stops at a layered L joint, each
+/// counted from the outside of the corner, as `(through, stops)` indices in
+/// order. Of all such pairings that do not cross, the one whose layers
+/// weigh most, structure 5, substrate 4, thermal or air 3, finish 1 2 and
+/// finish 2 1: so the cores pair first. Where the two walls show the same
+/// functions in the same order, every layer pairs with its like.
+fn paired_layers(through: &[u32], stops: &[u32]) -> Vec<(usize, usize)> {
+    let weight = |function: u32| 6 - i64::from(function.min(6));
+    let (n, m) = (through.len(), stops.len());
+    let mut best = vec![vec![0_i64; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            let paired = (through[i] == stops[j] && weight(through[i]) > 0)
+                .then(|| best[i + 1][j + 1] + weight(through[i]));
+            best[i][j] = best[i + 1][j].max(best[i][j + 1]).max(paired.unwrap_or(0));
+        }
+    }
+    let mut pairs = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if through[i] == stops[j]
+            && weight(through[i]) > 0
+            && best[i][j] == best[i + 1][j + 1] + weight(through[i])
+        {
+            pairs.push((i, j));
+            i += 1;
+            j += 1;
+        } else if best[i + 1][j] >= best[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    pairs
 }
 
 /// How closely two walls' bases and tops must agree for their layered join
@@ -1056,7 +1196,13 @@ pub enum CornerEnd {
     /// The wall stops against `partner`, which runs through the corner,
     /// layer by layer as at a layered L joint ([`layer_reaches`]): how far
     /// past its line's end each layer reaches, exterior first.
-    Layers { reach_feet: Vec<f64>, partner: u32 },
+    /// `axis_reach_feet` is how far past its line's end the partner's near
+    /// face lies, where Revit's export ends the wall's `Axis`.
+    Layers {
+        reach_feet: Vec<f64>,
+        partner: u32,
+        axis_reach_feet: f64,
+    },
 }
 
 /// The end of the wall `wall` at `slot` (0 its start, 1 its end), where three
@@ -1273,6 +1419,7 @@ fn corner_end(
                     CornerEnd::Layers {
                         reach_feet,
                         partner: only.id,
+                        axis_reach_feet: only.x - only.thickness_feet / 2.0,
                     }
                 });
             }
