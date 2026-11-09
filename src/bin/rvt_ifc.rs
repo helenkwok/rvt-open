@@ -261,6 +261,12 @@ struct Args {
     /// does; composing it with this layer on top gives the full tree.
     #[arg(long, value_name = "PATH", requires = "ifcx")]
     ifcx_diagnostics: Option<PathBuf>,
+    /// Leave out of the IFCX file what an IFC4 export does not hold: every
+    /// other element the file saves parameters for (phases, design options,
+    /// views, levels, materials, project information, unused types) and the
+    /// parameters the exported elements lack (faster on large files).
+    #[arg(long, requires = "ifcx")]
+    no_ifcx_revit_elements: bool,
     /// Also write the model as ThatOpen Fragments (`.frag`, the public
     /// @thatopen/fragments 3.6.0 schema) to this path: the IFCX graph's
     /// items, properties, tree and meshes.
@@ -586,6 +592,16 @@ fn run(args: Args) -> anyhow::Result<()> {
         eprintln!("rvt-ifc: {note}");
     }
 
+    // What IFCX carries beyond the IFC4 model, read while the file is open.
+    let revit_elements = if args.ifcx.is_some() && !args.no_ifcx_revit_elements {
+        rvt::control::stage("revit elements");
+        rvt::ifc::ifcx_revit_elements::read(&mut rf).unwrap_or_else(|e| {
+            eprintln!("rvt-ifc: warning: IFCX written without the file's other elements: {e}");
+            Vec::new()
+        })
+    } else {
+        Vec::new()
+    };
     // Everything below is written from the graph: free the file (its
     // inflated streams and memos) before it is built, and the model after.
     drop(rf);
@@ -594,7 +610,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     let untitled = model.project_name.is_none();
     rvt::control::stage("graph");
     // The model is the IFCX-shaped graph; the IFC4 text is derived from it.
-    let graph = rvt::convert::graph(
+    let mut graph = rvt::convert::graph(
         &model,
         &opts,
         args.ifcx.is_some() || args.frag.is_some() || args.usda.is_some() || args.usdc.is_some(),
@@ -664,38 +680,6 @@ fn run(args: Args) -> anyhow::Result<()> {
     };
     report.output("ifc", &out_path);
     eprintln!("rvt-ifc: wrote {written} bytes to {}", out_path.display());
-    if let Some(ifcx_path) = &args.ifcx {
-        rvt::control::stage("write ifcx");
-        // header time: --ifc4-timestamp, SOURCE_DATE_EPOCH, else the input file's own modified time
-        let ifcx_time = timestamp.or_else(|| {
-            std::fs::metadata(&args.input)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64)
-        });
-        // Written as it is built, not held whole.
-        let (written, (diagnostics_layer, ledger)) =
-            rvt::cli::write_output_with(ifcx_path, |out| {
-                write_ifcx_graph_layers_to(&graph, ifcx_time, out)
-            })?;
-        report.output("ifcx", ifcx_path);
-        eprintln!(
-            "rvt-ifc: wrote {written} IFCX bytes to {}",
-            ifcx_path.display()
-        );
-        if let Some(p) = &args.ifcx_diagnostics {
-            rvt::cli::write_output(p, diagnostics_layer.as_bytes())?;
-            eprintln!(
-                "rvt-ifc: wrote {} IFCX diagnostics bytes to {}",
-                diagnostics_layer.len(),
-                p.display()
-            );
-        }
-        if let Some(ledger_path) = &args.ifcx_ledger {
-            rvt::cli::write_output(ledger_path, serde_json::to_vec_pretty(&ledger)?)?;
-        }
-    }
     if let Some(frag_path) = &args.frag {
         rvt::control::stage("write frag");
         let (bytes, stats) = rvt::ifc::frag_writer::write_frag_graph_with(
@@ -736,6 +720,40 @@ fn run(args: Args) -> anyhow::Result<()> {
             bytes.len(),
             usdc_path.display()
         );
+    }
+    if let Some(ifcx_path) = &args.ifcx {
+        rvt::control::stage("write ifcx");
+        // Last, so the .frag and USD files above are as before.
+        graph.add_revit_elements(&revit_elements);
+        // header time: --ifc4-timestamp, SOURCE_DATE_EPOCH, else the input file's own modified time
+        let ifcx_time = timestamp.or_else(|| {
+            std::fs::metadata(&args.input)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+        });
+        // Written as it is built, not held whole.
+        let (written, (diagnostics_layer, ledger)) =
+            rvt::cli::write_output_with(ifcx_path, |out| {
+                write_ifcx_graph_layers_to(&graph, ifcx_time, out)
+            })?;
+        report.output("ifcx", ifcx_path);
+        eprintln!(
+            "rvt-ifc: wrote {written} IFCX bytes to {}",
+            ifcx_path.display()
+        );
+        if let Some(p) = &args.ifcx_diagnostics {
+            rvt::cli::write_output(p, diagnostics_layer.as_bytes())?;
+            eprintln!(
+                "rvt-ifc: wrote {} IFCX diagnostics bytes to {}",
+                diagnostics_layer.len(),
+                p.display()
+            );
+        }
+        if let Some(ledger_path) = &args.ifcx_ledger {
+            rvt::cli::write_output(ledger_path, serde_json::to_vec_pretty(&ledger)?)?;
+        }
     }
     for line in export_summary(
         &diagnostics,
