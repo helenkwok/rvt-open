@@ -5514,7 +5514,7 @@ fn append_production_walker_elements(
         Default::default(),
         Default::default(),
         Default::default(),
-            Default::default(),
+        Default::default(),
     ))
 }
 

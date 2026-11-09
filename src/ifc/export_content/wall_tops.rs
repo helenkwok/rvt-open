@@ -15,7 +15,7 @@
 //!   release's readers do not read is its record box, deeper than its layers,
 //!   whose underside is its lowest point and not a level the walls stop at,
 //!   and a roof whose outline is not read is drawn over its box's rectangle,
-//! which an L-shaped roof does not fill;
+//!   which an L-shaped roof does not fill;
 //! - the underside lies between the wall's base and top;
 //! - the element's plan covers the whole of the wall's plan and none of the
 //!   wall's plan lies in an opening of the element: the wall's plan outside
