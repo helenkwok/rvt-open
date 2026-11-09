@@ -940,7 +940,7 @@ fn body_readers(body: &str) -> &'static [&'static str] {
         | crate::element_record_beam_cuts::BEAM_BODY_COLUMN_CUT => &[SELECTED_FRAME_READER],
         ec::WALL_CENTRELINE_BODY_SOURCE
         | ec::WALL_TAPERED_BODY_SOURCE
-        | ec::WALL_LAYER_JOIN_BODY_SOURCE => &["bounded_line", "wall_type_layers"],
+        | ec::WALL_LAYER_JOIN_BODY_SOURCE => &["bounded_line", "native_wall", "wall_type_layers"],
         ec::BEAM_AXIS_BODY_SOURCE | ec::BEAM_BOX_BODY_SOURCE => &["bounded_line"],
         ec::WALL_ARC_BODY_SOURCE => &["bounded_arc", "wall_type_layers"],
         ec::INSTANCE_TURNED_BODY_SOURCE | ec::INSTANCE_ORIENTED_BODY_SOURCE => {
