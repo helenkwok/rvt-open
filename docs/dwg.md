@@ -38,9 +38,15 @@ from above (projection lines, with no hidden-line removal yet); a stair or raili
 draws its part above it as overhead lines on its layer's `-MBND` layer; other elements the cut plane cuts
 are drawn as their plan outlines. Each family instance's plan symbol (door swings, window and fixture
 lines: the curves its type shows in a plan view) is drawn through the instance's transform, on the
-instance's layer. The project's own lines are drawn: model, room and area separation lines in the view's
-range (`A-DETL-GENF`), and the view's detail lines (`A-DETL`; legend views drawn as plans are mostly
-these). A view whose axes are turned
+instance's layer. The project's own lines are drawn by what owns them: model lines in the view's range and
+the view's detail lines on `A-DETL` (legend views drawn as plans are mostly these), room separation lines on
+`A-AREA`, property lines on `C-PROP-LINE` in every plan, and the boundary sketches of floors, toposolids and
+building pads on their category's layer. Lines that only shape another element are not drawn: a family's
+own lines, the sketches of ceilings, roofs, railings, stairs, walls and openings, sweep paths, and area
+boundaries (area plans only). Rooms are drawn as the export's room polylines (`A-AREA-BNDY`). Grids are
+drawn to their extents in the view, with a head (a circle and the grid's name, `S-GRID-IDEN`) beyond the
+bubble end, and beyond the free end too where the view shows both. A roof seen from above hides the
+projection lines of what lies under it. A view whose axes are turned
 (a site plan set to true north) is drawn in its own axes about the internal origin. Line styles are not
 drawn.
 
