@@ -42,6 +42,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, fetch-depth: 0 }
+      # Before the base checkout, which may not have tools/ci/retry.sh.
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - name: Check out the base ref
         if: matrix.side == 'base'
         env:
@@ -50,7 +52,6 @@ jobs:
           git fetch -q origin "$BASE_REF" 2> /dev/null || true
           git checkout -q --detach "$(git rev-parse --verify "origin/$BASE_REF" 2> /dev/null || echo "$BASE_REF")"
           git log --oneline -1
-      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - run: |
           cargo build --release --locked --bin rvt-ifc --bin rvt-gltf
           mkdir -p bin && cp target/release/rvt-ifc target/release/rvt-gltf bin/ && git rev-parse HEAD > bin/commit
