@@ -936,25 +936,10 @@ impl StepFile {
         let mut placement_args = self
             .args(placement)
             .ok_or("cannot read the site placement")?;
-        let axis = placement_args.get(1).and_then(Arg::target);
-        // The site's own placement (identity as written), composed with F.
-        let (mut loc, mut z, mut x) = ([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
-        if let Some(axis) = axis {
-            let a = self
-                .args(axis)
-                .ok_or("cannot read the site axis placement")?;
-            if let Some(p) = a.first().and_then(Arg::target) {
-                loc = self.triple(p).unwrap_or(loc);
-            }
-            if let Some(d) = a.get(1).and_then(Arg::target) {
-                z = self.triple(d).unwrap_or(z);
-            }
-            if let Some(d) = a.get(2).and_then(Arg::target) {
-                x = self.triple(d).unwrap_or(x);
-            }
-        }
-        let loc = r([loc[0] - o[0], loc[1] - o[1], loc[2] - o[2]]);
-        let (z, x) = (r(z), r(x));
+        // F of the internal frame, whatever placement the writer gave the
+        // site (the shared position under `revit`).
+        let loc = r([-o[0], -o[1], -o[2]]);
+        let (z, x) = ([0.0, 0.0, 1.0], r([1.0, 0.0, 0.0]));
         let point = self.add("IFCCARTESIANPOINT", format!("({})", reals(&loc)));
         let zd = self.add("IFCDIRECTION", format!("({})", reals(&z)));
         let xd = self.add("IFCDIRECTION", format!("({})", reals(&x)));
@@ -965,6 +950,19 @@ impl StepFile {
         placement_args[1] = Arg::Ref(new_axis);
         self.set_args(placement, &placement_args);
 
+        // True North as the writer gives it for the internal frame.
+        let (s_tn, c_tn) = g.true_north.to_radians().sin_cos();
+        for id in self.ids_named("IFCGEOMETRICREPRESENTATIONCONTEXT") {
+            let Some(mut a) = self.args(id) else { continue };
+            if a.len() >= 6 && a[5].target().is_some() {
+                let d = self.add(
+                    "IFCDIRECTION",
+                    format!("({},{})", format_real(-s_tn), format_real(c_tn)),
+                );
+                a[5] = Arg::Ref(d);
+                self.set_args(id, &a);
+            }
+        }
         // The map coordinates of every point stay: the new origin's shared
         // coordinates, and the shared axes (survey point) or the turn of the
         // internal ones (project base point).
@@ -978,28 +976,13 @@ impl StepFile {
                 for k in 0..3 {
                     a[2 + k] = Arg::Atom(format_real(crs.map_value(shared[k])));
                 }
-                if turn {
-                    a[5] = Arg::Atom(format_real(1.0));
-                    a[6] = Arg::Atom(format_real(0.0));
-                }
+                let (ax, ay) = if turn { (1.0, 0.0) } else { (c_tn, -s_tn) };
+                a[5] = Arg::Atom(format_real(ax));
+                a[6] = Arg::Atom(format_real(ay));
                 self.set_args(id, &a);
             }
         }
         Ok(())
-    }
-
-    /// The three numbers of an `IfcCartesianPoint` or `IfcDirection`.
-    fn triple(&self, id: u32) -> Option<[f64; 3]> {
-        let a = self.args(id)?;
-        let Arg::List(items) = a.first()? else {
-            return None;
-        };
-        let mut v = [0.0; 3];
-        for (k, item) in items.iter().take(3).enumerate() {
-            let Arg::Atom(t) = item else { return None };
-            v[k] = parse_real(t)?;
-        }
-        Some(v)
     }
 
     // ---- units -----------------------------------------------------------

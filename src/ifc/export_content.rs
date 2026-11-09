@@ -597,6 +597,33 @@ fn area_property_set(decoded: &DecodedElement, drawn: Option<&AreaDrawn>) -> Pro
             });
         }
     }
+    // Its area, the parameter Revit's schedules show: the region's, where
+    // its sides are all straight.
+    let arcs = decoded
+        .fields
+        .iter()
+        .any(|(field, _)| field == crate::partition_area_records::AREA_ARCS_FIELD);
+    if let Some(drawn) = drawn.filter(|_| !arcs) {
+        let ring = |ring: &[(f64, f64)]| {
+            let n = ring.len();
+            (0..n)
+                .map(|i| {
+                    let (a, b) = (ring[i], ring[(i + 1) % n]);
+                    a.0 * b.1 - b.0 * a.1
+                })
+                .sum::<f64>()
+                .abs()
+                / 2.0
+        };
+        let area = ring(&drawn.profile.outer_xy)
+            - drawn.profile.inner_xy.iter().map(|r| ring(r)).sum::<f64>();
+        if area.is_finite() && area > 0.0 {
+            properties.push(Property {
+                name: "Area".into(),
+                value: PropertyValue::AreaSquareFeet(area),
+            });
+        }
+    }
     if drawn.is_none() {
         let refusal = decoded
             .fields
@@ -670,6 +697,115 @@ pub fn strip_building_element_geometry(entities: &mut [entities::IfcEntity]) {
     }
 }
 
+/// The hand-off marking a footprint roof none of whose edges defines a
+/// slope, which Revit's export writes as its one slab.
+pub const ROOF_ONE_SLAB_PROPERTY: &str = "RoofOneSlab";
+
+/// The class a Shaft Opening's record is read as.
+pub const SHAFT_OPENING_CLASS: &str = "ShaftOpening";
+
+/// An element record's box, model feet: its minimum and maximum corners.
+type RecordBox = ([f64; 3], [f64; 3]);
+
+/// The record box a decoded element carries (its plan centre, base and
+/// extents), where it has one.
+fn record_box(decoded: &DecodedElement) -> Option<RecordBox> {
+    let float = |wanted: &str| {
+        decoded.fields.iter().find_map(|(name, value)| match value {
+            InstanceField::Float { value, .. } if name == wanted && value.is_finite() => {
+                Some(*value)
+            }
+            _ => None,
+        })
+    };
+    let [x, y, z, dx, dy, dz] = [
+        "m_locationX",
+        "m_locationY",
+        "m_locationZ",
+        "m_bboxWidth",
+        "m_bboxDepth",
+        "m_bboxHeight",
+    ]
+    .map(float);
+    let (x, y, z, dx, dy, dz) = (x?, y?, z?, dx?, dy?, dz?);
+    Some((
+        [x - dx / 2.0, y - dy / 2.0, z],
+        [x + dx / 2.0, y + dy / 2.0, z + dz],
+    ))
+}
+
+/// The name Revit's export gives the openings cut in an element:
+/// `Family:Type:<type id>`, else `Opening for <name>`.
+fn host_opening_name(decoded: &DecodedElement, name: &str) -> String {
+    let type_id = decoded.fields.iter().find_map(|(name, value)| match value {
+        InstanceField::ElementId { id, .. }
+            if name == crate::partition_schema_mvp::TYPE_ID_FIELD =>
+        {
+            Some(*id)
+        }
+        _ => None,
+    });
+    match (family_and_type(decoded), type_id) {
+        (Some((family, type_name)), Some(type_id)) => format!("{family}:{type_name}:{type_id}"),
+        _ => format!("Opening for {name}"),
+    }
+}
+
+/// The opening the shaft opening `id` cuts in the slab at `host`, where their
+/// record boxes overlap in a volume: the shaft's plan box in the slab's frame,
+/// through the slab's whole depth. Revit's export writes it as an
+/// `IfcOpeningElement` voiding the slab, named for its type, tagged with the
+/// shaft's ElementId (tiny reference models set 2, recipe 10: the shaft from
+/// Level 1 to Level 2 voids the Level 2 floor it crosses and not the Level 1
+/// floor its base stands on, in all 10 releases). The box is the outline: a
+/// shaft sketched as anything but a rectangle along the plan axes is cut as
+/// its box.
+fn shaft_void(
+    id: u32,
+    shaft: &RecordBox,
+    host: usize,
+    slab: &RecordBox,
+    name: &str,
+    entities: &[entities::IfcEntity],
+) -> Option<entities::IfcEntity> {
+    const EPS: f64 = 1e-6;
+    let overlaps = (0..3).all(|k| shaft.0[k].max(slab.0[k]) + EPS < shaft.1[k].min(slab.1[k]));
+    if !overlaps {
+        return None;
+    }
+    let entities::IfcEntity::BuildingElement {
+        ifc_type,
+        location_feet: Some(at),
+        rotation_radians,
+        ..
+    } = entities.get(host)?
+    else {
+        return None;
+    };
+    let depth_feet = slab.1[2] - at[2];
+    if ifc_type != "IFCSLAB" || !depth_feet.is_finite() || depth_feet <= EPS {
+        return None;
+    }
+    let (sin, cos) = rotation_radians.unwrap_or(0.0).sin_cos();
+    let local = |x: f64, y: f64| {
+        let (dx, dy) = (x - at[0], y - at[1]);
+        (cos * dx + sin * dy, -sin * dx + cos * dy)
+    };
+    let (lo, hi) = (shaft.0, shaft.1);
+    Some(entities::IfcEntity::VoidOpening {
+        host,
+        tag: id.to_string(),
+        name: name.to_string(),
+        outline_feet: vec![
+            local(lo[0], lo[1]),
+            local(hi[0], lo[1]),
+            local(hi[0], hi[1]),
+            local(lo[0], hi[1]),
+        ],
+        depth_feet,
+    })
+}
+
 /// Accumulate production walker hits into IFC entities + storeys + materials.
 pub fn append_typed_production_elements(
     decoded_iter: impl Iterator<Item = DecodedElement>,
@@ -727,6 +863,10 @@ pub fn append_typed_production_elements(
     // What each type object's common set holds, by type and type
     // entity; `None` once two of its elements disagree.
     let mut type_commons: BTreeMap<(u32, String), Option<TypeCommon>> = BTreeMap::new();
+    // Each shaft opening's record box, and each slab's with the name its
+    // openings take, for the openings shafts cut in the slabs they cross.
+    let mut shafts: Vec<(u32, RecordBox)> = Vec::new();
+    let mut shaft_hosts: Vec<(usize, RecordBox, String)> = Vec::new();
 
     for decoded in decoded_iter {
         *out.production_class_counts
@@ -734,6 +874,15 @@ pub fn append_typed_production_elements(
             .or_insert(0) += 1;
 
         if is_misleading_proxy_class(&decoded.class) {
+            continue;
+        }
+
+        // A shaft opening is no element of its own in Revit's export: it is
+        // the opening it cuts in each slab it crosses, written below.
+        if decoded.class == SHAFT_OPENING_CLASS {
+            if let (Some(id), Some(record_box)) = (decoded.id, record_box(&decoded)) {
+                shafts.push((id, record_box));
+            }
             continue;
         }
 
@@ -1456,22 +1605,13 @@ pub fn append_typed_production_elements(
                 ));
             }
         }
-        let opening_name = (!void_bodies.is_empty() || !profile_openings.is_empty()).then(|| {
-            let type_id = decoded.fields.iter().find_map(|(name, value)| match value {
-                InstanceField::ElementId { id, .. }
-                    if name == crate::partition_schema_mvp::TYPE_ID_FIELD =>
-                {
-                    Some(*id)
-                }
-                _ => None,
-            });
-            match (family_and_type(&decoded), type_id) {
-                (Some((family, type_name)), Some(type_id)) => {
-                    format!("{family}:{type_name}:{type_id}")
-                }
-                _ => format!("Opening for {name}"),
+        let opening_name = (!void_bodies.is_empty() || !profile_openings.is_empty())
+            .then(|| host_opening_name(&decoded, &name));
+        if ifc_type == "IFCSLAB" {
+            if let Some(record_box) = record_box(&decoded) {
+                shaft_hosts.push((entity_index, record_box, host_opening_name(&decoded, &name)));
             }
-        });
+        }
         let level_set = level_parameter_property_set(&decoded, &ifc_type);
         let dimensions_set = wall_dimensions_property_set(&decoded, &ifc_type);
         record_type_common(&mut type_commons, &ifc_type, &decoded);
@@ -1686,6 +1826,23 @@ pub fn append_typed_production_elements(
                 }
                 pieces_of.push((entity_index, start..entities.len()));
             }
+        }
+        // A footprint roof none of whose edges defines a slope is its one
+        // slab ([`super::split_single_slab_roofs`], once its body is final).
+        if roof_parts.is_empty()
+            && decoded.class == "Roof"
+            && decoded.fields.iter().any(|(name, value)| {
+                name == crate::partition_schema_mvp::ROOF_NO_SLOPE_EDGE_FIELD
+                    && matches!(value, InstanceField::Bool(true))
+            })
+        {
+            out.record_handoffs
+                .entry(entity_index)
+                .or_default()
+                .push(Property {
+                    name: ROOF_ONE_SLAB_PROPERTY.into(),
+                    value: PropertyValue::Boolean(true),
+                });
         }
         // A plain footprint roof is written as its slabs, `IfcSlab` `.ROOF.`
         // with the roof's name and `Tag`, aggregated by the roof, which keeps
@@ -2000,6 +2157,13 @@ pub fn append_typed_production_elements(
     }
     for (whole, parts) in parts_by_whole.into_iter().chain(roof_slabs) {
         entities.push(entities::IfcEntity::Aggregate { whole, parts });
+    }
+    for (id, shaft) in &shafts {
+        for (host, slab, name) in &shaft_hosts {
+            if let Some(opening) = shaft_void(*id, shaft, *host, slab, name, entities) {
+                entities.push(opening);
+            }
+        }
     }
 
     // A join is written when both elements are exported as

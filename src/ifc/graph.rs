@@ -420,6 +420,7 @@ impl IfcxGraph {
             type_entity_sets: de(from_meta("type_entity_sets")),
             body_pieces: de(from_meta("body_pieces")),
             georeference: de(from_meta("georeference")),
+            grids: de::<Option<_>>(from_meta("grids")).unwrap_or_default(),
             ..IfcModel::default()
         };
         model.global_ids.document = de(from_meta("global_ids_document"));
@@ -1365,6 +1366,9 @@ impl Builder {
             "body_pieces": model.body_pieces,
             "georeference": model.georeference,
         });
+        if !model.grids.is_empty() {
+            project_model["grids"] = json!(model.grids);
+        }
         if let Some(ns) = &model.global_ids.guid_namespace {
             project_model["global_ids_guid_namespace"] = json!(ns);
         }

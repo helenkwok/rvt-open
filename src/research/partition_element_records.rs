@@ -354,6 +354,10 @@ pub const OST_DUCT_TERMINAL: i64 = -2_008_013;
 pub const OST_FOOD_SERVICE_EQUIPMENT: i64 = -2_001_043;
 /// Autodesk `BuiltInCategory.OST_Planting`.
 pub const OST_PLANTING: i64 = -2_001_360;
+/// Autodesk `BuiltInCategory.OST_Toposolid` — a site's toposolid (Revit 2024 on).
+pub const OST_TOPOSOLID: i64 = -2_001_079;
+/// Autodesk `BuiltInCategory.OST_Topography` — a site's topography surface.
+pub const OST_TOPOGRAPHY: i64 = -2_001_340;
 /// Autodesk `BuiltInCategory.OST_Parking`.
 pub const OST_PARKING: i64 = -2_001_180;
 /// Autodesk `BuiltInCategory.OST_Entourage`.
@@ -466,7 +470,7 @@ pub const OST_SECURITY_DEVICES: i64 = -2_008_079;
 /// Gutters: on BIM-Speed Vitoria `ALD26 Before` (Revit 2018) both
 /// instances the rule selects are `Tag`s of Revit's own export, written there
 /// as `IfcFlowSegment`.
-pub const PRODUCT_RECORD_CATEGORIES: [(i64, &str); 54] = [
+pub const PRODUCT_RECORD_CATEGORIES: [(i64, &str); 57] = [
     (OST_FURNITURE, "Furniture"),
     (OST_CASEWORK, "Casework"),
     (OST_PLUMBING_FIXTURES, "PlumbingFixture"),
@@ -489,6 +493,12 @@ pub const PRODUCT_RECORD_CATEGORIES: [(i64, &str); 54] = [
     (OST_DUCT_TERMINAL, "DuctTerminal"),
     (OST_FOOD_SERVICE_EQUIPMENT, "FoodServiceEquipment"),
     (OST_PLANTING, "Planting"),
+    (OST_TOPOSOLID, "Toposolid"),
+    (OST_TOPOGRAPHY, "Topography"),
+    (
+        OST_SHAFT_OPENING,
+        crate::ifc::export_content::SHAFT_OPENING_CLASS,
+    ),
     (OST_PARKING, "Parking"),
     (OST_ENTOURAGE, "Entourage"),
     (OST_HARDSCAPE, "Hardscape"),
@@ -1492,7 +1502,7 @@ pub(crate) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// The categories the exporter recovers instances of, with the class name
 /// each is decoded as: the architectural core plus
 /// [`PRODUCT_RECORD_CATEGORIES`].
-pub const RECOVERED_CATEGORIES: [(i64, &str); 63] = [
+pub const RECOVERED_CATEGORIES: [(i64, &str); 66] = [
     (OST_WALLS, "Wall"),
     (OST_DOORS, "Door"),
     (OST_WINDOWS, "Window"),
@@ -1524,6 +1534,12 @@ pub const RECOVERED_CATEGORIES: [(i64, &str); 63] = [
     (OST_DUCT_TERMINAL, "DuctTerminal"),
     (OST_FOOD_SERVICE_EQUIPMENT, "FoodServiceEquipment"),
     (OST_PLANTING, "Planting"),
+    (OST_TOPOSOLID, "Toposolid"),
+    (OST_TOPOGRAPHY, "Topography"),
+    (
+        OST_SHAFT_OPENING,
+        crate::ifc::export_content::SHAFT_OPENING_CLASS,
+    ),
     (OST_PARKING, "Parking"),
     (OST_ENTOURAGE, "Entourage"),
     (OST_HARDSCAPE, "Hardscape"),

@@ -520,6 +520,8 @@ pub fn refine_with_control(
         );
     }
     *log_provenance = None;
+    // A footprint roof with no slope-defining edge is its one slab.
+    crate::ifc::split_single_slab_roofs(model);
     // volumes, areas and material layers into the base
     // quantities, on the bodies as finally drawn.
     if !opts.placeholder {
@@ -746,6 +748,7 @@ pub fn gltf_model(
     if opts.proxy_shapes {
         crate::ifc::proxy_shapes::attach(&mut model);
     }
+    crate::ifc::split_single_slab_roofs(&mut model);
     crate::control::stage("Revit identity");
     crate::ifc::revit_identity::attach(rf, &mut model);
     Ok((model, notes))
