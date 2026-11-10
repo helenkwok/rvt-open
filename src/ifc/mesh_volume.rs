@@ -222,6 +222,7 @@ mod tests {
             vertices: vec![[0.0; 3]; normals.len()],
             normals,
             triangles: Vec::new(),
+            frame: None,
             hidden: false,
             filtered: false,
         }
