@@ -1,7 +1,7 @@
 # rvt-open's IFCX totals over every release of the tiny models: tools/ifcx-coverage/coverage.py fails when one drops. Raise them when a change carries more.
 set	kind	what	ifcx
 1	element instances	objects	240
-1	element instances	parameters	2442
+1	element instances	parameters	2706
 1	type objects	objects	90
 1	type objects	parameters	524
 1	unused type objects	objects	26205
