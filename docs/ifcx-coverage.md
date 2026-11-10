@@ -46,7 +46,7 @@ not public; the column below was measured once with `--revit-ifc`.
 
 ```bash
 tools/ci/fetch-tiny-models.sh _tiny
-python3 tools/ifcx-coverage/coverage.py _tiny out --bin target/ci --floor tools/ifcx-coverage/floor.tsv
+python3 tools/ifcx-coverage/coverage.py _tiny out --bin target/ci --rvt-ifc-arg=--ifcx-unused-types --floor tools/ifcx-coverage/floor.tsv
 ```
 
 ## What IFCX carries now
@@ -60,8 +60,10 @@ parameters under `rvtopen::revit::<Group>::<Name>`, all under one
 (`Sequence Number`), a design option its set (`Design Option Set Id`). An
 element or type the IFC4 model already holds gets the parameters it lacked. An
 enumeration whose text is not known keeps its integer.
-`--no-ifcx-revit-elements` leaves all of it out; the IFC4, USD and `.frag`
-files do not change either way.
+The types no element uses (most come from the project template) are left out
+unless `--ifcx-unused-types` is given; CI measures with it, so the unused type
+objects below are counted. `--no-ifcx-revit-elements` leaves all of it out;
+the IFC4, USD and `.frag` files do not change either way.
 
 ## Numbers
 
@@ -181,7 +183,7 @@ The release tables sum every kind but the unused type objects.
   treads and risers, top rails, and the wall and rooms of the phase and option
   recipes that its export phase and primary option leave out. IFCX holds all
   the materials, phases, design options and project information, 92% of the
-  views, 59% of the unused types, 89% of set 2's placed elements (balusters
+  views, 59% of the unused types (with `--ifcx-unused-types`), 89% of set 2's placed elements (balusters
   and the left-out wall and rooms included), and 13 and 8 times as many element
   parameters as Revit's export (sets 1 and 2).
 - **Neither carries** the revisions and the survey and project base points as

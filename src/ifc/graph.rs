@@ -364,10 +364,16 @@ impl IfcxGraph {
     /// it nor its type holds; any other element becomes a node of its own,
     /// with its ElementId (`ifc-src::attr::Tag`), its record's class
     /// (`rvtopen::revit::Class`) and its name, under one `RevitElements`
-    /// node of the project. A value whose kind differs from the one its key
+    /// node of the project; a type no element uses
+    /// ([`super::ifcx_revit_elements::RevitElement::unused_type`]) only when
+    /// `unused_types` is set. A value whose kind differs from the one its key
     /// already has is left out. For IFCX: the IFC4, USD and .frag writers
     /// leave these nodes out only if they read the graph before this.
-    pub fn add_revit_elements(&mut self, elements: &[super::ifcx_revit_elements::RevitElement]) {
+    pub fn add_revit_elements(
+        &mut self,
+        elements: &[super::ifcx_revit_elements::RevitElement],
+        unused_types: bool,
+    ) {
         let parent = uuid5(&format!("{}/revit-elements", self.root));
         for e in elements {
             let Ok(path) = ifc_guid_uuid(&e.global_id) else {
@@ -376,6 +382,7 @@ impl IfcxGraph {
             match self.nodes.get(&path) {
                 Some(n) if !n.ifcx => continue,
                 Some(_) => {}
+                None if e.unused_type && !unused_types => continue,
                 None => {
                     let mut attributes = Map::new();
                     attributes.insert("ifc-src::attr::Tag".into(), json!(e.id.to_string()));
