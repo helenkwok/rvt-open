@@ -716,11 +716,25 @@ pub const SYSTEM_FAMILY_SOURCE: &str = "system_family_by_category";
 /// ElementId it is tagged with.
 pub const PROFILE_OPENING_FIELD: &str = "m_profile_opening";
 
+/// The field prefix of the pockets of a wall's edited elevation profile against
+/// its convex hull, the openings Revit's export writes:
+/// `m_profile_pocket_<k>`, the pocket's outline as model-feet points in the
+/// wall's vertical plane, and `m_profile_pocket_<k>_tag`, the highest ElementId
+/// of the profile's lines it follows.
+pub const PROFILE_POCKET_FIELD: &str = "m_profile_pocket";
+
 /// The field holding the two ends of the elevation profile the openings of
 /// [`PROFILE_OPENING_FIELD`] are cut from, as model-feet points: the profile's
 /// lowest and highest along its own axis, which are where its edge runs and a
 /// wall that goes on past them can be told apart.
 pub const PROFILE_EXTENT_FIELD: &str = "m_profile_extent";
+
+/// The field holding the lowest and highest height of the elevation profile the
+/// openings of [`PROFILE_OPENING_FIELD`] are cut from, as two floats in model
+/// feet. A profile edited down from the wall's unconnected height closes below
+/// the top of the wall's record box, and its highest point is then where Revit's
+/// body ends.
+pub const PROFILE_HEIGHT_FIELD: &str = "m_profile_height";
 
 /// How far apart two sketch points may lie and still meet, and how far off a
 /// plane or a side a point may lie and still be on it, feet.

@@ -325,6 +325,33 @@ pub enum IfcEntity {
         recess: bool,
         quantities: bool,
     },
+    /// A pocket of the edited elevation profile of the wall at `host` against
+    /// the profile's convex hull: the opening Revit's export writes for it,
+    /// tagged with the highest ElementId of the profile's
+    /// lines it follows. Placed as a [`IfcEntity::WallProfileOpening`] is. It
+    /// is not written as it stands: the pass that makes the profile's cut in the
+    /// wall's body turns it into a [`IfcEntity::WallProfileOpening`] once it
+    /// has, so that the openings a wall carries are Revit's.
+    WallProfilePocket {
+        host: usize,
+        tag: String,
+        name: String,
+        outline_feet: Vec<(f64, f64)>,
+        axis_turn_radians: f64,
+        plane_offset_feet: f64,
+        thickness_feet: f64,
+    },
+    /// The properties of `set`, a set IFC4 gives an `IfcOpeningElement`
+    /// (`Pset_OpeningElementCommon`), that the parameters of the building
+    /// element at `element` (an index into `IfcModel::entities`) name: a
+    /// door's `FireExit`. Revit's export gives each opening an element cuts
+    /// in a wall besides the one it fills the properties of its cutter's own
+    /// sets, as revit-ifc's `OpeningUtil.CreateOpening` hands the cutter to
+    /// the opening's property sets (CLEANROOM.md source 5). The writer
+    /// adds these to the set of the same name of each
+    /// [`IfcEntity::WallCutOpening`] whose `reference_from` is `element`, and
+    /// writes them nowhere else.
+    CutterOpeningSet { element: usize, set: PropertySet },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

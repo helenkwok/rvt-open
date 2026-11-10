@@ -41,19 +41,23 @@ pub enum ExportKind {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SavedMeshChoice {
-    /// Doors and windows of Revit 2023 to 2027, the releases whose saved
-    /// graphics are read ([`default_scope`](super::saved_meshes::default_scope)), and the walls that embed a
-    /// curtain wall where Revit raised their base, on Revit 2024 to 2027, the
-    /// releases whose wall records name what embeds in them: `rvt-ifc`
-    /// with no switch.
+    /// Every element whose body would be its record's bounding box, on Revit
+    /// 2014 to 2027, the releases whose saved graphics are read, and the walls
+    /// that embed a curtain wall where Revit raised their base, on Revit 2024
+    /// to 2027, the releases whose wall records name what embeds in them:
+    /// `rvt-ifc` with no switch.
     #[default]
     Default,
-    /// Every element whose body would be its record's bounding box
-    /// (`rvt-ifc --saved-meshes`). Slower.
+    /// The same as [`Default`](Self::Default): `rvt-ifc --saved-meshes`, kept
+    /// for old command lines.
     All,
-    /// None: doors and windows keep their record's box, and walls that embed
-    /// a curtain wall their record's body (`rvt-ifc --no-saved-meshes`).
+    /// None: every element keeps its record's box, and walls that embed a
+    /// curtain wall their record's body (`rvt-ifc --no-saved-meshes`).
     Off,
+    /// Doors and windows only, on Revit 2014 to 2027, and the walls that embed a
+    /// curtain wall as for [`Default`](Self::Default): it reads less of the
+    /// file. No `rvt-ifc` switch selects it.
+    DoorsAndWindows,
 }
 
 /// The `rvt-ifc` switches that change the model. [`Default`] is `rvt-ifc` with
@@ -611,7 +615,13 @@ pub fn run_export_with_limits_and_control(
     opts.quality = options.mode;
     opts.walker_limits = limits;
     opts.family_geometry = !placeholder;
-    opts.saved_meshes = !placeholder && options.saved_meshes != SavedMeshChoice::Off;
+    // `convert` draws every boxed element with `saved_meshes`, doors and
+    // windows alone without it, and none with `no_saved_meshes`.
+    opts.saved_meshes = !placeholder
+        && matches!(
+            options.saved_meshes,
+            SavedMeshChoice::Default | SavedMeshChoice::All
+        );
     opts.no_saved_meshes = options.saved_meshes == SavedMeshChoice::Off;
     opts.saved_materials = !placeholder;
     opts.proxy_shapes = !placeholder;

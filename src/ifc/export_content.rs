@@ -35,6 +35,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 mod column_quantities;
 mod wall_areas;
 mod wall_profile;
+pub(crate) use wall_profile::CUT_MARGIN_FEET;
 mod wall_tops;
 
 /// Result of folding production walker hits into an IFC draft.
@@ -93,7 +94,9 @@ pub struct TypedProductionAppend {
     /// them. The names are [`INSTANCE_ORIGIN_PROPERTIES`],
     /// [`FILLER_OPENING_PROPERTIES`], [`DOOR_TYPE_SIZE_PROPERTIES`],
     /// [`CUT_LOOP_SIZE_PROPERTIES`], [`CUT_SOLID_SIZE_PROPERTIES`],
-    /// [`INSTANCE_BOX_SIZE_PROPERTIES`] and [`SYMBOL_WIRE_WIDTH_PROPERTY`].
+    /// [`INSTANCE_BOX_SIZE_PROPERTIES`], [`SYMBOL_WIRE_WIDTH_PROPERTY`] and,
+    /// for a property its parameters name in an opening's set,
+    /// [`CUTTER_OPENING_PROPERTY_PREFIX`].
     pub record_handoffs: BTreeMap<usize, Vec<Property>>,
     /// The joins between two connectors that the writer leaves out because a
     /// connector of either end is named with two partners and the two sides'
@@ -668,6 +671,13 @@ fn area_property_set(decoded: &DecodedElement, drawn: Option<&AreaDrawn>) -> Pro
         name: ELEMENT_RECORD_PROPERTY_SET.into(),
         properties,
     }
+}
+
+/// Make the cut of each wall's edited elevation profile in the
+/// wall's body, and leave the wall the openings Revit's export writes for it.
+/// Run after every pass that reads the wall's body or its openings.
+pub fn cut_wall_profiles(entities: &mut [entities::IfcEntity]) {
+    wall_profile::cut_profiles_from_bodies(entities);
 }
 
 /// Strip placement / body / host claims so an export cannot over-claim geometry.
@@ -1389,6 +1399,10 @@ pub fn append_typed_production_elements(
             solid_shape.is_some(),
             property_set.as_ref(),
         );
+        // and a floor drawn along its shape-edited plane, whose body
+        // source a mode without geometry strips below, as `level_slab`'s
+        // body is.
+        let shaped_floor_pitch = shaped_floor_body(&ifc_type, property_set.as_ref());
         let opening_host = pending_host_id;
         if !policy.include_geometry {
             location_feet = None;
@@ -1404,6 +1418,16 @@ pub fn append_typed_production_elements(
             held_body = None;
             solid_shape = None;
             roof_parts.clear();
+        }
+        // A wall whose edited elevation profile closes below
+        // its record box ends at the profile's highest point. Before the
+        // quantities below, which take the body's height.
+        if policy.include_geometry && decoded.class == "Wall" && solid_shape.is_none() {
+            if let (Some(location), Some(body), Some(set)) =
+                (location_feet, extrusion.as_mut(), property_set.as_mut())
+            {
+                wall_profile::take_top_at_profile(&decoded, location, rotation_radians, body, set);
+            }
         }
 
         let entity_index = entities.len();
@@ -1574,14 +1598,10 @@ pub fn append_typed_production_elements(
         add_beam_roll(&mut reference_sets, &ifc_type, &decoded);
         // A floor drawn along the plane of its shape-edited corners
         // keeps the extrusion of its plan profile beside its solid.
-        let shaped_floor = ifc_type == "IFCSLAB"
-            && property_set.as_ref().is_some_and(|set| {
-                set.properties.iter().any(|property| {
-                    property.name == "BodySource"
-                        && matches!(&property.value, PropertyValue::Text(source)
-                        if source == FLOOR_SHAPE_BODY_SOURCE)
-                })
-            });
+        let shaped_floor = shaped_floor_body(&ifc_type, property_set.as_ref());
+        if shaped_floor_pitch {
+            add_shaped_floor_pitch(&mut reference_sets, &decoded);
+        }
         add_slab_gross_area(
             &mut reference_sets,
             &ifc_type,
@@ -1616,6 +1636,8 @@ pub fn append_typed_production_elements(
         // The openings a wall's edited elevation profile cuts, in the
         // wall's plane relative to its placement.
         let mut profile_openings: Vec<ProfileOpening> = Vec::new();
+        // the pockets of the profile against its hull, placed the same way.
+        let mut profile_pockets: Vec<ProfileOpening> = Vec::new();
         if let (Some(location), Some(body)) = (location_feet, extrusion.as_ref()) {
             let local_turn = if body.width_feet >= body.depth_feet {
                 0.0
@@ -1627,31 +1649,40 @@ pub fn append_typed_production_elements(
             let offset = |p: &[f64; 3], direction: [f64; 2]| {
                 (p[0] - location[0]) * direction[0] + (p[1] - location[1]) * direction[1]
             };
-            for (tag, outline) in
-                crate::partition_schema_mvp::profile_openings_from_fields(&decoded.fields)
-            {
-                let Some(plane) = outline.first().map(|p| offset(p, left)) else {
-                    continue;
-                };
-                let mut uv: Vec<(f64, f64)> = outline
-                    .iter()
-                    .map(|p| (offset(p, axis), p[2] - location[2]))
-                    .collect();
-                let area: f64 = uv
-                    .iter()
-                    .zip(uv.iter().cycle().skip(1))
-                    .map(|(a, b)| a.0 * b.1 - b.0 * a.1)
-                    .sum();
-                if area < 0.0 {
-                    uv.reverse();
+            for (found, placed) in [
+                (
+                    crate::partition_schema_mvp::profile_openings_from_fields(&decoded.fields),
+                    &mut profile_openings,
+                ),
+                (
+                    crate::partition_schema_mvp::profile_pockets_from_fields(&decoded.fields),
+                    &mut profile_pockets,
+                ),
+            ] {
+                for (tag, outline) in found {
+                    let Some(plane) = outline.first().map(|p| offset(p, left)) else {
+                        continue;
+                    };
+                    let mut uv: Vec<(f64, f64)> = outline
+                        .iter()
+                        .map(|p| (offset(p, axis), p[2] - location[2]))
+                        .collect();
+                    let area: f64 = uv
+                        .iter()
+                        .zip(uv.iter().cycle().skip(1))
+                        .map(|(a, b)| a.0 * b.1 - b.0 * a.1)
+                        .sum();
+                    if area < 0.0 {
+                        uv.reverse();
+                    }
+                    placed.push((
+                        tag,
+                        uv,
+                        local_turn,
+                        plane,
+                        body.width_feet.min(body.depth_feet),
+                    ));
                 }
-                profile_openings.push((
-                    tag,
-                    uv,
-                    local_turn,
-                    plane,
-                    body.width_feet.min(body.depth_feet),
-                ));
             }
         }
         let opening_name = (!void_bodies.is_empty() || !profile_openings.is_empty())
@@ -2012,6 +2043,21 @@ pub fn append_typed_production_elements(
                     thickness_feet,
                 });
             }
+            // what Revit's export writes of them, once the profile's cut
+            // is in the wall's body (see `cut_profiles_from_bodies`).
+            for (tag, outline_feet, axis_turn_radians, plane_offset_feet, thickness_feet) in
+                profile_pockets
+            {
+                entities.push(entities::IfcEntity::WallProfilePocket {
+                    host: entity_index,
+                    tag: tag.to_string(),
+                    name: opening_name.clone(),
+                    outline_feet,
+                    axis_turn_radians,
+                    plane_offset_feet,
+                    thickness_feet,
+                });
+            }
         }
         // The Level parameters, in the `Constraints` set Revit's
         // export writes them in.
@@ -2172,6 +2218,22 @@ pub fn append_typed_production_elements(
         // The shared parameter Serial Number.
         for set in reference_sets.into_iter().chain(serial_sets) {
             add_element_set(entities, entity_index, set);
+        }
+        // the properties of `Pset_OpeningElementCommon` its parameters
+        // name, which the sets above leave out because the set is not its
+        // entity's, are for the openings it cuts.
+        if policy.include_geometry {
+            for (set, property) in &named {
+                if set == "Pset_OpeningElementCommon" && property.name != "Reference" {
+                    out.record_handoffs
+                        .entry(entity_index)
+                        .or_default()
+                        .push(Property {
+                            name: format!("{CUTTER_OPENING_PROPERTY_PREFIX}{}", property.name),
+                            value: property.value.clone(),
+                        });
+                }
+            }
         }
         if !named.is_empty() {
             pending_named.push((entity_index, named));
@@ -3421,13 +3483,25 @@ fn level_slab(
     landing || layered
 }
 
-/// Add `PitchAngle` 0 to the `Pset_SlabCommon` among `sets` of a slab
-/// [`level_slab`] finds level, read before a mode without geometry strips
-/// its body.
-fn add_level_slab_pitch(sets: &mut Vec<PropertySet>) {
+/// Whether a slab's body source says its body is drawn along the plane its
+/// shape-edited corners lie in.
+fn shaped_floor_body(ifc_type: &str, property_set: Option<&PropertySet>) -> bool {
+    ifc_type == "IFCSLAB"
+        && property_set.is_some_and(|set| {
+            set.properties.iter().any(|property| {
+                property.name == "BodySource"
+                    && matches!(&property.value, PropertyValue::Text(source)
+                    if source == FLOOR_SHAPE_BODY_SOURCE)
+            })
+        })
+}
+
+/// Add `PitchAngle` `angle` to the `Pset_SlabCommon` among `sets`, a new set
+/// where there is none.
+fn add_slab_pitch(sets: &mut Vec<PropertySet>, angle: f64) {
     let property = Property {
         name: "PitchAngle".into(),
-        value: PropertyValue::AngleRadians(0.0),
+        value: PropertyValue::AngleRadians(angle),
     };
     match sets.iter_mut().find(|set| set.name == "Pset_SlabCommon") {
         Some(set) => set.properties.push(property),
@@ -3435,6 +3509,32 @@ fn add_level_slab_pitch(sets: &mut Vec<PropertySet>) {
             name: "Pset_SlabCommon".into(),
             properties: vec![property],
         }),
+    }
+}
+
+/// Add `PitchAngle` 0 to the `Pset_SlabCommon` among `sets` of a slab
+/// [`level_slab`] finds level, read before a mode without geometry strips
+/// its body.
+fn add_level_slab_pitch(sets: &mut Vec<PropertySet>) {
+    add_slab_pitch(sets, 0.0);
+}
+
+/// Add the `PitchAngle` of a floor drawn along the plane its shape-edited
+/// corners lie in: revit-ifc's `SlopeCalculator` (CLEANROOM.md
+/// source 5) gives a slab with no location curve the slope of its largest
+/// upward face, which for a floor whose top is the plane
+/// `z = a·x + b·y + c` is the angle of that plane from the horizontal, the
+/// arctangent of the length of its gradient. The floor's body is
+/// drawn from the same plane, so a floor whose body is not (the plane read
+/// but not reproducing the record box) gets none.
+fn add_shaped_floor_pitch(sets: &mut Vec<PropertySet>, decoded: &DecodedElement) {
+    let Some([a, b, _]) = crate::partition_schema_mvp::slab_top_plane_from_fields(&decoded.fields)
+    else {
+        return;
+    };
+    let angle = a.hypot(b).atan();
+    if angle.is_finite() && angle > 0.0 {
+        add_slab_pitch(sets, angle);
     }
 }
 
@@ -5332,6 +5432,30 @@ pub const WALL_PROFILE_SOURCE_PROPERTY: &str = "ProfileStubSource";
 /// and `ProfileStubSource` both.
 pub const WALL_PROFILE_REFUSAL_PROPERTY: &str = "ProfileStubRefusal";
 
+/// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] that says its top was
+/// taken at the highest point of its edited elevation profile, which closes
+/// below the top of its record box: the one value
+/// [`WALL_PROFILE_TOP_AT_PROFILE`]. Counted in `exported.wall_profile_top_sources`.
+pub const WALL_PROFILE_TOP_PROPERTY: &str = "ProfileTopSource";
+
+/// [`WALL_PROFILE_TOP_PROPERTY`] of a wall whose profile spans the whole of it,
+/// from its base, and is the only thing that cuts it. The rule rests on one
+/// wall.
+pub const WALL_PROFILE_TOP_AT_PROFILE: &str = "wall_top_at_profile_top";
+
+/// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] that says a cut its
+/// edited elevation profile makes (the regions no pocket of the profile equals)
+/// is made in its body, and that the openings it carries are the pockets of the
+/// profile against its convex hull, as Revit's export writes them:
+/// the one value [`WALL_PROFILE_CUT_IN_BODY`]. Counted in
+/// `exported.wall_profile_cuts`.
+pub const WALL_PROFILE_CUT_PROPERTY: &str = "ProfileCutSource";
+
+/// [`WALL_PROFILE_CUT_PROPERTY`] of a wall whose body is its box less the regions
+/// reads from the profile that no pocket equals, as one boolean
+/// difference.
+pub const WALL_PROFILE_CUT_IN_BODY: &str = "wall_profile_cut_in_body";
+
 /// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] that says how its base
 /// was cut. It is not `BodyHeightSource`, which says how the
 /// top was cut and which a wall may carry as well: a property set holds one
@@ -5727,6 +5851,13 @@ fn model_ifc_type_of(entities: &[entities::IfcEntity], index: usize) -> Option<&
         _ => None,
     }
 }
+/// The prefix of the name of each hand-off holding a property of
+/// `Pset_OpeningElementCommon` that an element's parameters name: a
+/// door's `FireExit` is `OpeningElementCommon.FireExit`. They are not the
+/// element's own properties, which the set does not apply to; Revit's export
+/// gives them to the openings the element cuts in a wall besides the one it
+/// fills (`IfcEntity::CutterOpeningSet`).
+pub const CUTTER_OPENING_PROPERTY_PREFIX: &str = "OpeningElementCommon.";
 
 /// Classes whose body another rule draws, which a family instance's turn
 /// leaves alone: columns (their type's section), beams (their line), and

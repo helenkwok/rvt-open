@@ -12,11 +12,14 @@
 # writes IFC, IFCX and .frag (rvt-ifc, --ifc4-timestamp 1970-01-01T00:00:00Z) and a .glb (rvt-gltf) under GNU
 # time. OUT_DIR gets:
 #   summary.md         one row per variant: peak resident memory (MiB), seconds, and whether
-#                      every output's sha256 equals the base build's
+#                      every output's sha256 equals the base build's (head) or the head build's
+#                      (the other head variants)
 #   stages-*.tsv       each head variant's peak per stage (RVT_STAGE_MEMORY), rvt-ifc and rvt-gltf
 #   heaptrack-*.txt    with "heaptrack": the head rvt-ifc's largest allocators at its peak
 #                      (slow, and heaptrack_print needs several GB on the largest models)
-# Exit 1 when an export fails or an output differs from the base build's.
+# Exit 1 when an export fails, when a head variant's output differs from the head build's, or
+# when the head build's output differs from the base build's, unless OUTPUTS_MAY_CHANGE=1 (a
+# change meant to alter what is written; the difference is then reported, not failed).
 set -uo pipefail
 BASE="$1"; HEAD="$2"; OUT="$3"; FILE="$4"; HT="${5:-}"
 mkdir -p "$OUT"
@@ -41,6 +44,9 @@ run() { # variant bin_dir env...
   echo "$name $v: $(date -u +%T) done (rvt-ifc $(cat "$tmp/$v/ifc.time" 2> /dev/null), rvt-gltf $(cat "$tmp/$v/gltf.time" 2> /dev/null); KiB s)"
 }
 
+# The larger of GNU time's KiB and the largest stage peak (MiB) in the stage file, in KiB.
+peak() { awk -F'\t' -v k="$1" '$4 * 1024 > k { k = $4 * 1024 } END { print k }' "$2" 2> /dev/null || echo "$1"; }
+
 variants="base head head-batch1024 head-batch4096 head-arena2"
 run base "$BASE"
 run head "$HEAD"
@@ -51,13 +57,24 @@ run head-arena2 "$HEAD" MALLOC_ARENA_MAX=2
 {
   echo "### $name ($(du -m "$FILE" | cut -f1) MB)"
   echo
-  echo "| build | rvt-ifc peak (MiB) | rvt-ifc time (s) | rvt-gltf peak (MiB) | rvt-gltf time (s) | outputs equal to base |"
+  echo "| build | rvt-ifc peak (MiB) | rvt-ifc time (s) | rvt-gltf peak (MiB) | rvt-gltf time (s) | outputs equal (head to base, other variants to head) |"
   echo "|---|---:|---:|---:|---:|---|"
   for v in $variants; do
     read -r ik is < "$tmp/$v/ifc.time" 2> /dev/null || { ik=0; is=-; }
     read -r gk gs < "$tmp/$v/gltf.time" 2> /dev/null || { gk=0; gs=-; }
-    if cmp -s "$OUT/sha256-base.txt" "$OUT/sha256-$v.txt" && [ "$(wc -l < "$OUT/sha256-$v.txt")" = 4 ]; then same=yes
-    else same="**no**: $(diff "$OUT/sha256-base.txt" "$OUT/sha256-$v.txt" | sed -nE 's/^> [0-9a-f]+ +//p' | tr '\n' ' ')"; status=1; fi
+    # The head build is compared with the base build; the other head variants with the head build,
+    # since they change only how it runs, never what it writes.
+    ref=base; [ "$v" = head ] || [ "$v" = base ] || ref=head
+    if cmp -s "$OUT/sha256-$ref.txt" "$OUT/sha256-$v.txt" && [ "$(wc -l < "$OUT/sha256-$v.txt")" = 4 ]; then same=yes
+    else
+      same="**no**: $(diff "$OUT/sha256-$ref.txt" "$OUT/sha256-$v.txt" | sed -nE 's/^> [0-9a-f]+ +//p' | tr '\n' ' ')"
+      if [ "$v" = head ] && [ "${OUTPUTS_MAY_CHANGE:-}" = 1 ]; then
+        same="$same(expected)"; echo "::notice::$name: head outputs differ from base (OUTPUTS_MAY_CHANGE=1)"
+      else status=1; fi
+    fi
+    # RVT_STAGE_MEMORY resets the kernel's peak at every stage, which also resets what GNU time
+    # reads at exit: its %M is only the last stage's peak. The run's peak is the larger of the two.
+    ik=$(peak "$ik" "$OUT/stages-ifc-$v.tsv"); gk=$(peak "$gk" "$OUT/stages-gltf-$v.tsv")
     echo "| $v | $((ik / 1024)) | $is | $((gk / 1024)) | $gs | $same |"
   done
   for tool in ifc gltf; do

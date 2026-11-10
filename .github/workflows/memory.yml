@@ -3,7 +3,8 @@ name: Memory
 # at a base ref and at the checked-out commit, both built on this runner (tools/ci/measure-memory.sh).
 # Each model's job reports the peak by stage (RVT_STAGE_MEMORY), on request the largest
 # allocators at the peak (heaptrack, on the two largest models; slow and memory-hungry, so off
-# by default) and fails if any output (IFC, IFCX, .frag, .glb) differs from the base build's.
+# by default) and fails if any output (IFC, IFCX, .frag, .glb) differs from the base build's
+# (reported instead on a pull request or with outputs_may_change; head variants must always match head).
 # Every action is pinned to a full commit SHA.
 on:
   pull_request:
@@ -17,6 +18,10 @@ on:
         default: main
       heaptrack:
         description: Also run heaptrack on the two largest models
+        type: boolean
+        default: false
+      outputs_may_change:
+        description: The change alters what is written, so head outputs may differ from base (reported, not failed)
         type: boolean
         default: false
 permissions:
@@ -89,6 +94,10 @@ jobs:
           FILE: _samples/${{ matrix.file }}
           MODEL: ${{ matrix.model }}
           HT: ${{ inputs.heaptrack && matrix.heaptrack || '' }}
+          # A pull request runs this only when the measurement itself changes; it may carry reader
+          # changes too, so a different output is reported there, not failed. Head variants must
+          # still match the head build.
+          OUTPUTS_MAY_CHANGE: ${{ (github.event_name == 'pull_request' || inputs.outputs_may_change) && '1' || '' }}
         run: |
           chmod +x bins/*/rvt-*
           echo "base $(cat bins/bin-base/commit), head $(cat bins/bin-head/commit)"

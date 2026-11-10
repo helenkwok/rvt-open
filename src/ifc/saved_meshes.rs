@@ -16,14 +16,24 @@
 //! record box is 3.75 ft deep because it includes the swing: the 2.92 ft
 //! difference measured against Revit's own export.
 //!
-//! Doors and windows are drawn from their saved meshes by default
-//! ([`default_scope`], [`SavedMeshScope::DoorsAndWindows`], for the CLIs,
-//! Python and the viewer), where
-//! every vertex is Revit's within 0.001 ft on Core Interior's 132 doors and
-//! 6 windows and the BIM4LCA office's 269 windows.
-//! Every other class is opt-in ([`SavedMeshScope::All`],
-//! `rvt-ifc --saved-meshes`, `rvt-gltf --saved-meshes`): reading saved
-//! graphics is slow on large files, and some partial meshes record nothing.
+//! Every element drawn as its record's box is drawn from its saved mesh by
+//! default on Revit 2014 to 2027 ([`default_scope`], [`SavedMeshScope::All`],
+//! for the CLIs, Python and the viewer), and only where all of the mesh
+//! decodes. Of the bodies scored on 31 models, the meshes of 17 classes have
+//! every vertex of Revit's export within 0.001 ft, windows among them; doors
+//! are 675 of 681, sanitary terminals 68 of 94, flow fittings 71 of 89, flow
+//! terminals 30 of 35 and walls 14 of 18. [`SavedMeshScope::DoorsAndWindows`]
+//! reads less of the file: every vertex is Revit's within 0.001 ft on Core
+//! Interior's 132 doors and 6 windows and the BIM4LCA office's 269 windows.
+//!
+//! A roof drawn as the level block of its sketch outline at its record box's
+//! full height is replaced too: the record box holds the roof's
+//! reference surface, not its slope or its thickness, and its saved mesh is
+//! what Revit drew. The outline's own properties (`ProfileSource`,
+//! `ProfileVertexCount`, `ProfileVoidCount`) and the `SlabShapeRefusal` of
+//! any body replaced go with the body they described. A member, plate or
+//! column drawn from a closed mesh of flat faces gets that mesh's volume as
+//! its `NetVolume`.
 //!
 //! One kind of wall is drawn from its saved mesh in every scope that reads
 //! graphics, on Revit 2024 to 2027, the releases whose wall records name what
@@ -39,9 +49,10 @@
 
 use super::entities::{BrepTriangle, IfcEntity, Property, PropertySet, PropertyValue, SolidShape};
 use super::export_content::{
-    BEAM_BOX_BODY_SOURCE, SPACE_OUTLINE_SAVED_MESH, SPACE_OUTLINE_SOURCE_PROPERTY,
-    WALL_BASE_SOURCE_PROPERTY, WALL_TOP_STEPPED_BODY_HEIGHT_SOURCE,
+    BEAM_BOX_BODY_SOURCE, SLAB_SHAPE_REFUSAL_PROPERTY, SPACE_OUTLINE_SAVED_MESH,
+    SPACE_OUTLINE_SOURCE_PROPERTY, WALL_BASE_SOURCE_PROPERTY, WALL_TOP_STEPPED_BODY_HEIGHT_SOURCE,
 };
+use super::mesh_volume::{all_faces_flat, closed_mesh_volume};
 use super::{IfcModel, MaterialInfo};
 use crate::native_saved_mesh::{GraphicsMeshes, Primitive};
 use crate::native_wall_cuts::WallCutKind;
@@ -228,13 +239,14 @@ impl SavedMeshScope {
 }
 
 /// The bodies drawn from saved graphics by default, by `rvt-ifc`, `rvt-gltf`,
-/// the Python package and the viewer alike: doors and windows on Revit 2015
-/// to 2027, the releases whose saved graphics are read (2015 to 2022 since
+/// the Python package and the viewer alike: every boxed element on Revit 2014
+/// to 2027, the releases whose saved graphics are read, and none on any other
+/// release.
 pub fn default_scope(rf: &mut crate::RevitFile) -> Option<SavedMeshScope> {
     let release = rf.basic_file_info().ok()?.version;
     (2014..=2027)
         .contains(&release)
-        .then_some(SavedMeshScope::DoorsAndWindows)
+        .then_some(SavedMeshScope::All)
 }
 
 /// Replace each bounding-box body with the element's saved mesh, where the
@@ -322,6 +334,8 @@ pub fn attach_scoped_in_batches(
     batch_size: usize,
 ) -> anyhow::Result<SavedMeshReport> {
     let mut report = SavedMeshReport::default();
+    // the volume of each body drawn from a closed mesh of flat faces.
+    let mut volumes: Vec<(usize, f64)> = Vec::new();
     let mut by_id: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     // A stair or curtain wall is drawn by its parts; its own saved graphics
     // would draw it twice.
@@ -361,12 +375,15 @@ pub fn attach_scoped_in_batches(
         });
         // A beam drawn as its box along its line, and a curtain part drawn as
         // the box along its own axes, are stand-ins for their saved meshes, as
-        // the record box is.
+        // the record box is, and so is the level block of a roof's sketch
+        // outline: the record box holds the roof's reference surface, not its
+        // slope or its thickness. A resolved outline is the body of any other
+        // class (a floor's plan, a ceiling's).
         if !text("BodySource").is_some_and(|source| {
             super::export_content::is_plan_box_source(source)
                 || source == BEAM_BOX_BODY_SOURCE
                 || source == super::export_content::INSTANCE_ORIENTED_BODY_SOURCE
-        }) || profile_resolved
+        }) || (profile_resolved && ifc_type != "IFCROOF")
         {
             continue;
         }
@@ -517,6 +534,9 @@ pub fn attach_scoped_in_batches(
             {
                 *rotation_radians = Some(turned);
             }
+            // A body of flat faces only (no rails joined to it) has its mesh's
+            // volume as its `NetVolume`, where the mesh closes.
+            let flat = own_rails.is_empty() && all_faces_flat(&element.meshes.primitives);
             let replaced = 'element: {
                 // each face group's material, as the model's material.
                 // a railing's continuous rails join its body, after
@@ -732,8 +752,36 @@ pub fn attach_scoped_in_batches(
                             property.value = PropertyValue::Text(SAVED_MESH_BODY_SOURCE.into());
                         } else if property.name == SPACE_OUTLINE_SOURCE_PROPERTY {
                             property.value = PropertyValue::Text(SPACE_OUTLINE_SAVED_MESH.into());
+                        } else if property.name == "ProfileResolved" {
+                            property.value = PropertyValue::Boolean(false);
                         }
                     }
+                    // What describes a body that is no longer the outline block
+                    // or the box: where its outline came from and why its shape
+                    // was not drawn.
+                    set.properties.retain(|property| {
+                        !matches!(
+                            property.name.as_str(),
+                            "ProfileSource"
+                                | "ProfileVertexCount"
+                                | "ProfileVoidCount"
+                                | SLAB_SHAPE_REFUSAL_PROPERTY
+                        )
+                    });
+                }
+                if flat
+                    && let IfcEntity::BuildingElement {
+                        solid_shape:
+                            Some(SolidShape::TriangulatedFaceSet {
+                                vertices_feet,
+                                triangles,
+                                ..
+                            }),
+                        ..
+                    } = &model.entities[*index]
+                    && let Some(volume) = closed_mesh_volume(vertices_feet, triangles)
+                {
+                    volumes.push((*index, volume));
                 }
                 true
             };
@@ -746,12 +794,77 @@ pub fn attach_scoped_in_batches(
             }
         }
     }
+    add_mesh_volumes(model, &volumes);
     (
         report.unified_instances,
         report.unify_misses,
         report.unify_closest_miss_mm,
     ) = unify_instances(model);
     Ok(report)
+}
+
+/// Give each element of `volumes` (an index into the entities and the volume,
+/// cubic feet, of the closed mesh of flat faces its body was drawn from) the
+/// `NetVolume` that Revit's export writes for it, in the base quantity set of
+/// its entity, where it holds none: revit-ifc's `NetVolumeCalculator`
+/// takes the volume of the solid it writes (CLEANROOM.md source 5),
+/// and the mesh is that solid, which a body of flat faces gives exactly. A
+/// column gets no `GrossVolume`: Revit's export omits it on the 18 columns of
+/// the BIM4LCA office at building permit that it draws as a cut mesh, and
+/// writes it on 6 that nothing tells from them. A curtain mullion, a curtain
+/// panel and a column are the entities measured equal to Revit's on every
+/// element; a body of another entity gets none.
+fn add_mesh_volumes(model: &mut IfcModel, volumes: &[(usize, f64)]) {
+    if volumes.is_empty() {
+        return;
+    }
+    let mut held: BTreeMap<(usize, String), usize> = BTreeMap::new();
+    for (position, entity) in model.entities.iter().enumerate() {
+        if let IfcEntity::ElementPropertySet { element, set } = entity {
+            if set.name.starts_with("Qto_") {
+                held.entry((*element, set.name.clone())).or_insert(position);
+            }
+        }
+    }
+    for &(index, volume) in volumes {
+        let Some(IfcEntity::BuildingElement { ifc_type, .. }) = model.entities.get(index) else {
+            continue;
+        };
+        let (set_name, names): (&str, &[&str]) = match ifc_type.to_ascii_uppercase().as_str() {
+            "IFCMEMBER" => ("Qto_MemberBaseQuantities", &["NetVolume"]),
+            "IFCPLATE" => ("Qto_PlateBaseQuantities", &["NetVolume"]),
+            "IFCCOLUMN" => ("Qto_ColumnBaseQuantities", &["NetVolume"]),
+            _ => continue,
+        };
+        let volume_property = |name: &str| Property {
+            name: name.into(),
+            value: PropertyValue::VolumeCubicFeet(volume),
+        };
+        let key = (index, set_name.to_string());
+        match held.get(&key) {
+            Some(&position) => {
+                if let Some(IfcEntity::ElementPropertySet { set, .. }) =
+                    model.entities.get_mut(position)
+                {
+                    for &name in names {
+                        if !has_property(set, name) {
+                            set.properties.push(volume_property(name));
+                        }
+                    }
+                }
+            }
+            None => {
+                held.insert(key, model.entities.len());
+                model.entities.push(IfcEntity::ElementPropertySet {
+                    element: index,
+                    set: PropertySet {
+                        name: set_name.into(),
+                        properties: names.iter().map(|&name| volume_property(name)).collect(),
+                    },
+                });
+            }
+        }
+    }
 }
 
 /// An element's saved graphics as a body placed at `origin`, turned by
