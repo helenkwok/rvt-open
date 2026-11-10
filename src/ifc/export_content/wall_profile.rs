@@ -44,7 +44,7 @@
 //! and not counted. A wall with no record property set, or drawn from a
 //! profile of its own, is left out.
 //!
-//! # The top at the profile's highest point 
+//! # The top at the profile's highest point
 //!
 //! A profile edited down from the wall's unconnected height closes below the
 //! top of the wall's record box, and Revit's body ends at the profile's highest
@@ -73,9 +73,9 @@
 //!
 //! A wall of which any of this is not known keeps the box's top, as before.
 //!
-//! # The profile's cut in the wall's body 
+//! # The profile's cut in the wall's body
 //!
-//! regions, each between a run of the profile's lines and the
+//! The regions, each between a run of the profile's lines and the
 //! profile's bounding rectangle, make the wall's shape, but they are not what
 //! Revit's export writes as openings. Revit writes an opening only for each
 //! pocket of the profile against its convex hull
