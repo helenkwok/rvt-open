@@ -33,7 +33,7 @@
 //! `ProfileVertexCount`, `ProfileVoidCount`) and the `SlabShapeRefusal` of
 //! any body replaced go with the body they described. A member, plate or
 //! column drawn from a closed mesh of flat faces gets that mesh's volume as
-//! its `NetVolume` ([`add_mesh_volumes`]).
+//! its `NetVolume`.
 //!
 //! One kind of wall is drawn from its saved mesh in every scope that reads
 //! graphics, on Revit 2024 to 2027, the releases whose wall records name what
