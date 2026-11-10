@@ -394,6 +394,10 @@ struct Decoded {
 /// Records of one group decoded on every core when at least this many are:
 /// fewer do not pay for the threads.
 const PARALLEL_DECODES: usize = 8;
+/// Records of one group checked, decoded and emitted together: a group can
+/// be a whole partition, and holding every decoded graph of one until all
+/// were decoded raised the peak memory of the properties pass.
+const DECODE_CHUNK: usize = 256;
 /// [`native_segments::walk_inflated`] over partition `name` with the group
 /// budget [`partition_budget`] gives `max_group_bytes` and `requested`;
 /// `None` where the stream is over the limit ([`read_partition`]). The first
@@ -1099,357 +1103,365 @@ fn extract_records(
                 }
                 // Each record is checked here, in order; the graphs of those that
                 // are decoded are decoded on every core afterwards, and the
-                // records finished and emitted in the same order.
-                let mut pending: Vec<Pending<'_>> = Vec::new();
-                let scanned = (|| -> Result<()> {
-                    for (id, offset, start, end) in records {
-                        if !is_selected(id, &bytes[start..end]) {
-                            continue;
-                        }
-                        let identity = &index.identities[&id];
-                        let routed = native_index::route_episode(
-                            identity.stored_revision,
-                            increments,
-                            &present,
-                        )?;
-                        if unread.contains(&routed) {
-                            summary.routed_to_unread_partitions.insert(id);
-                            continue;
-                        }
-                        let current = match holders.get(&(source.channel, id)) {
-                            Some(held) if !held.contains(&routed) => {
-                                let latest =
-                                    *held.last().expect("an element in holders has a partition");
-                                // A later partition that was not read may hold
-                                // the current copy.
-                                if unread.iter().any(|&partition| partition > latest) {
-                                    summary.routed_to_unread_partitions.insert(id);
+                // records finished and emitted in the same order, [`DECODE_CHUNK`]
+                // records at a time so a large group's graphs are not all held at once.
+                for records in records.chunks(DECODE_CHUNK) {
+                    let mut pending: Vec<Pending<'_>> = Vec::new();
+                    let scanned = (|| -> Result<()> {
+                        for &(id, offset, start, end) in records {
+                            if !is_selected(id, &bytes[start..end]) {
+                                continue;
+                            }
+                            let identity = &index.identities[&id];
+                            let routed = native_index::route_episode(
+                                identity.stored_revision,
+                                increments,
+                                &present,
+                            )?;
+                            if unread.contains(&routed) {
+                                summary.routed_to_unread_partitions.insert(id);
+                                continue;
+                            }
+                            let current = match holders.get(&(source.channel, id)) {
+                                Some(held) if !held.contains(&routed) => {
+                                    let latest = *held
+                                        .last()
+                                        .expect("an element in holders has a partition");
+                                    // A later partition that was not read may hold
+                                    // the current copy.
+                                    if unread.iter().any(|&partition| partition > latest) {
+                                        summary.routed_to_unread_partitions.insert(id);
+                                        continue;
+                                    }
+                                    latest
+                                }
+                                _ => routed,
+                            };
+                            if current != partition {
+                                summary.skipped_historical_records += 1;
+                                continue;
+                            }
+                            summary.current_records_outside_route += usize::from(current != routed);
+                            ensure!(
+                                seen.insert((source.channel, id)),
+                                "ambiguous current record for {id} in channel{}",
+                                source.channel
+                            );
+                            seen_ids.insert(id);
+                            let note = options
+                                .value_source
+                                .filter(|_| record_sources)
+                                .zip(u32::try_from(id).ok());
+                            if let Some((reader, element_id)) = note {
+                                let copies =
+                                    holders.get(&(source.channel, id)).map_or(1, BTreeSet::len);
+                                let at = source
+                                    .inflated_offset
+                                    .and_then(|base| base.checked_add(offset));
+                                let value_source = ValueSource::in_partition(
+                                    reader,
+                                    CopyRule::Native,
+                                    copies,
+                                    partition,
+                                    at,
+                                );
+                                native_notes.push((element_id, value_source));
+                            }
+                            let body = &bytes[start..end];
+                            let class_name = le_bytes::u16_at(body, 0)
+                                .and_then(|tag| registry.class(tag))
+                                .map(|c| c.name.clone());
+                            if definitions_only {
+                                let first = le_bytes::u16_at(body, 0).ok_or_else(|| {
+                                    anyhow::anyhow!("truncated definition candidate tag")
+                                })?;
+                                // Whether a class owns a definition depends on its
+                                // tag alone: asked once for each, not for each of
+                                // the file's records.
+                                let owns_definition =
+                                    *definition_owners.entry(first).or_insert_with(|| {
+                                        let mut tag = first;
+                                        let mut owns = matches!(
+                                            class_name.as_deref(),
+                                            Some(
+                                                "UnitsElem"
+                                                    | "ParamBinding"
+                                                    | "Family"
+                                                    | "FamilySymbol"
+                                            )
+                                        );
+                                        for _ in 0..128 {
+                                            let Some(class) = registry.class(tag) else {
+                                                break;
+                                            };
+                                            owns |= class
+                                                .fields
+                                                .iter()
+                                                .any(|field| field.name == "m_pParamDef");
+                                            tag = class.parent_reference.tag;
+                                        }
+                                        owns
+                                    });
+                                if !owns_definition {
                                     continue;
                                 }
-                                latest
                             }
-                            _ => routed,
-                        };
-                        if current != partition {
-                            summary.skipped_historical_records += 1;
-                            continue;
-                        }
-                        summary.current_records_outside_route += usize::from(current != routed);
-                        ensure!(
-                            seen.insert((source.channel, id)),
-                            "ambiguous current record for {id} in channel{}",
-                            source.channel
-                        );
-                        seen_ids.insert(id);
-                        let note = options
-                            .value_source
-                            .filter(|_| record_sources)
-                            .zip(u32::try_from(id).ok());
-                        if let Some((reader, element_id)) = note {
-                            let copies =
-                                holders.get(&(source.channel, id)).map_or(1, BTreeSet::len);
-                            let at = source
-                                .inflated_offset
-                                .and_then(|base| base.checked_add(offset));
-                            let value_source = ValueSource::in_partition(
-                                reader,
-                                CopyRule::Native,
-                                copies,
-                                partition,
-                                at,
-                            );
-                            native_notes.push((element_id, value_source));
-                        }
-                        let body = &bytes[start..end];
-                        let class_name = le_bytes::u16_at(body, 0)
-                            .and_then(|tag| registry.class(tag))
-                            .map(|c| c.name.clone());
-                        if definitions_only {
-                            let first = le_bytes::u16_at(body, 0).ok_or_else(|| {
-                                anyhow::anyhow!("truncated definition candidate tag")
-                            })?;
-                            // Whether a class owns a definition depends on its
-                            // tag alone: asked once for each, not for each of
-                            // the file's records.
-                            let owns_definition =
-                                *definition_owners.entry(first).or_insert_with(|| {
-                                    let mut tag = first;
-                                    let mut owns = matches!(
-                                        class_name.as_deref(),
-                                        Some(
-                                            "UnitsElem"
-                                                | "ParamBinding"
-                                                | "Family"
-                                                | "FamilySymbol"
-                                        )
-                                    );
-                                    for _ in 0..128 {
-                                        let Some(class) = registry.class(tag) else {
-                                            break;
-                                        };
-                                        owns |= class
-                                            .fields
-                                            .iter()
-                                            .any(|field| field.name == "m_pParamDef");
-                                        tag = class.parent_reference.tag;
-                                    }
-                                    owns
-                                });
-                            if !owns_definition {
+                            if let Some(graph_classes) = &options.graph_classes {
+                                if !class_name
+                                    .as_ref()
+                                    .is_some_and(|c| graph_classes.contains(c))
+                                {
+                                    let base = crate::native_element::decode_base(body, registry);
+                                    summary.emitted_records += 1;
+                                    pending.push(Pending::Done(Box::new(Record {
+                                        identity: identity.clone(),
+                                        derived_default_ifc_guid: None,
+                                        derived_identifier_diagnostic: None,
+                                        effective_ifc_parameter: None,
+                                        effective_ifc_parameter_diagnostic: None,
+                                        channel: source.channel,
+                                        class_name,
+                                        status: if base.is_ok() {
+                                            "element_base"
+                                        } else {
+                                            "unsupported_element_base"
+                                        }
+                                        .into(),
+                                        diagnostic: base.as_ref().err().map(ToString::to_string),
+                                        source: RecordSource {
+                                            stream: name.clone(),
+                                            group: source.clone(),
+                                            group_record_offset: offset,
+                                            body_bytes: body.len(),
+                                            body_sha256: String::new(),
+                                        },
+                                        graph: None,
+                                        saved_metadata: None,
+                                        metadata_diagnostic: None,
+                                        base: base.ok(),
+                                        body: options.keep_body.then(|| body.to_vec()),
+                                    })));
+                                    continue;
+                                }
+                            }
+                            if needles.is_some_and(|needles| !needles.occur_in(body)) {
                                 continue;
                             }
-                        }
-                        if let Some(graph_classes) = &options.graph_classes {
-                            if !class_name
-                                .as_ref()
-                                .is_some_and(|c| graph_classes.contains(c))
-                            {
-                                let base = crate::native_element::decode_base(body, registry);
-                                summary.emitted_records += 1;
-                                pending.push(Pending::Done(Box::new(Record {
-                                    identity: identity.clone(),
-                                    derived_default_ifc_guid: None,
-                                    derived_identifier_diagnostic: None,
-                                    effective_ifc_parameter: None,
-                                    effective_ifc_parameter_diagnostic: None,
-                                    channel: source.channel,
-                                    class_name,
-                                    status: if base.is_ok() {
-                                        "element_base"
-                                    } else {
-                                        "unsupported_element_base"
-                                    }
-                                    .into(),
-                                    diagnostic: base.as_ref().err().map(ToString::to_string),
-                                    source: RecordSource {
-                                        stream: name.clone(),
-                                        group: source.clone(),
-                                        group_record_offset: offset,
-                                        body_bytes: body.len(),
-                                        body_sha256: String::new(),
-                                    },
-                                    graph: None,
-                                    saved_metadata: None,
-                                    metadata_diagnostic: None,
-                                    base: base.ok(),
-                                    body: options.keep_body.then(|| body.to_vec()),
-                                })));
-                                continue;
-                            }
-                        }
-                        if needles.is_some_and(|needles| !needles.occur_in(body)) {
-                            continue;
-                        }
-                        pending.push(Pending::Decode {
-                            id,
-                            offset,
-                            body,
-                            identity,
-                            class_name,
-                        });
-                    }
-                    Ok(())
-                })();
-                let limits = native_parameters::GraphLimits {
-                    max_values: options.max_graph_values,
-                    max_objects: options.max_graph_objects,
-                    ..Default::default()
-                };
-                let catalog = summary.extensible_storage_catalog.as_ref();
-                // The pure part of each decode: the graph, its metadata, the
-                // derived identifiers and the body's digest.
-                let decode = |job: &Pending<'_>| -> Option<Decoded> {
-                    let Pending::Decode {
-                        id,
-                        body,
-                        identity,
-                        class_name,
-                        ..
-                    } = job
-                    else {
-                        return None;
-                    };
-                    let id = *id;
-                    let projected = options
-                        .graph_fields
-                        .and_then(|fields| fields(class_name.as_deref()?));
-                    let decoded = match projected {
-                        Some(keep) => native_parameters::decode_graph_projected(
-                            body, registry, &limits, catalog, keep,
-                        ),
-                        None => native_parameters::decode_graph_with_catalog_usage(
-                            body, registry, &limits, catalog,
-                        ),
-                    };
-                    let decoded = decoded.and_then(|(graph, usage)| {
-                        if source.channel == 102 {
-                            let root = graph
-                                .objects
-                                .first()
-                                .ok_or_else(|| anyhow::anyhow!("empty owner graph"))?;
-                            let saved_id =
-                                crate::native_metadata::identifier(&root.fields["m_id"])?;
-                            ensure!(
-                                u64::try_from(saved_id).ok() == Some(id),
-                                "serialized owner identity disagrees with indexed record {id}"
-                            );
-                        }
-                        Ok((graph, usage))
-                    });
-                    let metadata = match decoded.as_ref().ok().filter(|_| projected.is_none()).map(
-                        |(graph, _)| {
-                            crate::native_metadata::project_with_definitions(graph, definitions)
-                        },
-                    ) {
-                        Some(Ok(value)) => (Some(value), None),
-                        Some(Err(error)) => (None, Some(error.to_string())),
-                        None => (None, None),
-                    };
-                    let derived = if options.record_extras {
-                        match crate::native_metadata::derive_default_ifc_guid(&identity.unique_id) {
-                            Ok(value) => (Some(value), None),
-                            Err(error) => (None, Some(error.to_string())),
-                        }
-                    } else {
-                        (None, None)
-                    };
-                    let effective = match (
-                        class_name.as_deref(),
-                        metadata.0.as_ref(),
-                        derived.0.as_deref(),
-                    ) {
-                        (Some(class), Some(metadata), Some(default_guid)) => {
-                            match crate::native_metadata::effective_ifc_parameter(
-                                class,
-                                metadata,
-                                default_guid,
-                                definitions,
-                            ) {
-                                Ok(value) => (value, None),
-                                Err(error) => (None, Some(error.to_string())),
-                            }
-                        }
-                        _ => (None, None),
-                    };
-                    let body_sha256 = if options.record_extras {
-                        lower_hex(&Sha256::digest(body))
-                    } else {
-                        String::new()
-                    };
-                    Some(Decoded {
-                        decoded,
-                        metadata,
-                        derived,
-                        effective,
-                        body_sha256,
-                    })
-                };
-                let decodes = pending
-                    .iter()
-                    .filter(|job| matches!(job, Pending::Decode { .. }))
-                    .count();
-                let mut done: Vec<Option<Decoded>> = if decodes >= PARALLEL_DECODES {
-                    crate::control::map_in_order(&pending, decode)
-                } else {
-                    pending.iter().map(decode).collect()
-                };
-                for (job, done) in pending.into_iter().zip(done.drain(..)) {
-                    let (id, offset, body, identity, class_name, finished) = match (job, done) {
-                        (Pending::Done(record), _) => {
-                            emit(*record)?;
-                            continue;
-                        }
-                        (
-                            Pending::Decode {
+                            pending.push(Pending::Decode {
                                 id,
                                 offset,
                                 body,
                                 identity,
                                 class_name,
-                            },
-                            Some(finished),
-                        ) => (id, offset, body, identity, class_name, finished),
-                        (Pending::Decode { .. }, None) => {
-                            unreachable!("every decode job is decoded")
+                            });
                         }
+                        Ok(())
+                    })();
+                    let limits = native_parameters::GraphLimits {
+                        max_values: options.max_graph_values,
+                        max_objects: options.max_graph_objects,
+                        ..Default::default()
                     };
-                    let Decoded {
-                        decoded,
-                        metadata: (saved_metadata, metadata_diagnostic),
-                        derived: (derived_default_ifc_guid, derived_identifier_diagnostic),
-                        effective: (effective_ifc_parameter, effective_ifc_parameter_diagnostic),
-                        body_sha256,
-                    } = finished;
-                    let (status, diagnostic, graph) = match decoded {
-                        Ok((graph, usage)) => {
-                            summary.max_graph_objects_observed =
-                                summary.max_graph_objects_observed.max(usage.objects);
-                            summary.max_graph_values_observed =
-                                summary.max_graph_values_observed.max(usage.values);
-                            summary.complete_graph_records += 1;
-                            ("complete_bounded_graph", None, Some(graph))
-                        }
-                        Err(e) => {
-                            summary.unsupported_graph_records += 1;
-                            summary.refused_graph_ids.push(id);
-                            if let Some(class_name) = &class_name {
-                                *summary
-                                    .refused_graph_classes
-                                    .entry(class_name.clone())
-                                    .or_default() += 1;
+                    let catalog = summary.extensible_storage_catalog.as_ref();
+                    // The pure part of each decode: the graph, its metadata, the
+                    // derived identifiers and the body's digest.
+                    let decode = |job: &Pending<'_>| -> Option<Decoded> {
+                        let Pending::Decode {
+                            id,
+                            body,
+                            identity,
+                            class_name,
+                            ..
+                        } = job
+                        else {
+                            return None;
+                        };
+                        let id = *id;
+                        let projected = options
+                            .graph_fields
+                            .and_then(|fields| fields(class_name.as_deref()?));
+                        let decoded = match projected {
+                            Some(keep) => native_parameters::decode_graph_projected(
+                                body, registry, &limits, catalog, keep,
+                            ),
+                            None => native_parameters::decode_graph_with_catalog_usage(
+                                body, registry, &limits, catalog,
+                            ),
+                        };
+                        let decoded = decoded.and_then(|(graph, usage)| {
+                            if source.channel == 102 {
+                                let root = graph
+                                    .objects
+                                    .first()
+                                    .ok_or_else(|| anyhow::anyhow!("empty owner graph"))?;
+                                let saved_id =
+                                    crate::native_metadata::identifier(&root.fields["m_id"])?;
+                                ensure!(
+                                    u64::try_from(saved_id).ok() == Some(id),
+                                    "serialized owner identity disagrees with indexed record {id}"
+                                );
                             }
-                            ("unsupported_graph", Some(e.to_string()), None)
-                        }
-                    };
-                    let coverage = summary
-                        .classes
-                        .entry(
-                            class_name
-                                .clone()
-                                .unwrap_or_else(|| "<unregistered>".into()),
-                        )
-                        .or_default();
-                    coverage.records += 1;
-                    coverage.body_bytes += body.len() as u64;
-                    if graph.is_some() {
-                        coverage.complete_graphs += 1;
-                        coverage.complete_graph_body_bytes += body.len() as u64;
-                    } else {
-                        coverage.unsupported_graphs += 1;
-                        *coverage
-                            .diagnostics
-                            .entry(diagnostic.clone().unwrap_or_default())
-                            .or_default() += 1;
-                    }
-                    summary.projected_metadata_records += usize::from(saved_metadata.is_some());
-                    summary.unsupported_metadata_records +=
-                        usize::from(metadata_diagnostic.is_some());
-                    summary.emitted_records += 1;
-                    emit(Record {
-                        identity: identity.clone(),
-                        derived_default_ifc_guid,
-                        derived_identifier_diagnostic,
-                        effective_ifc_parameter,
-                        effective_ifc_parameter_diagnostic,
-                        channel: source.channel,
-                        class_name,
-                        status: status.into(),
-                        diagnostic,
-                        source: RecordSource {
-                            stream: name.clone(),
-                            group: source.clone(),
-                            group_record_offset: offset,
-                            body_bytes: body.len(),
+                            Ok((graph, usage))
+                        });
+                        let metadata = match decoded
+                            .as_ref()
+                            .ok()
+                            .filter(|_| projected.is_none())
+                            .map(|(graph, _)| {
+                                crate::native_metadata::project_with_definitions(graph, definitions)
+                            }) {
+                            Some(Ok(value)) => (Some(value), None),
+                            Some(Err(error)) => (None, Some(error.to_string())),
+                            None => (None, None),
+                        };
+                        let derived = if options.record_extras {
+                            match crate::native_metadata::derive_default_ifc_guid(
+                                &identity.unique_id,
+                            ) {
+                                Ok(value) => (Some(value), None),
+                                Err(error) => (None, Some(error.to_string())),
+                            }
+                        } else {
+                            (None, None)
+                        };
+                        let effective = match (
+                            class_name.as_deref(),
+                            metadata.0.as_ref(),
+                            derived.0.as_deref(),
+                        ) {
+                            (Some(class), Some(metadata), Some(default_guid)) => {
+                                match crate::native_metadata::effective_ifc_parameter(
+                                    class,
+                                    metadata,
+                                    default_guid,
+                                    definitions,
+                                ) {
+                                    Ok(value) => (value, None),
+                                    Err(error) => (None, Some(error.to_string())),
+                                }
+                            }
+                            _ => (None, None),
+                        };
+                        let body_sha256 = if options.record_extras {
+                            lower_hex(&Sha256::digest(body))
+                        } else {
+                            String::new()
+                        };
+                        Some(Decoded {
+                            decoded,
+                            metadata,
+                            derived,
+                            effective,
                             body_sha256,
-                        },
-                        graph,
-                        saved_metadata,
-                        metadata_diagnostic,
-                        base: None,
-                        body: options.keep_body.then(|| body.to_vec()),
-                    })?;
+                        })
+                    };
+                    let decodes = pending
+                        .iter()
+                        .filter(|job| matches!(job, Pending::Decode { .. }))
+                        .count();
+                    let mut done: Vec<Option<Decoded>> = if decodes >= PARALLEL_DECODES {
+                        crate::control::map_in_order(&pending, decode)
+                    } else {
+                        pending.iter().map(decode).collect()
+                    };
+                    for (job, done) in pending.into_iter().zip(done.drain(..)) {
+                        let (id, offset, body, identity, class_name, finished) = match (job, done) {
+                            (Pending::Done(record), _) => {
+                                emit(*record)?;
+                                continue;
+                            }
+                            (
+                                Pending::Decode {
+                                    id,
+                                    offset,
+                                    body,
+                                    identity,
+                                    class_name,
+                                },
+                                Some(finished),
+                            ) => (id, offset, body, identity, class_name, finished),
+                            (Pending::Decode { .. }, None) => {
+                                unreachable!("every decode job is decoded")
+                            }
+                        };
+                        let Decoded {
+                            decoded,
+                            metadata: (saved_metadata, metadata_diagnostic),
+                            derived: (derived_default_ifc_guid, derived_identifier_diagnostic),
+                            effective: (effective_ifc_parameter, effective_ifc_parameter_diagnostic),
+                            body_sha256,
+                        } = finished;
+                        let (status, diagnostic, graph) = match decoded {
+                            Ok((graph, usage)) => {
+                                summary.max_graph_objects_observed =
+                                    summary.max_graph_objects_observed.max(usage.objects);
+                                summary.max_graph_values_observed =
+                                    summary.max_graph_values_observed.max(usage.values);
+                                summary.complete_graph_records += 1;
+                                ("complete_bounded_graph", None, Some(graph))
+                            }
+                            Err(e) => {
+                                summary.unsupported_graph_records += 1;
+                                summary.refused_graph_ids.push(id);
+                                if let Some(class_name) = &class_name {
+                                    *summary
+                                        .refused_graph_classes
+                                        .entry(class_name.clone())
+                                        .or_default() += 1;
+                                }
+                                ("unsupported_graph", Some(e.to_string()), None)
+                            }
+                        };
+                        let coverage = summary
+                            .classes
+                            .entry(
+                                class_name
+                                    .clone()
+                                    .unwrap_or_else(|| "<unregistered>".into()),
+                            )
+                            .or_default();
+                        coverage.records += 1;
+                        coverage.body_bytes += body.len() as u64;
+                        if graph.is_some() {
+                            coverage.complete_graphs += 1;
+                            coverage.complete_graph_body_bytes += body.len() as u64;
+                        } else {
+                            coverage.unsupported_graphs += 1;
+                            *coverage
+                                .diagnostics
+                                .entry(diagnostic.clone().unwrap_or_default())
+                                .or_default() += 1;
+                        }
+                        summary.projected_metadata_records += usize::from(saved_metadata.is_some());
+                        summary.unsupported_metadata_records +=
+                            usize::from(metadata_diagnostic.is_some());
+                        summary.emitted_records += 1;
+                        emit(Record {
+                            identity: identity.clone(),
+                            derived_default_ifc_guid,
+                            derived_identifier_diagnostic,
+                            effective_ifc_parameter,
+                            effective_ifc_parameter_diagnostic,
+                            channel: source.channel,
+                            class_name,
+                            status: status.into(),
+                            diagnostic,
+                            source: RecordSource {
+                                stream: name.clone(),
+                                group: source.clone(),
+                                group_record_offset: offset,
+                                body_bytes: body.len(),
+                                body_sha256,
+                            },
+                            graph,
+                            saved_metadata,
+                            metadata_diagnostic,
+                            base: None,
+                            body: options.keep_body.then(|| body.to_vec()),
+                        })?;
+                    }
+                    scanned?;
                 }
-                scanned?;
                 Ok(())
             },
         )?
