@@ -41,6 +41,9 @@ run() { # variant bin_dir env...
   echo "$name $v: $(date -u +%T) done (rvt-ifc $(cat "$tmp/$v/ifc.time" 2> /dev/null), rvt-gltf $(cat "$tmp/$v/gltf.time" 2> /dev/null); KiB s)"
 }
 
+# The larger of GNU time's KiB and the largest stage peak (MiB) in the stage file, in KiB.
+peak() { awk -F'\t' -v k="$1" '$4 * 1024 > k { k = $4 * 1024 } END { print k }' "$2" 2> /dev/null || echo "$1"; }
+
 variants="base head head-batch1024 head-batch4096 head-arena2"
 run base "$BASE"
 run head "$HEAD"
@@ -58,6 +61,9 @@ run head-arena2 "$HEAD" MALLOC_ARENA_MAX=2
     read -r gk gs < "$tmp/$v/gltf.time" 2> /dev/null || { gk=0; gs=-; }
     if cmp -s "$OUT/sha256-base.txt" "$OUT/sha256-$v.txt" && [ "$(wc -l < "$OUT/sha256-$v.txt")" = 4 ]; then same=yes
     else same="**no**: $(diff "$OUT/sha256-base.txt" "$OUT/sha256-$v.txt" | sed -nE 's/^> [0-9a-f]+ +//p' | tr '\n' ' ')"; status=1; fi
+    # RVT_STAGE_MEMORY resets the kernel's peak at every stage, which also resets what GNU time
+    # reads at exit: its %M is only the last stage's peak. The run's peak is the larger of the two.
+    ik=$(peak "$ik" "$OUT/stages-ifc-$v.tsv"); gk=$(peak "$gk" "$OUT/stages-gltf-$v.tsv")
     echo "| $v | $((ik / 1024)) | $is | $((gk / 1024)) | $gs | $same |"
   done
   for tool in ifc gltf; do
