@@ -105,6 +105,7 @@ pub mod ifc_options;
 pub mod ifcx_revit_elements;
 pub mod ifcx_writer;
 pub mod instancing;
+mod mesh_volume;
 pub mod meshopt;
 pub mod obj;
 pub mod pbr;
@@ -982,6 +983,24 @@ pub struct ExportedModelDiagnostics {
     /// Empty when no wall is.
     #[serde(default)]
     pub wall_top_stubs_cut: std::collections::BTreeMap<String, usize>,
+    /// Of the exported walls whose edited elevation profile closes below the top
+    /// of their record box, how many have their top taken at the profile's
+    /// highest point, by the `ProfileTopSource` property of each:
+    /// `wall_top_at_profile_top`. Revit's body ends there, and the
+    /// wall's `Height` is the profile's. Empty when no wall does.
+    #[serde(default)]
+    pub wall_profile_top_sources: std::collections::BTreeMap<String, usize>,
+    /// Of the exported walls whose edited elevation profile cuts the wall, how
+    /// many have a cut made in the wall's body (the regions reads that no
+    /// pocket of the profile equals) and the openings Revit's export writes for
+    /// the profile (the pockets of the profile against its convex hull) written
+    /// beside it, by the `ProfileCutSource` property of each:
+    /// `wall_profile_cut_in_body`. A wall whose every region a pocket equals has
+    /// no cut (its body is its box and its pockets are its openings), and a wall
+    /// whose regions cannot be cut is voided by them, as before; neither is
+    /// counted. Empty when no wall has a cut.
+    #[serde(default)]
+    pub wall_profile_cuts: std::collections::BTreeMap<String, usize>,
     /// Of the exported walls, how many have their base cut at an element their
     /// base join names, by the `BodyBaseSource` property of each (): `wall_base_sloped_at_covering_floor`,
     /// `wall_base_cut_at_covering_floor`, and the two `_in_part` values of a
@@ -1989,7 +2008,9 @@ fn export_rvt_doc_reporting(
         .include_geometry
         .then(|| opening_cuts_through_hosts(&entities, &record_handoffs));
     let wall_cut_openings_left_out = match &early_opening_cuts {
-        Some(cuts) => wall_cut_openings::attach_wall_cut_openings(rf, &mut entities, cuts),
+        Some(cuts) => {
+            wall_cut_openings::attach_wall_cut_openings(rf, &mut entities, cuts, &record_handoffs)
+        }
         None => Default::default(),
     };
 
@@ -2041,6 +2062,8 @@ fn export_rvt_doc_reporting(
 
     if policy.include_geometry {
         apply_placement_origins(&mut entities, &record_handoffs, &opening_cuts);
+        // after everything that reads a wall's body or its openings.
+        export_content::cut_wall_profiles(&mut entities);
     }
     let mut wall_profile_height_checks = std::collections::BTreeMap::<String, usize>::new();
     for property in record_handoffs.values().flatten() {
@@ -6732,6 +6755,8 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
     let mut wall_end_refusals = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_end_sources = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_top_stubs_cut = std::collections::BTreeMap::<String, usize>::new();
+    let mut wall_profile_top_sources = std::collections::BTreeMap::<String, usize>::new();
+    let mut wall_profile_cuts = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_base_sources = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_ends_order_dependent = 0usize;
     let mut wall_profile_sources = std::collections::BTreeMap::<String, usize>::new();
@@ -6802,6 +6827,14 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
                         export_content::WALL_TOP_STUB_PROPERTY,
                         entities::PropertyValue::Text(text),
                     ) => *wall_top_stubs_cut.entry(text.clone()).or_insert(0) += 1,
+                    (
+                        export_content::WALL_PROFILE_TOP_PROPERTY,
+                        entities::PropertyValue::Text(text),
+                    ) => *wall_profile_top_sources.entry(text.clone()).or_insert(0) += 1,
+                    (
+                        export_content::WALL_PROFILE_CUT_PROPERTY,
+                        entities::PropertyValue::Text(text),
+                    ) => *wall_profile_cuts.entry(text.clone()).or_insert(0) += 1,
                     (
                         export_content::WALL_BASE_SOURCE_PROPERTY,
                         entities::PropertyValue::Text(text),
@@ -6926,6 +6959,8 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
         wall_end_refusals,
         wall_end_sources,
         wall_top_stubs_cut,
+        wall_profile_top_sources,
+        wall_profile_cuts,
         wall_base_sources,
         wall_ends_order_dependent,
         wall_profile_sources,
@@ -7511,7 +7546,9 @@ fn production_walker_stats(
 /// Each element's type name, the `Reference` in any of its `Pset_` sets, by
 /// its index in `model.entities`: what an opening of the element's own
 /// geometry (a floor's sketch void, a face-hosted cut) carries as its
-/// `Pset_OpeningElementCommon.Reference`, as Revit's export writes it.
+/// `Pset_OpeningElementCommon.Reference` and
+/// `Pset_EnvironmentalImpactIndicators.Reference`, as Revit's export writes
+/// them.
 pub(crate) fn host_references(model: &IfcModel) -> std::collections::HashMap<usize, String> {
     let mut out = std::collections::HashMap::new();
     for entity in &model.entities {
@@ -7563,7 +7600,7 @@ fn host_element_without_layers(entity: &entities::IfcEntity) -> bool {
 /// The property values `write_step` writes in `Pset_` sets, counted as it
 /// emits them: every building element's own set and further sets, then each
 /// storey's sets and the building's when the model has a storey, and an
-/// opening of its host's own geometry's `Reference`. A piece the
+/// opening of its host's own geometry's `Reference` twice. A piece the
 /// writer folds into another element's body writes none: it is no
 /// element of the IFC, though it holds the sets of its owner.
 fn pset_property_value_count(model: &IfcModel) -> usize {
@@ -7602,7 +7639,10 @@ fn pset_property_value_count(model: &IfcModel) -> usize {
         })
         .sum();
     let references = host_references(model);
-    let openings = model
+    // an opening of its host's own geometry holds the host's
+    // type name twice, in `Pset_OpeningElementCommon` and
+    // `Pset_EnvironmentalImpactIndicators`.
+    let openings = 2 * model
         .entities
         .iter()
         .filter(|entity| match entity {
@@ -7611,15 +7651,36 @@ fn pset_property_value_count(model: &IfcModel) -> usize {
             _ => false,
         })
         .count();
-    // A wall's cut opening holds its cutter's type name twice, in
-    // `Pset_OpeningElementCommon` and `Pset_EnvironmentalImpactIndicators`.
-    let wall_cuts = 2 * model
+    // a wall's cut opening holds its cutter's type name twice, in
+    // `Pset_OpeningElementCommon` and `Pset_EnvironmentalImpactIndicators`,
+    // and each property its cutter's parameters name in its set.
+    let mut cutter_values = std::collections::BTreeMap::<usize, usize>::new();
+    for entity in &model.entities {
+        if let entities::IfcEntity::CutterOpeningSet { element, set } = entity {
+            *cutter_values.entry(*element).or_default() += values(set);
+        }
+    }
+    let wall_cuts: usize = model
+        .entities
+        .iter()
+        .map(|entity| match entity {
+            entities::IfcEntity::WallCutOpening { reference_from, .. } => {
+                2 * usize::from(references.contains_key(reference_from))
+                    + cutter_values.get(reference_from).copied().unwrap_or(0)
+            }
+            _ => 0,
+        })
+        .sum();
+    // so does the opening of a wall's own elevation profile, where the
+    // wall has one and the opening is written (a region cut in the wall's body
+    // has no outline left).
+    let wall_profiles = 2 * model
         .entities
         .iter()
         .filter(|entity| match entity {
-            entities::IfcEntity::WallCutOpening { reference_from, .. } => {
-                references.contains_key(reference_from)
-            }
+            entities::IfcEntity::WallProfileOpening {
+                host, outline_feet, ..
+            } => outline_feet.len() >= 3 && references.contains_key(host),
             _ => false,
         })
         .count();
@@ -7641,6 +7702,7 @@ fn pset_property_value_count(model: &IfcModel) -> usize {
         + building
         + openings
         + wall_cuts
+        + wall_profiles
         + step_writer::type_object_pset_values(model)
 }
 

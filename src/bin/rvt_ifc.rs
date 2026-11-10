@@ -110,9 +110,10 @@ struct Args {
     diagnostic_proxies: bool,
     /// Draw every element whose body would be its record's bounding box
     /// (furniture, fixtures, equipment and the rest) from the mesh Revit
-    /// saved for display. Doors and windows are drawn so by default
-    /// on Revit 2023 to 2027. Slower on large files.
-    /// on by default (this flag is kept for old command lines).
+    /// saved for display, on Revit 2014 to 2027 (on by default; this flag is
+    /// kept for old command lines). The walls that embed a curtain wall are
+    /// drawn so on Revit 2024 to 2027 where Revit raised their base. Slower on
+    /// large files.
     #[arg(long, conflicts_with_all = ["placeholder", "no_saved_meshes"])]
     saved_meshes: bool,
     /// draw those elements from the family's own embedded

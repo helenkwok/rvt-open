@@ -43,14 +43,78 @@
 //! where the cut-out stays outside the wall across the stretch, is not changed
 //! and not counted. A wall with no record property set, or drawn from a
 //! profile of its own, is left out.
+//!
+//! # The top at the profile's highest point 
+//!
+//! A profile edited down from the wall's unconnected height closes below the
+//! top of the wall's record box, and Revit's body ends at the profile's highest
+//! point. The openings above are cut from the profile's own bounding rectangle,
+//! so the strip between that rectangle's top and the box's top stays solid and
+//! the wall's `Height`, the extrusion's, is the box's. The BIM4LCA office's
+//! terrain files hold the one wall measured: 1387731, whose profile closes
+//! 3.6765 ft below its box over the whole of its 173.9 ft, and whose `Height`
+//! Revit writes as the profile's 4.4 m where the box gives 5.520605 m.
+//!
+//! [`take_top_at_profile`] lowers such a wall's extrusion to the profile's
+//! highest point when all of these hold, and says so in
+//! `ProfileTopSource`. The rule rests on that one wall, so every condition is
+//! the narrowest the measured wall allows:
+//!
+//! - the record names nothing joined to or cutting the wall, so that no other
+//!   pass decides its top or base;
+//! - the profile spans the wall: its lowest and highest points along its own
+//!   axis lie at the wall's two ends, within a thousandth of a foot. A wall that
+//!   goes on past its profile has a box that holds the profile's line carried on
+//! (`rac_basic`'s wall 493612 is 3.529 m high for a profile of 3.5 m),
+//!   and its top is not the profile's;
+//! - the profile's lowest line is the wall's base;
+//! - the profile's highest point lies more than a thousandth of a foot below the
+//!   top of the box.
+//!
+//! A wall of which any of this is not known keeps the box's top, as before.
+//!
+//! # The profile's cut in the wall's body 
+//!
+//! regions, each between a run of the profile's lines and the
+//! profile's bounding rectangle, make the wall's shape, but they are not what
+//! Revit's export writes as openings. Revit writes an opening only for each
+//! pocket of the profile against its convex hull
+//! ([`crate::partition_schema_mvp::elevation_profile_pockets`]): none on a
+//! straight sloped top; on the terrain wall 1387731 the first three lines of its
+//! top closed by a chord; and on Core Interior's wall 55840 the stretch of its
+//! stepped top closed through the corner of the profile's rectangle that the
+//! hull's edge cuts off (301.65 ft2, not the 71.23 ft2 the stretch and the edge
+//! hold). [`cut_profiles_from_bodies`] runs after every pass that reads a wall's
+//! body or its openings, and deals with each region by what Revit writes:
+//!
+//! - A region that a pocket equals (Core Interior's 55840 and 4 of the 7 walls
+//!   with pockets of Snowdon Towers, local only) is that pocket: the wall keeps
+//!   its box, and the pocket's opening is written in the region's place.
+//! - A region no pocket equals (the office's eight walls and the terrain's two,
+//!   and the regions of 5 of Snowdon's 9 walls with sketch lines) is taken out
+//!   of the wall's body as a boolean difference and written as no opening. The
+//!   wall's pockets are written as its openings, so that the openings a wall
+//!   carries are Revit's and its shape is the same. The wall's
+//!   `ProfileCutSource` says that a cut was made in the body.
+//!
+//! A wall it cannot do this for keeps the regions as its openings, as before,
+//! and its pockets are not written. A body that is cut and holds an opening that
+//! overlaps the cut is not evaluated whole by IfcOpenShell on one of Snowdon's
+//! walls (it gives the uncut box), which is why a region a pocket equals is not
+//! cut as well.
 
-use std::f64::consts::FRAC_PI_4;
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use super::{
-    ELEMENT_RECORD_PROPERTY_SET, WALL_PROFILE_CHECK_PROPERTY, WALL_PROFILE_REFUSAL_PROPERTY,
-    WALL_PROFILE_SOURCE_PROPERTY,
+    ELEMENT_RECORD_PROPERTY_SET, WALL_PROFILE_CHECK_PROPERTY, WALL_PROFILE_CUT_IN_BODY,
+    WALL_PROFILE_CUT_PROPERTY, WALL_PROFILE_REFUSAL_PROPERTY, WALL_PROFILE_SOURCE_PROPERTY,
+    WALL_PROFILE_TOP_AT_PROFILE, WALL_PROFILE_TOP_PROPERTY,
 };
-use crate::ifc::entities::{IfcEntity, Property, PropertyValue};
+use crate::ifc::entities::{
+    Extrusion, IfcBooleanOp, IfcEntity, ProfileDef, Property, PropertySet, PropertyValue,
+    SolidShape,
+};
+use crate::walker::{DecodedElement, InstanceField};
 use std::collections::{BTreeMap, HashMap};
 
 /// How far a wall must go on past its profile for a stretch to be one, how
@@ -433,6 +497,321 @@ fn extended_with(
     Ok(Some((carried, kind)))
 }
 
+/// The height a wall's body takes when its top is taken at the highest point of
+/// its edited elevation profile (see the module documentation), or `None`
+/// where it keeps the box's top. `heights` are the lowest and highest height of
+/// the profile's lines and `ends` the plan position of its lowest and highest
+/// points along its own axis, all model feet; `frame` is the wall's extrusion
+/// as the exporter built it, whose base is `location[2]`.
+fn top_at_profile(heights: (f64, f64), ends: ([f64; 2], [f64; 2]), frame: &Frame) -> Option<f64> {
+    let (lowest, highest) = heights;
+    let numbers = [
+        lowest,
+        highest,
+        ends.0[0],
+        ends.0[1],
+        ends.1[0],
+        ends.1[1],
+        frame.width,
+        frame.depth,
+        frame.height,
+        frame.location[0],
+        frame.location[1],
+        frame.location[2],
+        frame.rotation,
+    ];
+    if numbers.iter().any(|number| !number.is_finite()) {
+        return None;
+    }
+    // The wall's long axis, as the exporter places its profile openings along
+    // it, and its two ends about the extrusion's centre.
+    let turn = frame.rotation
+        + if frame.width >= frame.depth {
+            0.0
+        } else {
+            FRAC_PI_2
+        };
+    let axis = [turn.cos(), turn.sin()];
+    let along = |point: [f64; 2]| {
+        (point[0] - frame.location[0]) * axis[0] + (point[1] - frame.location[1]) * axis[1]
+    };
+    let (first, second) = (along(ends.0), along(ends.1));
+    let (low, high) = (first.min(second), first.max(second));
+    let half = frame.width.max(frame.depth) / 2.0;
+    if (low + half).abs() > TOLERANCE_FEET || (half - high).abs() > TOLERANCE_FEET {
+        return None;
+    }
+    if (lowest - frame.location[2]).abs() > TOLERANCE_FEET {
+        return None;
+    }
+    let top = highest - frame.location[2];
+    (top > TOLERANCE_FEET && frame.height - top > TOLERANCE_FEET).then_some(top)
+}
+
+/// Take the top of the wall `decoded` is drawn as, `body` at `location` with
+/// `rotation`, at the highest point of its edited elevation profile where
+/// [`top_at_profile`] says so and nothing else cuts the wall, and say so in
+/// `set`, the wall's record property set (see the module documentation).
+pub(super) fn take_top_at_profile(
+    decoded: &DecodedElement,
+    location: [f64; 3],
+    rotation: Option<f64>,
+    body: &mut Extrusion,
+    set: &mut PropertySet,
+) {
+    let uncut = decoded.fields.iter().any(|(name, value)| {
+        name == crate::partition_schema_mvp::WALL_UNCUT_FIELD
+            && matches!(value, InstanceField::Bool(true))
+    });
+    if !uncut || set.name != ELEMENT_RECORD_PROPERTY_SET || body.profile_override.is_some() {
+        return;
+    }
+    let (Some(heights), Some((low, high))) = (
+        crate::partition_schema_mvp::profile_height_from_fields(&decoded.fields),
+        crate::partition_schema_mvp::profile_extent_from_fields(&decoded.fields),
+    ) else {
+        return;
+    };
+    let frame = Frame {
+        width: body.width_feet,
+        depth: body.depth_feet,
+        height: body.height_feet,
+        location,
+        rotation: rotation.filter(|turn| turn.is_finite()).unwrap_or(0.0),
+    };
+    let ends = ([low[0], low[1]], [high[0], high[1]]);
+    if let Some(height) = top_at_profile(heights, ends, &frame) {
+        body.height_feet = height;
+        set.properties.push(Property {
+            name: WALL_PROFILE_TOP_PROPERTY.into(),
+            value: PropertyValue::Text(WALL_PROFILE_TOP_AT_PROFILE.into()),
+        });
+    }
+}
+
+/// How far the prism that makes a profile's cut reaches beyond the wall's two
+/// faces, feet, so that its faces lie in none of the wall's.
+const CUT_MARGIN_FEET: f64 = 0.01;
+
+/// The solid of a region reads from a wall's profile: its outline in the
+/// wall's vertical plane, extruded through the wall and placed as the opening it
+/// is written as is. `None` where the entity is not one, or is not a solid.
+fn cut_prism(entity: &IfcEntity) -> Option<SolidShape> {
+    let IfcEntity::WallProfileOpening {
+        outline_feet,
+        axis_turn_radians,
+        plane_offset_feet,
+        thickness_feet,
+        ..
+    } = entity
+    else {
+        return None;
+    };
+    let finite = outline_feet
+        .iter()
+        .flat_map(|point| [point.0, point.1])
+        .chain([*axis_turn_radians, *plane_offset_feet, *thickness_feet])
+        .all(f64::is_finite);
+    if outline_feet.len() < 3 || !finite || *thickness_feet <= 0.0 {
+        return None;
+    }
+    let (sin, cos) = axis_turn_radians.sin_cos();
+    let start = plane_offset_feet + thickness_feet / 2.0 + CUT_MARGIN_FEET;
+    Some(SolidShape::PlacedExtrusion {
+        profile: ProfileDef::ArbitraryClosed {
+            points: outline_feet.clone(),
+        },
+        origin_feet: [-sin * start, cos * start, 0.0],
+        axis: [sin, -cos, 0.0],
+        ref_direction: [cos, sin, 0.0],
+        depth_feet: thickness_feet + 2.0 * CUT_MARGIN_FEET,
+    })
+}
+
+/// Take the solids `prisms` out of the body of the wall `host` as a boolean
+/// difference and say so in the wall's record property set. `false`, with the
+/// wall as it was, where the entity is not a wall with a body of its own.
+fn cut_body(host: Option<&mut IfcEntity>, prisms: Vec<SolidShape>) -> bool {
+    let Some(IfcEntity::BuildingElement {
+        ifc_type,
+        extrusion,
+        solid_shape,
+        representation_map_index: None,
+        property_set,
+        ..
+    }) = host
+    else {
+        return false;
+    };
+    if !matches!(
+        ifc_type.to_ascii_uppercase().as_str(),
+        "IFCWALL" | "IFCWALLSTANDARDCASE"
+    ) {
+        return false;
+    }
+    let Some(body) = solid_shape
+        .clone()
+        .or_else(|| extrusion.clone().map(SolidShape::ExtrudedArea))
+    else {
+        return false;
+    };
+    *solid_shape = Some(
+        prisms
+            .into_iter()
+            .fold(body, |whole, prism| SolidShape::BooleanResult {
+                op: IfcBooleanOp::Difference,
+                operand_a: Box::new(whole),
+                operand_b: Box::new(prism),
+            }),
+    );
+    if let Some(set) = property_set {
+        if set.name == ELEMENT_RECORD_PROPERTY_SET {
+            set.properties.push(Property {
+                name: WALL_PROFILE_CUT_PROPERTY.into(),
+                value: PropertyValue::Text(WALL_PROFILE_CUT_IN_BODY.into()),
+            });
+        }
+    }
+    true
+}
+
+/// How far two corners of an outline may stand apart, feet, to be one corner.
+const OUTLINE_EPS_FEET: f64 = 1e-3;
+
+/// The corners of a closed outline: a point within the tolerance of the one
+/// before it, and one on the straight run between its neighbours, are no corner.
+fn outline_corners(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let near = |a: (f64, f64), b: (f64, f64)| {
+        (a.0 - b.0).abs() <= OUTLINE_EPS_FEET && (a.1 - b.1).abs() <= OUTLINE_EPS_FEET
+    };
+    let mut corners: Vec<(f64, f64)> = Vec::new();
+    for point in points {
+        if corners.last().is_none_or(|last| !near(*last, *point)) {
+            corners.push(*point);
+        }
+    }
+    while corners.len() > 1 && near(corners[0], corners[corners.len() - 1]) {
+        corners.pop();
+    }
+    loop {
+        let count = corners.len();
+        if count < 3 {
+            break;
+        }
+        let straight = (0..count).find(|index| {
+            let before = corners[(index + count - 1) % count];
+            let here = corners[*index];
+            let after = corners[(index + 1) % count];
+            let span = (after.0 - before.0).hypot(after.1 - before.1);
+            let cross = (here.0 - before.0) * (after.1 - before.1)
+                - (here.1 - before.1) * (after.0 - before.0);
+            span > 0.0 && cross.abs() / span <= OUTLINE_EPS_FEET
+        });
+        match straight {
+            Some(index) => {
+                corners.remove(index);
+            }
+            None => break,
+        }
+    }
+    corners
+}
+
+/// Whether two outlines, both counter-clockwise, are one polygon: the same
+/// corners in the same order from some corner on (see [`outline_corners`]).
+fn same_outline(a: &[(f64, f64)], b: &[(f64, f64)]) -> bool {
+    let (a, b) = (outline_corners(a), outline_corners(b));
+    let near = |p: (f64, f64), q: (f64, f64)| {
+        (p.0 - q.0).abs() <= OUTLINE_EPS_FEET && (p.1 - q.1).abs() <= OUTLINE_EPS_FEET
+    };
+    a.len() >= 3
+        && a.len() == b.len()
+        && (0..b.len()).any(|shift| (0..a.len()).all(|k| near(a[k], b[(k + shift) % b.len()])))
+}
+
+/// The outline of a region or a pocket.
+fn outline_of(entity: &IfcEntity) -> Option<&[(f64, f64)]> {
+    match entity {
+        IfcEntity::WallProfileOpening { outline_feet, .. }
+        | IfcEntity::WallProfilePocket { outline_feet, .. } => Some(outline_feet.as_slice()),
+        _ => None,
+    }
+}
+
+/// Make the cut of each wall's edited elevation profile in the wall's body and
+/// write the openings Revit's export writes for it (see the module
+/// documentation). A region that a pocket equals is not cut in the body: the
+/// pocket's opening voids it, as the region did. A wall whose other regions are
+/// not all solids, or whose entity is not a wall with a body of its own, is left
+/// with its regions as its openings.
+pub(super) fn cut_profiles_from_bodies(entities: &mut [IfcEntity]) {
+    let mut regions: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut pockets: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (index, entity) in entities.iter().enumerate() {
+        match entity {
+            IfcEntity::WallProfileOpening { host, .. } => {
+                regions.entry(*host).or_default().push(index);
+            }
+            IfcEntity::WallProfilePocket { host, .. } => {
+                pockets.entry(*host).or_default().push(index);
+            }
+            _ => {}
+        }
+    }
+    for (host, region_indices) in regions {
+        let pocket_indices = pockets.remove(&host).unwrap_or_default();
+        let (equalled, cut): (Vec<usize>, Vec<usize>) =
+            region_indices.iter().copied().partition(|region| {
+                outline_of(&entities[*region]).is_some_and(|outline| {
+                    pocket_indices.iter().any(|pocket| {
+                        outline_of(&entities[*pocket])
+                            .is_some_and(|other| same_outline(outline, other))
+                    })
+                })
+            });
+        if !cut.is_empty() {
+            let Some(prisms) = cut
+                .iter()
+                .map(|index| cut_prism(&entities[*index]))
+                .collect::<Option<Vec<SolidShape>>>()
+            else {
+                continue;
+            };
+            if !cut_body(entities.get_mut(host), prisms) {
+                continue;
+            }
+        }
+        for index in cut.iter().chain(&equalled) {
+            if let IfcEntity::WallProfileOpening { outline_feet, .. } = &mut entities[*index] {
+                outline_feet.clear();
+            }
+        }
+        for index in pocket_indices {
+            let opening = match &entities[index] {
+                IfcEntity::WallProfilePocket {
+                    host,
+                    tag,
+                    name,
+                    outline_feet,
+                    axis_turn_radians,
+                    plane_offset_feet,
+                    thickness_feet,
+                } => IfcEntity::WallProfileOpening {
+                    host: *host,
+                    tag: tag.clone(),
+                    name: name.clone(),
+                    outline_feet: outline_feet.clone(),
+                    axis_turn_radians: *axis_turn_radians,
+                    plane_offset_feet: *plane_offset_feet,
+                    thickness_feet: *thickness_feet,
+                },
+                _ => continue,
+            };
+            entities[index] = opening;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,5 +1019,177 @@ mod tests {
         // The same ending inside the wall's height is refused.
         let inside = [(0.0, 3.3), (0.0, 1.0), (4.0, 2.5)];
         assert_eq!(carried(&inside, 4.0, 1.0, 0.4).err(), Some(CUT_NOT_READ));
+    }
+
+    /// The BIM4LCA office terrain files' wall 1387731: 173.8565 ft long about
+    /// its centre, 18.1122 ft tall from 182.0866 ft, along the x axis.
+    fn terrain_wall() -> Frame {
+        Frame {
+            width: 173.8565,
+            depth: 0.4921,
+            height: 18.1122,
+            location: [209.3321, 121.5711, 182.0866],
+            rotation: 0.0,
+        }
+    }
+
+    const ENDS: ([f64; 2], [f64; 2]) = ([122.4038, 121.5711], [296.2603, 121.5718]);
+
+    #[test]
+    fn a_profile_that_spans_the_wall_and_closes_below_its_box_gives_its_top() {
+        let top = top_at_profile((182.0866, 196.5223), ENDS, &terrain_wall());
+        let Some(top) = top else {
+            panic!("the profile's top was not taken");
+        };
+        assert!((top - 14.4357).abs() < 1e-4, "{top}");
+    }
+
+    #[test]
+    fn a_profile_that_stops_short_of_an_end_keeps_the_box() {
+        // rac_basic's wall 493612 is of this kind: its box holds the line carried on.
+        let short = ([122.4038, 121.5711], [296.1203, 121.5718]);
+        assert_eq!(
+            top_at_profile((182.0866, 196.5223), short, &terrain_wall()),
+            None
+        );
+        let other_end = ([122.5438, 121.5711], [296.2603, 121.5718]);
+        assert_eq!(
+            top_at_profile((182.0866, 196.5223), other_end, &terrain_wall()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_profile_that_starts_above_the_base_keeps_the_box() {
+        assert_eq!(
+            top_at_profile((182.5, 196.5223), ENDS, &terrain_wall()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_profile_as_high_as_the_box_keeps_the_box() {
+        let box_top = 182.0866 + 18.1122;
+        assert_eq!(
+            top_at_profile((182.0866, box_top), ENDS, &terrain_wall()),
+            None
+        );
+        assert_eq!(
+            top_at_profile((182.0866, box_top - 0.0005), ENDS, &terrain_wall()),
+            None
+        );
+        assert_eq!(
+            top_at_profile((182.0866, box_top + 1.0), ENDS, &terrain_wall()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_profile_with_no_height_above_the_base_keeps_the_box() {
+        assert_eq!(
+            top_at_profile((182.0866, 182.0866), ENDS, &terrain_wall()),
+            None
+        );
+        assert_eq!(
+            top_at_profile((182.0866, 181.0), ENDS, &terrain_wall()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_wall_turned_across_the_axes_is_read_along_its_own_axis() {
+        // The same wall turned a quarter turn about its centre, its long side
+        // along y: the profile's ends lie at the wall's ends along y.
+        let mut turned = terrain_wall();
+        turned.rotation = FRAC_PI_2;
+        let ends = (
+            [209.3321, 121.5711 - 86.92825],
+            [209.3321, 121.5711 + 86.92825],
+        );
+        let Some(top) = top_at_profile((182.0866, 196.5223), ends, &turned) else {
+            panic!("the turned wall's profile top was not taken");
+        };
+        assert!((top - 14.4357).abs() < 1e-4, "{top}");
+        // Its ends read along x, as an unturned wall's would be, are not its ends.
+        assert_eq!(top_at_profile((182.0866, 196.5223), ENDS, &turned), None);
+    }
+
+    #[test]
+    fn a_wall_drawn_with_a_thickness_longer_than_its_length_is_read_along_its_depth() {
+        let mut upright = terrain_wall();
+        upright.width = 0.4921;
+        upright.depth = 173.8565;
+        upright.rotation = 0.0;
+        let along_y = (
+            [209.3321, 121.5711 - 86.92825],
+            [209.3321, 121.5711 + 86.92825],
+        );
+        assert!(top_at_profile((182.0866, 196.5223), along_y, &upright).is_some());
+    }
+
+    #[test]
+    fn numbers_that_are_not_finite_keep_the_box() {
+        assert_eq!(
+            top_at_profile((182.0866, f64::NAN), ENDS, &terrain_wall()),
+            None
+        );
+        let mut frame = terrain_wall();
+        frame.location[2] = f64::INFINITY;
+        assert_eq!(top_at_profile((182.0866, 196.5223), ENDS, &frame), None);
+        let nan_end = ([f64::NAN, 121.5711], [296.2603, 121.5718]);
+        assert_eq!(
+            top_at_profile((182.0866, 196.5223), nan_end, &terrain_wall()),
+            None
+        );
+    }
+
+    fn staircase() -> Vec<(f64, f64)> {
+        vec![
+            (3.0, 2.0),
+            (3.0, 4.0),
+            (1.5, 4.0),
+            (1.5, 3.0),
+            (-2.0, 3.0),
+            (-2.0, 2.0),
+        ]
+    }
+
+    #[test]
+    fn an_outline_is_the_same_from_any_corner_on() {
+        let rotated: Vec<(f64, f64)> = staircase().into_iter().cycle().skip(3).take(6).collect();
+        assert!(same_outline(&staircase(), &rotated));
+    }
+
+    #[test]
+    fn a_point_on_a_straight_run_and_a_repeated_first_point_are_no_corner() {
+        let mut padded = staircase();
+        padded.insert(5, (-2.0, 2.5));
+        padded.push(padded[0]);
+        assert!(same_outline(&staircase(), &padded));
+        assert_eq!(outline_corners(&padded).len(), 6);
+    }
+
+    #[test]
+    fn a_smaller_or_another_polygon_is_not_the_same() {
+        let mut lower = staircase();
+        lower[1] = (3.0, 3.5);
+        lower[2] = (1.5, 3.5);
+        assert!(!same_outline(&staircase(), &lower));
+        // A region that holds a pocket is not the pocket.
+        let pocket = vec![(1.5, 3.0), (3.0, 3.0), (3.0, 4.0), (1.5, 4.0)];
+        assert!(!same_outline(&staircase(), &pocket));
+    }
+
+    #[test]
+    fn fewer_than_three_corners_are_no_outline() {
+        let line = vec![(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)];
+        assert!(!same_outline(&line, &line));
+        assert!(!same_outline(&[], &[]));
+    }
+
+    #[test]
+    fn the_same_polygon_walked_the_other_way_is_not_the_same() {
+        let reversed: Vec<(f64, f64)> = staircase().into_iter().rev().collect();
+        assert!(!same_outline(&staircase(), &reversed));
     }
 }

@@ -157,11 +157,11 @@
       "source_ifc_type": "IFCPROPERTYSET",
       "tolerance": 0,
       "decoder_metric": "step.IFCPROPERTYSET",
-      "decoder_expected": 6514,
+      "decoder_expected": 6578,
       "decoder_tolerance": 8,
       "tracking": "partial_revit_element_parameters",
       "unsupported_feature": "partial_revit_element_parameters",
-      "notes": "The Pset_ sets carry the Revit parameters rvt-open reads (Reference, FloorCovering, IsExternal and the storey and building sets), so the diagnostics count them and claim the narrower gap. The row stays known_gap because the paired export's property-set inventory still differs from Revit's: neither side is a subset of the other."
+      "notes": "The Pset_ sets carry the Revit parameters rvt-open reads (Reference, FloorCovering, IsExternal and the storey and building sets), so the diagnostics count them and claim the narrower gap. The row stays known_gap because the paired export's property-set inventory still differs from Revit's: neither side is a subset of the other. Moved 6514 -> 6578: each of the 62 openings of a floor's own sketch gains Pset_EnvironmentalImpactIndicators holding its floor's Reference, beside its Pset_OpeningElementCommon, as Revit's export writes both."
     },
     "shading_devices": {
       "status": "decoder_baseline",

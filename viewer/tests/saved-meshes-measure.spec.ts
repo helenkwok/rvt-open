@@ -4,10 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The viewer draws the doors and windows of Revit 2023 to 2027 files from the
-// meshes Revit saved for them, with a toggle that keeps their boxes. The
-// condition for that default is that the viewer's
-// memory and load time are measured in Playwright on the reference models.
+// The viewer draws every element of a Revit 2014 to 2027 file that would be a
+// box from the mesh Revit saved for it, with a toggle that keeps the boxes.
+// The condition for that default is that the viewer's memory and load time
+// are measured in Playwright on the reference models.
 // This spec opens each model with the option on and off, each in a fresh
 // browser context, and records what the open cost:
 //
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 //   openMs           the wasm open call alone, where the saved graphics are read
 //   wasmMemoryBytes  the wasm linear memory after the whole parse; it only
 //                    grows, so it is the peak against the 4 GiB a tab holds
-//   savedMeshBodies  doors and windows drawn from saved meshes
+//   savedMeshBodies  bodies drawn from saved meshes
 //   estimatedPeakBytes  what the viewer's pre-check expects the open to take
 // (ten times the file) and its ratio to the peak
 //   timeline         where the open's time went, from the decoder's own
@@ -46,7 +46,7 @@ interface Model {
   file: string;
   release: number;
   loadTimeout: number;
-  /** Its doors and windows are known to draw from saved meshes. */
+  /** Its bodies are known to draw from saved meshes. */
   drawsSavedMeshes?: boolean;
 }
 
@@ -234,7 +234,7 @@ function tableRows(report: Report): string[][] {
       mib(m.estimatedPeakBytes),
       (m.estimatedPeakBytes / m.wasmMemoryBytes).toFixed(2),
       mib(m.mainHeapBytes),
-      `${m.savedMeshBodies} of ${m.doors + m.windows}`,
+      `${m.savedMeshBodies} of ${m.savedMeshBodies + m.boundingBoxBodies}`,
       String(m.boundingBoxBodies),
     ]);
   return [
@@ -249,7 +249,7 @@ function tableRows(report: Report): string[][] {
       'Estimate MiB',
       'Estimate / wasm',
       'Page heap MiB',
-      'Doors and windows from meshes',
+      'Boxed bodies from meshes',
       'Box bodies',
     ],
     ...rows,
@@ -336,9 +336,8 @@ for (const [index, model] of models.entries()) {
     const on = runs.get(true)!;
     // Off keeps every box.
     expect(off.savedMeshBodies).toBe(0);
-    // On draws doors and windows only, and replaces boxes one for one: the
-    // elements are the same, and the boxes that went are the meshes that came.
-    expect(on.savedMeshBodies).toBeLessThanOrEqual(on.doors + on.windows);
+    // On replaces boxes one for one: the elements are the same, and the boxes
+    // that went are the meshes that came.
     expect(on.buildingElements).toBe(off.buildingElements);
     expect(off.boundingBoxBodies - on.boundingBoxBodies).toBe(on.savedMeshBodies);
     if (model.drawsSavedMeshes) expect(on.savedMeshBodies).toBeGreaterThan(0);

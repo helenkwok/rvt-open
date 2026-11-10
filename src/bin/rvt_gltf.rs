@@ -71,12 +71,14 @@ struct Cli {
 
     /// Draw every element whose body would be its record's bounding box
     /// (furniture, fixtures, equipment and the rest) from the mesh Revit
-    /// command lines).
+    /// saved for display, on Revit 2014 to 2027 (on by default; this flag is
+    /// kept for old command lines).
     #[arg(long, conflicts_with = "no_saved_meshes")]
     saved_meshes: bool,
 
-    /// Keep every element as its record's bounding box instead of the
-    /// mesh Revit saved for it.
+    /// Keep every element as its record's bounding box, and the walls that
+    /// embed a curtain wall as their record's body, instead of the mesh Revit
+    /// saved for them.
     #[arg(long)]
     no_saved_meshes: bool,
 

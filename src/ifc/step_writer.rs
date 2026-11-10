@@ -3542,25 +3542,20 @@ impl StepWriter<'_> {
                         })
                     })
                 };
-                // not on a stair, a flight or a stringer from 2026, where
-                // Revit's own export does not write it.
-                let stair_part_class = ["IFCSTAIR", "IFCSTAIRFLIGHT", "IFCMEMBER"]
-                    .iter()
-                    .any(|class| ifc_type.eq_ignore_ascii_case(class));
-                let stair_part_family = property_text(super::export_content::FAMILY_NAME_PROPERTY)
-                    .is_some_and(|family| {
-                        crate::native_stairs::NATIVE_STAIR_FAMILIES.contains(&family.as_str())
-                    });
+                // Not from 2026, where Revit's own export writes no `ObjectType`:
+                // of the five held-out pairs saved by 2026 and 2027 (two houses
+                // and an office), 418 typed elements of nine classes had an
+                // `ObjectType` that differed from Revit's, and on every one
+                // Revit writes none, where its export of the same projects
+                // saved by 2025 writes `Family:Type` on every typed element.
                 let object_type_left_out = model.global_ids.revit_version.is_some_and(|version| {
-                    version >= crate::native_stairs::STAIR_OBJECT_TYPE_LEFT_OUT_FROM
+                    version >= crate::native_stairs::OBJECT_TYPE_LEFT_OUT_FROM
                 });
-                let stair_part_without_object_type =
-                    stair_part_class && stair_part_family && object_type_left_out;
                 let object_type_quoted = match (
                     property_text(super::export_content::FAMILY_NAME_PROPERTY),
                     property_text(super::export_content::TYPE_NAME_PROPERTY),
                 ) {
-                    (Some(family), Some(type_name)) if !stair_part_without_object_type => {
+                    (Some(family), Some(type_name)) if !object_type_left_out => {
                         quoted_or_dollar(&escape(&format!("{family}:{type_name}")))
                     }
                     _ => "$".into(),
@@ -3897,7 +3892,9 @@ impl StepWriter<'_> {
         // contained in a storey.: so is the opening a face-hosted door
         // or window cuts in its host, numbered among the host's openings.
         // Either is the host's own geometry, so, as Revit's export
-        // writes it, its Pset_OpeningElementCommon.Reference is the host's.
+        // writes it, its Pset_OpeningElementCommon.Reference is the host's, and
+        // so is its Pset_EnvironmentalImpactIndicators.Reference, as on
+        // every other opening Revit's export holds.
         for entity in &model.entities {
             let (host, tag, name, outline_feet, depth_feet, number) = match entity {
                 super::entities::IfcEntity::VoidOpening {
@@ -3988,28 +3985,25 @@ impl StepWriter<'_> {
                 ),
             );
             if let Some(reference) = host_references.get(host) {
-                let set = PropertySet {
-                    name: "Pset_OpeningElementCommon".into(),
-                    properties: vec![super::entities::Property {
-                        name: "Reference".into(),
-                        value: super::entities::PropertyValue::Identifier(reference.clone()),
-                    }],
-                };
-                self.emit_property_set(
-                    owner_hist,
-                    opening_id,
-                    &set,
-                    &gid(&[
-                        "property-set",
-                        opening_gid.as_str(),
-                        "Pset_OpeningElementCommon",
-                    ]),
-                    &gid(&[
-                        "defines-by-properties",
-                        opening_gid.as_str(),
-                        "Pset_OpeningElementCommon",
-                    ]),
-                );
+                for set_name in [
+                    "Pset_OpeningElementCommon",
+                    "Pset_EnvironmentalImpactIndicators",
+                ] {
+                    let set = PropertySet {
+                        name: set_name.into(),
+                        properties: vec![super::entities::Property {
+                            name: "Reference".into(),
+                            value: super::entities::PropertyValue::Identifier(reference.clone()),
+                        }],
+                    };
+                    self.emit_property_set(
+                        owner_hist,
+                        opening_id,
+                        &set,
+                        &gid(&["property-set", opening_gid.as_str(), set_name]),
+                        &gid(&["defines-by-properties", opening_gid.as_str(), set_name]),
+                    );
+                }
             }
             void_fill_triples.push((*host, opening_id, None, opening_gid));
         }
@@ -4030,6 +4024,11 @@ impl StepWriter<'_> {
             else {
                 continue;
             };
+            // a region whose cut is made in its wall's body has no
+            // outline left, and is not written.
+            if outline_feet.len() < 3 {
+                continue;
+            }
             let (Some(Some(host_el_id)), Some(Some(host_placement))) = (
                 entity_index_to_el_id.get(*host),
                 entity_index_to_placement.get(*host),
@@ -4115,6 +4114,63 @@ impl StepWriter<'_> {
                     escape(tag),
                 ),
             );
+            // As Revit's export writes the opening of a wall's own geometry,
+            // its Reference is the wall's type name, in both sets, and none
+            // where the wall has none.
+            if let Some(reference) = host_references.get(host) {
+                for set_name in [
+                    "Pset_OpeningElementCommon",
+                    "Pset_EnvironmentalImpactIndicators",
+                ] {
+                    let set = PropertySet {
+                        name: set_name.into(),
+                        properties: vec![super::entities::Property {
+                            name: "Reference".into(),
+                            value: super::entities::PropertyValue::Identifier(reference.clone()),
+                        }],
+                    };
+                    self.emit_property_set(
+                        owner_hist,
+                        opening_id,
+                        &set,
+                        &gid(&["property-set", opening_gid.as_str(), set_name]),
+                        &gid(&["defines-by-properties", opening_gid.as_str(), set_name]),
+                    );
+                }
+            }
+            // Where the wall has base quantities, its `Area` is the profile's
+            // (Revit's export writes no other quantity on it).
+            let profile_area = outline_feet
+                .iter()
+                .zip(outline_feet.iter().cycle().skip(1))
+                .map(|(a, b)| a.0 * b.1 - b.0 * a.1)
+                .sum::<f64>()
+                .abs()
+                / 2.0;
+            if profile_area > 0.0 && wall_widths.contains_key(host) {
+                let quantities = PropertySet {
+                    name: "Qto_OpeningElementBaseQuantities".into(),
+                    properties: vec![super::entities::Property {
+                        name: "Area".into(),
+                        value: super::entities::PropertyValue::AreaSquareFeet(profile_area),
+                    }],
+                };
+                self.emit_property_set(
+                    owner_hist,
+                    opening_id,
+                    &quantities,
+                    &gid(&[
+                        "property-set",
+                        opening_gid.as_str(),
+                        "Qto_OpeningElementBaseQuantities",
+                    ]),
+                    &gid(&[
+                        "defines-by-properties",
+                        opening_gid.as_str(),
+                        "Qto_OpeningElementBaseQuantities",
+                    ]),
+                );
+            }
             void_fill_triples.push((*host, opening_id, None, opening_gid));
         }
 
@@ -4127,6 +4183,20 @@ impl StepWriter<'_> {
         // of the export: Revit's IFC exporter's `OpeningUtil` hashes its number in the
         // wall's openings with the wall's and the cutter's GlobalIds
         // (CLEANROOM.md source 5).
+        // and the properties its cutter's parameters name in each set
+        // of an opening (a door's `FireExit`), which revit-ifc's
+        // `OpeningUtil.CreateOpening` hands the opening as it hands the
+        // cutter its own.
+        let mut cutter_properties: BTreeMap<(usize, &str), Vec<super::entities::Property>> =
+            Default::default();
+        for entity in &model.entities {
+            if let super::entities::IfcEntity::CutterOpeningSet { element, set } = entity {
+                cutter_properties
+                    .entry((*element, set.name.as_str()))
+                    .or_default()
+                    .extend(set.properties.iter().cloned());
+            }
+        }
         for entity in &model.entities {
             let super::entities::IfcEntity::WallCutOpening {
                 host,
@@ -4234,26 +4304,34 @@ impl StepWriter<'_> {
                     if *recess { ".RECESS." } else { ".OPENING." },
                 ),
             );
-            if let Some(reference) = host_references.get(reference_from) {
-                for set_name in [
-                    "Pset_OpeningElementCommon",
-                    "Pset_EnvironmentalImpactIndicators",
-                ] {
-                    let set = PropertySet {
-                        name: set_name.into(),
-                        properties: vec![super::entities::Property {
-                            name: "Reference".into(),
-                            value: super::entities::PropertyValue::Identifier(reference.clone()),
-                        }],
-                    };
-                    self.emit_property_set(
-                        owner_hist,
-                        opening_id,
-                        &set,
-                        &gid(&["property-set", opening_gid.as_str(), set_name]),
-                        &gid(&["defines-by-properties", opening_gid.as_str(), set_name]),
-                    );
+            for set_name in [
+                "Pset_OpeningElementCommon",
+                "Pset_EnvironmentalImpactIndicators",
+            ] {
+                let mut properties = Vec::new();
+                if let Some(reference) = host_references.get(reference_from) {
+                    properties.push(super::entities::Property {
+                        name: "Reference".into(),
+                        value: super::entities::PropertyValue::Identifier(reference.clone()),
+                    });
                 }
+                if let Some(named) = cutter_properties.get(&(*reference_from, set_name)) {
+                    properties.extend(named.iter().cloned());
+                }
+                if properties.is_empty() {
+                    continue;
+                }
+                let set = PropertySet {
+                    name: set_name.into(),
+                    properties,
+                };
+                self.emit_property_set(
+                    owner_hist,
+                    opening_id,
+                    &set,
+                    &gid(&["property-set", opening_gid.as_str(), set_name]),
+                    &gid(&["defines-by-properties", opening_gid.as_str(), set_name]),
+                );
             }
             // Revit's `Depth` is the extrusion's depth, and its `Width`
             // and `Height` are the rectangle's extents along the wall and up,

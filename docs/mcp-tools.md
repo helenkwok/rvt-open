@@ -468,9 +468,10 @@ Which bodies are drawn from the mesh Revit saved for display.
 
 | Value | Meaning |
 |---|---|
-| "doors_and_windows" | Doors and windows on Revit 2023 to 2027 (the default). |
-| "all" | Every element that would be its record's bounding box. Slower. |
-| "off" | None: doors and windows keep their record's box. |
+| "default" | Every element that would be its record's bounding box, on Revit 2014 to 2027 (the default). |
+| "doors_and_windows" | Doors and windows only, on Revit 2014 to 2027: cheaper in time and memory. |
+| "all" | The same as `default`, kept for old callers. |
+| "off" | None: every element keeps its record's box. |
 
 ### ModeArg
 

@@ -221,11 +221,11 @@ fn entity_refs(kind: &str) -> RefSpec {
             (&["representation_map_index"], RepMap),
         ],
         "Aggregate" => &[(&["whole"], Entity), (&["parts"], Entity)],
-        "ElementPropertySet" => &[(&["element"], Entity)],
+        "ElementPropertySet" | "CutterOpeningSet" => &[(&["element"], Entity)],
         "PortConnection" => &[(&["a"], Entity), (&["b"], Entity)],
         "Port" => &[(&["element"], Entity)],
         "System" | "DesignOption" | "Zone" => &[(&["members"], Entity)],
-        "VoidOpening" | "WallProfileOpening" => &[(&["host"], Entity)],
+        "VoidOpening" | "WallProfileOpening" | "WallProfilePocket" => &[(&["host"], Entity)],
         "SpaceContainment" => &[(&["space"], Entity), (&["elements"], Entity)],
         _ => &[],
     }
