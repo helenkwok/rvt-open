@@ -65,7 +65,7 @@
 //! - the profile spans the wall: its lowest and highest points along its own
 //!   axis lie at the wall's two ends, within a thousandth of a foot. A wall that
 //!   goes on past its profile has a box that holds the profile's line carried on
-//! (`rac_basic`'s wall 493612 is 3.529 m high for a profile of 3.5 m),
+//!   (`rac_basic`'s wall 493612 is 3.529 m high for a profile of 3.5 m),
 //!   and its top is not the profile's;
 //! - the profile's lowest line is the wall's base;
 //! - the profile's highest point lies more than a thousandth of a foot below the
