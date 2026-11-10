@@ -591,7 +591,7 @@ pub(super) fn take_top_at_profile(
 
 /// How far the prism that makes a profile's cut reaches beyond the wall's two
 /// faces, feet, so that its faces lie in none of the wall's.
-const CUT_MARGIN_FEET: f64 = 0.01;
+pub(crate) const CUT_MARGIN_FEET: f64 = 0.01;
 
 /// The solid of a region reads from a wall's profile: its outline in the
 /// wall's vertical plane, extruded through the wall and placed as the opening it

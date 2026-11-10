@@ -35,6 +35,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 mod column_quantities;
 mod wall_areas;
 mod wall_profile;
+pub(crate) use wall_profile::CUT_MARGIN_FEET;
 mod wall_tops;
 
 /// Result of folding production walker hits into an IFC draft.

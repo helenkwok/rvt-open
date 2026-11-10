@@ -288,6 +288,66 @@ fn shape_shells(shape: &SolidShape) -> Option<Vec<Shell>> {
     }
 }
 
+/// The shells of a wall whose body is its own body less the prisms of its
+/// edited elevation profile's regions
+/// ([`super::export_content::WALL_PROFILE_CUT_IN_BODY`]): each prism goes
+/// through the wall and a cut margin past each face, so the volume it takes
+/// out is its outline's area times the wall's thickness, its depth less the
+/// two margins. `None` for any other body.
+fn profile_cut_shells(entity: &IfcEntity) -> Option<Vec<Shell>> {
+    let IfcEntity::BuildingElement {
+        solid_shape: Some(shape),
+        property_set: Some(set),
+        ..
+    } = entity
+    else {
+        return None;
+    };
+    let cut = set.properties.iter().any(|p| {
+        p.name == super::export_content::WALL_PROFILE_CUT_PROPERTY
+            && matches!(&p.value, PropertyValue::Text(t) if t == super::export_content::WALL_PROFILE_CUT_IN_BODY)
+    });
+    if !cut {
+        return None;
+    }
+    let mut removed = 0.0;
+    let mut body = shape;
+    while let SolidShape::BooleanResult {
+        op: IfcBooleanOp::Difference,
+        operand_a,
+        operand_b,
+    } = body
+    {
+        let SolidShape::PlacedExtrusion {
+            profile: super::entities::ProfileDef::ArbitraryClosed { points },
+            depth_feet,
+            ..
+        } = operand_b.as_ref()
+        else {
+            return None;
+        };
+        let through = depth_feet - 2.0 * super::export_content::CUT_MARGIN_FEET;
+        let twice_area: f64 = points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .map(|(a, b)| a.0 * b.1 - b.0 * a.1)
+            .sum();
+        if !(through > 0.0 && twice_area.is_finite()) {
+            return None;
+        }
+        removed += twice_area.abs() / 2.0 * through;
+        body = operand_a;
+    }
+    let mut shells = shape_shells(body)?;
+    let material = shells.first().map_or(NO_FACE_MATERIAL, |s| s.material);
+    shells.push(Shell {
+        volume: -removed,
+        area: 0.0,
+        material,
+    });
+    Some(shells)
+}
+
 fn body_shells(body: Body<'_>) -> Option<Vec<Shell>> {
     match body {
         Body::Extrusion(e) => mesh_shells(&body_geometry::extrusion_mesh(e)?),
@@ -635,8 +695,12 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
             return None;
         };
         let slabs = slabs_of.get(&index);
+        // A wall whose edited elevation profile is cut in its body: its box
+        // less the regions, each the region's area through the wall.
+        let profile_cut = profile_cut_shells(entity);
         let (extruded, mut shells) =
             match body_geometry::element_body(entity, &model.representation_maps) {
+                Some(_) if profile_cut.is_some() => (true, profile_cut),
                 Some(body) => (
                     matches!(
                         body,
