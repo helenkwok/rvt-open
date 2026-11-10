@@ -114,6 +114,10 @@ pub struct ElementParameters {
     /// Instance parameters a family instance holds no value for, whose
     /// type holds the family's default, counted for each element listed.
     pub instance_parameters_without_value: usize,
+    /// For each requested element with a record: its record's class and the
+    /// ElementIds its record's own fields that name a type hold (`m_typeId`,
+    /// `m_masterSymbolId`, `m_WallAttributesId`, ...).
+    pub named_ids: BTreeMap<u64, (String, Vec<i64>)>,
 }
 
 impl ElementParameters {
@@ -147,6 +151,25 @@ struct RecordParameters {
     instance_defaults: BTreeSet<i64>,
     unresolved_slots: usize,
     master_symbol: Option<i64>,
+    /// The ElementIds the record's own type fields hold.
+    named_ids: Vec<i64>,
+}
+
+/// The ElementIds held by the fields of `fields` (a record's root object)
+/// whose name says they name a type.
+fn type_field_ids(fields: &Value) -> Vec<i64> {
+    let Some(fields) = fields.as_object() else {
+        return Vec::new();
+    };
+    fields
+        .iter()
+        .filter(|(name, _)| {
+            let name = name.to_ascii_lowercase();
+            name.contains("type") || name.contains("attr") || name.contains("symbol")
+        })
+        .filter_map(|(_, value)| crate::native_json::identifier_i64(value))
+        .filter(|&id| id > 0)
+        .collect()
 }
 
 /// The system-family element records that name their type, as (element
@@ -419,6 +442,7 @@ fn read_selected(
                     instance_defaults,
                     unresolved_slots: owner_slots
                         .saturating_sub(metadata.resolved_family_parameters.len()),
+                    named_ids: type_field_ids(&root.fields),
                     master_symbol: std::iter::once(("FamilyInstance", "m_masterSymbolId"))
                         .chain(SYSTEM_TYPE_LINKS.iter().map(|link| (link.0, link.1)))
                         .find(|link| link.0 == class_name)
@@ -476,6 +500,8 @@ fn read_selected(
             continue;
         };
         let mut values = record.own.clone();
+        let named = (record.class_name.clone(), record.named_ids.clone());
+        result.named_ids.insert(element_id, named);
         result.unresolved_family_slots += record.unresolved_slots;
         if let Some(symbol) = record.master_symbol.and_then(|id| records.get(&id)) {
             result.unresolved_family_slots += symbol.unresolved_slots;

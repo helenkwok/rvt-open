@@ -263,10 +263,14 @@ struct Args {
     ifcx_diagnostics: Option<PathBuf>,
     /// Leave out of the IFCX file what an IFC4 export does not hold: every
     /// other element the file saves parameters for (phases, design options,
-    /// views, levels, materials, project information, unused types) and the
+    /// views, levels, materials, project information) and the
     /// parameters the exported elements lack (faster on large files).
     #[arg(long, requires = "ifcx")]
     no_ifcx_revit_elements: bool,
+    /// Also write into the IFCX file the types no element uses (most come
+    /// from the project template; a larger file).
+    #[arg(long, requires = "ifcx", conflicts_with = "no_ifcx_revit_elements")]
+    ifcx_unused_types: bool,
     /// Also write the model as ThatOpen Fragments (`.frag`, the public
     /// @thatopen/fragments 3.6.0 schema) to this path: the IFCX graph's
     /// items, properties, tree and meshes.
@@ -595,7 +599,12 @@ fn run(args: Args) -> anyhow::Result<()> {
     // What IFCX carries beyond the IFC4 model, read while the file is open.
     let revit_elements = if args.ifcx.is_some() && !args.no_ifcx_revit_elements {
         rvt::control::stage("revit elements");
-        rvt::ifc::ifcx_revit_elements::read(&mut rf).unwrap_or_else(|e| {
+        let named_types: std::collections::BTreeSet<u64> = model
+            .element_type_ids
+            .values()
+            .map(|&t| u64::from(t))
+            .collect();
+        rvt::ifc::ifcx_revit_elements::read(&mut rf, &named_types).unwrap_or_else(|e| {
             eprintln!("rvt-ifc: warning: IFCX written without the file's other elements: {e}");
             Vec::new()
         })
@@ -728,7 +737,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     if let Some(ifcx_path) = &args.ifcx {
         rvt::control::stage("write ifcx");
         // Last, so the .frag and USD files above are as before.
-        graph.add_revit_elements(&revit_elements);
+        graph.add_revit_elements(&revit_elements, args.ifcx_unused_types);
         // header time: --ifc4-timestamp, SOURCE_DATE_EPOCH, else the input file's own modified time
         let ifcx_time = timestamp.or_else(|| {
             std::fs::metadata(&args.input)

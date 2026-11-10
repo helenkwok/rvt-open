@@ -15,6 +15,8 @@
 //! phase also gets its name and its place in the project's order (`Sequence
 //! Number`), and a design option its name and its set (`Design Option Set
 //! Id`), which the file keeps outside its parameters.
+//! A type no element names as its type is marked
+//! [`RevitElement::unused_type`]: the IFCX file holds it only on request.
 //! Its node's path is the GlobalId Revit's IFC exporter gives it (as the
 //! research module `revit_global_ids` rebuilds it), so an element an IFC
 //! export holds has the same id in both.
@@ -22,6 +24,7 @@
 use super::entities::{Property, PropertyValue};
 use super::revit_property_sets::grouped;
 use crate::RevitFile;
+use crate::research::native_element_parameters::ParameterLevel;
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -37,16 +40,59 @@ pub struct RevitElement {
     pub name: Option<String>,
     /// Its parameters by group label.
     pub sets: BTreeMap<&'static str, Vec<Property>>,
+    /// A type (its record's class derives from
+    /// [`crate::file_types::TYPE_BASE_CLASS`]) that no element names: no
+    /// element read takes a type value from it or names it in a type field
+    /// of its record, and no exported element is typed by it.
+    pub unused_type: bool,
 }
 
 /// Every element with a GlobalId and at least one parameter Revit's property
 /// sets would write. Empty for a file whose parameters are not read (before
-/// Revit 2015) or whose ElemTable layout gives no GlobalIds.
-pub fn read(file: &mut RevitFile) -> Result<Vec<RevitElement>> {
+/// Revit 2015) or whose ElemTable layout gives no GlobalIds. `named_types`
+/// are types the caller knows an element names (the exported model's
+/// element types): they are not unused.
+pub fn read(file: &mut RevitFile, named_types: &BTreeSet<u64>) -> Result<Vec<RevitElement>> {
     let global_ids = crate::revit_global_ids::revit_global_ids(file)?;
     let ids: BTreeSet<u64> = global_ids.keys().map(|&id| u64::from(id)).collect();
     let saved = crate::research::native_element_parameters::read(file, &ids)?;
     let names = file.memoised_element_names();
+    let type_classes: BTreeSet<String> = file
+        .schema_layouts()
+        .map(|layouts| {
+            layouts
+                .classes
+                .keys()
+                .filter_map(|&tag| {
+                    let chain = layouts.chain(tag)?;
+                    chain
+                        .iter()
+                        .any(|c| c.name == crate::file_types::TYPE_BASE_CLASS)
+                        .then(|| chain.last().map(|c| c.name.clone()))
+                        .flatten()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // The types an element takes a type value from, or that a type field of
+    // an element's record (not a type's) names: a railing's or stair's type.
+    let mut used: BTreeSet<i64> = saved
+        .elements
+        .iter()
+        .flat_map(|(&id, parameters)| {
+            parameters
+                .iter()
+                .filter(move |p| {
+                    p.level == ParameterLevel::Type && i64::try_from(id) != Ok(p.source_element_id)
+                })
+                .map(|p| p.source_element_id)
+        })
+        .collect();
+    for (class, named) in saved.named_ids.values() {
+        if !type_classes.contains(class) {
+            used.extend(named.iter().copied());
+        }
+    }
     let mut out = Vec::new();
     for (&id, parameters) in &saved.elements {
         let (Ok(id32), Ok(own_id)) = (u32::try_from(id), i64::try_from(id)) else {
@@ -66,12 +112,15 @@ pub fn read(file: &mut RevitFile) -> Result<Vec<RevitElement>> {
         if sets.is_empty() {
             continue;
         }
+        let unused_type =
+            type_classes.contains(&class) && !used.contains(&own_id) && !named_types.contains(&id);
         out.push(RevitElement {
             id,
             global_id: global_id.clone(),
             class,
             name: names.entries.get(&id32).map(|e| e.name.clone()),
             sets,
+            unused_type,
         });
     }
     let phases = file.memoised_phase_filter();
@@ -144,6 +193,7 @@ fn add(
                 class: class.to_string(),
                 name: None,
                 sets: BTreeMap::new(),
+                unused_type: false,
             });
             out.len() - 1
         }

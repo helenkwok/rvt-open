@@ -188,11 +188,22 @@ fn ifcx_diagnostics_are_a_layer_of_their_own() {
             shared_shapes: true,
         },
     );
-    // As rvt-ifc does for IFCX: the file's other elements and the parameters
-    // the exported ones lack.
-    let revit_elements = rvt::ifc::ifcx_revit_elements::read(&mut rf).unwrap();
+    // As rvt-ifc does for IFCX by default: the file's other elements but the
+    // types no element uses, and the parameters the exported ones lack.
+    let named_types: std::collections::BTreeSet<u64> = model
+        .element_type_ids
+        .values()
+        .map(|&t| u64::from(t))
+        .collect();
+    let revit_elements = rvt::ifc::ifcx_revit_elements::read(&mut rf, &named_types).unwrap();
     assert!(!revit_elements.is_empty(), "no other elements read");
-    graph.add_revit_elements(&revit_elements);
+    let mut with_unused = graph.clone();
+    with_unused.add_revit_elements(&revit_elements, true);
+    graph.add_revit_elements(&revit_elements, false);
+    assert!(
+        with_unused.nodes.len() > graph.nodes.len(),
+        "--ifcx-unused-types adds no node"
+    );
     let mut composed: std::collections::BTreeMap<String, Map<String, Value>> = main["data"]
         .as_array()
         .unwrap()

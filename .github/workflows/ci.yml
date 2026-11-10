@@ -401,9 +401,10 @@ jobs:
       # How much of what the Revit API reports (each model's api-dump.json) the
       # IFC4 and IFCX exports carry, by kind; fails when an IFCX total drops
       # below tools/ifcx-coverage/floor.tsv or below IFC4's (docs/ifcx-coverage.md).
+      # With --ifcx-unused-types, so the unused types are measured too.
       - name: IFCX coverage of the Revit API's information
         run: |
-          "$RUNNER_TEMP/ifc/bin/python" tools/ifcx-coverage/coverage.py _tiny "$RUNNER_TEMP/ifcx-coverage" --bin target/ci --floor tools/ifcx-coverage/floor.tsv
+          "$RUNNER_TEMP/ifc/bin/python" tools/ifcx-coverage/coverage.py _tiny "$RUNNER_TEMP/ifcx-coverage" --bin target/ci --rvt-ifc-arg=--ifcx-unused-types --floor tools/ifcx-coverage/floor.tsv
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

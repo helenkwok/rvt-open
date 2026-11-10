@@ -22,7 +22,7 @@ Exports compared: rvt-open's IFC4 and IFCX (run with `--bin`, or read from
 `--exports`), and Revit's own IFC4 Reference View (`--revit-ifc`, optional).
 
 Usage:
-  coverage.py FIXTURES_DIR WORK_DIR [--bin BIN_DIR] [--exports DIR]
+  coverage.py FIXTURES_DIR WORK_DIR [--bin BIN_DIR [--rvt-ifc-arg ARG ...]] [--exports DIR]
               [--revit-ifc DIR ...] [--floor TSV] [--write-floor TSV]
 
 Writes WORK_DIR/ifcx-coverage.tsv (one row per model and kind) and
@@ -365,11 +365,11 @@ def score(dump, exports):
     return res
 
 
-def run_rvt_ifc(bin_dir, rvt, out_dir):
+def run_rvt_ifc(bin_dir, rvt, out_dir, extra=()):
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.join(out_dir, os.path.basename(rvt)[:-4])
     ifc, ifcx = stem + ".ifc", stem + ".ifcx"
-    proc = subprocess.run([os.path.join(bin_dir, "rvt-ifc"), rvt, "-o", ifc, "--ifcx", ifcx],
+    proc = subprocess.run([os.path.join(bin_dir, "rvt-ifc"), rvt, "-o", ifc, "--ifcx", ifcx, *extra],
                           capture_output=True, text=True, timeout=900)
     if proc.returncode != 0:
         sys.stderr.write("rvt-ifc failed on %s: %s\n" % (rvt, proc.stderr[-2000:]))
@@ -390,6 +390,8 @@ def main():
     ap.add_argument("fixtures")
     ap.add_argument("work")
     ap.add_argument("--bin", help="folder holding rvt-ifc: export each model to WORK_DIR")
+    ap.add_argument("--rvt-ifc-arg", action="append", default=[],
+                    help="extra rvt-ifc option with --bin, such as --ifcx-unused-types (repeatable)")
     ap.add_argument("--exports", help="folder of earlier exports: rvt-open-tiny-models-N/RELEASE/RECIPE.ifc and .ifcx")
     ap.add_argument("--revit-ifc", action="append", default=[],
                     help="SET=DIR: Revit's exports, DIR/RELEASE/RECIPE.ifc4rv.ifc (repeatable)")
@@ -405,7 +407,7 @@ def main():
         exports = {}
         if a.bin:
             ifc, ifcx = run_rvt_ifc(a.bin, dump_path[: -len(".api-dump.json")] + ".rvt",
-                                    os.path.join(a.work, "exports", folder, release))
+                                    os.path.join(a.work, "exports", folder, release), a.rvt_ifc_arg)
         elif a.exports:
             stem = os.path.join(a.exports, folder, release, recipe)
             ifc, ifcx = stem + ".ifc", stem + ".ifcx"
