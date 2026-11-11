@@ -140,32 +140,49 @@ fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
         let p = mesh.vertices[v as usize];
         std::array::from_fn(|k| (p[k] / WELD_FEET).round() as i64)
     };
-    let tris: Vec<[[i64; 3]; 3]> = mesh
+    // The welded points numbered in their sorted order, so that comparing
+    // two numbers compares the points, and an edge is a pair of numbers held
+    // in sorted lists. Maps keyed by point pairs raised the peak memory of
+    // this stage by about 270 MiB on `rac_basic` 2024.
+    let mut points: Vec<[i64; 3]> = mesh.triangles.iter().flatten().map(|&v| weld(v)).collect();
+    points.sort_unstable();
+    points.dedup();
+    let number = |v: u32| -> u64 { points.binary_search(&weld(v)).map_or(0, |n| n as u64) };
+    let tris: Vec<[u64; 3]> = mesh
         .triangles
         .iter()
-        .map(|&[a, b, c]| [weld(a), weld(b), weld(c)])
+        .map(|&[a, b, c]| [number(a), number(b), number(c)])
         .collect();
-    let mut directed: BTreeMap<([i64; 3], [i64; 3]), i64> = BTreeMap::new();
-    let mut users: BTreeMap<([i64; 3], [i64; 3]), Vec<usize>> = BTreeMap::new();
+    drop(points);
+    let edge = |s: u64, e: u64| (s << 32) | e;
+    let mut directed: Vec<u64> = Vec::with_capacity(tris.len() * 3);
+    let mut users: Vec<(u64, usize)> = Vec::with_capacity(tris.len() * 3);
     for (i, t) in tris.iter().enumerate() {
         for (s, e) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
             if s == e {
                 continue;
             }
-            *directed.entry((s, e)).or_default() += 1;
-            users
-                .entry(if s <= e { (s, e) } else { (e, s) })
-                .or_default()
-                .push(i);
+            directed.push(edge(s, e));
+            users.push((edge(s.min(e), s.max(e)), i));
         }
     }
+    drop(tris);
+    directed.sort_unstable();
+    let count = |key: u64| {
+        let from = directed.partition_point(|&k| k < key);
+        directed[from..].partition_point(|&k| k == key)
+    };
     if directed
-        .iter()
-        .any(|(&(s, e), &n)| directed.get(&(e, s)) != Some(&n))
+        .chunk_by(|a, b| a == b)
+        .any(|run| count(edge(run[0] & u64::from(u32::MAX), run[0] >> 32)) != run.len())
     {
         return None;
     }
-    let mut parent: Vec<usize> = (0..tris.len()).collect();
+    drop(directed);
+    // Sorted by edge, then by triangle: each edge's triangles in the order
+    // they were met.
+    users.sort_unstable();
+    let mut parent: Vec<usize> = (0..mesh.triangles.len()).collect();
     fn find(parent: &mut [usize], mut i: usize) -> usize {
         while parent[i] != i {
             parent[i] = parent[parent[i]];
@@ -173,12 +190,13 @@ fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
         }
         i
     }
-    for list in users.values() {
-        if let [a, b] = list[..] {
+    for list in users.chunk_by(|a, b| a.0 == b.0) {
+        if let [(_, a), (_, b)] = *list {
             let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
             parent[ra] = rb;
         }
     }
+    drop(users);
     let mut groups: BTreeMap<usize, (f64, f64, BTreeMap<usize, f64>)> = BTreeMap::new();
     for (i, &[a, b, c]) in mesh.triangles.iter().enumerate() {
         let [p, q, r] = [a, b, c].map(|v| mesh.vertices[v as usize]);

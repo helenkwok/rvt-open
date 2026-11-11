@@ -1,6 +1,6 @@
 - **Lower peak memory in the command-line exports, with identical output.**
-  rvt-ifc and rvt-gltf now extract saved graphics 1,024 elements at a
-  time, as the browser build already did with 256, and read the saved
+  rvt-ifc and rvt-gltf now extract saved graphics 256 elements at a
+  time, as the browser build already did, and read the saved
   materials once for all batches instead of once per batch. rvt-ifc frees
   the file before building the graph and the model after it; rvt-gltf
   frees the file before writing the glb. Every IFC, IFCX, .frag and .glb

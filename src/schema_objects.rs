@@ -660,8 +660,8 @@ pub struct PartitionRead {
 
 /// Call `visit` with every data object of every partition of `rf`, read by
 /// its schema, and return each partition's gaps. At most 4,096
-/// objects are held at a time, so memory stays bounded by the largest
-/// partition.
+/// objects, and about a mebibyte of their payload, are held at a time, so
+/// memory stays bounded by the largest partition.
 pub fn for_each_object(
     rf: &mut RevitFile,
     mut visit: impl FnMut(&SchemaObject),
@@ -687,6 +687,12 @@ pub fn for_each_object(
 /// core busy, few enough that memory stays bounded by a slice of a partition.
 const READ_CHUNK: usize = 4096;
 
+/// Payload bytes [`read_frames_in_order`] reads at once, past the first
+/// object of a chunk. A read object takes many times its payload, and some
+/// partitions hold thousands of large objects: 4,096 of them at once raised
+/// the peak memory of the properties pass by more than a gigabyte.
+const READ_CHUNK_BYTES: usize = 1 << 20;
+
 /// `visit` each of `frames` read by its schema, in order. The frames are read
 /// a chunk at a time on every core ([`crate::control::map_in_order`]), so
 /// what `visit` sees and in what order does not depend on the thread count.
@@ -697,7 +703,20 @@ fn read_frames_in_order(
     frames: &[Frame],
     visit: &mut impl FnMut(&SchemaObject),
 ) {
-    for chunk in frames.chunks(READ_CHUNK) {
+    let mut rest = frames;
+    while !rest.is_empty() {
+        let mut bytes = 0;
+        let n = rest
+            .iter()
+            .take(READ_CHUNK)
+            .take_while(|frame| {
+                let fits = bytes == 0 || bytes + frame.payload.len() <= READ_CHUNK_BYTES;
+                bytes += frame.payload.len();
+                fits
+            })
+            .count();
+        let (chunk, tail) = rest.split_at(n.max(1));
+        rest = tail;
         let objects = crate::control::map_in_order(chunk, |frame| {
             read_frame(layouts, stream, buf, frame.clone())
         });
