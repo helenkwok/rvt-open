@@ -251,8 +251,11 @@ jobs:
       - name: Real-file, CLI and contract tests (partition ${{ matrix.part }} of ${{ env.PARTITIONS }})
         run: tools/ci/verify-real-files.sh --profile ci --partition "count:${{ matrix.part }}/${{ env.PARTITIONS }}" --no-fail-fast
 
-  wasm:
-    name: wasm32 and wasm64
+  # The browser package is built in two jobs side by side, one per module,
+  # with the scripts tools/ci/wasm-package.sh runs for the release; the job
+  # "wasm32 and wasm64" then puts them together and checks the package.
+  wasm32:
+    name: wasm32 module
     needs: scope
     if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-24.04
@@ -263,11 +266,8 @@ jobs:
       - run: |
           tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy -t wasm32-unknown-unknown
           rustup default "$RUST_VERSION"
-          tools/ci/retry.sh 3 rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
           echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
-      # Its own key since the 64-bit build has a target folder of its own (tools/ci/wasm-package.sh).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { key: wasm64-own-target }
       # A failed prebuilt download is built from crates.io instead.
       - id: tools6
         continue-on-error: true
@@ -278,21 +278,65 @@ jobs:
         run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9"
       - run: cargo clippy -p rvt-wasm --all-targets -- -D warnings
       # The release's SBOMs for both browser targets, so a tag is never the first run of these commands.
-      - name: SBOMs for the wasm package
+      - name: SBOM for the 32-bit module
         run: |
           cargo cyclonedx --manifest-path rvt-wasm/Cargo.toml --format json --spec-version 1.5 --all \
             --target wasm32-unknown-unknown --override-filename sbom32
-          RUSTUP_TOOLCHAIN=nightly-2026-10-30 cargo cyclonedx --manifest-path rvt-wasm/Cargo.toml --format json --spec-version 1.5 --all \
-            --target wasm64-unknown-unknown --override-filename sbom64
-          test -s rvt-wasm/sbom32.json && test -s rvt-wasm/sbom64.json
-      # The package the release ships: 32-bit and 64-bit builds and the loader, in one folder.
-      - run: tools/ci/wasm-package.sh pkg
+          test -s rvt-wasm/sbom32.json
+      - run: tools/ci/wasm32-build.sh pkg
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: wasm-pkg, path: pkg }
+        with: { name: wasm32-module, path: pkg, retention-days: 1 }
       # The viewer's package, from the same 32-bit build, under the name the viewer loads.
       - run: wasm-bindgen --target web --out-dir viewer/pkg --out-name rvt target/wasm32-unknown-unknown/release/rvt_wasm.wasm
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: viewer-pkg, path: viewer/pkg, retention-days: 3 }
+
+  wasm64:
+    name: wasm64 module
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: |
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          tools/ci/retry.sh 3 rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
+          echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools8
+        continue-on-error: true
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        with: { tool: "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9" }
+      - if: steps.tools8.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9"
+      - name: SBOM for the 64-bit module
+        run: |
+          RUSTUP_TOOLCHAIN=nightly-2026-10-30 cargo cyclonedx --manifest-path rvt-wasm/Cargo.toml --format json --spec-version 1.5 --all \
+            --target wasm64-unknown-unknown --override-filename sbom64
+          test -s rvt-wasm/sbom64.json
+      - run: tools/ci/wasm64-build.sh pkg
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: wasm64-module, path: pkg, retention-days: 1 }
+
+  wasm:
+    name: wasm32 and wasm64
+    needs: [wasm32, wasm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { pattern: wasm*-module, merge-multiple: true, path: pkg }
+      # The package the release ships: 32-bit and 64-bit builds and the loader, in one folder.
+      - run: tools/ci/wasm-package.sh pkg --assemble
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: wasm-pkg, path: pkg }
 
   mcp:
     name: MCP server (rvt-open-mcp)
@@ -489,14 +533,14 @@ jobs:
           if-no-files-found: ignore
 
   # The browser tests run in two legs on the one wasm package (the 32-bit build
-  # of the wasm job, which also makes the release's package), split by the
+  # the release's package is made from), split by the
   # tests' measured times (2026-11-09: 237 s in all; the four Core Interior
   # tests 40 to 60 s each, the rest under 15 s): leg 2 holds two of the long
   # tests and the orbit, diagnostics and toast tests (about 110 s), leg 1 the
   # rest (about 127 s). Re-balance when a leg runs much longer than the other.
   viewer:
     name: viewer (Playwright) / leg ${{ matrix.leg }}
-    needs: wasm
+    needs: wasm32
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
