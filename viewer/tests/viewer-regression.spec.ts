@@ -714,8 +714,10 @@ projectSampleTest(
     await expect(common).not.toContainText(/true|false/);
     const quantities = properties.filter({ hasText: 'Qto_WallBaseQuantities' });
     await expect(quantities.locator('.info-row', { hasText: 'Width' }).locator('.v')).toHaveText('0.656 ft');
-    await expect(quantities.locator('.info-row[data-property-kind="length"]')).toHaveCount(1);
-    await expect(quantities.locator('.info-row[data-property-kind="length"]')).toBeVisible();
+    // Width from the wall's type, and the Height its saved mesh gives (a vertical
+    // prism less its openings), as Revit's export writes them.
+    await expect(quantities.locator('.info-row[data-property-kind="length"]')).toHaveCount(2);
+    await expect(quantities.locator('.info-row[data-property-kind="length"]', { hasText: 'Height' })).toBeVisible();
 
     // No bare dashes standing in for an absent optional.
     await expect(info.locator('.info-row .v', { hasText: /^—$/ })).toHaveCount(0);

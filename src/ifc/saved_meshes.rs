@@ -1113,6 +1113,15 @@ pub fn attach_scoped_in_batches(
             }
         }
     }
+    // The elements arrive batch by batch: what they found is applied in the
+    // order of the entities, so the sets appended are the same for any batch
+    // size.
+    volumes.sort_by_key(|(index, _)| *index);
+    members.sort_by_key(|member| member.index);
+    column_volumes.sort_by_key(|(index, _)| *index);
+    wall_quantities.sort_by_key(|(index, _)| *index);
+    plate_widths.sort_by_key(|(index, _)| *index);
+    refusals.sort_by_key(|(index, _)| *index);
     drop_column_box_quantities(model, &column_volumes);
     let moved = add_mesh_volumes(model, &volumes, &members);
     follow_mesh_span(model, &moved);

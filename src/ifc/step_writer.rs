@@ -3689,7 +3689,10 @@ impl StepWriter<'_> {
                     &ifc_upper,
                     model.global_ids.revit_version,
                 );
+                // A roof's slabs keep `.ROOF.`: Revit 2027's own export of the
+                // tiny reference roofs writes it on all of them.
                 let predefined = match predefined_type.as_deref() {
+                    Some("ROOF") if ifc_upper == "IFCSLAB" => Some("ROOF"),
                     _ if predefined_left_out => None,
                     Some("USERDEFINED") if object_type_quoted == "$" => Some("NOTDEFINED"),
                     other => other,
