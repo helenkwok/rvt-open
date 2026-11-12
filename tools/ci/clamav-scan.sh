@@ -8,6 +8,10 @@
 # the signature database, so a scan never depends on reaching the signature mirrors; freshclam runs first
 # inside the container to fetch newer signatures, and a failed update only warns.
 #
+# With CLAMAV_DB set to a folder, the signature database lives there between runs (CI caches it a
+# day at a time): an empty folder is filled from the image first, and freshclam then fetches only
+# what changed since. Without it, the image's own database is used and updated as before.
+#
 # Exit status: 1 when ClamAV flags anything, 0 otherwise (a scan that could not complete warns, and the
 # section says so).
 #
@@ -30,11 +34,25 @@ done
 chmod -R a+rX "$stage"
 
 # Generous limits, and anything over them is reported (alert-exceeds-max) rather than silently skipped.
-docker run --rm -v "$stage:/scan:ro" --entrypoint /bin/sh "$IMAGE" -c '
+db=()
+if [ -n "${CLAMAV_DB:-}" ]; then
+  mkdir -p "$CLAMAV_DB" && chmod 777 "$CLAMAV_DB"
+  if [ -z "$(ls -A "$CLAMAV_DB")" ]; then
+    docker run --rm -v "$CLAMAV_DB:/seed" --entrypoint /bin/sh "$IMAGE" -c 'cp -a /var/lib/clamav/. /seed/'
+  fi
+  db=(-v "$CLAMAV_DB:/var/lib/clamav")
+fi
+docker run --rm -v "$stage:/scan:ro" "${db[@]}" --entrypoint /bin/sh "$IMAGE" -c '
+  echo "TIME: start $(date -u +%T)"
   if freshclam --stdout; then echo "FRESHCLAM: updated"; else echo "FRESHCLAM: failed"; fi
+  echo "TIME: signatures ready $(date -u +%T)"
   echo "VERSION: $(clamscan --version)"
   clamscan --recursive --infected --scan-archive=yes --alert-exceeds-max=yes \
     --max-filesize=2000M --max-scansize=4000M --max-files=100000 /scan
+  rc=$?
+  echo "TIME: scanned $(date -u +%T)"
+  chmod -R a+rwX /var/lib/clamav 2> /dev/null
+  exit $rc
 ' > "$log" 2>&1
 rc=$?
 version=$(sed -n 's/^VERSION: //p' "$log" | tail -1)
