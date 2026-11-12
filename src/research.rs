@@ -92,6 +92,7 @@
 //!
 //! - [`es_refs`]: ES reference occurrence locator contracts, with no decoder yet
 //! - [`evidence`]: Named evidence tiers and lightweight ledgers
+//! - [`graph_value`]: A compact value for a decoded object graph's fields, exact to `serde_json::Value`
 //! - [`identity`]: Document-scoped identity and source-span contracts
 //! - [`rect_opening_index`]: Revit 2024's 60 B rows read as a wall-opening index, which name system elements, not openings
 //! - [`revit_global_ids`]: The IFC `GlobalId` Revit's own exporter gives an element, rebuilt from the file
@@ -105,6 +106,7 @@ pub mod element_record_storeys;
 pub mod element_record_wall_joins;
 pub mod es_refs;
 pub mod evidence;
+pub mod graph_value;
 pub mod identity;
 pub mod native_area_regions;
 pub mod native_column_joins;

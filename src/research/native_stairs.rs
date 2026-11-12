@@ -44,7 +44,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::Value;
+use crate::graph_value::Fv;
 
 use crate::RevitFile;
 use crate::native_document::{Options, extract_graphs};
@@ -70,15 +70,15 @@ pub struct NativeRun {
     pub type_id: u64,
 }
 
-fn number(v: &Value, name: &str) -> Option<f64> {
+fn number(v: &Fv, name: &str) -> Option<f64> {
     v.get(name)?.as_f64().filter(|x| x.is_finite())
 }
 
-fn flag(v: &Value, name: &str) -> Option<bool> {
+fn flag(v: &Fv, name: &str) -> Option<bool> {
     v.get(name)?.as_bool()
 }
 
-fn point(v: &Value, name: &str) -> Option<[f64; 3]> {
+fn point(v: &Fv, name: &str) -> Option<[f64; 3]> {
     finite_triple(v.get(name)?)
 }
 
@@ -88,7 +88,7 @@ fn unit_plan(p: [f64; 3]) -> Option<[f64; 2]> {
         .then_some([p[0] / length, p[1] / length])
 }
 
-fn run_type(fields: &Value, name: Option<String>) -> Option<RunType> {
+fn run_type(fields: &Fv, name: Option<String>) -> Option<RunType> {
     Some(RunType {
         structural_depth_feet: number(fields, "m_structuralDepth")?,
         tread_thickness_feet: number(fields, "m_treadThickness")?,
@@ -110,7 +110,7 @@ fn run_type(fields: &Value, name: Option<String>) -> Option<RunType> {
 /// are cut at the base, as they are drawn; those 300 mm extended
 /// (`m_extendBelowBase` -0.98425 ft) and those that start on a landing run
 /// their underside on to their first riser line.
-fn base_cut(run: &Value) -> Option<Option<f64>> {
+fn base_cut(run: &Fv) -> Option<Option<f64>> {
     Some(match run.get("m_baseRiserIndex")?.as_i64()? {
         0 => Some(number(run, "m_extendBelowBase")?),
         _ => None,
@@ -162,7 +162,7 @@ pub fn native_run_base_cuts(
 
 /// The run's sketch and riser height from its root and its treads, in
 /// climbing order.
-fn sketch(run: &Value, treads: &[Value]) -> Option<(RunSketch, f64)> {
+fn sketch(run: &Fv, treads: &[Fv]) -> Option<(RunSketch, f64)> {
     if !flag(run, "m_beginWithRiser")? {
         return None;
     }
@@ -268,7 +268,7 @@ pub fn native_run_shapes(
         let Some(graph) = record.graph.as_ref() else {
             return Ok(());
         };
-        let treads: Vec<&Value> = graph
+        let treads: Vec<&Fv> = graph
             .objects
             .iter()
             .filter(|o| o.class_name == "StairsTreadInfo")
@@ -276,7 +276,7 @@ pub fn native_run_shapes(
             .collect();
         let shapes: BTreeSet<Option<i64>> = treads
             .iter()
-            .map(|t| t.get("m_runType").and_then(Value::as_i64))
+            .map(|t| t.get("m_runType").and_then(Fv::as_i64))
             .collect();
         if let [Some(run_type)] = shapes.into_iter().collect::<Vec<_>>().as_slice() {
             out.insert(
@@ -365,7 +365,7 @@ pub fn stair_predefined_type(runs: &[RunShape], landings: usize) -> Option<&'sta
 /// The run types, and each run's `StairsRun` fields with its treads'
 /// `StairsTreadInfo` fields in riser order, of the runs in `runs` and their
 /// types.
-type RunGraphs = (BTreeMap<u64, RunType>, BTreeMap<u64, (Value, Vec<Value>)>);
+type RunGraphs = (BTreeMap<u64, RunType>, BTreeMap<u64, (Fv, Vec<Fv>)>);
 
 fn run_graphs(rf: &mut RevitFile, runs: &BTreeMap<u64, u64>) -> anyhow::Result<RunGraphs> {
     let options = Options {
@@ -374,7 +374,7 @@ fn run_graphs(rf: &mut RevitFile, runs: &BTreeMap<u64, u64>) -> anyhow::Result<R
         ..Options::default()
     };
     let mut types: BTreeMap<u64, RunType> = BTreeMap::new();
-    let mut found: BTreeMap<u64, (Value, Vec<Value>)> = BTreeMap::new();
+    let mut found: BTreeMap<u64, (Fv, Vec<Fv>)> = BTreeMap::new();
     extract_graphs(rf, &options, |record| {
         let (Some(class), Some(graph)) = (record.class_name.as_deref(), record.graph.as_ref())
         else {
@@ -396,7 +396,7 @@ fn run_graphs(rf: &mut RevitFile, runs: &BTreeMap<u64, u64>) -> anyhow::Result<R
                 }
             }
             "StairsRun" if runs.contains_key(&id) => {
-                let mut treads: Vec<(i64, Value)> = graph
+                let mut treads: Vec<(i64, Fv)> = graph
                     .objects
                     .iter()
                     .filter(|o| o.class_name == "StairsTreadInfo")
@@ -527,7 +527,7 @@ pub fn native_stair_counts(
         match class {
             "StairsElement" if stairs.contains(&id) => {
                 if let (Some(risers), Some(riser_height_feet), Some(tread_depth_feet)) = (
-                    fields.get("m_actualNumberOfRisers").and_then(Value::as_i64),
+                    fields.get("m_actualNumberOfRisers").and_then(Fv::as_i64),
                     number(fields, "m_actualRiserHeight").filter(|h| *h > 0.0),
                     number(fields, "m_actualTreadDepth").filter(|d| *d > 0.0),
                 ) {
@@ -542,7 +542,7 @@ pub fn native_stair_counts(
                 }
             }
             "StairsRun" if runs.contains(&id) => {
-                let index = |name: &str| fields.get(name).and_then(Value::as_i64);
+                let index = |name: &str| fields.get(name).and_then(Fv::as_i64);
                 if let (
                     Some(stair),
                     Some(top),
@@ -617,7 +617,7 @@ pub struct NativeSpiralRun {
 /// passes -pi. `None` unless every tread is a spiral
 /// tread about one centre, between the same two radii, and each tread lies
 /// next to the one before it and above it.
-fn spiral(run: &Value, treads: &[Value]) -> Option<([f64; 2], [f64; 2], Vec<SpiralTread>)> {
+fn spiral(run: &Fv, treads: &[Fv]) -> Option<([f64; 2], [f64; 2], Vec<SpiralTread>)> {
     let close = |a: f64, b: f64| (a - b).abs() <= NATIVE_RUN_TOLERANCE_FEET;
     // The stored angles wrap by a turn where a run passes -pi (the BIM4LCA
     // office's run 3057703: -3.44719 then 2.836).
@@ -634,7 +634,7 @@ fn spiral(run: &Value, treads: &[Value]) -> Option<([f64; 2], [f64; 2], Vec<Spir
         let corners = tread.get("m_bndBox")?.get("m_corners")?.as_array()?;
         let corner = |index: usize| -> Option<[f64; 2]> {
             let pair = corners.get(index)?.as_array()?;
-            match pair.as_slice() {
+            match pair {
                 [a, b] => {
                     Some([a.as_f64()?, b.as_f64()?]).filter(|p| p.iter().all(|c| c.is_finite()))
                 }
@@ -868,7 +868,7 @@ pub fn railing_type_heights(
 
 /// A sketch `GLine`'s plan direction (`m_dirVec`) and length, the span of
 /// its `m_endParams`, feet.
-fn sketch_line(fields: &Value) -> Option<([f64; 2], f64)> {
+fn sketch_line(fields: &Fv) -> Option<([f64; 2], f64)> {
     let ends = fields.get("m_endParams")?.as_array()?;
     let dir = fields.get("m_dirVec")?.as_array()?;
     let span = (ends.get(1)?.as_f64()? - ends.first()?.as_f64()?).abs();
@@ -880,23 +880,43 @@ fn sketch_line(fields: &Value) -> Option<([f64; 2], f64)> {
 /// as Autodesk's samples saved by 2025 read them.
 pub const RAILING_LENGTH_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 
-/// The `Length` Revit's export writes on each railing in `railings` that
-/// belongs to a stair (`BaseRailing.m_stairsId`) and whose path, the sketch
-/// its record names (`m_sketchId`), is one straight line along one or more
-/// of that stair's runs, feet. The line climbs at the stair's
-/// riser height over its tread depth (its `StairsElement`'s actual counts)
-/// for as long as the longest of those runs climbs, its risers less one
-/// times the tread depth (`m_topRiserIndex` less `m_baseRiserIndex`, less
-/// one), and runs level for the rest: Revit's `Length` on every such railing
-/// of the BIM4LCA office and the R2025 stair models. A railing whose path
-/// has more lines, or an arc, is left out: over a stair well with landings
-/// the climb is not read yet.
-pub fn railing_lengths(
+/// What the native records of stair railings say.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct RailingRecords {
+    /// The stair each railing in the selection belongs to
+    /// (`BaseRailing.m_stairsId`), ElementId to ElementId. Revit's export
+    /// aggregates such a railing under its stair, as it does the stair's runs
+    /// and stringers.
+    pub stairs: BTreeMap<u64, u64>,
+    /// The railings among them whose record names a component of their
+    /// stair (`BaseRailing.m_stairsComponentId`, a run). Revit's export
+    /// leaves such a railing out of the stair's aggregate, a plain element of
+    /// its own storey.
+    pub on_components: BTreeSet<u64>,
+    /// The `Length` Revit's export writes on each railing whose path is one
+    /// straight line along its stair's runs, feet; see [`railing_records`].
+    pub lengths: BTreeMap<u64, f64>,
+}
+
+/// The stair of each railing in `railings` that belongs to one
+/// (`BaseRailing.m_stairsId`), the railings among them that sit on a component
+/// of it (`m_stairsComponentId`), and the `Length` Revit's export writes on each
+/// whose path, the sketch its record names (`m_sketchId`), is one straight
+/// line along one or more of that stair's runs, feet. The line
+/// climbs at the stair's riser height over its tread depth (its
+/// `StairsElement`'s actual counts) for as long as the longest of those runs
+/// climbs, its risers less one times the tread depth (`m_topRiserIndex` less
+/// `m_baseRiserIndex`, less one), and runs level for the rest: Revit's
+/// `Length` on every such railing of the BIM4LCA office and the R2025 stair
+/// models. A railing whose path has more lines, or an arc, is left out of the
+/// lengths: over a stair well with landings the climb is not read yet.
+pub fn railing_records(
     rf: &mut RevitFile,
     railings: &BTreeSet<u64>,
-) -> anyhow::Result<BTreeMap<u64, f64>> {
+) -> anyhow::Result<RailingRecords> {
+    let mut records = RailingRecords::default();
     if railings.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(records);
     }
     let mut held: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
     let options = Options {
@@ -908,18 +928,22 @@ pub fn railing_lengths(
             .graph
             .as_ref()
             .and_then(|graph| graph.objects.iter().find(|o| o.class_name == "BaseRailing"));
-        if let Some((sketch, stair)) = root.and_then(|root| {
-            Some((
-                element_id(&root.fields, "m_sketchId")?,
-                element_id(&root.fields, "m_stairsId")?,
-            ))
-        }) {
-            held.insert(record.identity.element_id, (sketch, stair));
+        let id = record.identity.element_id;
+        let stair = root.and_then(|root| element_id(&root.fields, "m_stairsId"));
+        if let Some(stair) = stair {
+            records.stairs.insert(id, stair);
+        }
+        if root.is_some_and(|root| element_id(&root.fields, "m_stairsComponentId").is_some()) {
+            records.on_components.insert(id);
+        }
+        let sketch = root.and_then(|root| element_id(&root.fields, "m_sketchId"));
+        if let (Some(sketch), Some(stair)) = (sketch, stair) {
+            held.insert(id, (sketch, stair));
         }
         Ok(())
     })?;
     if held.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(records);
     }
     let sketches: BTreeSet<u64> = held.values().map(|(sketch, _)| *sketch).collect();
     let stairs: BTreeSet<u64> = held.values().map(|(_, stair)| *stair).collect();
@@ -952,7 +976,7 @@ pub fn railing_lengths(
                 let Some(fields) = graph.objects.first().map(|o| &o.fields) else {
                     return Ok(());
                 };
-                let index = |name: &str| fields.get(name).and_then(Value::as_i64);
+                let index = |name: &str| fields.get(name).and_then(Fv::as_i64);
                 let counted = (
                     element_id(fields, "m_stairsId"),
                     index("m_topRiserIndex"),
@@ -977,7 +1001,7 @@ pub fn railing_lengths(
                 if !stairs.contains(&stair) || top <= base || top_z - bottom_z <= 0.0 {
                     return Ok(());
                 }
-                let treads: Vec<&Value> = graph
+                let treads: Vec<&Fv> = graph
                     .objects
                     .iter()
                     .filter(|o| o.class_name == "StairsTreadInfo")
@@ -985,7 +1009,7 @@ pub fn railing_lengths(
                     .collect();
                 let kinds: BTreeSet<Option<i64>> = treads
                     .iter()
-                    .map(|t| t.get("m_runType").and_then(Value::as_i64))
+                    .map(|t| t.get("m_runType").and_then(Fv::as_i64))
                     .collect();
                 if kinds.len() != 1 || kinds.contains(&None) {
                     return Ok(());
@@ -1025,7 +1049,6 @@ pub fn railing_lengths(
         }
         Ok(())
     })?;
-    let mut out = BTreeMap::new();
     for (railing, (sketch, stair)) in held {
         let (Some(Some(path)), Some(&(riser, tread))) = (paths.get(&sketch), slopes.get(&stair))
         else {
@@ -1041,10 +1064,12 @@ pub fn railing_lengths(
             .fold(0.0_f64, f64::max);
         if longest > 0.0 && *span > 0.0 {
             let climb = span.min(longest);
-            out.insert(railing, span + climb * ((riser / tread).hypot(1.0) - 1.0));
+            records
+                .lengths
+                .insert(railing, span + climb * ((riser / tread).hypot(1.0) - 1.0));
         }
     }
-    Ok(out)
+    Ok(records)
 }
 
 /// Releases a stair's and its parts' names are read from their native
@@ -1087,7 +1112,7 @@ pub struct NativeStairPart {
     pub family: &'static str,
 }
 
-fn element_id(v: &Value, name: &str) -> Option<u64> {
+fn element_id(v: &Fv, name: &str) -> Option<u64> {
     v.get(name)?.get("m_id")?.get("m_id64")?.as_u64()
 }
 
@@ -1192,7 +1217,7 @@ pub fn native_stair_parts(
         {
             names.insert(id, name.to_string());
         }
-        let style = |name: &str| root.fields.get(name).and_then(Value::as_i64);
+        let style = |name: &str| root.fields.get(name).and_then(Fv::as_i64);
         match class {
             "StairsType" => {
                 if let Some(method) = style("m_constructionMethod") {
@@ -1334,7 +1359,7 @@ fn landing_loop(
                 let target = crate::native_saved_mesh::pointer(graph, index, curve).ok()??;
                 let curve = graph.objects.get(target)?;
                 let params = curve.fields.get("m_endParams")?.as_array()?;
-                let [t0, t1] = params.as_slice() else {
+                let [t0, t1] = params else {
                     return None;
                 };
                 let (t0, t1) = (t0.as_f64()?, t1.as_f64()?);

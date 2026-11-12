@@ -236,6 +236,10 @@ impl ExportOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ExportNote {
+    /// Standalone family revolutions reconstructed from their saved records.
+    FamilyRevolutions { added: usize },
+    /// An unsupported standalone family was left unchanged.
+    FamilyRevolutionsSkipped { error: String },
     /// Bodies drawn from the saved graphics of `candidates` boxed elements.
     #[non_exhaustive]
     SavedMeshes {
@@ -401,6 +405,7 @@ impl ExportNote {
     pub fn skipped(&self) -> Option<&str> {
         match self {
             Self::SavedMeshesSkipped { error }
+            | Self::FamilyRevolutionsSkipped { error }
             | Self::FamilyExtrusionsSkipped { error }
             | Self::RevitPropertySetsSkipped { error }
             | Self::RevitSetPlacementSkipped { error }
@@ -413,6 +418,13 @@ impl ExportNote {
 impl fmt::Display for ExportNote {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::FamilyRevolutions { added } => write!(
+                f,
+                "{added} standalone family revolution bodies decoded from native records"
+            ),
+            Self::FamilyRevolutionsSkipped { error } => {
+                write!(f, "family revolution bodies unchanged: {error}")
+            }
             Self::SavedMeshes {
                 scope,
                 candidates,

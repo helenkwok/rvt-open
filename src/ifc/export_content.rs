@@ -1065,7 +1065,11 @@ pub fn append_typed_production_elements(
         let effective = ifc_export_override(&decoded).unwrap_or(mapping);
         let ifc_type = effective.ifc_type.to_string();
         let family_space = space_by_export_value(&decoded);
-        // The element's own or its type's IFC predefined type, when
+        // an element redirected to another entity than its category's
+        // takes its own predefined type there where the entity is one of those
+        // only a value reaches ([`category_map::override_predefined_type_for`]).
+        let redirected = effective.ifc_type != mapping.ifc_type;
+        // the element's own or its type's IFC predefined type, when
         // it is an enumerator of the entity it exports as; a family instance
         // written as a space through its value takes its own.
         // A curtain panel wall's predefined type is `NOTDEFINED` in Revit's
@@ -1084,11 +1088,22 @@ pub fn append_typed_production_elements(
                 InstanceField::String(text)
                     if name == crate::partition_schema_mvp::IFC_PREDEFINED_TYPE_FIELD =>
                 {
-                    category_map::predefined_type_for(effective.ifc_type, text).or_else(|| {
-                        family_space
-                            .then(|| category_map::space_predefined_type_for(text))
-                            .flatten()
-                    })
+                    category_map::predefined_type_for(effective.ifc_type, text)
+                        .or_else(|| {
+                            redirected
+                                .then(|| {
+                                    category_map::override_predefined_type_for(
+                                        effective.ifc_type,
+                                        text,
+                                    )
+                                })
+                                .flatten()
+                        })
+                        .or_else(|| {
+                            family_space
+                                .then(|| category_map::space_predefined_type_for(text))
+                                .flatten()
+                        })
                 }
                 _ => None,
             })
@@ -1124,6 +1139,36 @@ pub fn append_typed_production_elements(
                         })
                     })
                     .flatten()
+            })
+            .or_else(|| {
+                // Revit's exporter writes `NOTDEFINED` on a furniture or
+                // casework element that has no "IFC Predefined Type" of its own
+                // or its type's (Revit's IFC exporter's `IFCExportInfoPair`, CLEANROOM.md
+                // source 5; 89 and 90 on the BIM4LCA housing's four large files,
+                // 36 on its office, and every furniture of the held-out pairs of
+                // 2024, 2025 and 2026), on the releases of
+                // `FURNITURE_DEFAULT_REVIT_VERSIONS`: its 2027 export writes none,
+                // and a 2022 file's export parameters are not read.
+                // A value that is no enumerator is left unset: what Revit writes
+                // for one is not measured.
+                (effective.ifc_type == "IFCFURNITURE"
+                    && decoded.fields.iter().any(|(name, value)| match value {
+                        InstanceField::Integer { value, .. }
+                            if name == crate::partition_schema_mvp::FURNITURE_RELEASE_FIELD =>
+                        {
+                            u32::try_from(*value).is_ok_and(|release| {
+                                crate::partition_schema_mvp::FURNITURE_DEFAULT_REVIT_VERSIONS
+                                    .contains(&release)
+                            })
+                        }
+                        _ => false,
+                    })
+                    && !decoded.fields.iter().any(|(name, value)| {
+                        matches!(value, InstanceField::String(text)
+                            if name == crate::partition_schema_mvp::IFC_PREDEFINED_TYPE_FIELD
+                                && !text.trim().is_empty())
+                    }))
+                .then_some("NOTDEFINED")
             })
             .or(
                 // a room, area or MEP space that says "Export to
@@ -1592,7 +1637,12 @@ pub fn append_typed_production_elements(
             extrusion.as_ref(),
             solid_shape.as_ref(),
         );
-        add_beam_length(&mut reference_sets, &ifc_type, property_set.as_ref());
+        add_beam_length(
+            &mut reference_sets,
+            &ifc_type,
+            property_set.as_ref(),
+            &decoded,
+        );
         add_beam_span(&mut reference_sets, &ifc_type);
         add_beam_slope(&mut reference_sets, &ifc_type, &decoded);
         add_beam_roll(&mut reference_sets, &ifc_type, &decoded);
@@ -1924,7 +1974,7 @@ pub fn append_typed_production_elements(
                 };
                 let confirmed = float(crate::partition_schema_mvp::WALL_LENGTH_FIELD).is_some();
                 let cutback = float(crate::partition_schema_mvp::WALL_CUTBACK_LENGTH_FIELD);
-                if confirmed || cutback.is_some() {
+                if (confirmed || cutback.is_some()) && !layered_wall(&decoded) {
                     pending_bounded.push(wall_areas::Pending {
                         index: entity_index,
                         named,
@@ -2909,7 +2959,10 @@ fn reference_set_kinds(
 /// rvt-open's and never where rvt-open leaves it out: the office's
 /// and the R2025 models' IFC4 exports, and RE1's IFC2X3 exports for the duct
 /// and pipe fitting and duct segment types. Reference goes in no other set
-/// until a Revit export confirms it.
+/// until a Revit export confirms it. `Pset_ShadingDeviceCommon` joins on the timber office's IFC4 exports, as
+/// built and at building permit, which write it on all 44 of their
+/// `IfcShadingDevice` and on no other element: rvt-open's value is Revit's on
+/// 44 of 44 in both.
 const CONFIRMED_REFERENCE_SETS: &[&str] = &[
     "Pset_AirTerminalTypeCommon",
     "Pset_BeamCommon",
@@ -2938,6 +2991,7 @@ const CONFIRMED_REFERENCE_SETS: &[&str] = &[
     "Pset_ReinforcementBarPitchOfWall",
     "Pset_RoofCommon",
     "Pset_SanitaryTerminalTypeCommon",
+    "Pset_ShadingDeviceCommon",
     "Pset_SlabCommon",
     "Pset_SpaceCommon",
     "Pset_StairCommon",
@@ -3520,7 +3574,7 @@ fn add_level_slab_pitch(sets: &mut Vec<PropertySet>) {
 }
 
 /// Add the `PitchAngle` of a floor drawn along the plane its shape-edited
-/// corners lie in: revit-ifc's `SlopeCalculator` (CLEANROOM.md
+/// corners lie in: Revit's IFC exporter's `SlopeCalculator` (CLEANROOM.md
 /// source 5) gives a slab with no location curve the slope of its largest
 /// upward face, which for a floor whose top is the plane
 /// `z = a·x + b·y + c` is the angle of that plane from the horizontal, the
@@ -3563,15 +3617,18 @@ fn add_railing_length(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &Dec
     });
 }
 
-/// Add a space's `Qto_SpaceBaseQuantities.Height` to `sets`, its room's
-/// height.
+/// Add a space's `Qto_SpaceBaseQuantities.Height` to `sets`: its room's height,
+/// or an Area's, the height of its body, from its Level up to the
+/// Level above, which its reader gives on the releases Revit's export
+/// is measured on.
 fn add_space_height(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &DecodedElement) {
     if ifc_type != "IFCSPACE" {
         return;
     }
     let Some(height) = decoded.fields.iter().find_map(|(name, value)| match value {
         InstanceField::Float { value, .. }
-            if name == crate::partition_schema_mvp::ROOM_HEIGHT_FIELD =>
+            if name == crate::partition_schema_mvp::ROOM_HEIGHT_FIELD
+                || name == crate::partition_area_records::AREA_SPACE_HEIGHT_FIELD =>
         {
             Some(*value)
         }
@@ -3715,21 +3772,25 @@ fn add_door_window_quantities(
 /// its `Length`, the depth of the extrusion it is drawn as, and, where that
 /// extrusion is its type's hollow section (whose family parameters are
 /// Revit's profile exactly), its `CrossSectionArea` (the section's area),
-/// `OuterSurfaceArea` (the length times the section's outline and hole) and
-/// `GrossVolume` (the area times the length), as Revit's IFC exporter's
+/// `OuterSurfaceArea` (the length times the section's outline and hole),
+/// `GrossVolume` (the area times the length) and `NetVolume`, as Revit's IFC exporter's
 /// `PropertyUtil.CreateBeamColumnBaseQuantities` takes them (CLEANROOM.md
-/// source 5). Its `NetVolume` is left out: Revit's export writes the volume
-/// Revit computes, less than that on every one of the BIM4LCA office's
-/// hollow columns. A column drawn as its record's box gets none of these, as a
-/// round column is drawn as one too. All on a column joined by no
+/// source 5). A hollow section's `NetVolume` is the volume Revit computes,
+/// which the arcs of its corners are missing from: the section's outside
+/// rectangle less its inside one times the length, Revit's exactly on the
+/// BIM4LCA office's three hollow-section types measured (PI-2, PI-4 and PI-5,
+/// five columns, the PI-4 arcs taking 3.4 per cent off its area's box). A
+/// column drawn as its record's box gets none of these, as a round column is
+/// drawn as one too. All on a column joined by no
 /// `CleanPairGStep`
 /// ([`crate::partition_schema_mvp::COLUMN_UNJOINED_FIELD`]), which Revit's
 /// export draws as that extrusion. A joined column's Length is left out:
 /// Revit's export draws 18 of the BIM4LCA office's at permit as a cut mesh
 /// and gives them none, and no field tells them from the others. None where
-/// another solid draws it. A curtain panel's `Width`, its box's larger side
-/// wherever Revit writes it, is left out too: Revit's export writes none on
-/// 3 of the office's panels that no field tells apart.
+/// another solid draws it. A curtain panel's `Width` is not written here: the
+/// saved-mesh pass gives it where the panel's mesh is a vertical box
+/// (`mesh_volume::box_plan_width`), which is what
+/// tells the 3 of the office's panels Revit's export gives none from the rest.
 fn add_body_quantities(
     sets: &mut Vec<PropertySet>,
     ifc_type: &str,
@@ -3758,7 +3819,7 @@ fn add_body_quantities(
         name: "Length".into(),
         value: PropertyValue::PositiveLengthFeet(feet),
     }];
-    if let Some((area, perimeter)) = profile.and_then(hollow_section_area_perimeter) {
+    if let Some((area, perimeter, rectangles)) = profile.and_then(hollow_section_area_perimeter) {
         properties.extend([
             Property {
                 name: "CrossSectionArea".into(),
@@ -3772,6 +3833,10 @@ fn add_body_quantities(
                 name: "GrossVolume".into(),
                 value: PropertyValue::VolumeCubicFeet(area * feet),
             },
+            Property {
+                name: "NetVolume".into(),
+                value: PropertyValue::VolumeCubicFeet(rectangles * feet),
+            },
         ]);
     }
     sets.push(PropertySet {
@@ -3781,31 +3846,50 @@ fn add_body_quantities(
 }
 
 /// Add a beam's `Qto_BeamBaseQuantities.Length` to `sets`: the
-/// length of the location line it is drawn along (its record set's
-/// `AxisLength`), where its body is that line's box
-/// ([`BEAM_AXIS_BODY_SOURCE`]), whose ends lie in the beam's record box:
-/// Revit's export writes it as its body's extrusion length, the line's on
-/// each of the BIM4LCA office's 8 beams. Its areas and volumes are left out:
-/// that box is not the beam's section.
-fn add_beam_length(sets: &mut Vec<PropertySet>, ifc_type: &str, record: Option<&PropertySet>) {
+/// length of its location line. Revit's export writes it as the
+/// length of the beam's `Axis` curve: on each of the BIM4LCA office's 8 beams,
+/// which are drawn along the line, and on 291 of 291 beams with a line in the
+/// office and the housing, whether Revit draws the beam as an extrusion along the
+/// line, across it, or as a mesh. The line is the record set's
+/// `AxisLength` where the body is that line's box ([`BEAM_AXIS_BODY_SOURCE`]), and
+/// otherwise the line of the beam's element data that lies inside its record box
+/// ([`crate::partition_schema_mvp::beam_line_from_fields`]), whatever the body is
+/// drawn from: a box along the line that is longer than it
+/// ([`BEAM_BOX_BODY_SOURCE`]), or a saved mesh. A beam with no line gets none.
+/// Its areas and volumes are left out here: that box is not the beam's section.
+fn add_beam_length(
+    sets: &mut Vec<PropertySet>,
+    ifc_type: &str,
+    record: Option<&PropertySet>,
+    decoded: &DecodedElement,
+) {
     if ifc_type != "IFCBEAM" {
         return;
     }
-    let Some(record) = record else {
-        return;
-    };
-    let along_axis = record.properties.iter().any(|property| {
-        property.name == "BodySource"
-            && matches!(&property.value, PropertyValue::Text(text) if text == BEAM_AXIS_BODY_SOURCE)
-    });
-    let length = record
-        .properties
-        .iter()
-        .find_map(|property| match &property.value {
-            PropertyValue::LengthFeet(feet) if property.name == "AxisLength" => Some(*feet),
-            _ => None,
+    let along_axis_length = record
+        .filter(|record| {
+            record.properties.iter().any(|property| {
+                property.name == "BodySource"
+                    && matches!(&property.value, PropertyValue::Text(text) if text == BEAM_AXIS_BODY_SOURCE)
+            })
+        })
+        .and_then(|record| {
+            record
+                .properties
+                .iter()
+                .find_map(|property| match &property.value {
+                    PropertyValue::LengthFeet(feet) if property.name == "AxisLength" => Some(*feet),
+                    _ => None,
+                })
         });
-    let (true, Some(length)) = (along_axis, length) else {
+    let Some(length) = along_axis_length.or_else(|| {
+        crate::partition_schema_mvp::beam_line_from_fields(&decoded.fields).map(|(start, end)| {
+            (0..3)
+                .map(|axis| (end[axis] - start[axis]).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        })
+    }) else {
         return;
     };
     if !(length.is_finite() && length > 0.0) {
@@ -3820,14 +3904,14 @@ fn add_beam_length(sets: &mut Vec<PropertySet>, ifc_type: &str, record: Option<&
     });
 }
 
-/// Add a beam's `Pset_BeamCommon.Span` to `sets` (W7): Revit's IFC exporter's
+/// Add a beam's `Pset_BeamCommon.Span` to `sets`: Revit's IFC exporter's
 /// `SpanCalculator` (CLEANROOM.md source 5) takes it, where no parameter
 /// gives it, from the length of the extrusion the beam is exported as, the
 /// length `Qto_BeamBaseQuantities.Length` holds ([`add_beam_length`]), which
-/// is the line the beam is drawn along. Revit's export writes the
-/// two equal on each of the BIM4LCA office's 8 beams, as built and at
-/// permit. Written only where `sets` holds that `Length`, so a beam Revit
-/// draws another way, whose export has no extrusion length, gets none.
+/// is the line of the beam. Revit's export writes the two equal
+/// on every beam of the BIM4LCA office and housing that has a line (291 of 291,
+/// as built and at permit). Written only where `sets` holds that `Length`, so a
+/// beam with no line gets none.
 fn add_beam_span(sets: &mut Vec<PropertySet>, ifc_type: &str) {
     if ifc_type != "IFCBEAM" {
         return;
@@ -3870,50 +3954,57 @@ fn add_beam_common(sets: &mut Vec<PropertySet>, property: Property) {
     }
 }
 
-/// Add a level beam's `Pset_BeamCommon.Slope` 0 to `sets` (W7): Revit's IFC exporter's
+/// Add a beam's `Pset_BeamCommon.Slope` to `sets`: Revit's IFC exporter's
 /// `SlopeCalculator` (CLEANROOM.md source 5) takes the slope of a beam it
 /// exports as an extrusion, where no parameter named `Slope` gives it, from
 /// the extrusion's own slope where there is one, and otherwise as the angle
-/// between its location line and the horizontal, 0 for a line in the plan.
-/// Only a beam written with the extrusion length of [`add_beam_length`]
-/// whose location line does not leave the horizontal (its direction's
-/// vertical share below [`crate::partition_beam_axes::HORIZONTAL_EPS`]) gets
-/// it: a sloped beam's value comes from the extrusion's slope, which is not
-/// measured, so it gets none. Revit's export writes 0 on each of the BIM4LCA
-/// office's 8 beams, as built and at permit, all level.
+/// between its location line and the horizontal, 0 for a line in the plan. The
+/// angle is that of the beam's location line (the line of its record set where
+/// one is drawn along, else [`crate::partition_schema_mvp::beam_line_from_fields`]),
+/// its vertical rise over its horizontal run, 0 where its direction's vertical
+/// share is below [`crate::partition_beam_axes::HORIZONTAL_EPS`]. Only a beam
+/// written with the length of [`add_beam_length`] gets it. Revit's export writes
+/// that angle on each of the 291 beams with a line in the BIM4LCA office and
+/// housing, 36 of them sloped (3.586 degrees on a housing's 9), and 0 on each
+/// of the 255 level ones; before it only a level beam got it, 0.
 fn add_beam_slope(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &DecodedElement) {
     if ifc_type != "IFCBEAM" || beam_extrusion_length(sets).is_none() {
         return;
     }
-    let Some((start, end)) = crate::partition_schema_mvp::beam_axis_from_fields(&decoded.fields)
+    let Some((start, end)) = crate::partition_schema_mvp::beam_line_from_fields(&decoded.fields)
+        .or_else(|| crate::partition_schema_mvp::beam_axis_from_fields(&decoded.fields))
     else {
         return;
     };
     let delta = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
     let length = (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]).sqrt();
-    if !(length.is_finite() && length > 0.0)
-        || (delta[2] / length).abs() > crate::partition_beam_axes::HORIZONTAL_EPS
-    {
+    if !(length.is_finite() && length > 0.0) {
         return;
     }
+    let slope = if (delta[2] / length).abs() > crate::partition_beam_axes::HORIZONTAL_EPS {
+        delta[2].abs().atan2(delta[0].hypot(delta[1]))
+    } else {
+        0.0
+    };
     add_beam_common(
         sets,
         Property {
             name: "Slope".into(),
-            value: PropertyValue::AngleRadians(0.0),
+            value: PropertyValue::AngleRadians(slope),
         },
     );
 }
 
-/// Add an unrotated beam's `Pset_BeamCommon.Roll` 0 to `sets` (W7):
+/// Add an unrotated beam's `Pset_BeamCommon.Roll` 0 to `sets`:
 /// Revit's IFC exporter's `RollCalculator` (CLEANROOM.md source 5) takes the roll from
 /// the beam's Cross-Section Rotation parameter, in radians, whatever its
 /// value. rvt-open reads that rotation from the beam's native record
 /// ([`crate::partition_schema_mvp::BEAM_ROTATION_FIELD`]) and writes the roll
-/// of a beam whose rotation is exactly 0, as it is on each of the BIM4LCA
-/// office's 8 beams, as built and at permit, on beams written with the
-/// extrusion length of [`add_beam_length`]. A rotated beam gets none: no
-/// measured beam is rotated, so its roll is not measured.
+/// of a beam whose rotation is exactly 0, as it is on each of the 291 beams
+/// with a line in the BIM4LCA office and housing, as built and at permit, on
+/// beams written with the length of [`add_beam_length`]. A
+/// rotated beam gets none: no measured beam is rotated, so its roll is not
+/// measured.
 fn add_beam_roll(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &DecodedElement) {
     if ifc_type != "IFCBEAM" || beam_extrusion_length(sets).is_none() {
         return;
@@ -3946,7 +4037,7 @@ fn add_beam_roll(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &DecodedE
 /// `Depth`, the one layer's thickness of a floor of one layer, and its
 /// `GrossVolume`, the area times it. A floor of several layers gets neither:
 /// the office's export (24.0.5) gives it its bottom layer's thickness, a
-/// newer exporter (26.4) another value. Its
+/// newer exporter (26.4) another value. A floor's
 /// `Perimeter` is left out: Revit's export writes it in feet, unscaled, in
 /// a file whose length unit is millimetres.
 ///
@@ -3966,9 +4057,24 @@ fn add_beam_roll(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &DecodedE
 /// sketch's outline, gets the same from its layers: its `Depth` is
 /// the extrusion's, the layers' total, whatever their number, and its
 /// `NetVolume`, when its record holds no cutting step, the area times it. Its
+/// `Perimeter`, the length of the outline of that profile, is written too:
+/// Revit's export writes a roof's in the file's unit, unlike a floor's
+///, and on all 10 of the office's roofs it is that outline's
+/// length. A roof whose profile has holes gets none: whether the export
+/// counts a hole's outline in the value is unmeasured, and the housing's 2
+/// roofs with holes are left out. Nor does one whose outline has a corner
+/// that is not a right angle: an arc of its sketch is chords there. Its
 /// `Width` is its profile's extent, as a floor of one layer's is, and is left
 /// out. All 10 of the office's roofs as built and at permit are Revit's, the
 /// one a hatch cuts (`YP-1`) but for its `NetVolume`.
+///
+/// A roof whose sketch has holes gets its outline's area for `GrossArea`, and
+/// that area times its depth for `GrossVolume`, with the holes left in:
+/// Revit's export writes them as openings and takes them off neither,
+/// and takes them off its `NetVolume` alone. A floor's holes are taken off its
+/// `GrossArea`. On the BIM4LCA housing as built Revit's `GrossArea`
+/// has the holes off on 8 floors (one or two holes of 0.31 to 4.26 m2) and
+/// leaves them in on its 2 roofs with holes.
 fn add_slab_gross_area(
     sets: &mut Vec<PropertySet>,
     ifc_type: &str,
@@ -4002,6 +4108,14 @@ fn add_slab_gross_area(
     let Some(area) = profile_area(body) else {
         return;
     };
+    // a roof's holes are left in its gross quantities. A profile with no
+    // holes has no outline of its own to take (its outline is `area`), so the
+    // fallback changes nothing for it.
+    let gross = if roof {
+        profile_outline_area(body).unwrap_or(area)
+    } else {
+        area
+    };
     let depth = body.height_feet;
     let layers = crate::partition_schema_mvp::element_layers_from_fields(&decoded.fields)
         .filter(|layers| layers.stacked && !layers.layers.is_empty());
@@ -4016,8 +4130,19 @@ fn add_slab_gross_area(
     }
     let mut properties = vec![Property {
         name: "GrossArea".into(),
-        value: PropertyValue::AreaSquareFeet(area),
+        value: PropertyValue::AreaSquareFeet(gross),
     }];
+    // A roof's `Perimeter` is its profile's outline length in the file's unit,
+    // not the floor's value in feet, and Revit writes it on every roof it
+    // writes the area on.
+    if roof {
+        if let Some(perimeter) = profile_outline_length(body) {
+            properties.push(Property {
+                name: "Perimeter".into(),
+                value: PropertyValue::PositiveLengthFeet(perimeter),
+            });
+        }
+    }
     // A floor of one layer only: on floors of several layers Revit's
     // exporters disagree.
     let one_layer = layers
@@ -4033,7 +4158,7 @@ fn add_slab_gross_area(
         });
         properties.push(Property {
             name: "GrossVolume".into(),
-            value: PropertyValue::VolumeCubicFeet(area * quantity),
+            value: PropertyValue::VolumeCubicFeet(gross * quantity),
         });
     }
     let uncut = decoded.fields.iter().any(|(name, value)| {
@@ -4090,10 +4215,91 @@ fn profile_area(body: &Extrusion) -> Option<f64> {
     (area.is_finite() && area > 0.0).then_some(area)
 }
 
+/// The area of the outline of the profile `body` extrudes, its holes not taken
+/// off: `None` unless the profile has some.
+fn profile_outline_area(body: &Extrusion) -> Option<f64> {
+    use crate::ifc::from_decoded::polygon_area_sqft;
+    let Some(entities::ProfileDef::ArbitraryWithVoids { points, .. }) = &body.profile_override
+    else {
+        return None;
+    };
+    let area = polygon_area_sqft(points);
+    (area.is_finite() && area > 0.0).then_some(area)
+}
+
+/// The length of the outline of the profile `body` extrudes, its holes not
+/// taken in: `None` for a profile with holes or another shape,
+/// and for an outline with a corner that is not a right angle
+/// ([`square_corner_count`]): a sketch arc reaches the outline as chords,
+/// whose length is short of the arc's.
+fn profile_outline_length(body: &Extrusion) -> Option<f64> {
+    let Some(entities::ProfileDef::ArbitraryClosed { points }) = &body.profile_override else {
+        return None;
+    };
+    if square_corner_count(points).is_none_or(|corners| corners < 4) {
+        return None;
+    }
+    let mut length = 0.0;
+    for (index, &(x, y)) in points.iter().enumerate() {
+        let (next_x, next_y) = *points.get((index + 1) % points.len())?;
+        length += (next_x - x).hypot(next_y - y);
+    }
+    (length.is_finite() && length > 0.0).then_some(length)
+}
+
+/// The number of corners of the closed outline `points` where every one of
+/// them is a right angle, and `None` where one is not. A sketch arc reaches an
+/// outline as chords within 0.0005 ft of it, and no corner between two such
+/// chords is square, so an outline that has a count holds no arc and its
+/// polygon's length and area are its sketch's own. A point the outline runs
+/// straight through is no corner (a rectangle one of whose edges is two
+/// sketch lines has four), a repeated point and the closing one are dropped,
+/// and a spike is a corner that is not square.
+pub(super) fn square_corner_count(points: &[(f64, f64)]) -> Option<usize> {
+    // How far from zero a corner's cosine and a straight joint's sine may be.
+    const SQUARE: f64 = 1e-6;
+    const STRAIGHT: f64 = 1e-9;
+    let mut ring: Vec<(f64, f64)> = Vec::with_capacity(points.len());
+    for &point in points {
+        if ring.last() != Some(&point) {
+            ring.push(point);
+        }
+    }
+    if ring.len() > 1 && ring.first() == ring.last() {
+        ring.pop();
+    }
+    let count = ring.len();
+    let mut corners = 0usize;
+    for index in 0..count {
+        let before = ring.get((index + count - 1) % count)?;
+        let at = ring.get(index)?;
+        let after = ring.get((index + 1) % count)?;
+        let (u, v) = (
+            (at.0 - before.0, at.1 - before.1),
+            (after.0 - at.0, after.1 - at.1),
+        );
+        let scale = u.0.hypot(u.1) * v.0.hypot(v.1);
+        if !(scale.is_finite() && scale > 0.0) {
+            return None;
+        }
+        let (dot, cross) = (u.0 * v.0 + u.1 * v.1, u.0 * v.1 - u.1 * v.0);
+        if cross.abs() <= STRAIGHT * scale && dot > 0.0 {
+            continue;
+        }
+        if dot.abs() > SQUARE * scale {
+            return None;
+        }
+        corners += 1;
+    }
+    Some(corners)
+}
+
 /// The area and the length of the outline and hole of a hollow section
-/// `body` extrudes ([`hollow_section_profile`]), its arcs counted exactly;
+/// `body` extrudes ([`hollow_section_profile`]), its arcs counted exactly,
+/// and the area the section's two rectangles span: the outside's less the
+/// inside's, which times the length is the volume Revit computes for it.
 /// `None` for another profile.
-fn hollow_section_area_perimeter(body: &Extrusion) -> Option<(f64, f64)> {
+fn hollow_section_area_perimeter(body: &Extrusion) -> Option<(f64, f64, f64)> {
     let Some(entities::ProfileDef::IndexedPolyCurveWithVoids { outer, voids }) =
         &body.profile_override
     else {
@@ -4101,12 +4307,33 @@ fn hollow_section_area_perimeter(body: &Extrusion) -> Option<(f64, f64)> {
     };
     let (mut area, mut perimeter) = curve_area_length(outer)?;
     area = area.abs();
+    let mut rectangles = ring_rectangle_area(outer)?;
     for void in voids {
         let (hole, length) = curve_area_length(void)?;
         area -= hole.abs();
         perimeter += length;
+        rectangles -= ring_rectangle_area(void)?;
     }
-    (area.is_finite() && area > 0.0 && perimeter.is_finite()).then_some((area, perimeter))
+    (area.is_finite()
+        && area > 0.0
+        && perimeter.is_finite()
+        && rectangles.is_finite()
+        && rectangles > 0.0)
+        .then_some((area, perimeter, rectangles))
+}
+
+/// The area of the rectangle a closed ring spans, its corners' arcs lying
+/// inside it: for a hollow section's ring, the rectangle its family's
+/// parameters build it on.
+fn ring_rectangle_area(curve: &entities::IndexedCurve) -> Option<f64> {
+    let mut low = (f64::INFINITY, f64::INFINITY);
+    let mut high = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for &(x, y) in &curve.points {
+        low = (low.0.min(x), low.1.min(y));
+        high = (high.0.max(x), high.1.max(y));
+    }
+    let area = (high.0 - low.0) * (high.1 - low.1);
+    (area.is_finite() && area > 0.0).then_some(area)
 }
 
 /// The signed area (positive counter-clockwise) and the length of a closed
@@ -4286,10 +4513,11 @@ fn add_stair_flight_quantities(
 /// written only where the two are the same.
 /// Nothing where the thickness is not read.
 /// Add a curtain wall's `Qto_CurtainWallQuantities.Length` to `sets`: its
-/// curve's length ([`crate::partition_schema_mvp::WALL_LENGTH_FIELD`]), which
-/// Revit's IFC exporter's `LengthCalculator` takes from the wall's location curve
-/// (CLEANROOM.md source 5): on all 218 of the BIM4LCA office's straight
-/// curtain walls, as built and at permit. Nothing on a curved one.
+/// location curve's length ([`crate::partition_schema_mvp::WALL_LENGTH_FIELD`]),
+/// which Revit's IFC exporter's `LengthCalculator` takes from the wall's location curve
+/// (CLEANROOM.md source 5): on all 218 of the BIM4LCA office's curtain walls
+/// whose record holds a straight location curve, as built and at permit.
+/// Nothing on a curved one, whose location curve is an arc.
 fn add_curtain_wall_length(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &DecodedElement) {
     use crate::partition_schema_mvp as mvp;
     if ifc_type != "IFCCURTAINWALL" || decoded.class != mvp::CURTAIN_WALL_CLASS {
@@ -4387,6 +4615,11 @@ fn add_wall_height(
     }
 }
 
+/// Whether a wall's type has several layers.
+fn layered_wall(decoded: &DecodedElement) -> bool {
+    crate::partition_schema_mvp::wall_layer_count_from_fields(&decoded.fields) >= 2
+}
+
 /// Add a wall's `Qto_WallBaseQuantities` `GrossSideArea`, `NetSideArea`,
 /// `GrossVolume` and `NetVolume` to `sets`, where its native record holds no
 /// step that cuts, embeds or sweeps it
@@ -4408,6 +4641,14 @@ fn add_wall_height(
 /// footprint loop, which becomes `GrossFootprintArea`: its length times its
 /// thickness, Revit's on every one of those walls but the shortest, which is
 /// as long as it is thick and which Revit's export gives none.
+///
+/// A wall whose type has several layers gets none of these: Revit's
+/// export draws it layer by layer, and the volume of its solid is the sum of
+/// its layers' after they are joined, which its box does not know. On the
+/// BIM4LCA housing as built, 3 of its 153 such walls have a `NetVolume` that
+/// is not the box's, Revit's export writes no `GrossFootprintArea` on any of
+/// them, and all 204 walls of one layer with a `Height` have one. The saved
+/// mesh gives such a wall the quantities it can.
 fn add_wall_areas_and_volumes(
     sets: &mut [PropertySet],
     ifc_type: &str,
@@ -4415,7 +4656,7 @@ fn add_wall_areas_and_volumes(
     extrusion: Option<&Extrusion>,
     property_set: Option<&PropertySet>,
 ) {
-    if !matches!(ifc_type, "IFCWALL" | "IFCWALLSTANDARDCASE") {
+    if !matches!(ifc_type, "IFCWALL" | "IFCWALLSTANDARDCASE") || layered_wall(decoded) {
         return;
     }
     let flagged = |wanted: &str| {
@@ -4513,7 +4754,12 @@ fn prism_quantities(body: &Extrusion, width: f64) -> Option<[Property; 4]> {
 /// mullion's body extrusion where no parameter gives it. A mullion runs along
 /// its own Z axis: on the model's axes, its record box's extent
 /// along the model axis that Z lies on; turned or tilted, the extent along Z
-/// of the box along its own axes. Nothing where neither is read.
+/// of the box along its own axes; turned so far about its own axis
+/// that the box leaves those extents undetermined, its extent along the model
+/// axis its own Z lies on, where that is one. Nothing where none of
+/// these gives a length. Only a mullion whose box along its own axes is solved
+/// takes a `NetVolume` and a `NetSurfaceArea` from it, which need its two sides
+/// across it.
 /// The same length is its `Qto_MemberBaseQuantities.Length`, which Revit's
 /// export gives every one of the BIM4LCA office's 10,003 mullions equal to
 /// their `Span`.
@@ -4542,8 +4788,9 @@ fn add_mullion_span(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &Decod
         }
         _ => None,
     });
+    let own = mvp::curtain_axes_from_fields(&decoded.fields);
     // The box's two sides across the mullion, then its length along it.
-    let sides = match (mvp::curtain_axes_from_fields(&decoded.fields), along) {
+    let sides = match (own, along) {
         (Some(axes), _) => oriented_box(axes, size).map(|(_, half)| half.map(|h| 2.0 * h)),
         (None, Some(axis)) if axis < 3 => {
             let across: Vec<f64> = (0..3).filter(|i| *i != axis).map(|i| size[i]).collect();
@@ -4551,10 +4798,15 @@ fn add_mullion_span(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &Decod
         }
         _ => None,
     };
-    let Some(span) = sides
+    // a mullion turned near enough to 45 degrees about its own axis
+    // leaves the box along its own axes undetermined, but its own Z is
+    // still the direction of its length: where that Z is one of the model's
+    // axes, the record box's extent along it is the mullion's own extent.
+    let span = sides
         .map(|sides| sides[2])
-        .filter(|span| span.is_finite() && *span > 0.0)
-    else {
+        .or_else(|| own.and_then(|axes| length_on_a_model_axis(axes[2], size)))
+        .filter(|span| span.is_finite() && *span > 0.0);
+    let Some(span) = span else {
         return;
     };
     let property = Property {
@@ -4588,6 +4840,26 @@ fn add_mullion_span(sets: &mut Vec<PropertySet>, ifc_type: &str, decoded: &Decod
         name: "Qto_MemberBaseQuantities".into(),
         properties: quantities,
     });
+}
+
+/// The record box's extent along the model axis a mullion's own Z lies on,
+/// where it lies on exactly one of them: that extent is the box's extent along
+/// the mullion's own Z, its two other axes being square to that model axis,
+/// and so the mullion's length. Nothing where the Z lies on none of
+/// the model's axes or on more than one, or where the extent is not positive.
+fn length_on_a_model_axis(own_z: [f64; 3], size: [f64; 3]) -> Option<f64> {
+    let mut on = None;
+    for (index, value) in own_z.iter().enumerate() {
+        if value.abs() <= crate::partition_schema_mvp::INSTANCE_TURN_MIN_RADIANS {
+            continue;
+        }
+        if on.is_some() {
+            return None;
+        }
+        on = Some(index);
+    }
+    let extent = *size.get(on?)?;
+    (extent.is_finite() && extent > 0.0).then_some(extent)
 }
 
 /// A curtain mullion's `NetVolume`: its box's two sides across
@@ -5245,7 +5517,7 @@ fn ifc_export_override(decoded: &DecodedElement) -> Option<&'static category_map
         .iter()
         .find_map(|(name, value)| match (name.as_str(), value) {
             (crate::partition_schema_mvp::IFC_EXPORT_AS_FIELD, InstanceField::String(text)) => {
-                category_map::lookup_export_override(text)
+                category_map::lookup_export_override_for(text, &decoded.class)
             }
             _ => None,
         })
@@ -5287,7 +5559,15 @@ pub(crate) fn unapplied_export_value(decoded: &DecodedElement) -> Option<&str> {
         })?;
     let written = ifc_export_override(decoded).unwrap_or(mapping).ifc_type;
     let entity = value.split('.').next().unwrap_or(value);
-    (!written.eq_ignore_ascii_case(entity)).then_some(value)
+    // a value that names an entity's type object (`IfcFurnitureType`)
+    // names the entity it types, which is what the element is written as.
+    let named = match entity.len().checked_sub(4) {
+        Some(cut) if entity.is_char_boundary(cut) && entity[cut..].eq_ignore_ascii_case("type") => {
+            &entity[..cut]
+        }
+        _ => entity,
+    };
+    (!written.eq_ignore_ascii_case(entity) && !written.eq_ignore_ascii_case(named)).then_some(value)
 }
 
 /// True when this element came from a partition element record.
@@ -5488,6 +5768,52 @@ pub const WALL_BASE_SLOPED_IN_PART_BODY_BASE_SOURCE: &str =
 /// whose corner vertices are shape-edited is still drawn as its record box
 ///.
 pub const SLAB_SHAPE_REFUSAL_PROPERTY: &str = "SlabShapeRefusal";
+
+/// Property of the [`ELEMENT_RECORD_PROPERTY_SET`] of an element whose body is
+/// still the element record's box after the pass that draws such a box from the
+/// mesh Revit saved for it: why that mesh was not used. One of
+/// [`SAVED_MESH_NO_GRAPHICS`], [`SAVED_MESH_NO_MESH`],
+/// [`SAVED_MESH_NO_TRIANGLES`], [`SAVED_MESH_ELEMENT_ID_SHARED`], or
+/// [`SAVED_MESH_PARTIAL_PREFIX`] followed by the decoder diagnostics that left
+/// the mesh partial, with their digits written as `#`, or
+/// [`SAVED_MESH_NOT_CANDIDATE_PREFIX`] and why the pass did not look, or
+/// [`SAVED_MESH_NOT_OFFERED_PREFIX`] and why no pass ran.
+pub const SAVED_MESH_REFUSAL_PROPERTY: &str = "SavedMeshRefusal";
+
+/// [`SAVED_MESH_REFUSAL_PROPERTY`] of an element the file holds no saved
+/// graphics for.
+pub const SAVED_MESH_NO_GRAPHICS: &str = "no_saved_graphics";
+
+/// [`SAVED_MESH_REFUSAL_PROPERTY`] of an element whose saved graphics decode to
+/// no surface and report nothing they could not read.
+pub const SAVED_MESH_NO_MESH: &str = "no_saved_mesh";
+
+/// [`SAVED_MESH_REFUSAL_PROPERTY`] of an element whose saved mesh holds no
+/// triangle.
+pub const SAVED_MESH_NO_TRIANGLES: &str = "no_triangles";
+
+/// [`SAVED_MESH_REFUSAL_PROPERTY`] of an element whose ElementId several
+/// entities carry (a slab's pieces): the mesh is the element's, not a piece's.
+pub const SAVED_MESH_ELEMENT_ID_SHARED: &str = "element_id_shared";
+
+/// The start of the [`SAVED_MESH_REFUSAL_PROPERTY`] of an element whose saved
+/// graphics did not decode whole.
+pub const SAVED_MESH_PARTIAL_PREFIX: &str = "partial: ";
+
+/// The start of the [`SAVED_MESH_REFUSAL_PROPERTY`] of a box body the pass did
+/// not take as a candidate, so that it looked at no saved graphics:
+/// followed by `whole_drawn_by_its_parts` (a stair or curtain wall whose parts
+/// draw it), `no_location`, `no_element_id` (its Tag is no ElementId) or
+/// `class_not_in_scope` (a caller asked for the doors and windows only).
+pub const SAVED_MESH_NOT_CANDIDATE_PREFIX: &str = "not_a_candidate: ";
+
+/// The start of the [`SAVED_MESH_REFUSAL_PROPERTY`] of a box body that no pass
+/// offered a saved mesh: followed by `release_outside_2014_to_2027` (the
+/// release's saved graphics are not read), `release_not_read` (the file's
+/// release could not be read), `saved_meshes_off` (the caller turned the pass
+/// off) or `pass_failed` (the pass stopped on an error, which the export notes
+/// name).
+pub const SAVED_MESH_NOT_OFFERED_PREFIX: &str = "not_offered: ";
 
 /// Property of a wall's [`ELEMENT_RECORD_PROPERTY_SET`] that says why a wall
 /// whose base join names a floor with shape-edited corners keeps the base of
@@ -5942,11 +6268,12 @@ pub const BEAM_AXIS_BODY_SOURCE: &str = "partition_beam_axis";
 ///   and `BodyLength`, the body's, which is the record box's length along the
 ///   line, with `SectionWidth` and `SectionDepth`.
 ///
-/// It is not [`BEAM_AXIS_BODY_SOURCE`]: no Revit export measures a beam longer
-/// than its line, so it gets none of the quantities that source's beams get
-/// (`Qto_BeamBaseQuantities.Length`, and from it `Pset_BeamCommon.Span`,
-/// `Slope` and `Roll`), and no I section. A saved mesh that decodes whole
-/// still replaces it under `--saved-meshes`.
+/// It is not [`BEAM_AXIS_BODY_SOURCE`]: its body is longer than the beam's line,
+/// so it gets no I section. Its `Qto_BeamBaseQuantities.Length`, and from it
+/// `Pset_BeamCommon.Span`, `Slope` and `Roll`, are the line's, as for every beam
+/// that has one: Revit's export writes the line's length on all 39 such beams of
+/// the BIM4LCA housing. A saved mesh that decodes whole still
+/// replaces it under `--saved-meshes`.
 pub const BEAM_BOX_BODY_SOURCE: &str = "partition_beam_box_along_axis";
 
 /// A sloped beam's body: its section swept along its centreline, with the
@@ -9569,5 +9896,107 @@ mod roof_slab_tests {
             "{sum} vs {}",
             volume(&whole)
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::square_corner_count;
+
+    /// A square with one corner rounded by a quarter circle of radius 1,
+    /// the arc as `chords` chords, which is how a sketch arc reaches an
+    /// outline.
+    fn rounded_square(chords: usize) -> Vec<(f64, f64)> {
+        let mut points = vec![(0.0, 0.0), (4.0, 0.0), (4.0, 3.0)];
+        for step in 1..=chords {
+            let angle = std::f64::consts::FRAC_PI_2 * step as f64 / chords as f64;
+            points.push((3.0 + angle.cos(), 3.0 + angle.sin()));
+        }
+        points.push((0.0, 4.0));
+        points
+    }
+
+    #[test]
+    fn an_arc_of_chords_is_refused() {
+        for chords in [2, 8, 64, 1024] {
+            assert_eq!(
+                square_corner_count(&rounded_square(chords)),
+                None,
+                "{chords} chords"
+            );
+        }
+    }
+
+    #[test]
+    fn a_slanted_edge_is_refused() {
+        assert_eq!(
+            square_corner_count(&[(0.0, 0.0), (4.0, 0.0), (5.0, 3.0), (0.0, 3.0)]),
+            None
+        );
+        assert_eq!(
+            square_corner_count(&[(0.0, 0.0), (4.0, 0.0), (0.0, 3.0)]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_spike_is_refused() {
+        let spike = [
+            (0.0, 0.0),
+            (4.0, 0.0),
+            (4.0, 3.0),
+            (2.0, 3.0),
+            (2.0, 5.0),
+            (2.0, 3.0),
+            (0.0, 3.0),
+        ];
+        assert_eq!(square_corner_count(&spike), None);
+    }
+
+    #[test]
+    fn a_rectangle_with_a_collinear_joint_has_four_corners() {
+        let split = [(0.0, 0.0), (2.0, 0.0), (4.0, 0.0), (4.0, 3.0), (0.0, 3.0)];
+        assert_eq!(square_corner_count(&split), Some(4));
+    }
+
+    #[test]
+    fn a_repeated_point_and_the_closing_point_are_dropped() {
+        let closed = [
+            (0.0, 0.0),
+            (4.0, 0.0),
+            (4.0, 0.0),
+            (4.0, 3.0),
+            (0.0, 3.0),
+            (0.0, 0.0),
+        ];
+        assert_eq!(square_corner_count(&closed), Some(4));
+    }
+
+    #[test]
+    fn an_l_has_six_corners_at_any_turn_and_either_winding() {
+        let l = [
+            (0.0, 0.0),
+            (4.0, 0.0),
+            (4.0, 2.0),
+            (2.0, 2.0),
+            (2.0, 4.0),
+            (0.0, 4.0),
+        ];
+        assert_eq!(square_corner_count(&l), Some(6));
+        let reversed: Vec<(f64, f64)> = l.iter().rev().copied().collect();
+        assert_eq!(square_corner_count(&reversed), Some(6));
+        let (sin, cos) = 0.5_f64.sin_cos();
+        let turned: Vec<(f64, f64)> = l
+            .iter()
+            .map(|&(x, y)| (1e4 + x * cos - y * sin, -2e3 + x * sin + y * cos))
+            .collect();
+        assert_eq!(square_corner_count(&turned), Some(6));
+    }
+
+    #[test]
+    fn no_outline_has_no_corner() {
+        assert_eq!(square_corner_count(&[]), Some(0));
+        assert_eq!(square_corner_count(&[(1.0, 1.0)]), None);
+        assert_eq!(square_corner_count(&[(0.0, 0.0), (1.0, 0.0)]), None);
     }
 }

@@ -12,12 +12,12 @@
 //! record (CLEANROOM.md source 5, checked against 148 of 148 openings whose
 //! GlobalId hashes the opening number).
 
+use crate::graph_value::Fv;
 use crate::native_json::{element_id, finite_triple};
 use crate::{
     RevitFile, native_document, native_saved_mesh::face, native_saved_mesh::pointer,
     partition_element_records as per,
 };
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Which step of a wall's record names a cutting element.
@@ -44,6 +44,12 @@ pub struct WallCutStep {
     /// cuts this wall as the one it is hosted in (a door's own wall) or only
     /// as a further wall it reaches.
     pub cuts_something: Option<bool>,
+    /// The step's own `m_id`, which a `WallShadowCutoutGStep` of another wall
+    /// names as its `m_ggId`.
+    pub id: Option<u64>,
+    /// Of a `WallShadowCutoutGStep`: the wall it mirrors a cut of
+    /// (`m_otherWallId`) and the `m_id` of that wall's step (`m_ggId`).
+    pub mirrors: Option<(u64, u64)>,
 }
 
 /// For each of `walls` (ElementIds), the steps of its native record that
@@ -60,15 +66,7 @@ pub fn wall_cut_steps(
     if walls.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let missing: BTreeSet<u64> = walls
-        .difference(&rf.wall_cut_steps_asked)
-        .copied()
-        .collect();
-    if !missing.is_empty() {
-        let read = read_wall_cut_steps(rf, &missing)?;
-        rf.wall_cut_steps_asked.extend(missing);
-        rf.wall_cut_steps_memo.extend(read);
-    }
+    remember_wall_records(rf, walls)?;
     Ok(walls
         .iter()
         .filter_map(|id| {
@@ -79,12 +77,84 @@ pub fn wall_cut_steps(
         .collect())
 }
 
-/// The steps of the native records of `walls`, read now.
-fn read_wall_cut_steps(
-    rf: &mut RevitFile,
-    walls: &BTreeSet<u64>,
-) -> anyhow::Result<BTreeMap<u64, Vec<WallCutStep>>> {
+/// Reads each `WallShadowCutoutGStep` as the kind of the step of the other
+/// wall it mirrors: the wall it names (`m_otherWallId`) holds an embed
+/// or a cutout step of the same cutter whose `m_id` is the shadow's `m_ggId`:
+/// all 124 shadow steps of the BIM4LCA office, `rac_advanced` and Snowdon
+/// Towers Architectural name one. Revit's export writes the cutter's
+/// opening in the shadow's wall as it does in the other wall on all 3 of the
+/// office's shadow steps. The shadow keeps its own `m_bCutSomething`, which is
+/// about its own wall. A shadow whose other wall holds no such step stays a
+/// shadow.
+pub fn resolve_shadow_steps(steps: &mut BTreeMap<u64, Vec<WallCutStep>>) {
+    let mut resolved: Vec<(u64, usize, WallCutStep)> = Vec::new();
+    for (wall, list) in steps.iter() {
+        for (position, step) in list.iter().enumerate() {
+            let (WallCutKind::ShadowCutout, Some((other, id))) = (step.kind, step.mirrors) else {
+                continue;
+            };
+            let mirrored = steps.get(&other).into_iter().flatten().find(|candidate| {
+                candidate.id == Some(id)
+                    && candidate.cutter == step.cutter
+                    && matches!(candidate.kind, WallCutKind::Embed | WallCutKind::Cutout)
+            });
+            if let Some(mirrored) = mirrored {
+                resolved.push((
+                    *wall,
+                    position,
+                    // Only the kind is the mirrored step's: the shadow's own
+                    // `m_bCutSomething` is about its own wall (false on 85 of the
+                    // 124, where the cutter is not hosted in it) and the other
+                    // step's about the other wall.
+                    WallCutStep {
+                        kind: mirrored.kind,
+                        ..*step
+                    },
+                ));
+            }
+        }
+    }
+    for (wall, position, step) in resolved {
+        if let Some(slot) = steps.get_mut(&wall).and_then(|list| list.get_mut(position)) {
+            *slot = step;
+        }
+    }
+}
+
+/// Reads the native records of those of `walls` not asked for before, in one
+/// walk, and keeps what it gives on the file's handle: each wall's cut steps
+/// and whether its record holds a base join. The openings the walls carry and
+/// the walls drawn from their saved mesh ask for the same records, and a walk
+/// of them is a pass over the file, so no caller makes a second one.
+fn remember_wall_records(rf: &mut RevitFile, walls: &BTreeSet<u64>) -> anyhow::Result<()> {
+    let missing: BTreeSet<u64> = walls
+        .difference(&rf.wall_cut_steps_asked)
+        .copied()
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let read = read_wall_records(rf, &missing)?;
+    rf.wall_cut_steps_asked.extend(missing);
+    rf.wall_cut_steps_memo.extend(read.steps);
+    rf.wall_no_base_join_memo.extend(read.no_base_join);
+    Ok(())
+}
+
+/// What one walk of walls' native records gives.
+struct WallRecords {
+    /// The cut steps of each wall whose record was read.
+    steps: BTreeMap<u64, Vec<WallCutStep>>,
+    /// The walls whose record was read as a wall's and holds no base join.
+    no_base_join: BTreeSet<u64>,
+}
+
+/// The steps of the native records of `walls` and which of them hold no base
+/// join, read now.
+fn read_wall_records(rf: &mut RevitFile, walls: &BTreeSet<u64>) -> anyhow::Result<WallRecords> {
     let mut out: BTreeMap<u64, Vec<WallCutStep>> = BTreeMap::new();
+    let mut read: BTreeSet<u64> = BTreeSet::new();
+    let mut attached: BTreeSet<u64> = BTreeSet::new();
     let options = native_document::Options {
         selected_ids: walls.clone(),
         ..native_document::Options::default()
@@ -93,6 +163,18 @@ fn read_wall_cut_steps(
         let Some(graph) = record.graph.as_ref() else {
             return Ok(());
         };
+        // a base join is a `JoinToRoofGStep` that does not say it joins
+        // the top, in any record read as this wall's.
+        if matches!(record.class_name.as_deref(), Some("SWall" | "ArcWall")) {
+            let id = record.identity.element_id;
+            read.insert(id);
+            if graph.objects.iter().any(|object| {
+                object.class_name == "JoinToRoofGStep"
+                    && object.fields.get("m_baseOrTop").and_then(Fv::as_i64) != Some(1)
+            }) {
+                attached.insert(id);
+            }
+        }
         let mut steps = Vec::new();
         for object in &graph.objects {
             let kind = match object.class_name.as_str() {
@@ -107,17 +189,54 @@ fn read_wall_cut_steps(
                     flag.as_bool()
                         .or_else(|| flag.as_i64().map(|value| value != 0))
                 });
+                let mirrors = if kind == WallCutKind::ShadowCutout {
+                    object
+                        .fields
+                        .get("m_otherWallId")
+                        .and_then(element_id)
+                        .zip(object.fields.get("m_ggId").and_then(Fv::as_u64))
+                } else {
+                    None
+                };
                 steps.push(WallCutStep {
                     kind,
                     cutter,
                     cuts_something,
+                    id: object.fields.get("m_id").and_then(Fv::as_u64),
+                    mirrors,
                 });
             }
         }
         out.entry(record.identity.element_id).or_insert(steps);
         Ok(())
     })?;
-    Ok(out)
+    Ok(WallRecords {
+        steps: out,
+        no_base_join: read.difference(&attached).copied().collect(),
+    })
+}
+
+/// The walls of `walls` whose native record was read and holds no base join, no
+/// `JoinToRoofGStep` whose `m_baseOrTop` is 0. Revit's export gives a
+/// wall whose body is a vertical prism less its openings the areas of its sides
+/// only where its base is not attached: all 170 such walls of the BIM4LCA
+/// office as built and at building permit, and none of the 5 that are. A wall
+/// whose record is not read, one whose record holds such a step, and one whose
+/// step does not say whether it joins the base or the top, is left out, so the
+/// set never names a wall that may be attached at its base. The records are the
+/// ones [`wall_cut_steps`] reads, in the same walk, once for the file's handle.
+pub fn walls_with_no_base_join(
+    rf: &mut RevitFile,
+    walls: &BTreeSet<u64>,
+) -> anyhow::Result<BTreeSet<u64>> {
+    if walls.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    remember_wall_records(rf, walls)?;
+    Ok(walls
+        .intersection(&rf.wall_no_base_join_memo)
+        .copied()
+        .collect())
 }
 
 /// For each of `ids` (rectangular wall openings' ElementIds), the box of the
@@ -148,8 +267,8 @@ pub fn rect_opening_boxes(
             .iter()
             .find(|object| object.class_name == "RectOpeningData")
             .and_then(|object| object.fields.get("m_aPoint"))
-            .and_then(Value::as_array);
-        if let Some([a, b]) = corners.map(Vec::as_slice) {
+            .and_then(Fv::as_array);
+        if let Some([a, b]) = corners {
             if let (Some(a), Some(b)) = (finite_triple(a), finite_triple(b)) {
                 out.insert(
                     record.identity.element_id,
@@ -205,8 +324,8 @@ pub fn frame_boxes(rf: &mut RevitFile, ids: &BTreeSet<u64>) -> BTreeMap<u64, Vec
 }
 
 /// A 3 by 3 matrix as its rows.
-fn rows(value: &Value) -> Option<[[f64; 3]; 3]> {
-    let [a, b, c] = value.as_array()?.as_slice() else {
+fn rows(value: &Fv) -> Option<[[f64; 3]; 3]> {
+    let [a, b, c] = value.as_array()? else {
         return None;
     };
     Some([finite_triple(a)?, finite_triple(b)?, finite_triple(c)?])

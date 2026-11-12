@@ -485,7 +485,7 @@ pub fn symbol_sheet_graphics(
 }
 
 /// A `GRichText` graphics object as a text, see [`symbol_sheet_graphics`].
-fn rich_text(f: &serde_json::Value) -> Option<SymbolText> {
+fn rich_text(f: &crate::graph_value::Fv) -> Option<SymbolText> {
     let xyz = |name: &str| -> Option<[f64; 3]> {
         let v = f.get(name)?.get("m_xyz")?.as_array()?;
         let p: Vec<f64> = v.iter().filter_map(|x| x.as_f64()).collect();
@@ -547,7 +547,9 @@ fn symbol_polyline(
 ) -> PlanPolyline {
     let (range, arc) = match curve {
         Curve::Line { range, .. } => (*range, false),
-        Curve::Arc { range, .. } | Curve::Hermite { range, .. } => (*range, true),
+        Curve::Arc { range, .. } | Curve::Hermite { range, .. } | Curve::Ellipse { range, .. } => {
+            (*range, true)
+        }
     };
     let at = |t: f64| {
         let p = curve.eval(t);

@@ -15,10 +15,11 @@
 //! classes. The decisions behind `exported.bounding_box_bodies`,
 //! `exported.bounding_box_spaces`, `exported.area_body_refusals`,
 //! `exported.slab_shape_refusals`, `exported.wall_base_refusals`,
-//! `exported.wall_end_refusals` and `exported.wall_profile_refusals` are here
-//! too (`body_is_record_box`, `space_outline_is_record_box`,
-//! `area_body_refused`, `slab_shape_refused`, `wall_base_cut_refused`,
-//! `wall_end_extension_refused`, `wall_profile_extension_refused`).
+//! `exported.wall_end_refusals`, `exported.wall_profile_refusals` and
+//! `exported.saved_mesh_refusals` are here too (`body_is_record_box`,
+//! `space_outline_is_record_box`, `area_body_refused`, `slab_shape_refused`,
+//! `wall_base_cut_refused`, `wall_end_extension_refused`,
+//! `wall_profile_extension_refused`, `saved_mesh_not_used`).
 //!
 //! The log is off unless asked for (`ExportOptions::with_export_decisions`,
 //! `rvt-ifc --export-decisions`) and bounded: it keeps at most
@@ -38,8 +39,8 @@
 //!   frame in scan order, partition number and then offset, with no test of
 //!   vertical extent. The frame the provenance table names for an exported
 //!   element ([`super::element_provenance`], `select_instance_records`) is
-//!   the one with the greatest extent, so the two can name different frames
-//!   of the same element.
+//!   the newest and, within one partition, the one with the greatest extent,
+//!   so the two can name different frames of the same element.
 //! - `element_record_frame_stopped` is made on Revit 2008 to 2023 files, from the
 //!   frames of their marker scan that did not become an element: its `class` is
 //!   the stage the frame stopped at (`frame_outside_stream`,
@@ -79,7 +80,7 @@ pub const MAX_DECISIONS_PER_REASON: usize = 5_000;
 
 /// The reasons whose `detail` is a code rvt-open writes, not text from the
 /// project, so [`ExportDecisionLog::anonymize`] keeps it.
-const CODE_DETAIL_REASONS: [&str; 7] = [
+const CODE_DETAIL_REASONS: [&str; 8] = [
     "area_without_proven_body",
     "area_body_refused",
     "body_is_record_box",
@@ -87,6 +88,7 @@ const CODE_DETAIL_REASONS: [&str; 7] = [
     "wall_base_cut_refused",
     "wall_end_extension_refused",
     "wall_profile_extension_refused",
+    "saved_mesh_not_used",
 ];
 
 /// Which fail-closed step made a decision.
@@ -103,8 +105,10 @@ pub enum DecisionStage {
     /// record's extent where a shape or a cut Revit applies is not read: a
     /// shape-edited floor (`slab_shape_refused`), the base of a wall
     /// (`wall_base_cut_refused`), the end of a wall
-    /// (`wall_end_extension_refused`) or the top of a wall past its
-    /// elevation profile (`wall_profile_extension_refused`).
+    /// (`wall_end_extension_refused`), the top of a wall past its
+    /// elevation profile (`wall_profile_extension_refused`) or a box
+    /// the mesh Revit saved for the element did not replace
+    /// (`saved_mesh_not_used`).
     BodyLeftAsBox,
     /// A door or window has no host to cut, or an opening index row has no
     /// host geometry: no opening is cut.
@@ -143,8 +147,8 @@ pub struct ExportDecision {
     /// The reason code: the `reason` of the `skipped` item it is counted in,
     /// or `body_is_record_box`, `space_outline_is_record_box`,
     /// `area_body_refused`, `slab_shape_refused`, `wall_base_cut_refused`,
-    /// `wall_end_extension_refused` or `wall_profile_extension_refused` for the
-    /// decisions behind the `exported` counts.
+    /// `wall_end_extension_refused`, `wall_profile_extension_refused` or
+    /// `saved_mesh_not_used` for the decisions behind the `exported` counts.
     pub reason: String,
     /// The element's Revit ElementId. Absent for a frame that carries none
     /// (`element_record_without_element_id`).

@@ -49,10 +49,19 @@
 
 use super::entities::{BrepTriangle, IfcEntity, Property, PropertySet, PropertyValue, SolidShape};
 use super::export_content::{
-    BEAM_BOX_BODY_SOURCE, SLAB_SHAPE_REFUSAL_PROPERTY, SPACE_OUTLINE_SAVED_MESH,
+    BEAM_AXIS_BODY_SOURCE, BEAM_BOX_BODY_SOURCE, INSTANCE_ORIENTED_BODY_SOURCE,
+    INSTANCE_TURNED_BODY_SOURCE, RECORD_BBOX_BODY_SOURCE, SAVED_MESH_ELEMENT_ID_SHARED,
+    SAVED_MESH_NO_GRAPHICS, SAVED_MESH_NO_MESH, SAVED_MESH_NO_TRIANGLES,
+    SAVED_MESH_NOT_CANDIDATE_PREFIX, SAVED_MESH_NOT_OFFERED_PREFIX, SAVED_MESH_PARTIAL_PREFIX,
+    SAVED_MESH_REFUSAL_PROPERTY, SLAB_SHAPE_REFUSAL_PROPERTY, SPACE_OUTLINE_SAVED_MESH,
     SPACE_OUTLINE_SOURCE_PROPERTY, WALL_BASE_SOURCE_PROPERTY, WALL_TOP_STEPPED_BODY_HEIGHT_SOURCE,
 };
-use super::mesh_volume::{all_faces_flat, closed_mesh_volume};
+use super::mesh_volume::{
+    BeamQuantities, ColumnQuantities, MESH_LENGTH_REACH, Placed, Prism, all_faces_flat,
+    beam_quantities, box_plan_width, closed_mesh_volume, column_quantities, mullion_surface_area,
+    partner_ends, partners_the_boxes_missed, prism_along,
+};
+use super::mesh_wall_quantities::{WallFrame, WallMeshQuantities, wall_mesh_quantities};
 use super::{IfcModel, MaterialInfo};
 use crate::native_saved_mesh::{GraphicsMeshes, Primitive};
 use crate::native_wall_cuts::WallCutKind;
@@ -160,9 +169,44 @@ fn continuous_rails(rf: &mut crate::RevitFile) -> BTreeMap<u64, Vec<u64>> {
 /// BIM4LCA office 357 such meshes, none of them Revit's body. Only branches
 /// left out for their view semantics leave a mesh whole.
 fn meshes_partial(meshes: &GraphicsMeshes) -> bool {
-    meshes.diagnostics.iter().any(|diagnostic| {
-        !diagnostic.ends_with(crate::native_graphics_traversal::NESTED_DETAIL_FILTER_DIAGNOSTIC)
-            && !diagnostic.ends_with(crate::native_graphics_traversal::VIEW_COMPONENT_DIAGNOSTIC)
+    meshes
+        .diagnostics
+        .iter()
+        .any(|diagnostic| leaves_partial(diagnostic))
+}
+
+/// Whether a decoder diagnostic leaves its mesh partial (see [`meshes_partial`]).
+fn leaves_partial(diagnostic: &str) -> bool {
+    !diagnostic.ends_with(crate::native_graphics_traversal::NESTED_DETAIL_FILTER_DIAGNOSTIC)
+        && !diagnostic.ends_with(crate::native_graphics_traversal::VIEW_COMPONENT_DIAGNOSTIC)
+}
+
+/// A decoder diagnostic as [`SAVED_MESH_REFUSAL_PROPERTY`] says it: without the
+/// object it names (the text before its first `: `) and with its digits written
+/// as `#`, so that two elements with the same fault say it alike.
+fn diagnostic_kind(message: &str) -> String {
+    let text = message.split_once(": ").map_or(message, |(_, rest)| rest);
+    text.chars()
+        .map(|c| if c.is_ascii_digit() { '#' } else { c })
+        .collect()
+}
+
+/// What [`SAVED_MESH_REFUSAL_PROPERTY`] says of a mesh that did not decode
+/// whole: [`SAVED_MESH_PARTIAL_PREFIX`] and the distinct kinds of the
+/// diagnostics that left it partial, in order, joined by `; `. None where
+/// [`meshes_partial`] is false.
+fn partial_refusal(meshes: &GraphicsMeshes) -> Option<String> {
+    let kinds: BTreeSet<String> = meshes
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| leaves_partial(diagnostic))
+        .map(|diagnostic| diagnostic_kind(diagnostic))
+        .collect();
+    (!kinds.is_empty()).then(|| {
+        format!(
+            "{SAVED_MESH_PARTIAL_PREFIX}{}",
+            kinds.into_iter().collect::<Vec<_>>().join("; ")
+        )
     })
 }
 
@@ -190,6 +234,80 @@ fn in_world(meshes: &GraphicsMeshes) -> GraphicsMeshes {
         diagnostics: meshes.diagnostics.clone(),
         ..Default::default()
     }
+}
+
+/// Whether an element of `ifc_type` with `properties` is drawn as a box that
+/// the pass can replace with its saved mesh: its record's box, a beam's box,
+/// a family instance's box turned to its angle or a curtain
+/// mullion's box along its own axes (327 mullions of the BIM4LCA
+/// timber office at permit, whose Revit solids have mitred ends), each a
+/// stand-in for the mesh; and a roof's level block, whose record box holds the
+/// reference surface and not the slope or thickness. A resolved outline
+/// is the body of any other class (a floor's plan, a ceiling's).
+fn is_replaceable_box(ifc_type: &str, properties: &[Property]) -> bool {
+    let source = properties
+        .iter()
+        .find_map(|property| match &property.value {
+            PropertyValue::Text(text) if property.name == "BodySource" => Some(text.as_str()),
+            _ => None,
+        });
+    let profile_resolved = properties.iter().any(|property| {
+        property.name == "ProfileResolved" && matches!(property.value, PropertyValue::Boolean(true))
+    });
+    matches!(
+        source,
+        Some(
+            RECORD_BBOX_BODY_SOURCE
+                | BEAM_BOX_BODY_SOURCE
+                | INSTANCE_TURNED_BODY_SOURCE
+                | INSTANCE_ORIENTED_BODY_SOURCE
+        )
+    ) && !(profile_resolved && ifc_type != "IFCROOF")
+}
+
+/// Say on each box body that no pass offered a saved mesh why none did:
+/// `why` follows [`SAVED_MESH_NOT_OFFERED_PREFIX`]. Returns how many
+/// elements it said it on.
+pub fn note_not_offered(model: &mut IfcModel, why: &str) -> usize {
+    let boxed: Vec<usize> = model
+        .entities
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entity)| match entity {
+            IfcEntity::BuildingElement {
+                ifc_type,
+                property_set: Some(set),
+                ..
+            } if is_replaceable_box(ifc_type, &set.properties) => Some(index),
+            _ => None,
+        })
+        .collect();
+    for &index in &boxed {
+        note_refusal(
+            model,
+            index,
+            format!("{SAVED_MESH_NOT_OFFERED_PREFIX}{why}"),
+        );
+    }
+    boxed.len()
+}
+
+/// Say on the element at `index` why its box was not replaced by the mesh Revit
+/// saved for it.
+fn note_refusal(model: &mut IfcModel, index: usize, reason: String) {
+    let Some(IfcEntity::BuildingElement {
+        property_set: Some(set),
+        ..
+    }) = model.entities.get_mut(index)
+    else {
+        return;
+    };
+    set.properties
+        .retain(|property| property.name != SAVED_MESH_REFUSAL_PROPERTY);
+    set.properties.push(Property {
+        name: SAVED_MESH_REFUSAL_PROPERTY.into(),
+        value: PropertyValue::Text(reason),
+    });
 }
 
 /// The vertices and triangles of `primitives`, in the frame of an element at
@@ -347,6 +465,77 @@ pub fn attach_scoped_in_batches(
             _ => None,
         })
         .collect();
+    // why each box that keeps its box does; a box the pass does not take
+    // as a candidate says so before it looks at any saved graphics.
+    let mut refusals: Vec<(usize, String)> = Vec::new();
+    for (index, entity) in model.entities.iter().enumerate() {
+        let IfcEntity::BuildingElement {
+            ifc_type,
+            type_guid,
+            property_set: Some(set),
+            location_feet,
+            ..
+        } = entity
+        else {
+            continue;
+        };
+        // On Snowdon Towers Electrical 116 of 130 receptacles, outlets, conduit
+        // elbows and pendants drawn as a turned box have a whole saved mesh.
+        if !is_replaceable_box(ifc_type, &set.properties) {
+            continue;
+        }
+        let id = type_guid.as_deref().and_then(|tag| tag.parse::<u64>().ok());
+        let not_taken = if wholes.contains(&index) {
+            Some("whole_drawn_by_its_parts")
+        } else if location_feet.is_none() {
+            Some("no_location")
+        } else if id.is_none() {
+            Some("no_element_id")
+        } else if !scope.includes(ifc_type) {
+            Some("class_not_in_scope")
+        } else {
+            None
+        };
+        match (id, not_taken) {
+            (Some(id), None) => {
+                report.candidates += 1;
+                by_id.entry(id).or_default().push(index);
+            }
+            (_, Some(why)) => {
+                refusals.push((index, format!("{SAVED_MESH_NOT_CANDIDATE_PREFIX}{why}")));
+            }
+            (None, None) => {}
+        }
+    }
+    // the walls whose quantities their saved mesh gives, whether or not
+    // the wall's own body is drawn from it.
+    let mut walls: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    for (index, entity) in model.entities.iter().enumerate() {
+        if wholes.contains(&index) {
+            continue;
+        }
+        let IfcEntity::BuildingElement {
+            ifc_type,
+            type_guid: Some(tag),
+            ..
+        } = entity
+        else {
+            continue;
+        };
+        if !matches!(ifc_type.as_str(), "IFCWALL" | "IFCWALLSTANDARDCASE")
+            || !scope.includes(ifc_type)
+        {
+            continue;
+        }
+        if let Ok(id) = tag.parse::<u64>() {
+            walls.entry(id).or_default().push(index);
+        }
+    }
+    // the beams drawn along their location line, whose base quantities
+    // their saved mesh gives, whether or not the beam's own body is drawn from
+    // it: that body is the extrusion of a resolved section and stays so, as a
+    // wall's does.
+    let mut beam_lines: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for (index, entity) in model.entities.iter().enumerate() {
         if wholes.contains(&index) {
             continue;
@@ -355,43 +544,60 @@ pub fn attach_scoped_in_batches(
             ifc_type,
             type_guid: Some(tag),
             property_set: Some(set),
-            location_feet: Some(_),
             ..
         } = entity
         else {
             continue;
         };
-        if !scope.includes(ifc_type) {
-            continue;
-        }
-        let text = |name: &str| {
-            set.properties.iter().find_map(|p| match &p.value {
-                PropertyValue::Text(t) if p.name == name => Some(t.as_str()),
-                _ => None,
-            })
-        };
-        let profile_resolved = set.properties.iter().any(|p| {
-            p.name == "ProfileResolved" && matches!(p.value, PropertyValue::Boolean(true))
+        let along_its_line = set.properties.iter().any(|property| {
+            property.name == "BodySource"
+                && matches!(&property.value, PropertyValue::Text(text) if text == BEAM_AXIS_BODY_SOURCE)
         });
-        // A beam drawn as its box along its line, and a curtain part drawn as
-        // the box along its own axes, are stand-ins for their saved meshes, as
-        // the record box is, and so is the level block of a roof's sketch
-        // outline: the record box holds the roof's reference surface, not its
-        // slope or its thickness. A resolved outline is the body of any other
-        // class (a floor's plan, a ceiling's).
-        if !text("BodySource").is_some_and(|source| {
-            super::export_content::is_plan_box_source(source)
-                || source == BEAM_BOX_BODY_SOURCE
-                || source == super::export_content::INSTANCE_ORIENTED_BODY_SOURCE
-        }) || (profile_resolved && ifc_type != "IFCROOF")
+        if !ifc_type.eq_ignore_ascii_case("IFCBEAM") || !along_its_line || !scope.includes(ifc_type)
         {
             continue;
         }
-        let Ok(id) = tag.parse::<u64>() else {
+        if let Ok(id) = tag.parse::<u64>() {
+            beam_lines.entry(id).or_default().push(index);
+        }
+    }
+    // the columns whose body is the rectangle their type's section gives
+    // over the record's height (a resolved profile, which the pass leaves alone:
+    // `is_replaceable_box`), whose base quantities their saved mesh gives all the
+    // same. That body is Revit's own form for a plain section and stays so, as a
+    // beam's does.
+    let mut column_rectangles: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    for (index, entity) in model.entities.iter().enumerate() {
+        if wholes.contains(&index) {
+            continue;
+        }
+        let IfcEntity::BuildingElement {
+            ifc_type,
+            type_guid: Some(tag),
+            property_set: Some(set),
+            ..
+        } = entity
+        else {
             continue;
         };
-        report.candidates += 1;
-        by_id.entry(id).or_default().push(index);
+        let boxed = set.properties.iter().any(|property| {
+            property.name == "BodySource"
+                && matches!(&property.value, PropertyValue::Text(source) if source == RECORD_BBOX_BODY_SOURCE)
+        });
+        let resolved = set.properties.iter().any(|property| {
+            property.name == "ProfileResolved"
+                && matches!(property.value, PropertyValue::Boolean(true))
+        });
+        if !ifc_type.eq_ignore_ascii_case("IFCCOLUMN")
+            || !resolved
+            || !boxed
+            || !scope.includes(ifc_type)
+        {
+            continue;
+        }
+        if let Ok(id) = tag.parse::<u64>() {
+            column_rectangles.entry(id).or_default().push(index);
+        }
     }
     let hosts = match embed_hosts(rf, model, &by_id) {
         Ok(hosts) => hosts,
@@ -401,7 +607,15 @@ pub fn attach_scoped_in_batches(
         }
     };
     report.embed_hosts = hosts.len();
-    if by_id.is_empty() && hosts.is_empty() {
+    if by_id.is_empty()
+        && hosts.is_empty()
+        && walls.is_empty()
+        && beam_lines.is_empty()
+        && column_rectangles.is_empty()
+    {
+        for (index, reason) in refusals {
+            note_refusal(model, index, reason);
+        }
         return Ok(report);
     }
     let railings: BTreeSet<u64> = by_id
@@ -426,10 +640,39 @@ pub fn attach_scoped_in_batches(
     let ids: Vec<u64> = by_id
         .keys()
         .chain(hosts.keys())
+        .chain(walls.keys())
+        .chain(beam_lines.keys())
+        .chain(column_rectangles.keys())
         .copied()
         .collect::<BTreeSet<u64>>()
         .into_iter()
         .collect();
+    // each curtain mullion's mesh read as a prism along its own axis.
+    let mut members: Vec<MemberMesh> = Vec::new();
+    // the axis each curtain mullion runs along, by ElementId, in the model's frame.
+    let mullion_axes = rf.mullion_axes();
+    // the end faces each curtain mullion's solid keeps, by ElementId.
+    let kept_ends = rf.mullion_kept_ends();
+    // what each beam's mesh gives of its base quantities.
+    let mut beams: Vec<(usize, BeamQuantities)> = Vec::new();
+    // what each column's mesh gives of its base quantities.
+    let mut columns: Vec<(usize, ColumnQuantities)> = Vec::new();
+    // the volume of each column's mesh, whatever its faces.
+    let mut column_volumes: Vec<(usize, f64)> = Vec::new();
+    // what the mesh of each wall gives of its quantities.
+    let mut wall_quantities: Vec<(usize, WallMeshQuantities)> = Vec::new();
+    // what a wall's mesh needs besides itself to be read as a vertical
+    // prism less the openings rvt-open cuts in it, the wall's own axes and the
+    // boxes of those openings, and whether its base is joined to a roof, floor
+    // or footing, which takes the areas away.
+    let wall_openings = wall_frame_and_openings(model);
+    let wall_ids: BTreeSet<u64> = walls.keys().copied().collect();
+    let no_base_join =
+        crate::native_wall_cuts::walls_with_no_base_join(rf, &wall_ids).unwrap_or_default();
+    // the width of each curtain panel drawn from a mesh that is a vertical box.
+    let mut plate_widths: Vec<(usize, f64)> = Vec::new();
+    // the candidates the scene held graphics for.
+    let mut seen: BTreeSet<u64> = BTreeSet::new();
     // before 2023 an instance's element frame carries no plan
     // rotation (the record gives none); its saved mesh is placed in the
     // frame its InstanceInfo turns it to, as Revit's export places it.
@@ -480,6 +723,46 @@ pub fn attach_scoped_in_batches(
         // By value: each element's saved mesh is freed once its body is built,
         // so the scene shrinks as the model grows.
         for element in elements {
+            let element_id = element.identity.element_id;
+            if by_id.contains_key(&element_id) {
+                seen.insert(element_id);
+            }
+            // a wall's, a beam's or a column's quantities from its saved mesh,
+            // whether or not its body is drawn from it; the mesh is moved into
+            // the model's frame first, as these read it.
+            if walls.contains_key(&element_id)
+                || beam_lines.contains_key(&element_id)
+                || column_rectangles.contains_key(&element_id)
+            {
+                let world = in_world(&element.meshes);
+                if let Some([index]) = walls.get(&element_id).map(Vec::as_slice) {
+                    let held = wall_openings.get(index);
+                    let frame = held.map_or(WallFrame { turn: 0.0 }, |held| held.frame);
+                    let boxes: &[[f64; 6]] = held.map_or(&[], |held| held.boxes.as_slice());
+                    let found = wall_mesh_quantities(
+                        &world.primitives,
+                        &frame,
+                        boxes,
+                        !no_base_join.contains(&element_id),
+                    );
+                    if let Some(found) = found {
+                        wall_quantities.push((*index, found));
+                    }
+                }
+                let whole = partial_refusal(&element.meshes).is_none();
+                if let Some([index]) = beam_lines.get(&element_id).map(Vec::as_slice)
+                    && whole
+                    && let Some(found) = beam_mesh_quantities(&world.primitives)
+                {
+                    beams.push((*index, found));
+                }
+                if let Some([index]) = column_rectangles.get(&element_id).map(Vec::as_slice)
+                    && whole
+                    && let Some(found) = column_mesh_quantities(&world.primitives)
+                {
+                    columns.push((*index, found));
+                }
+            }
             if let Some(&index) = hosts.get(&element.identity.element_id) {
                 raise_embed_host(model, index, &in_world(&element.meshes), &mut report);
                 continue;
@@ -490,6 +773,11 @@ pub fn attach_scoped_in_batches(
             // A Tag carried by several entities (a slab's pieces) is ambiguous:
             // leave them as they are.
             let [index] = indices.as_slice() else {
+                refusals.extend(
+                    indices
+                        .iter()
+                        .map(|index| (*index, SAVED_MESH_ELEMENT_ID_SHARED.to_string())),
+                );
                 continue;
             };
             let wanted: BTreeSet<u64> = rails
@@ -506,15 +794,21 @@ pub fn attach_scoped_in_batches(
                 // railing keeps its own body (the box check counts it).
                 .filter(|r| !is_partial(r))
                 .collect();
+            let partial = partial_refusal(&element.meshes);
             if element.meshes.primitives.is_empty() {
+                refusals.push((
+                    *index,
+                    partial.unwrap_or_else(|| SAVED_MESH_NO_MESH.to_string()),
+                ));
                 continue;
             }
             // A mesh some face or branch of which did not decode is only
             // part of the body (on the BIM4LCA office 357 such meshes, none of
             // them Revit's body). Only branches left out for their view semantics
             // leave it whole.
-            if is_partial(&element) {
+            if let Some(partial) = partial {
                 report.partial += 1;
+                refusals.push((*index, partial));
                 continue;
             }
             // before 2023 an instance's element frame carries no
@@ -534,6 +828,16 @@ pub fn attach_scoped_in_batches(
             {
                 *rotation_radians = Some(turned);
             }
+            // a curtain mullion's, a curtain panel's, a beam's and a column's
+            // quantities from its mesh in the element's frame, kept where the
+            // mesh replaces its body.
+            let quantities = element_quantities(
+                &model.entities[*index],
+                &element,
+                mullion_axes.as_deref(),
+                kept_ends.as_deref(),
+                *index,
+            );
             // A body of flat faces only (no rails joined to it) has its mesh's
             // volume as its `NetVolume`, where the mesh closes.
             let flat = own_rails.is_empty() && all_faces_flat(&element.meshes.primitives);
@@ -785,16 +1089,51 @@ pub fn attach_scoped_in_batches(
                 }
                 true
             };
-            if !replaced
-                && let IfcEntity::BuildingElement {
+            if replaced {
+                let MeshQuantities {
+                    member,
+                    beam,
+                    column,
+                    column_volume,
+                    plate_width,
+                } = quantities;
+                members.extend(member);
+                beams.extend(beam.map(|beam| (*index, beam)));
+                columns.extend(column.map(|column| (*index, column)));
+                column_volumes.extend(column_volume.map(|volume| (*index, volume)));
+                plate_widths.extend(plate_width.map(|width| (*index, width)));
+            } else {
+                refusals.push((*index, SAVED_MESH_NO_TRIANGLES.to_string()));
+                if let IfcEntity::BuildingElement {
                     rotation_radians, ..
                 } = &mut model.entities[*index]
-            {
-                *rotation_radians = unturned;
+                {
+                    *rotation_radians = unturned;
+                }
             }
         }
     }
-    add_mesh_volumes(model, &volumes);
+    drop_column_box_quantities(model, &column_volumes);
+    let moved = add_mesh_volumes(model, &volumes, &members);
+    follow_mesh_span(model, &moved);
+    add_mullion_surface_areas(model, &members);
+    add_beam_quantities(model, &mut beams);
+    add_column_quantities(model, &mut columns);
+    add_wall_quantities(model, &wall_quantities);
+    add_plate_widths(model, &plate_widths);
+    // a candidate the scene held no graphics for keeps its box too.
+    for (id, indices) in &by_id {
+        if !seen.contains(id) {
+            refusals.extend(
+                indices
+                    .iter()
+                    .map(|index| (*index, SAVED_MESH_NO_GRAPHICS.to_string())),
+            );
+        }
+    }
+    for (index, reason) in refusals {
+        note_refusal(model, index, reason);
+    }
     (
         report.unified_instances,
         report.unify_misses,
@@ -803,21 +1142,250 @@ pub fn attach_scoped_in_batches(
     Ok(report)
 }
 
+/// What a mesh that replaces a body gives of its element's quantities
+/// besides its `NetVolume` ([`element_quantities`]).
+#[derive(Default)]
+struct MeshQuantities {
+    member: Option<MemberMesh>,
+    beam: Option<BeamQuantities>,
+    column: Option<ColumnQuantities>,
+    column_volume: Option<f64>,
+    plate_width: Option<f64>,
+}
+
+/// The quantities `element`'s saved mesh gives the entity at `index` (a curtain
+/// mullion's prism along its own axis, a curtain panel's width, a beam's and a
+/// column's base quantities, a column's mesh volume), read from the mesh in the
+/// element's frame: each primitive placed in the model's frame
+/// ([`in_world`]), then moved into the element's. Nothing for any other entity.
+fn element_quantities(
+    entity: &IfcEntity,
+    element: &crate::native_saved_scene::SavedElement,
+    mullion_axes: Option<&BTreeMap<u32, [f64; 3]>>,
+    kept_ends: Option<&BTreeMap<u32, crate::partition_schema_mvp::KeptEnds>>,
+    index: usize,
+) -> MeshQuantities {
+    let IfcEntity::BuildingElement {
+        ifc_type,
+        location_feet: Some(origin),
+        rotation_radians,
+        ..
+    } = entity
+    else {
+        return MeshQuantities::default();
+    };
+    let kind = ifc_type.to_ascii_uppercase();
+    if !matches!(
+        kind.as_str(),
+        "IFCMEMBER" | "IFCPLATE" | "IFCBEAM" | "IFCCOLUMN"
+    ) {
+        return MeshQuantities::default();
+    }
+    let world = in_world(&element.meshes);
+    let primitives = &world.primitives;
+    let (vertices, triangles) = local_mesh(primitives, *origin, *rotation_radians);
+    if triangles.is_empty() {
+        return MeshQuantities::default();
+    }
+    let volume = all_faces_flat(primitives)
+        .then(|| closed_mesh_volume(&vertices, &triangles))
+        .flatten();
+    let plate_width = volume
+        .filter(|_| kind == "IFCPLATE")
+        .and_then(|volume| box_plan_width(&vertices, &triangles, volume));
+    let column_volume = (kind == "IFCCOLUMN")
+        .then(|| oriented_mesh_volume(primitives, *origin))
+        .flatten();
+    // the mullion's own axis, from its record, turned into the element's
+    // frame as its mesh is.
+    let member = volume.filter(|_| kind == "IFCMEMBER").and_then(|_| {
+        let id = u32::try_from(element.identity.element_id).ok()?;
+        let axis = *mullion_axes?.get(&id)?;
+        let turn = rotation_radians.unwrap_or(0.0);
+        let (sin, cos) = (-turn).sin_cos();
+        let local = [
+            axis[0] * cos - axis[1] * sin,
+            axis[0] * sin + axis[1] * cos,
+            axis[2],
+        ];
+        let prism = prism_along(&vertices, &triangles, local)?;
+        // The end faces' centres in the model's frame, where mullions are
+        // compared with one another.
+        let (sin, cos) = turn.sin_cos();
+        let world = |p: [f64; 3]| {
+            [
+                origin[0] + p[0] * cos - p[1] * sin,
+                origin[1] + p[0] * sin + p[1] * cos,
+                origin[2] + p[2],
+            ]
+        };
+        let placed = Placed {
+            axis,
+            ends: prism.ends.map(|end| world(end.centre)),
+            areas: prism.ends.map(|end| end.area),
+        };
+        let kept = kept_ends.and_then(|kept| kept.get(&id).copied());
+        Some(MemberMesh {
+            index,
+            kept,
+            prism,
+            placed,
+        })
+    });
+    // a beam's mesh, where it is a closed solid of flat faces, as the prism
+    // Revit's export extrudes its profile into.
+    let beam = volume
+        .filter(|_| kind == "IFCBEAM")
+        .and_then(|_| beam_quantities(&vertices, &triangles));
+    // a column's mesh, where it is a closed solid of flat faces, as the
+    // vertical prism Revit's export extrudes its profile into.
+    let column = volume
+        .filter(|_| kind == "IFCCOLUMN")
+        .and_then(|_| column_quantities(&vertices, &triangles));
+    MeshQuantities {
+        member,
+        beam,
+        column,
+        column_volume,
+        plate_width,
+    }
+}
+
+/// How far a column's box volume may differ from the volume of the mesh Revit
+/// saved for it, as a fraction of the mesh's, and still be its solid:
+/// the mesh of a cylinder drawn with chords is within 1% of it, and a round
+/// column's box (the circle's bounding square) is 27% over it.
+const COLUMN_BOX_MESH_TOLERANCE: f64 = 0.02;
+
+/// The volume, cubic feet, of the surface `primitives` make, each triangle
+/// turned outward by its vertices' normals and measured from `origin`, or none
+/// where a primitive has no normals for its vertices or the volume is not
+/// positive. It does not need the surface closed or its faces flat, so it reads
+/// the chord-drawn side of a cylinder to the accuracy of its chords.
+fn oriented_mesh_volume(primitives: &[Primitive], origin: [f64; 3]) -> Option<f64> {
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let cross = |a: [f64; 3], b: [f64; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let mut total = 0.0;
+    for primitive in primitives {
+        if primitive.normals.len() != primitive.vertices.len() {
+            return None;
+        }
+        for triangle in &primitive.triangles {
+            let [i, j, k] = triangle.map(|index| index as usize);
+            let a = sub(*primitive.vertices.get(i)?, origin);
+            let mut b = sub(*primitive.vertices.get(j)?, origin);
+            let mut c = sub(*primitive.vertices.get(k)?, origin);
+            let outward = [i, j, k].map(|index| primitive.normals[index]);
+            let sum = [
+                outward[0][0] + outward[1][0] + outward[2][0],
+                outward[0][1] + outward[1][1] + outward[2][1],
+                outward[0][2] + outward[1][2] + outward[2][2],
+            ];
+            if dot(cross(sub(b, a), sub(c, a)), sum) < 0.0 {
+                std::mem::swap(&mut b, &mut c);
+            }
+            total += dot(a, cross(b, c)) / 6.0;
+        }
+    }
+    (total.is_finite() && total > 0.0).then_some(total)
+}
+
+/// Take from each column of `found` (an index into the entities and the volume
+/// of the mesh its body was drawn from) the quantities its record's box gave
+/// where the box is not its solid: its `CrossSectionArea`,
+/// `OuterSurfaceArea`, `GrossVolume` and `NetVolume`, written for a type whose
+/// length parameter `b` is both sides of its box, which a round column
+/// of that type is as well. Its `Length` stays. The box is its solid where its
+/// held `NetVolume`, or its `GrossVolume` where it holds no other, is within
+/// [`COLUMN_BOX_MESH_TOLERANCE`] of its mesh's volume. On Autodesk's
+/// rac_advanced sample 6 round columns of 450 mm and as many in each of its
+/// three later saves hold the square's areas and volumes, 4/pi of the circle's.
+fn drop_column_box_quantities(model: &mut IfcModel, found: &[(usize, f64)]) {
+    if found.is_empty() {
+        return;
+    }
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (position, entity) in model.entities.iter().enumerate() {
+        if let IfcEntity::ElementPropertySet { element, set } = entity {
+            if set.name == "Qto_ColumnBaseQuantities" {
+                held.entry(*element).or_insert(position);
+            }
+        }
+    }
+    for &(index, mesh_volume) in found {
+        let Some(&position) = held.get(&index) else {
+            continue;
+        };
+        let Some(IfcEntity::ElementPropertySet { set, .. }) = model.entities.get_mut(position)
+        else {
+            continue;
+        };
+        let volume_of = |wanted: &str| {
+            set.properties
+                .iter()
+                .find_map(|property| match &property.value {
+                    PropertyValue::VolumeCubicFeet(volume) if property.name == wanted => {
+                        Some(*volume)
+                    }
+                    _ => None,
+                })
+        };
+        let Some(box_volume) = volume_of("NetVolume").or_else(|| volume_of("GrossVolume")) else {
+            continue;
+        };
+        if (box_volume - mesh_volume).abs() > COLUMN_BOX_MESH_TOLERANCE * mesh_volume {
+            set.properties.retain(|property| {
+                !matches!(
+                    property.name.as_str(),
+                    "CrossSectionArea" | "OuterSurfaceArea" | "GrossVolume" | "NetVolume"
+                )
+            });
+        }
+    }
+}
+
 /// Give each element of `volumes` (an index into the entities and the volume,
 /// cubic feet, of the closed mesh of flat faces its body was drawn from) the
 /// `NetVolume` that Revit's export writes for it, in the base quantity set of
-/// its entity, where it holds none: revit-ifc's `NetVolumeCalculator`
+/// its entity, where it holds none: Revit's IFC exporter's `NetVolumeCalculator`
 /// takes the volume of the solid it writes (CLEANROOM.md source 5),
 /// and the mesh is that solid, which a body of flat faces gives exactly. A
-/// column gets no `GrossVolume`: Revit's export omits it on the 18 columns of
-/// the BIM4LCA office at building permit that it draws as a cut mesh, and
-/// writes it on 6 that nothing tells from them. A curtain mullion, a curtain
-/// panel and a column are the entities measured equal to Revit's on every
-/// element; a body of another entity gets none.
-fn add_mesh_volumes(model: &mut IfcModel, volumes: &[(usize, f64)]) {
+/// column gets no `GrossVolume` here: Revit's export omits it on the 18 columns of
+/// the BIM4LCA office at building permit that it draws as a cut mesh, and the
+/// volume alone does not tell them from the rest ([`add_column_quantities`]
+/// gives it where the mesh is a vertical prism). A curtain mullion, a curtain
+/// panel and a column are the entities measured equal to Revit's on every element,
+/// and a building element proxy since (256 values on 26 models with a
+/// Revit export, eight held-out pairs of 2024 to 2027 among them, none different);
+/// a body of another entity gets none. A proxy's saved
+/// mesh is a tessellation wherever its solid has a curved face, which
+/// [`all_faces_flat`] refuses, so on the BIM4LCA office as built 8 of its 12
+/// proxies take Revit's `NetVolume` and the ones drawn from a profile with rounded
+/// folds get none. A curtain mullion
+/// whose `NetVolume` the box gave and whose mesh has another volume is not an
+/// extrusion of its box, and takes the mesh's and the mesh's length:
+/// the mullions of `members` whose `Length` it changed are returned with
+/// the new one, for [`follow_mesh_span`].
+fn add_mesh_volumes(
+    model: &mut IfcModel,
+    volumes: &[(usize, f64)],
+    members: &[MemberMesh],
+) -> Vec<(usize, f64)> {
+    let mut moved = Vec::new();
     if volumes.is_empty() {
-        return;
+        return moved;
     }
+    let extents: BTreeMap<usize, f64> = members
+        .iter()
+        .map(|member| (member.index, member.prism.extent))
+        .collect();
     let mut held: BTreeMap<(usize, String), usize> = BTreeMap::new();
     for (position, entity) in model.entities.iter().enumerate() {
         if let IfcEntity::ElementPropertySet { element, set } = entity {
@@ -834,6 +1402,7 @@ fn add_mesh_volumes(model: &mut IfcModel, volumes: &[(usize, f64)]) {
             "IFCMEMBER" => ("Qto_MemberBaseQuantities", &["NetVolume"]),
             "IFCPLATE" => ("Qto_PlateBaseQuantities", &["NetVolume"]),
             "IFCCOLUMN" => ("Qto_ColumnBaseQuantities", &["NetVolume"]),
+            "IFCBUILDINGELEMENTPROXY" => ("Qto_BuildingElementProxyQuantities", &["NetVolume"]),
             _ => continue,
         };
         let volume_property = |name: &str| Property {
@@ -851,6 +1420,12 @@ fn add_mesh_volumes(model: &mut IfcModel, volumes: &[(usize, f64)]) {
                             set.properties.push(volume_property(name));
                         }
                     }
+                    if set_name == "Qto_MemberBaseQuantities" {
+                        let extent = extents.get(&index).copied();
+                        if let Some(length) = follow_mesh_over_box(set, volume, extent) {
+                            moved.push((index, length));
+                        }
+                    }
                 }
             }
             None => {
@@ -861,6 +1436,635 @@ fn add_mesh_volumes(model: &mut IfcModel, volumes: &[(usize, f64)]) {
                         name: set_name.into(),
                         properties: names.iter().map(|&name| volume_property(name)).collect(),
                     },
+                });
+            }
+        }
+    }
+    moved
+}
+
+/// How far a curtain mullion's box volume may differ from the volume of the
+/// mesh Revit saved for it, as a fraction of the mesh's, before the box is not
+/// its solid. A mullion whose `NetVolume` is Revit's from its box has
+/// the mesh's volume to within 1e-4; one with a 45 degree end differs by 2.6 to
+/// 3.7%.
+const BOX_MESH_VOLUME_TOLERANCE: f64 = 1e-3;
+
+/// How far, feet, the extent of a mullion's mesh must differ from its written
+/// `Length` to replace it: the mesh's corners are single precision,
+/// which moves an extent by 1e-5 ft, and the box overruns the solid by 0.03 ft
+/// or more where it does.
+const MESH_LENGTH_MOVES_FEET: f64 = 1e-4;
+
+/// A curtain mullion whose `NetVolume` was written from its box and
+/// whose saved mesh has another volume is not an extrusion of that box, as a
+/// mullion with a 45 degree end is not: Revit's `NetVolume` is the mesh's,
+/// and the box's `NetSurfaceArea`, its sides and the end faces its
+/// neighbours leave, is not Revit's, so it is left out. Its `Length` is
+/// the extent of the mesh along its own axis: Revit's `Length` is the
+/// extent of its own body, which the saved mesh is, and a box that overruns the
+/// solid gives a longer one. `extent` is that of the mesh along the mullion's own
+/// axis, where it is a prism along it ([`prism_along`]); it replaces the `Length`
+/// where it is within `MESH_LENGTH_REACH` of it, and otherwise the written
+/// `Length` stays. Returns the new `Length`, where there is one.
+fn follow_mesh_over_box(
+    set: &mut PropertySet,
+    mesh_volume: f64,
+    extent: Option<f64>,
+) -> Option<f64> {
+    if !(mesh_volume.is_finite() && mesh_volume > 0.0) {
+        return None;
+    }
+    let box_volume = set
+        .properties
+        .iter()
+        .find_map(|property| match &property.value {
+            PropertyValue::VolumeCubicFeet(volume) if property.name == "NetVolume" => Some(*volume),
+            _ => None,
+        })?;
+    if (box_volume - mesh_volume).abs() <= BOX_MESH_VOLUME_TOLERANCE * mesh_volume {
+        return None;
+    }
+    for property in &mut set.properties {
+        if property.name == "NetVolume" {
+            property.value = PropertyValue::VolumeCubicFeet(mesh_volume);
+        }
+    }
+    set.properties
+        .retain(|property| property.name != "NetSurfaceArea");
+    let length = set
+        .properties
+        .iter_mut()
+        .find(|property| property.name == "Length")?;
+    let PropertyValue::PositiveLengthFeet(written) = &mut length.value else {
+        return None;
+    };
+    let extent = extent?;
+    let off = (extent - *written).abs();
+    if off > MESH_LENGTH_REACH * *written || off <= MESH_LENGTH_MOVES_FEET {
+        return None;
+    }
+    *written = extent;
+    Some(extent)
+}
+
+/// A curtain mullion drawn from its saved mesh, closed and of flat faces, read as
+/// a prism along its own axis.
+struct MemberMesh {
+    /// The mullion's index into the entities.
+    index: usize,
+    /// How many of its two end faces its Revit solid keeps, and which of those
+    /// ends have a partner, where its curtain wall's boxes say.
+    kept: Option<crate::partition_schema_mvp::KeptEnds>,
+    /// The mesh as a prism along the mullion's axis.
+    prism: Prism,
+    /// Where its two end faces are, in the model's frame.
+    placed: Placed,
+}
+
+/// Give each curtain mullion of `members` that holds no `NetSurfaceArea` the one
+/// Revit's export writes, from its mesh: the area of its faces along
+/// its own axis and of the end faces its solid keeps
+/// ([`mullion_surface_area`]). The mesh is Revit's solid, so its lateral and end
+/// areas are Revit's; `kept` is rule on the boxes of the mullion's
+/// curtain wall, which is read for a mullion on any host, where the box's own
+/// `NetSurfaceArea` is written only for one on a plain host. A mullion whose
+/// box gave a `NetSurfaceArea` that its mesh did not contradict keeps
+/// it. Where a mullion has a partner at an end that `kept` counts, the count
+/// misses a continuation on another curtain wall, and the mullion gets none:
+/// `kept` must leave every end with a partner (`partner_ends`) among the ends it
+/// does not count, but for the ends at which the boxes saw the partner and kept
+/// the end, as an oblique mullion or one across inside keeps it.
+/// The mesh's two ends are matched to the boxes' by which side of the
+/// mullion's axis each lies on ([`partners_the_boxes_missed`]), so that a partner
+/// at the end the boxes saw none at is missed whatever lies at the other.
+fn add_mullion_surface_areas(model: &mut IfcModel, members: &[MemberMesh]) {
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (position, entity) in model.entities.iter().enumerate() {
+        if let IfcEntity::ElementPropertySet { element, set } = entity {
+            if set.name == "Qto_MemberBaseQuantities" {
+                held.entry(*element).or_insert(position);
+            }
+        }
+    }
+    let placed: Vec<Placed> = members.iter().map(|member| member.placed).collect();
+    let partners = partner_ends(&placed);
+    for (member, partners) in members.iter().zip(partners) {
+        let (Some(ends), Some(&position)) = (member.kept, held.get(&member.index)) else {
+            continue;
+        };
+        let kept = ends.kept;
+        // The partners the boxes saw at the ends they keep are no continuation they
+        // missed; a partner at any other end is.
+        let missed = partners_the_boxes_missed(&member.placed, partners, ends.partnered);
+        if missed > usize::from(2 - kept.min(2)) {
+            continue;
+        }
+        let Some(IfcEntity::ElementPropertySet { set, .. }) = model.entities.get_mut(position)
+        else {
+            continue;
+        };
+        if has_property(set, "NetSurfaceArea") {
+            continue;
+        }
+        let Some(area) = mullion_surface_area(&member.prism, kept) else {
+            continue;
+        };
+        set.properties.push(Property {
+            name: "NetSurfaceArea".into(),
+            value: PropertyValue::AreaSquareFeet(area),
+        });
+    }
+}
+
+/// What the saved mesh of a beam drawn along its line gives of its base
+/// quantities, where all its faces are planes and it is one closed
+/// solid that is a prism. The quantities are lengths, areas and a volume, which
+/// where the mesh is placed does not change.
+fn beam_mesh_quantities(primitives: &[Primitive]) -> Option<BeamQuantities> {
+    if !all_faces_flat(primitives) {
+        return None;
+    }
+    let (vertices, triangles) = local_mesh(primitives, [0.0; 3], None);
+    beam_quantities(&vertices, &triangles)
+}
+
+/// What the saved mesh of a column drawn as its type's rectangle gives of its
+/// base quantities, where all its faces are planes and it is one closed
+/// solid that is a prism along the vertical. Where the mesh is placed
+/// does not change the lengths, areas and volume.
+fn column_mesh_quantities(primitives: &[Primitive]) -> Option<ColumnQuantities> {
+    if !all_faces_flat(primitives) {
+        return None;
+    }
+    let (vertices, triangles) = local_mesh(primitives, [0.0; 3], None);
+    column_quantities(&vertices, &triangles)
+}
+
+/// Give each beam of `found` (an index into the entities and what its mesh gives
+/// of its base quantities) the quantities Revit's export writes for it, in the
+/// base quantity set it holds or a new one, where that holds none of them:
+/// `CrossSectionArea`, `OuterSurfaceArea`, `GrossSurfaceArea`,
+/// `NetSurfaceArea`, `GrossVolume` and `NetVolume`. They are taken in the order
+/// of the entities, so that the sets a beam that has none gets are appended in
+/// one order whichever order the elements were meshed in.
+fn add_beam_quantities(model: &mut IfcModel, found: &mut [(usize, BeamQuantities)]) {
+    if found.is_empty() {
+        return;
+    }
+    found.sort_by_key(|(index, _)| *index);
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (position, entity) in model.entities.iter().enumerate() {
+        if let IfcEntity::ElementPropertySet { element, set } = entity {
+            if set.name == "Qto_BeamBaseQuantities" {
+                held.entry(*element).or_insert(position);
+            }
+        }
+    }
+    for (index, quantities) in found.iter() {
+        let values = [
+            (
+                "CrossSectionArea",
+                PropertyValue::AreaSquareFeet(quantities.cross_section_area),
+            ),
+            (
+                "OuterSurfaceArea",
+                PropertyValue::AreaSquareFeet(quantities.outer_surface_area),
+            ),
+            (
+                "GrossSurfaceArea",
+                PropertyValue::AreaSquareFeet(quantities.surface_area),
+            ),
+            (
+                "NetSurfaceArea",
+                PropertyValue::AreaSquareFeet(quantities.surface_area),
+            ),
+            (
+                "GrossVolume",
+                PropertyValue::VolumeCubicFeet(quantities.volume),
+            ),
+            (
+                "NetVolume",
+                PropertyValue::VolumeCubicFeet(quantities.volume),
+            ),
+        ];
+        match held.get(index) {
+            Some(&position) => {
+                if let Some(IfcEntity::ElementPropertySet { set, .. }) =
+                    model.entities.get_mut(position)
+                {
+                    for (name, value) in values {
+                        if !has_property(set, name) {
+                            set.properties.push(Property {
+                                name: name.into(),
+                                value,
+                            });
+                        }
+                    }
+                }
+            }
+            None => {
+                held.insert(*index, model.entities.len());
+                model.entities.push(IfcEntity::ElementPropertySet {
+                    element: *index,
+                    set: PropertySet {
+                        name: "Qto_BeamBaseQuantities".into(),
+                        properties: values
+                            .into_iter()
+                            .map(|(name, value)| Property {
+                                name: name.into(),
+                                value,
+                            })
+                            .collect(),
+                    },
+                });
+            }
+        }
+    }
+}
+
+/// Give each column of `found` (an index into the entities and what its mesh
+/// gives of its base quantities) the quantities Revit's export writes for a
+/// column it draws as an extrusion: `CrossSectionArea`,
+/// `OuterSurfaceArea` and `GrossVolume`, and `Length`, in the base quantity set it
+/// holds. A column whose set holds none of the three gets all four, and one
+/// that holds all three gets the `Length` it lacks; one that holds some of the
+/// three is left as it is, because the cut-column rule writes a
+/// `CrossSectionArea` and no more for a column Revit draws as a cut mesh, which has
+/// no `OuterSurfaceArea` or `GrossVolume`. A column drawn from
+/// its mesh holds the set: [`add_mesh_volumes`] gave every column whose mesh is
+/// a closed solid of flat faces its `NetVolume`. A column that keeps its body,
+/// the rectangle its type gives, may hold none, and then gets the set
+/// with all of them, its `NetVolume` the volume of the prism as Revit's is of an
+/// extrusion. A value a column holds is never replaced.
+fn add_column_quantities(model: &mut IfcModel, found: &mut [(usize, ColumnQuantities)]) {
+    if found.is_empty() {
+        return;
+    }
+    found.sort_by_key(|(index, _)| *index);
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (position, entity) in model.entities.iter().enumerate() {
+        if let IfcEntity::ElementPropertySet { element, set } = entity {
+            if set.name == "Qto_ColumnBaseQuantities" {
+                held.entry(*element).or_insert(position);
+            }
+        }
+    }
+    for (index, quantities) in found.iter() {
+        let section = [
+            (
+                "CrossSectionArea",
+                PropertyValue::AreaSquareFeet(quantities.cross_section_area),
+            ),
+            (
+                "OuterSurfaceArea",
+                PropertyValue::AreaSquareFeet(quantities.outer_surface_area),
+            ),
+            (
+                "GrossVolume",
+                PropertyValue::VolumeCubicFeet(quantities.volume),
+            ),
+        ];
+        let rest = [
+            (
+                "Length",
+                PropertyValue::PositiveLengthFeet(quantities.length),
+            ),
+            (
+                "NetVolume",
+                PropertyValue::VolumeCubicFeet(quantities.volume),
+            ),
+        ];
+        let Some(&position) = held.get(index) else {
+            held.insert(*index, model.entities.len());
+            model.entities.push(IfcEntity::ElementPropertySet {
+                element: *index,
+                set: PropertySet {
+                    name: "Qto_ColumnBaseQuantities".into(),
+                    properties: section
+                        .into_iter()
+                        .chain(rest)
+                        .map(|(name, value)| Property {
+                            name: name.into(),
+                            value,
+                        })
+                        .collect(),
+                },
+            });
+            continue;
+        };
+        let Some(IfcEntity::ElementPropertySet { set, .. }) = model.entities.get_mut(position)
+        else {
+            continue;
+        };
+        let held_of_three = section
+            .iter()
+            .filter(|(name, _)| has_property(set, name))
+            .count();
+        let wanted = match held_of_three {
+            0 => section.into_iter().chain(rest).collect::<Vec<_>>(),
+            3 => rest.into_iter().collect::<Vec<_>>(),
+            _ => continue,
+        };
+        for (name, value) in wanted {
+            if !has_property(set, name) {
+                set.properties.push(Property {
+                    name: name.into(),
+                    value,
+                });
+            }
+        }
+    }
+}
+
+/// Give the `Span` of each mullion of `moved` (an index into the entities and its
+/// new `Length`, feet) the same length, as it has at the record.
+fn follow_mesh_span(model: &mut IfcModel, moved: &[(usize, f64)]) {
+    if moved.is_empty() {
+        return;
+    }
+    let lengths: BTreeMap<usize, f64> = moved.iter().copied().collect();
+    for entity in &mut model.entities {
+        let IfcEntity::ElementPropertySet { element, set } = entity else {
+            continue;
+        };
+        let Some(&length) = lengths.get(&*element) else {
+            continue;
+        };
+        if set.name != "Pset_MemberCommon" {
+            continue;
+        }
+        for property in &mut set.properties {
+            if property.name == "Span" {
+                property.value = PropertyValue::PositiveLengthFeet(length);
+            }
+        }
+    }
+}
+
+/// How far a wall's held `NetVolume` may differ from the volume of its mesh,
+/// relative to the mesh's, and still be the solid's: the mesh's corners
+/// are single precision, which moves the volume of a small wall at 190 ft by
+/// about 1e-4 of it.
+const WALL_BOX_MESH_TOLERANCE: f64 = 1e-3;
+
+/// How far the vertical span of a wall's mesh may differ from the height of its
+/// body, feet, and still confirm it: the span is within 1e-4 ft of
+/// Revit's `Height` on every wall of the BIM4LCA office, and the
+/// smallest difference between a body's height and Revit's measured on the
+/// BIM4LCA housing is 0.11 ft.
+const WALL_HEIGHT_AGREE_FEET: f64 = 5e-4;
+
+/// How far, radians, an element's turn may lie off its wall's own axes for its
+/// world box, which is axis aligned, to be that element's extent in the wall's
+/// frame.
+const OPENING_TURN_TOLERANCE: f64 = 1e-6;
+
+/// A wall's own axes and the world boxes, feet, of the openings rvt-open cuts in
+/// it, `[min_x, min_y, min_z, max_x, max_y, max_z]`.
+struct WallOpenings {
+    frame: WallFrame,
+    boxes: Vec<[f64; 6]>,
+}
+
+/// each wall's frame, by its index in `model.entities`, and the boxes of
+/// the openings written in it: the rectangle of every element the wall hosts,
+/// with the axis across the wall cut to the wall's thickness, placed on that
+/// element's own placement and extruded up its height, as the writer emits it.
+/// A wall whose element is not read, and an opening whose turn is
+/// not one of its wall's, is left out, so the wall gets no areas of the mesh for
+/// them.
+fn wall_frame_and_openings(model: &IfcModel) -> BTreeMap<usize, WallOpenings> {
+    let mut out: BTreeMap<usize, WallOpenings> = BTreeMap::new();
+    for (index, entity) in model.entities.iter().enumerate() {
+        let IfcEntity::BuildingElement {
+            ifc_type,
+            rotation_radians,
+            ..
+        } = entity
+        else {
+            continue;
+        };
+        if matches!(ifc_type.as_str(), "IFCWALL" | "IFCWALLSTANDARDCASE") {
+            out.insert(
+                index,
+                WallOpenings {
+                    frame: WallFrame {
+                        turn: rotation_radians.unwrap_or(0.0),
+                    },
+                    boxes: Vec::new(),
+                },
+            );
+        }
+    }
+    for (index, entity) in model.entities.iter().enumerate() {
+        let IfcEntity::BuildingElement {
+            host_element_index: Some(host),
+            location_feet: Some(location),
+            rotation_radians,
+            extrusion: Some(body),
+            solid_shape: None,
+            ..
+        } = entity
+        else {
+            continue;
+        };
+        // Only a body of a plain rectangle is the opening the writer emits
+        // from it; a profile or a solid of another shape explains nothing.
+        if body.profile_override.is_some() {
+            continue;
+        }
+        let Some(hosted) = out.get_mut(host) else {
+            continue;
+        };
+        let turn = rotation_radians.unwrap_or(0.0) - hosted.frame.turn;
+        if (2.0 * turn).sin().abs() > OPENING_TURN_TOLERANCE {
+            continue;
+        }
+        let cut = model.opening_cuts.get(&index);
+        let [x_dim, y_dim] = cut.map_or([body.width_feet, body.depth_feet], |cut| {
+            [cut.x_dim_feet, cut.y_dim_feet]
+        });
+        let [cx, cy] = cut.map_or([0.0, 0.0], |cut| cut.centre_feet);
+        let [start, height] = cut
+            .and_then(|cut| cut.z_range_feet)
+            .map_or([0.0, body.height_feet], |[start, height]| {
+                [start, start + height]
+            });
+        let (sin, cos) = rotation_radians.unwrap_or(0.0).sin_cos();
+        let mut x = [f64::INFINITY, f64::NEG_INFINITY];
+        let mut y = [f64::INFINITY, f64::NEG_INFINITY];
+        for side_x in [-1.0, 1.0] {
+            for side_y in [-1.0, 1.0] {
+                let (px, py) = (cx + side_x * x_dim / 2.0, cy + side_y * y_dim / 2.0);
+                let corner = [
+                    location[0] + px * cos - py * sin,
+                    location[1] + px * sin + py * cos,
+                ];
+                x = [x[0].min(corner[0]), x[1].max(corner[0])];
+                y = [y[0].min(corner[1]), y[1].max(corner[1])];
+            }
+        }
+        let world = [
+            x[0],
+            y[0],
+            location[2] + start,
+            x[1],
+            y[1],
+            location[2] + start + height,
+        ];
+        if world.iter().all(|value| value.is_finite()) {
+            hosted.boxes.push(world);
+        }
+    }
+    out
+}
+
+/// Give each wall of `found` (an index into the entities and what the mesh
+/// Revit saved for it gives) the quantities Revit's export writes from its
+/// solid, in the base quantity set it holds, where that holds none of them:
+/// `NetVolume`, and, of a wall with no more than four vertical faces
+/// or of one whose mesh is a vertical prism less the openings cut in it and
+/// whose base is not attached, `NetSideArea` and, where its two sides
+/// agree on it, `GrossSideArea` and, the wall type's `Width` times it,
+/// `GrossVolume`
+/// (Revit's IFC exporter's `PropertyUtil.CreateWallBaseQuantities`, CLEANROOM.md source 5).
+/// A wall with no base quantity set, as a wall Revit's export writes
+/// none for may be, gets none.
+///
+/// The quantities of a wall's box hold only where the box is
+/// the solid. A wall whose held `NetVolume` is not the mesh's, by more
+/// than [`WALL_BOX_MESH_TOLERANCE`] of it, is a box that is not Revit's solid (a
+/// wall joined at an angle, whose footprint is a pentagon, or a box longer than
+/// the wall): the quantities taken from the box are dropped, and the mesh gives
+/// those it can. The footprint stays where the mesh's vertical span is not the
+/// box's height, which says the wall is cut in height and not in plan. A
+/// `Height` is the box's, and is written for a wall that gets its areas, where
+/// the mesh's vertical span confirms it and is dropped where the span does not
+/// (a wall whose lower part a door as wide as the wall cuts away).
+fn add_wall_quantities(model: &mut IfcModel, found: &[(usize, WallMeshQuantities)]) {
+    if found.is_empty() {
+        return;
+    }
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (position, entity) in model.entities.iter().enumerate() {
+        if let IfcEntity::ElementPropertySet { element, set } = entity {
+            if set.name == "Qto_WallBaseQuantities" {
+                held.entry(*element).or_insert(position);
+            }
+        }
+    }
+    for (index, quantities) in found {
+        let Some(&position) = held.get(index) else {
+            continue;
+        };
+        // The height of the wall's body, where it is the extrusion of its box.
+        let body_height = match model.entities.get(*index) {
+            Some(IfcEntity::BuildingElement {
+                extrusion: Some(body),
+                solid_shape: None,
+                ..
+            }) => Some(body.height_feet),
+            _ => None,
+        };
+        let Some(IfcEntity::ElementPropertySet { set, .. }) = model.entities.get_mut(position)
+        else {
+            continue;
+        };
+        let height_agrees = body_height
+            .map(|height| (quantities.height_feet - height).abs() <= WALL_HEIGHT_AGREE_FEET);
+        let held_volume = set
+            .properties
+            .iter()
+            .find_map(|property| match &property.value {
+                PropertyValue::VolumeCubicFeet(volume) if property.name == "NetVolume" => {
+                    Some(*volume)
+                }
+                _ => None,
+            });
+        if held_volume.is_some_and(|held| {
+            (held - quantities.net_volume).abs() > WALL_BOX_MESH_TOLERANCE * quantities.net_volume
+        }) {
+            // The footprint is the plan's: a box whose height the mesh does not
+            // have (a wall cut away from below or above) may still have Revit's.
+            let keep_footprint = height_agrees == Some(false);
+            set.properties
+                .retain(|property| match property.name.as_str() {
+                    "NetVolume" | "NetSideArea" | "GrossSideArea" | "GrossVolume" => false,
+                    "GrossFootprintArea" => keep_footprint,
+                    _ => true,
+                });
+        }
+        if let Some(height) = body_height {
+            if height_agrees == Some(false) {
+                set.properties.retain(|property| property.name != "Height");
+            } else if quantities.sides.is_some() && !has_property(set, "Height") {
+                set.properties.push(Property {
+                    name: "Height".into(),
+                    value: PropertyValue::PositiveLengthFeet(height),
+                });
+            }
+        }
+        let width = set
+            .properties
+            .iter()
+            .find_map(|property| match &property.value {
+                PropertyValue::PositiveLengthFeet(width) if property.name == "Width" => {
+                    Some(*width)
+                }
+                _ => None,
+            });
+        let mut add = |name: &str, value: PropertyValue| {
+            if !has_property(set, name) {
+                set.properties.push(Property {
+                    name: name.into(),
+                    value,
+                });
+            }
+        };
+        add(
+            "NetVolume",
+            PropertyValue::VolumeCubicFeet(quantities.net_volume),
+        );
+        let Some(sides) = quantities.sides else {
+            continue;
+        };
+        add("NetSideArea", PropertyValue::AreaSquareFeet(sides.net));
+        if let Some(gross) = sides.gross {
+            add("GrossSideArea", PropertyValue::AreaSquareFeet(gross));
+            if let Some(width) = width {
+                add("GrossVolume", PropertyValue::VolumeCubicFeet(width * gross));
+            }
+        }
+    }
+}
+
+/// Give each curtain panel of `widths` (an index into the entities and the
+/// longer horizontal side, feet, of the box its body was drawn from a mesh as)
+/// the `Width` of its `Qto_PlateBaseQuantities`, where that holds none.
+/// Revit's export writes it on the panels it draws as a box and on no
+/// other, and `add_mesh_volumes` has made the set by now for each of these.
+fn add_plate_widths(model: &mut IfcModel, widths: &[(usize, f64)]) {
+    if widths.is_empty() {
+        return;
+    }
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (position, entity) in model.entities.iter().enumerate() {
+        if let IfcEntity::ElementPropertySet { element, set } = entity {
+            if set.name == "Qto_PlateBaseQuantities" {
+                held.entry(*element).or_insert(position);
+            }
+        }
+    }
+    for &(index, width) in widths {
+        let Some(&position) = held.get(&index) else {
+            continue;
+        };
+        if let Some(IfcEntity::ElementPropertySet { set, .. }) = model.entities.get_mut(position) {
+            if !has_property(set, "Width") {
+                set.properties.push(Property {
+                    name: "Width".into(),
+                    value: PropertyValue::LengthFeet(width),
                 });
             }
         }

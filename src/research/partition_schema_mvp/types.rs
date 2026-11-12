@@ -9,9 +9,26 @@ use super::*;
 pub(super) fn attach_ifc_export_overrides(
     rf: &mut RevitFile,
     revit_version: u32,
-    lists: [&mut Vec<DecodedElement>; 7],
+    mut lists: [&mut Vec<DecodedElement>; 7],
 ) {
     use crate::partition_ifc_export_overrides as ieo;
+    // a furniture or casework element's default predefined type depends
+    // on the release, so each carries it, whether or not the file holds an export
+    // parameter.
+    for elements in lists.iter_mut() {
+        for element in elements.iter_mut() {
+            if matches!(element.class.as_str(), "Furniture" | "Casework") {
+                element.fields.push((
+                    FURNITURE_RELEASE_FIELD.into(),
+                    InstanceField::Integer {
+                        value: i64::from(revit_version),
+                        signed: false,
+                        size: 4,
+                    },
+                ));
+            }
+        }
+    }
     let declared: BTreeSet<u32> = match crate::elem_table::parse_records(rf) {
         Ok(records) => crate::elem_table::declared_ids(&records),
         Err(_) => return,
@@ -199,7 +216,8 @@ pub(super) fn without_bodiless_family_spaces(
         .filter(|element| {
             element.fields.iter().any(|(name, value)| {
                 matches!(value, InstanceField::String(entity)
-                    if name == IFC_EXPORT_AS_FIELD && entity.trim().eq_ignore_ascii_case("IfcSpace"))
+                    if name == IFC_EXPORT_AS_FIELD
+                        && crate::ifc::category_map::export_value_is_space(entity, &element.class))
             })
         })
         .filter_map(|element| element.id.map(u64::from))
@@ -476,7 +494,11 @@ pub(crate) fn types_and_phases_for_lists(
 /// object. RE1 Architecture's railing 462556 holds its type 446543, Revit's
 /// `IfcRailingType` Tag, at +283 of its 329-byte object. With the picks, the
 /// picked types' names their own objects hold
-/// ([`crate::partition_names::railing_type_name_in`]). Revit 2024 and later.
+/// ([`crate::partition_names::railing_type_name_in`]), each from the latest
+/// partition that holds one, as a type's element data name is: on the
+/// BIM4LCA housing every railing type has an older copy with its Finnish name
+/// and a newer one with the English name Revit's export carries. Revit 2024 and
+/// later.
 pub(super) fn railing_type_picks(
     rf: &mut RevitFile,
     railings: &[(usize, u32)],
