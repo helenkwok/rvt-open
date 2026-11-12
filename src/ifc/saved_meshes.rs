@@ -745,7 +745,17 @@ pub fn attach_scoped_in_batches(
                         boxes,
                         !no_base_join.contains(&element_id),
                     );
-                    if let Some(found) = found {
+                    if let Some(mut found) = found {
+                        // The frames a batch composes can move a sum over the
+                        // faces in its last bit; to 1e-9 (far below the saved
+                        // corners' single precision) every batch size agrees.
+                        let tidy = |x: f64| (x * 1e9).round() / 1e9;
+                        found.net_volume = tidy(found.net_volume);
+                        found.height_feet = tidy(found.height_feet);
+                        if let Some(sides) = &mut found.sides {
+                            sides.net = tidy(sides.net);
+                            sides.gross = sides.gross.map(tidy);
+                        }
                         wall_quantities.push((*index, found));
                     }
                 }
