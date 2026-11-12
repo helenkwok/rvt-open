@@ -12,7 +12,7 @@ fails on a fail that is not listed, and on a listed gap that now passes (so the
 list only shrinks). A markdown summary goes to $GITHUB_STEP_SUMMARY when set.
 
 Usage: tiny_models_check.py FIXTURES_DIR BIN_DIR WORK_DIR [--known-gaps TSV] [--no-run]
-                            [--ifcx [--rvt-ifc-arg ARG ...]] [--jobs N]
+                            [--ifcx [--rvt-ifc-arg ARG ...]] [--jobs N] [--convert-only K/N]
 """
 import argparse
 import collections
@@ -380,20 +380,41 @@ def run(cmd):
         raise RuntimeError(f"{os.path.basename(cmd[0])} exited {r.returncode}: {r.stderr.strip()[-600:]}")
 
 
-def check_model(a, ans):
-    """Convert one model (unless --no-run) and score it: (release, recipe, checks, error)."""
+def paths(a, ans):
+    """(release, recipe, rvt, ifc, jsonl, out folder) of one answer key."""
     release, recipe = os.path.basename(os.path.dirname(ans)), os.path.basename(ans)[: -len(".answer.json")]
     # WORK/SET/RELEASE, the layout tools/ifcx-coverage/coverage.py --exports reads.
     out = os.path.join(a.work, os.path.relpath(os.path.dirname(ans), a.fixtures))
+    return release, recipe, ans[: -len(".answer.json")] + ".rvt", os.path.join(out, recipe + ".ifc"), os.path.join(out, recipe + ".jsonl"), out
+
+
+def convert(a, ans):
+    """Export one model with rvt-ifc and rvt-schedule into WORK."""
+    release, recipe, rvt, ifc, jsonl, out = paths(a, ans)
     os.makedirs(out, exist_ok=True)
-    rvt, ifc, jsonl = ans[: -len(".answer.json")] + ".rvt", os.path.join(out, recipe + ".ifc"), os.path.join(out, recipe + ".jsonl")
+    cmd = [os.path.join(a.bin_dir, "rvt-ifc"), rvt, "-o", ifc]
+    if a.ifcx:
+        cmd += ["--ifcx", os.path.join(out, recipe + ".ifcx")]
+    run(cmd + a.rvt_ifc_arg)
+    run([os.path.join(a.bin_dir, "rvt-schedule"), rvt, "--format", "jsonl", "-o", jsonl])
+
+
+def convert_model(a, ans):
+    """convert(), as (release, recipe, error)."""
+    release, recipe = paths(a, ans)[:2]
+    try:
+        convert(a, ans)
+        return release, recipe, None
+    except Exception as e:
+        return release, recipe, f"{type(e).__name__}: {e}"
+
+
+def check_model(a, ans):
+    """Convert one model (unless --no-run) and score it: (release, recipe, checks, error)."""
+    release, recipe, rvt, ifc, jsonl, out = paths(a, ans)
     try:
         if not a.no_run:
-            cmd = [os.path.join(a.bin_dir, "rvt-ifc"), rvt, "-o", ifc]
-            if a.ifcx:
-                cmd += ["--ifcx", os.path.join(out, recipe + ".ifcx")]
-            run(cmd + a.rvt_ifc_arg)
-            run([os.path.join(a.bin_dir, "rvt-schedule"), rvt, "--format", "jsonl", "-o", jsonl])
+            convert(a, ans)
         dump_path = ans[: -len(".answer.json")] + ".api-dump.json"
         dump = {e["id"]: e for e in json.load(open(dump_path))["elements"]} if os.path.exists(dump_path) else None
         return release, recipe, score(json.load(open(ans)), ifc, jsonl, dump), None
@@ -413,6 +434,9 @@ def main():
     ap.add_argument("--rvt-ifc-arg", action="append", default=[],
                     help="extra rvt-ifc option, such as --ifcx-unused-types with --ifcx (repeatable)")
     ap.add_argument("--jobs", type=int, default=os.cpu_count(), help="models converted and scored at once")
+    ap.add_argument("--convert-only", metavar="K/N",
+                    help="only export the K-th of every N models into WORK (1-based), for a later --no-run; "
+                         "exits 1 when an export fails")
     a = ap.parse_args()
 
     gaps = {}
@@ -429,6 +453,15 @@ def main():
                      + glob.glob(os.path.join(a.fixtures, "*", "20[0-9][0-9]", "*.answer.json")))
     if not answers:
         sys.exit(f"no answer keys under {a.fixtures}")
+    if a.convert_only:
+        k, n = map(int, a.convert_only.split("/"))
+        mine = answers[k - 1::n]
+        with concurrent.futures.ProcessPoolExecutor(a.jobs) as pool:
+            failed = [r for r in pool.map(functools.partial(convert_model, a), mine) if r[2]]
+        for release, recipe, err in failed:
+            print(f"ERROR {release} {recipe}: {err}")
+        print(f"exported {len(mine) - len(failed)} of {len(mine)} models (part {k} of {n})")
+        sys.exit(1 if failed else 0)
     # Each model is converted and scored on its own, so they run in parallel; the results are
     # gathered in the answer keys' order, as before.
     with concurrent.futures.ProcessPoolExecutor(a.jobs) as pool:

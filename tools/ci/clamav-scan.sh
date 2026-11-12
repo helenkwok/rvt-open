@@ -24,7 +24,7 @@ out=$1 log=$2; shift 2
 stage=$(mktemp -d); mkdir -p "$stage/files" "$stage/unpacked"
 for f; do
   [ -f "$f" ] || continue
-  cp "$f" "$stage/files/"
+  ln "$f" "$stage/files/" 2> /dev/null || cp "$f" "$stage/files/"
   d="$stage/unpacked/${f##*/}"
   case $f in
     *.tar.gz) mkdir -p "$d" && tar xzf "$f" -C "$d" ;;
@@ -42,18 +42,39 @@ if [ -n "${CLAMAV_DB:-}" ]; then
   fi
   db=(-v "$CLAMAV_DB:/var/lib/clamav")
 fi
-docker run --rm -v "$stage:/scan:ro" "${db[@]}" --entrypoint /bin/sh "$IMAGE" -c '
-  echo "TIME: start $(date -u +%T)"
-  if freshclam --stdout; then echo "FRESHCLAM: updated"; else echo "FRESHCLAM: failed"; fi
-  echo "TIME: signatures ready $(date -u +%T)"
-  echo "VERSION: $(clamscan --version)"
+# Every file under the stage is scanned once, the files split by size into one list per core and a
+# clamscan per list side by side; the logs are printed whole, then the summed counts.
+ci=$(mktemp -d)
+cat > "$ci/scan.sh" <<'SCAN'
+echo "TIME: start $(date -u +%T)"
+if freshclam --stdout; then echo "FRESHCLAM: updated"; else echo "FRESHCLAM: failed"; fi
+echo "TIME: signatures ready $(date -u +%T)"
+echo "VERSION: $(clamscan --version)"
+n=$(nproc)
+find /scan -type f -exec stat -c '%s %n' {} + | sort -rn |
+  awk -v n="$n" '{ print substr($0, index($0, " ") + 1) > ("/tmp/list" (NR % n)) }'
+pids=""
+for l in /tmp/list*; do
+  [ -e "$l" ] || continue
   clamscan --recursive --infected --scan-archive=yes --alert-exceeds-max=yes \
-    --max-filesize=2000M --max-scansize=4000M --max-files=100000 /scan
-  rc=$?
-  echo "TIME: scanned $(date -u +%T)"
-  chmod -R a+rwX /var/lib/clamav 2> /dev/null
-  exit $rc
-' > "$log" 2>&1
+    --max-filesize=2000M --max-scansize=4000M --max-files=100000 --file-list="$l" > "$l.log" 2>&1 &
+  pids="$pids $!:$l"
+done
+rc=0 scanned=0 infected=0
+for p in $pids; do
+  wait "${p%%:*}"; r=$?; l=${p#*:}
+  cat "$l.log"
+  s=$(sed -n 's/^Scanned files: //p' "$l.log" | tail -1); i=$(sed -n 's/^Infected files: //p' "$l.log" | tail -1)
+  scanned=$((scanned + ${s:-0})); infected=$((infected + ${i:-0}))
+  if [ "$r" = 1 ]; then rc=1; elif [ "$r" != 0 ] && [ "$rc" != 1 ]; then rc=$r; fi
+done
+echo "TIME: scanned $(date -u +%T)"
+echo "Scanned files: $scanned"
+echo "Infected files: $infected"
+chmod -R a+rwX /var/lib/clamav 2> /dev/null
+exit $rc
+SCAN
+docker run --rm -v "$stage:/scan:ro" -v "$ci:/ci:ro" "${db[@]}" --entrypoint /bin/sh "$IMAGE" /ci/scan.sh > "$log" 2>&1
 rc=$?
 version=$(sed -n 's/^VERSION: //p' "$log" | tail -1)
 scanned=$(sed -n 's/^Scanned files: //p' "$log" | tail -1)

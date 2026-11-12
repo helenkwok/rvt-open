@@ -413,10 +413,19 @@ jobs:
       - name: Sheet and plan view PDF (qpdf, poppler render, segments against the DXF)
         run: tools/ci/sheet-pdf-check.sh target/ci _samples/2024/racbasicsampleproject.rvt A102 "Level 1"
 
-  tiny-models:
-    name: tiny reference models
+  # The tiny reference models are exported in four parts side by side (each
+  # model once: rvt-ifc writes the IFC4 and the IFCX, with --ifcx-unused-types
+  # so the unused types are measured too, and rvt-schedule the element table),
+  # then one job scores every export against the answer keys and measures the
+  # IFCX coverage, as one job did before.
+  tiny-export:
+    name: tiny reference models / export ${{ matrix.part }}/4
     needs: scope
     if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -432,20 +441,38 @@ jobs:
         with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
       - run: tools/ci/fetch-tiny-models.sh _tiny
       - run: cargo build --profile ci --bin rvt-ifc --bin rvt-schedule
-      # Each model is exported once, every model's at once on the runner's cores:
-      # rvt-ifc writes the IFC4 and the IFCX (--ifcx-unused-types, so the unused
-      # types are measured too) that both steps read.
+      - name: Export part ${{ matrix.part }} of the models
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt
+          "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny target/ci "$RUNNER_TEMP/tiny-out" --ifcx --rvt-ifc-arg=--ifcx-unused-types --convert-only "${{ matrix.part }}/4"
+      - name: TEMP IFC4 with and without the IFCX options
+        if: matrix.part == 1
+        run: |
+          export SOURCE_DATE_EPOCH=1700000000
+          for m in rvt-open-tiny-models-1/2024/1-hip-roof rvt-open-tiny-models-2/2025/13-stairs rvt-open-tiny-models-2/2027/21-mep-basics; do
+            target/ci/rvt-ifc _tiny/$m.rvt -o a.ifc 2>/dev/null; target/ci/rvt-ifc _tiny/$m.rvt -o b.ifc --ifcx b.ifcx --ifcx-unused-types 2>/dev/null
+            cmp a.ifc b.ifc && echo "SAME $m" || { echo "DIFF $m"; diff a.ifc b.ifc | head -8 | cut -c1-200; }
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: "tiny-exports-${{ matrix.part }}", path: "${{ runner.temp }}/tiny-out", retention-days: 1 }
+
+  tiny-models:
+    name: tiny reference models
+    needs: tiny-export
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
+      - run: tools/ci/fetch-tiny-models.sh _tiny
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { pattern: tiny-exports-*, merge-multiple: true, path: "${{ runner.temp }}/tiny-out" }
       - name: Exports against the answer keys
         run: |
           python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt
-          "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny target/ci "$RUNNER_TEMP/tiny-out" --ifcx --rvt-ifc-arg=--ifcx-unused-types
-      - name: TEMP equality of the IFC4 with and without the IFCX options
-        run: |
-          set -euo pipefail
-          find _tiny -name '*.answer.json' | sort > "$RUNNER_TEMP/ans.txt"; wc -l < "$RUNNER_TEMP/ans.txt"
-          find _tiny -name '*.api-dump.json' | sed 's/\.api-dump\.json$//' | sort > "$RUNNER_TEMP/d.txt"; sed 's/\.answer\.json$//' "$RUNNER_TEMP/ans.txt" | diff - "$RUNNER_TEMP/d.txt" && echo "same models in both"
-          mkdir -p "$RUNNER_TEMP/plain"
-          sed 's/\.answer\.json$//' "$RUNNER_TEMP/ans.txt" | xargs -P4 -I{} sh -c 'o="$RUNNER_TEMP/plain/$(echo {} | tr / _).ifc"; target/ci/rvt-ifc {}.rvt -o "$o" 2>/dev/null; grep -v "^FILE_NAME" "$o" | sha256sum | cut -c1-64 > "$o.sum"; r=$(echo {} | sed "s|^_tiny/||"); grep -v "^FILE_NAME" "$RUNNER_TEMP/tiny-out/$r.ifc" | sha256sum | cut -c1-64 | cmp -s - "$o.sum" && echo same || echo "DIFF {}"' | sort | uniq -c
+          "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny target/ci "$RUNNER_TEMP/tiny-out" --no-run
       # How much of what the Revit API reports (each model's api-dump.json) the
       # IFC4 and IFCX exports carry, by kind; fails when an IFCX total drops
       # below tools/ifcx-coverage/floor.tsv or below IFC4's (docs/ifcx-coverage.md).
