@@ -208,7 +208,7 @@ jobs:
       # A failed prebuilt download is built from crates.io instead.
       - id: tools5
         continue-on-error: true
-        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with: { tool: cargo-nextest@0.9.146 }
       - if: steps.tools5.outcome == 'failure'
         shell: bash
@@ -237,7 +237,7 @@ jobs:
       # A failed prebuilt download is built from crates.io instead.
       - id: tools6
         continue-on-error: true
-        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with: { tool: "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9" }
       - if: steps.tools6.outcome == 'failure'
         shell: bash
@@ -431,7 +431,7 @@ jobs:
       # A failed prebuilt download is built from crates.io instead.
       - id: tools7
         continue-on-error: true
-        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with: { tool: "wasm-bindgen@${{ env.WB }}" }
       - if: steps.tools7.outcome == 'failure'
         shell: bash
