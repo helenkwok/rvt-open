@@ -38,7 +38,7 @@ serde-wasm-bindgen = "0.6"
 rvt = { package = "rvt-open", path = "..", default-features = false, features = ["sqlite"] }
 # SQLite's host services (clock, local time, randomness, sleep) from the
 # browser through wasm-bindgen: Date, crypto.getRandomValues, Atomics.wait.
-sqlite-wasm-rs = { version = "=0.6.2", default-features = false, features = ["wasm-bindgen"] }
+sqlite-wasm-rs = { version = "=0.6.3", default-features = false, features = ["wasm-bindgen"] }
 
 # wasm-pack configuration. The bundled `wasm-opt` in wasm-pack 0.14
 # doesn't accept rustc's bulk-memory output — it prints a wall of
