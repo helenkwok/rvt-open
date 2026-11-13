@@ -34,14 +34,14 @@ jobs:
       # tried once more, so that it does not turn the run red on its own.
       - id: sarif
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: results.sarif
           category: scorecard
       - if: steps.sarif.outcome == 'failure'
         run: sleep 30
       - if: steps.sarif.outcome == 'failure'
-        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: results.sarif
           category: scorecard
