@@ -4,6 +4,8 @@
 //! path the caller names, and returns a summary of what went in and what was
 //! left out, with the SHA-256 of the file. The file itself is never returned.
 
+use std::io::Write;
+
 use rmcp::model::Resource;
 use rvt::control::WalkerControl;
 use rvt::ifc::gltf::{GltfOptions, model_to_glb_with};
@@ -218,12 +220,6 @@ pub fn gltf(
         Ok::<_, Failure>((model, notes, unread))
     })?;
     let (model, notes, unread) = built;
-    refuse_partial(&unread, args.allow_partial)?;
-    control.check().map_err(|_| Failure::Cancelled)?;
-    let glb = model_to_glb_with(&model, &GltfOptions::default());
-    let written = output::write(&target, args.overwrite, control, |writer| {
-        writer.write_all(&glb)
-    })?;
     let computed = entry.computed(config, control)?;
     let source = Source {
         model: &model,
@@ -233,11 +229,9 @@ pub fn gltf(
     };
     refuse_partial(&source, args.allow_partial)?;
     control.check().map_err(|_| Failure::Cancelled)?;
-    // The binary buffer is written from where it was built: the GLB is never
-    // assembled whole beside it, as `model_to_glb` does.
-    let (document, binary) = build_gltf(&computed.model);
+    let glb = model_to_glb_with(&model, &GltfOptions::default());
     let written = output::write(&target, args.overwrite, control, |writer| {
-        write_glb_to(&document, &binary, writer)
+        writer.write_all(&glb)
     })?;
     Ok(finish(
         &entry,
