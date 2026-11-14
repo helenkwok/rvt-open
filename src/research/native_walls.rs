@@ -995,6 +995,9 @@ pub fn native_walls_and_top_joins_into(
     let mut end_joins: BTreeMap<u64, EndJoins> = BTreeMap::new();
     let facts_only: BTreeSet<u64> = facts_only.difference(walls).copied().collect();
     let mut facts_top_joined: BTreeMap<u64, bool> = BTreeMap::new();
+    // Each wall's ends, as `WallReads::ends` reads them, from the same records:
+    // the top joins below count these walls as read for the ends too.
+    let mut read_ends: BTreeMap<u64, WallEnds> = BTreeMap::new();
     let mut facts_bearing: BTreeMap<u64, bool> = BTreeMap::new();
     let options = Options {
         selected_ids: walls.union(&facts_only).copied().collect(),
@@ -1042,6 +1045,11 @@ pub fn native_walls_and_top_joins_into(
         }
         if !matches!(class, "SWall" | "ArcWall") {
             return Ok(());
+        }
+        if class == "SWall" && (walls.contains(&id) || facts_only.contains(&id)) {
+            if let Some(read) = wall_ends(graph, id) {
+                read_ends.insert(id, read);
+            }
         }
         if facts_only.contains(&id) {
             facts_top_joined.insert(id, is_top_joined(graph));
@@ -1308,6 +1316,7 @@ pub fn native_walls_and_top_joins_into(
     // wall's record again for this one member. Only the walls it found
     // one for count as read: a wall whose whole graph did not decode (over the
     // value budget, say) is left to the projected read, which builds far less.
+    reads.ends.extend(read_ends);
     reads.top_joined.extend(&top_joined);
     reads.top_joins_read.extend(top_joined.keys().copied());
     // A wall read for its facts alone counts as read for them only where its
