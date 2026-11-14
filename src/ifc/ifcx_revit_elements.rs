@@ -11,10 +11,17 @@
 //! Each element keeps its own parameters (not its type's: those are on the
 //! type's node), grouped and valued as Revit's property sets are
 //! ([`super::revit_property_sets`]), under `rvtopen::revit::<Group>::<Name>`,
-//! except that an enumeration whose text is not known keeps its integer. A
-//! phase also gets its name and its place in the project's order (`Sequence
-//! Number`), and a design option its name and its set (`Design Option Set
-//! Id`), which the file keeps outside its parameters.
+//! except that what Revit's export leaves out is written as saved (an
+//! enumeration whose text is not known as its integer, a parameter of the
+//! IFC group, a real of another spec, an ElementId that names nothing with a
+//! name as its id). A phase also gets its name and its place in the project's
+//! order (`Sequence Number`), and a design option its name and its set
+//! (`Design Option Set Id`), which the file keeps outside its parameters.
+//! Every element also gets the category and design option its record's
+//! `ElementHeader` holds, and the fields of view, level, grid, wall,
+//! revision, base point and location records that are built-in parameters
+//! ([`RECORD_FIELDS`], with the type a record names): revisions, base points,
+//! project and site locations and the internal origin become nodes too.
 //! A type no element names as its type is marked
 //! [`RevitElement::unused_type`]: the IFCX file holds it only on request.
 //! Its node's path is the GlobalId Revit's IFC exporter gives it (as the
