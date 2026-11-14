@@ -195,7 +195,9 @@ fn ifcx_diagnostics_are_a_layer_of_their_own() {
         .values()
         .map(|&t| u64::from(t))
         .collect();
-    let revit_elements = rvt::ifc::ifcx_revit_elements::read(&mut rf, &named_types).unwrap();
+    let revit_elements =
+        rvt::ifc::ifcx_revit_elements::read(&mut rf, &named_types, model.georeference.as_ref())
+            .unwrap();
     assert!(!revit_elements.is_empty(), "no other elements read");
     let mut with_unused = graph.clone();
     with_unused.add_revit_elements(&revit_elements, true);

@@ -112,6 +112,24 @@ pub struct Georeference {
     /// Not written to any output.
     #[serde(skip)]
     pub crs_candidates: Vec<Crs>,
+    /// The elements the georeference was read from, for IFCX. Not written
+    /// to any other output.
+    #[serde(skip)]
+    pub elements: SiteElements,
+}
+
+/// The project locations, site locations and base points of a model.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SiteElements {
+    /// Each project location (`GeoLocation`): its ElementId, name and the
+    /// ElementId of its site location.
+    pub locations: Vec<(u64, String, u64)>,
+    /// Each site location's (`GeoSite`) ElementId.
+    pub sites: Vec<u64>,
+    /// Each base point: its ElementId, its position in the active location's
+    /// shared coordinates (east, north, elevation; feet) and its
+    /// `m_locationType` (1 survey point, 0 project base point).
+    pub base_points: Vec<(u64, [f64; 3], Option<u32>)>,
 }
 
 /// Source of a CRS chosen with `rvt-ifc --epsg`.
@@ -634,6 +652,17 @@ pub fn read(rf: &mut RevitFile) -> Option<Georeference> {
         }
     }
 
+    let elements = SiteElements {
+        locations: locations
+            .iter()
+            .map(|(&id, l)| (id, l.name.clone(), l.site))
+            .collect(),
+        sites: sites.keys().copied().collect(),
+        base_points: points
+            .iter()
+            .map(|(&id, &(p, kind))| (id, to_shared_ft(p), kind))
+            .collect(),
+    };
     Some(Georeference {
         location_name: loc.name.clone(),
         latitude: site.lat.to_degrees(),
@@ -646,6 +675,7 @@ pub fn read(rf: &mut RevitFile) -> Option<Georeference> {
         project_base_point,
         crs,
         crs_candidates,
+        elements,
     })
 }
 
@@ -667,6 +697,7 @@ mod tests {
             project_base_point: None,
             crs: None,
             crs_candidates: Vec::new(),
+            elements: SiteElements::default(),
         };
         let s = g.to_shared([0.0, 0.0, 0.0]);
         for (a, b) in s.iter().zip([100.0, 50.0, 3.0]) {
@@ -713,6 +744,7 @@ mod tests {
             project_base_point: None,
             crs: None,
             crs_candidates: Vec::new(),
+            elements: SiteElements::default(),
         };
         assert_eq!(g.override_epsg(3879), None);
         let c = g.crs.clone().unwrap();
