@@ -272,6 +272,13 @@ fn ifcx_diagnostics_are_a_layer_of_their_own() {
                 .iter()
                 .filter(|(k, _)| !k.starts_with("rvtopen::ifc4::"))
                 .map(|(k, v)| (k.clone(), v.clone()))
+                // A node's mesh is kept outside its attributes and written
+                // among them.
+                .chain(
+                    n.mesh
+                        .as_deref()
+                        .map(|m| (rvt::ifc::graph::UsdMesh::KEY.to_string(), m.to_value())),
+                )
                 .collect();
             (p, attrs)
         })
