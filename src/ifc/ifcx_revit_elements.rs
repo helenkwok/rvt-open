@@ -20,7 +20,7 @@
 //! Every element also gets the category and design option its record's
 //! `ElementHeader` holds, and the fields of view, level, grid, wall,
 //! revision, base point and location records that are built-in parameters
-//! ([`RECORD_FIELDS`], with the type a record names): revisions, base points,
+//! (`RECORD_FIELDS`, with the type a record names): revisions, base points,
 //! project and site locations and the internal origin become nodes too.
 //! A type no element names as its type is marked
 //! [`RevitElement::unused_type`]: the IFCX file holds it only on request.
