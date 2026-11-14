@@ -4011,6 +4011,9 @@ impl StepWriter<'_> {
         // writes it, its Pset_OpeningElementCommon.Reference is the host's, and
         // so is its Pset_EnvironmentalImpactIndicators.Reference, as on
         // every other opening Revit's export holds.
+        // how many openings of each host and tag are written, so a shaft
+        // cutting a slab in several loops gives each its own GlobalId.
+        let mut void_counts: HashMap<(usize, String), usize> = HashMap::new();
         for entity in &model.entities {
             let (host, tag, name, outline_feet, depth_feet, number) = match entity {
                 super::entities::IfcEntity::VoidOpening {
@@ -4089,7 +4092,15 @@ impl StepWriter<'_> {
                 Some(number) => crate::revit_global_ids::hashed_global_id(&format!(
                     "IfcOpeningElement:{number}:{host_gid}"
                 )),
-                None => gid(&["void-opening", host_gid, tag]),
+                None => {
+                    let seen = void_counts.entry((*host, tag.clone())).or_insert(0);
+                    *seen += 1;
+                    if *seen == 1 {
+                        gid(&["void-opening", host_gid, tag])
+                    } else {
+                        gid(&["void-opening", host_gid, tag, &seen.to_string()])
+                    }
+                }
             };
             let opening_id = self.id();
             self.emit_entity(

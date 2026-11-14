@@ -709,18 +709,23 @@ pub(super) type ShaftOutline = (Vec<(f64, f64)>, (f64, f64));
 /// takes the outline as a void. An element the shaft only partly overlaps
 /// is left as it is. Revit 2024 only
 /// ([`crate::partition_beam_axes::SHAFT_OUTLINE_SUPPORTED_REVIT_VERSIONS`]).
+///
+/// On Revit 2024 to 2027
+/// ([`crate::partition_beam_axes::SHAFT_SKETCH_SUPPORTED_REVIT_VERSIONS`])
+/// each shaft opening also takes its sketch's loops as its plan profile, which
+/// the openings it cuts in the slabs it crosses follow instead of its box.
 pub(super) fn attach_shaft_voids(
     rf: &mut RevitFile,
     revit_version: u32,
-    groups: [&mut Vec<DecodedElement>; 2],
+    mut groups: [&mut Vec<DecodedElement>; 2],
 ) {
     use crate::element_record_plan_profiles as erpp;
     use crate::partition_element_records as per;
-    // A shaft is cut on Revit 2024 only; a later release's floors,
-    // ceilings and roofs stay whole and the export counts the shafts
-    // (`shaft_opening_not_cut`).
+    // A shaft's outline is cut from the outlines within it on Revit 2024
+    // only; a later release's floors, ceilings and roofs stay whole and the
+    // export counts the shafts (`shaft_opening_not_cut`).
     if !per::supports_revit_version(revit_version)
-        || !crate::partition_beam_axes::supports_shaft_outlines(revit_version)
+        || !crate::partition_beam_axes::supports_shaft_sketches(revit_version)
     {
         return;
     }
@@ -755,9 +760,23 @@ pub(super) fn attach_shaft_voids(
         .into_iter()
         .filter(|record| record.builtin_category == per::OST_SKETCH_LINES)
         .collect();
-    let shafts: Vec<ShaftOutline> = shaft_outlines(rf, revit_version, &sketch_lines, &boxes)
+    let profiles = shaft_profiles(rf, revit_version, &sketch_lines, &boxes);
+    for element in groups.iter_mut().flat_map(|elements| elements.iter_mut()) {
+        let profile = element
+            .id
+            .filter(|_| element.class == crate::ifc::export_content::SHAFT_OPENING_CLASS)
+            .and_then(|id| profiles.get(&id));
+        if let Some(profile) = profile {
+            element.fields.extend(profile.fields());
+        }
+    }
+    if !crate::partition_beam_axes::supports_shaft_outlines(revit_version) {
+        return;
+    }
+    let shafts: Vec<ShaftOutline> = profiles
         .into_iter()
-        .filter_map(|(id, outline)| Some((outline, *heights.get(&id)?)))
+        .filter(|(_, profile)| profile.inner_xy.is_empty() && profile.pieces.is_empty())
+        .filter_map(|(id, profile)| Some((profile.outer_xy, *heights.get(&id)?)))
         .collect();
     let float = |element: &DecodedElement, wanted: &str| {
         element.fields.iter().find_map(|(name, value)| match value {
@@ -766,7 +785,9 @@ pub(super) fn attach_shaft_voids(
         })
     };
     for element in groups.into_iter().flat_map(|elements| elements.iter_mut()) {
-        if element.class == "Roof" && !roof_reads_exact_sketches(revit_version) {
+        if element.class == "Roof" && !roof_reads_exact_sketches(revit_version)
+            || element.class == crate::ifc::export_content::SHAFT_OPENING_CLASS
+        {
             continue;
         }
         let Some(profile) = erpp::plan_profile_from_fields(&element.fields) else {
@@ -801,24 +822,22 @@ pub(super) fn attach_shaft_voids(
     }
 }
 
-/// Each shaft's outline, `shafts` its plan record boxes. A shaft's
+/// Each shaft's sketch, `shafts` its plan record boxes. A shaft's
 /// sketch holds its boundary and the symbolic lines drawn across it, the
 /// diagonals of the X Revit shows in plan; lines that cross another of the
 /// sketch's lines are those, and are left out. The rest must be straight
-/// lines read exactly, or a full circle, that close into one
-/// loop spanning the shaft's record box. Its lines are those its Sketch
+/// lines read exactly, or full circles, that close into loops spanning
+/// the shaft's record box together: one loop, or several apart (rac_advanced's
+/// two shafts are three and four rectangles). Its lines are those its Sketch
 /// lists, or else those naming it.
-pub(super) fn shaft_outlines(
+pub(super) fn shaft_profiles(
     rf: &mut RevitFile,
     revit_version: u32,
     sketch_lines: &[crate::partition_element_records::PartitionElementRecord],
     shafts: &BTreeMap<u32, [f64; 4]>,
-) -> BTreeMap<u32, Vec<(f64, f64)>> {
+) -> BTreeMap<u32, crate::element_record_plan_profiles::PlanProfile> {
     use crate::element_record_plan_profiles as erpp;
     use std::collections::BTreeMap;
-    if !crate::partition_beam_axes::supports_shaft_outlines(revit_version) {
-        return BTreeMap::new();
-    }
     let line_ids: BTreeSet<u32> = sketch_lines.iter().map(|r| r.element_id).collect();
     let lists = erpp::scan_sketch_curve_lists(rf, revit_version, &line_ids);
     let mut members: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
@@ -836,8 +855,8 @@ pub(super) fn shaft_outlines(
         members.insert(shaft, listed.unwrap_or_else(named));
     }
     let ids: BTreeSet<u32> = members.values().flatten().copied().collect();
-    // The release gate is the shafts' own, checked above, not the beams' or
-    // the arcs'.
+    // The release gate is the shafts' own, checked by the caller, not the
+    // beams' or the arcs'.
     let (Ok(lines), Ok(circles)) = (
         crate::partition_beam_axes::scan_first_bounded_lines(rf, revit_version, &ids),
         crate::partition_beam_axes::scan_sketch_circles(rf, revit_version, &ids),
@@ -900,8 +919,8 @@ pub(super) fn shaft_outlines(
                 .zip(&shafts[&shaft])
                 .all(|(a, b)| (a - b).abs() <= SKETCH_BOX_TOLERANCE_FEET)
         });
-        if spans && profile.inner_xy.is_empty() && profile.pieces.is_empty() {
-            out.insert(shaft, profile.outer_xy);
+        if spans {
+            out.insert(shaft, profile);
         }
     }
     out
