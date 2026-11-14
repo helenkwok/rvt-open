@@ -184,11 +184,13 @@ fn nordic_office_concrete_draws_shared_shapes_in_place() {
             // drawn as their own outlines. 739 -> 744 maps and 10,842 ->
             // 10,835 mapped items: the 9 doors set in no wall are placed at
             // their stored origin, as Revit's export places them, and no
-            // longer share one map.
+            // longer share one map. 1,631 -> 1,634 shapes: the columns whose
+            // mesh is a prism of another section than their type's rectangle
+            // are drawn from it.
             maps: 744,
             mapped_items: 10_835,
             bodies: 12_803,
-            shapes: 1_631,
+            shapes: 1_634,
         },
     );
 }

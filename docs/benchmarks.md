@@ -37,7 +37,7 @@ Four `criterion` suites under `benches/`. Run with `cargo bench --bench
 | Suite | What it measures | Fixture |
 |---|---|---|
 | `compression` | Raw inflate throughput on synthetic gzip chunks. Isolates `compression::inflate_at` from any surrounding CFB / schema work. | In-memory |
-| `basic_file_info` | UTF-16LE key-value parse on a realistic BasicFileInfo buffer. Hot path for `rvt-info` / `rvt-history`. | In-memory synthesized |
+| `basic_file_info` | UTF-16LE key-value parse on a realistic BasicFileInfo buffer. Hot path for `rvt-info` / `rvt-analyze`. | In-memory synthesized |
 | `schema` | Floor-time timing for `formats::parse_schema` on an empty input. Richer real-schema timings are in the `project_file` suite below. | In-memory |
 | `project_file` | Open / summarize / schema-parse / elem-table records / ADocument walker on 913 KB and 34 MB real `.rvt` project files. Skips when the corpus isn't present. | magnetar-io/revit-test-datasets (LFS) |
 
@@ -125,7 +125,7 @@ bound on per-operation cost, not as microbenchmarks.
 | CLI | Mean | Notes |
 |---|---:|---|
 | `rvt-history` | **3.8 ms** | Parse document-upgrade history only |
-| `rvt-schema` | **4.5 ms** | Parse all 395 classes + 1,114 fields |
+| `rvt-schema` | **4.5 ms** | Parse all 4,126 classes + 11,562 fields |
 | `rvt-info` (text) | 7.6 ms | + basic-file-info + PartAtom + preview |
 | `rvt-info` (json) | 7.7 ms | Same content, JSON-serialised |
 | `rvt-history --partitions` | 19.4 ms | + every UTF-16LE string in `Partitions/NN` |
@@ -137,7 +137,7 @@ Raw hyperfine export: [`docs/data/bench-2024.md`](data/bench-2024.md),
 
 ### Full-corpus sweep
 
-`rvt-analyze --redact --json` over all 11 Revit releases:
+`rvt-analyze --redact --json` over 11 of the corpus's Revit releases:
 
 ```
 Mean:  227.2 ms ± 2.1 ms
@@ -178,8 +178,9 @@ cargo bench --bench project_file
 ```
 
 The `project_file` suite requires the magnetar-io/revit-test-datasets
-corpus (MIT, git-LFS); without it, each sub-benchmark emits a
-`skipping: … not present` message and exits green.
+corpus (MIT, git-LFS); without it, only the `open` sub-benchmark emits a
+`skipping … not present` message, the other four return silently, and the
+run exits green.
 
 ## Honest limitations
 
@@ -200,9 +201,9 @@ corpus (MIT, git-LFS); without it, each sub-benchmark emits a
   were taken on, not as a floor.
 - **Cold vs hot cache.** hyperfine defaults to warm-cache runs after
   1-2 warmups. First-open-from-disk cost is not separately reported.
-- **No allocation profiling.** The `Allocations` column in the planned
-  results table will require `criterion-perf-events` or a bespoke
-  `GlobalAlloc` wrapper. Not yet wired up.
+- **No allocation profiling.** Allocation counts would require
+  `criterion-perf-events` or a bespoke `GlobalAlloc` wrapper. Not yet
+  wired up.
 - **No cross-platform numbers.** Only Apple Silicon (M2 Max) is
   measured today. x86_64 Linux and Windows timings are expected to
   differ.

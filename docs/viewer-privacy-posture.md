@@ -61,7 +61,8 @@ The compiled `.wasm` artifact, built from the `rvt-wasm` crate:
 
 - Has no `wasm-bindgen` imports that map to `fetch`, `XMLHttpRequest`,
   or the network-shaped Web APIs.
-- Reads user-supplied bytes via `File` / `FileReader` only.
+- Reads user-supplied bytes via the `File` / `Blob` API
+  (`file.arrayBuffer()`) only.
 - Writes output through `Blob` download anchors so the user sees
   a browser download dialog — nothing is POSTed.
 
@@ -75,12 +76,14 @@ The viewer is deployed to GitHub Pages, a static host, and keeps to these
 rules:
 
 - No cookies, no localStorage tokens, no identifiers that survive
-  page reloads beyond the explicit `#v=...` URL fragment.
+  page reloads beyond its own query parameters; the `#v=...` share
+  fragment is a primitive the page does not bind.
 - No third-party analytics SDK (Google Analytics, Plausible,
   PostHog, etc.) — these send URLs, and URL fragments in this
   viewer can contain file hashes the user hasn't chosen to
   disclose.
-- A `Content-Security-Policy` header that keeps `connect-src`
+- A `Content-Security-Policy` `<meta>` element in
+  `viewer/index.html` that keeps `connect-src`
   restricted to `'self'` and `blob:`. The same-origin allowance
   exists only because the `wasm-pack` JavaScript loader fetches the
   static `rvt_bg.wasm` bundle from the viewer origin; `blob:` is
@@ -129,8 +132,10 @@ downloads.
 
 Three checks make the posture verifiable post-facto:
 
-1. `cargo deny check` — no crate in the dep tree has a known
-   telemetry history.
+1. `cargo deny check` — `deny.toml`'s RustSec advisories and yanked
+   crates, license allowlist, duplicate and wildcard bans, and
+   crates.io-only sources. It has no telemetry knowledge base, so a
+   crate with a telemetry history is caught only if someone listed it.
 2. `viewer/scripts/audit-wasm-imports.mjs` on the compiled viewer —
    every import of the `.wasm`, by name and by the body of its shim
    in the wasm-bindgen glue, checked for `fetch`, `XMLHttpRequest`,

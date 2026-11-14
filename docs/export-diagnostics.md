@@ -1,7 +1,7 @@
 # IFC Export Diagnostics
 
-`rvt-ifc --diagnostics path.json` writes a JSON sidecar next to the IFC
-output. The same payload is available to Python via
+`rvt-ifc --diagnostics path.json` writes a JSON sidecar to the path it
+names. The same payload is available to Python via
 `RevitFile.export_diagnostics_json()` / `rvt_to_ifc_diagnostics(path)` and to
 WASM via `openRvtBytesWithDiagnosticsMode(bytes, mode)`.
 
@@ -45,8 +45,8 @@ rvt-ifc model.rvt -o diagnostic.ifc --diagnostic-proxies \
   --diagnostics diagnostic.json
 ```
 
-Where each element was read from is a list as long as the file has elements,
-so it is off unless asked for:
+Where each element was read from is a list of the file's keyed elements,
+up to the 250,000 the table lists, so it is off unless asked for:
 
 ```bash
 rvt-ifc model.rvt -o model.ifc --diagnostics model.diagnostics.json --element-provenance
@@ -370,8 +370,9 @@ every reason of `skipped` the log's `total` is the sum of the items' counts and,
 for a reason that dropped none, the entries by class are the item's `classes`.
 `tests/export_decisions_counts.rs` checks this on Core Interior, the RE1 models
 (the default export, and the first phase, which leaves the 11 rooms out),
-Einhoven and the BIM4LCA as-built office. The one item it leaves out is
-`stream_not_read_resource_limit`, which counts streams, not elements. Core
+Einhoven and the BIM4LCA as-built office. The items it leaves out are
+`stream_not_read_resource_limit`, which counts streams, and
+`work_budget_reached`, which counts readers' stops, not elements. Core
 Interior has nothing left out (its `skipped` section is empty and the three
 `exported` counts are 0), so its log is empty and the test checks that; for the
 other models it names the reasons their diagnostics count and requires entries
@@ -379,7 +380,7 @@ for each, so an empty log cannot pass.
 
 | Stage | Reason | What was decided | Counted in |
 |---|---|---|---|
-| `element_skipped` | `below_min_element_confidence`, `low_confidence_schema_scan_candidate`, `element_record_without_element_id`, `element_record_frame_stopped` (`class`: the stage), `element_record_without_volume`, `element_record_in_non_primary_design_option`, `element_record_not_in_export_phase`, `room_not_in_export_phase`, `element_record_empty_curtain_panel`, `element_record_family_space_without_body`, `area_without_proven_body`, `shaft_opening_not_cut` (`class`: `ShaftOpening`) | The element is not in the export. A shaft opening is no element of the IFC: it is counted because its cut from the floors, ceilings and roofs it passes through is read on Revit 2024 only, so on a 2025 to 2027 file they stay whole. | the `skipped` item of the same reason |
+| `element_skipped` | `below_min_element_confidence`, `low_confidence_schema_scan_candidate`, `element_record_without_element_id`, `element_record_frame_stopped` (`class`: the stage), `element_record_without_volume`, `element_record_in_non_primary_design_option`, `element_record_not_in_export_phase`, `room_not_in_export_phase`, `element_record_empty_curtain_panel`, `element_record_family_space_without_body`, `element_record_family_type_draws_nothing`, `area_without_proven_body`, `shaft_opening_not_cut` (`class`: `ShaftOpening`) | The element is not in the export. A shaft opening is no element of the IFC: it is counted because its cut from the floors, ceilings and roofs it passes through is read on Revit 2024 only, so on a 2025 to 2027 file they stay whole. | the `skipped` item of the same reason |
 | `body_not_drawn` | `unsupported_geometry_curve`, `unsupported_geometry_profile`, `unsupported_geometry_missing_dimensions` | The element is written with no body. | the `skipped` item |
 | `opening_not_cut` | `unsupported_geometry_unresolved_host` | A door or window has no host to cut. | the `skipped` item |
 | `storey_not_bound` | `unsupported_geometry_missing_level` | The element is written outside any storey. | the `skipped` item |
@@ -437,7 +438,8 @@ What an entry's `offset` is, and what has been measured:
 Why a switch of its own, not `--element-provenance`: the log is bounded (at most
 5,000 entries a reason, whatever the model; 1,000 of each stage for
 `element_record_frame_stopped`, whose counts in `skipped` are complete) where the provenance table lists
-every element ([Provenance table size](#provenance-table-size)), and it needs no table in the
+every keyed element, up to the 250,000 it holds
+([Provenance table size](#provenance-table-size)), and it needs no table in the
 sidecar. Where an entry's
 evidence is an element the walk decoded, its stream and offset are read from a
 table built for the purpose and dropped. Someone asking why an element was left
@@ -575,14 +577,17 @@ minor release; incompatible changes must increment this number.
 | `warnings` | array | User-facing caveats for this specific export. On a Revit 2024 or later file that holds an Area or an area boundary line, one says how many declared chain records have an entry block that does not read (it does not fit the record, or an entry's second word is not -1): the Area reader does not see them, an Area among them with it. It is absent from a file with neither. |
 | `confidence` | object | Coarse export-readiness level and booleans for metadata/elements/geometry. |
 | `source_coverage` | object (optional) | Measured coverage from export/decode counts. `status` is `measured` when at least one fraction has a trustworthy denominator; otherwise `unset` with null fractions. Never invents ratios. |
-| `formats_latest_integrity` | object (optional) | `Formats/Latest` page-boundary integrity under the narrow gate (the page strip stays **disabled**). Multipage streams report `integrity_status: uncertain` and `diagnostic_code: RVT_FORMATS_MULTIPAGE_UNVERIFIED` without claiming completeness. `schema_scan_truncated` / `schema_scanned_bytes` report whether schema parsing stopped at the 65536-byte scan limit — a "we stopped looking" signal, not a claim about the unscanned tail. |
+| `formats_latest_integrity` | object (optional) | `Formats/Latest` page-boundary integrity under the narrow gate (the page strip is on: `checksum_tail_stripping` is `enabled`). Multipage streams report `integrity_status: uncertain` and `diagnostic_code: RVT_FORMATS_MULTIPAGE_UNVERIFIED` without claiming completeness. `schema_scan_truncated` / `schema_scanned_bytes` are kept from before, when schema parsing stopped at the 65536-byte scan limit: parsing now reads the whole stream, so the first is always `false` and the second the whole inflated length (`null` where inflate failed). |
 `skipped.reason` is stable enough for automation. Geometry-related reasons use
 the `unsupported_geometry_*` prefix and currently include
 `unsupported_geometry_curve`, `unsupported_geometry_profile`,
 `unsupported_geometry_unresolved_host`, `unsupported_geometry_missing_level`,
 and `unsupported_geometry_missing_dimensions`. A single element can appear in
 more than one geometry bucket because these are condition counts, not a
-deduplicated element total.
+deduplicated element total. A whole whose aggregated parts carry its body, a
+stair or curtain wall as Revit's export draws them, is in neither
+`unsupported_geometry_profile` nor `unsupported_geometry_missing_dimensions`:
+it is counted in `exported.building_elements_carried_by_parts`.
 
 `stream_not_read_resource_limit` lists the streams a resource limit kept from
 being read whole: `classes` maps each stream's name (`Partitions/189`)
@@ -853,6 +858,13 @@ The property's *absence* is the honest unbound state. An unbound element is
 contained in the `IfcBuilding`, which says "in this building, storey unknown";
 it is never written into the first storey, because that would state a
 containment nothing measured.
+
+Where the storeys' names come from Level records, a line of `warnings` counts
+the exported elements by how they reached their storey: through the Level
+ElementId, through a measured elevation match (either face), in a storey with
+no `StoreyBindSource`, and in no storey. A part of an aggregate, such as a
+curtain wall's panel, is placed through its whole and is not counted. Where the Level ElementId placed every element, the line says "all
+N element(s)"; a join that placed none is not named.
 
 `LevelBindResolved` still stays `false` for every element whose storey came
 from an elevation match, and for the typed `Floor` / `Room` `m_level_id` join,

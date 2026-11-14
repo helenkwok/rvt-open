@@ -23,7 +23,7 @@ the `Formats/Latest` + `PartAtom` streams.
 cargo build --release
 ./target/release/rvt-info \
     --show-classes --redact \
-    samples/rac_basic_sample_family-2024.rfa
+    _corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa
 ```
 
 Real output (redacted form; raw path → `<redacted>` so it's safe to
@@ -32,8 +32,6 @@ commit):
 ```text
 Revit file ·
   version:       2024
-  build:         —
-  file GUID:     —
   original path: C:\Users\<redacted>\Desktop\Revit - <redacted project id>\2024\racbasicsamplefamily.rfa
   partition:     Partitions/67
   streams:       13 (397312 total bytes)
@@ -46,10 +44,10 @@ Schema ·
   class names (inferred): 395
   sample:
     - ADocument
+    - APIAppInfo
     - DBView
     - HostObj
     - Symbol
-    - APIAppInfo
 
 Streams ·
   BasicFileInfo
@@ -80,8 +78,9 @@ What just happened:
 - `--redact` rewrote Windows usernames + project-ID folders to
   `<redacted>` placeholders while preserving path shape.
 
-For JSON: `./target/release/rvt-info -f json --redact my.rfa` (schema is
-the `rvt::reader::Summary` struct in `src/reader.rs`). For the full
+For JSON: `./target/release/rvt-info -f json --redact my.rfa` (the schema
+is `rvt::reader::Summary` in `src/reader.rs`, plus `document` and
+`family_types`). For the full
 forensic report (identity + upgrade history + format anchors + schema +
 tag-linkage histogram + disclosure scan) use `rvt-analyze --redact
 <file>`; committed samples live at
@@ -106,9 +105,8 @@ with the C++ type signature the Revit serializer writes it with.
 Real output (HostObj family only):
 
 ```text
-Schema · 395 classes
-          13570 fields total
-          1087 unique C++ type signatures
+Schema · 4126 classes
+          11562 fields total
 
 Classes matching /HostObj/:
 
@@ -143,7 +141,7 @@ decodes each field according to the `Formats/Latest` schema, and prints
 typed values.
 
 ```bash
-./target/release/rvt-doc --redact samples/rac_basic_sample_family-2024.rfa
+./target/release/rvt-doc --redact _corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa
 ```
 
 Real output (first ~15 of 36 ADocument fields):
@@ -164,7 +162,7 @@ adocument entry:   0x000a40
   m_active_view_id                     :: ElementId  [tag=193, id=7]
   m_sun_settings_id                    :: ElementId  [tag=201, id=12]
   m_project_location_id                :: ElementId  [tag=219, id=8]
-  m_devBranchInfo                      :: element_id
+  m_devBranchInfo                      :: ElementId  [tag=…, id=…]
   …
 ```
 
@@ -198,7 +196,7 @@ let entry    = schema.classes.iter().find(|c| c.name == "Level").unwrap();
 let decoded  = SimpleDecoder::new("Level").decode(bytes, entry, &handle_index)?;
 let level    = Level::from_decoded(&decoded);
 // Level { name: Some("Ground Floor"), elevation_feet: Some(0.0),
-//         level_type_id: Some(ElementId { tag: 201, id: 17 }),
+//         level_type_id: Some(ElementId::new(17)),
 //         is_building_story: Some(true) }
 ```
 
@@ -362,7 +360,8 @@ GlobalIds are derived from identity, not generated; entity and property ordering
 stable by construction. With those three in place, re-running the
 writer on the same `IfcModel` twice produces byte-equal strings, and
 re-running the fixture-generating test with `DUMP_IFC=1` produces a
-file whose only varying line is line 4 (the timestamp).
+file whose only varying lines are line 4 and line 13 (the timestamp,
+in the `FILE_NAME` header and the `IfcOwnerHistory`).
 
 CI writes the synthetic project and structural frame on every run and
 validates them with IfcOpenShell and `tools/ci/ifc_schema_arity.py`; it

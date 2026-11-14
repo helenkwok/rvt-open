@@ -164,13 +164,14 @@ impl ElementDecoder for MyClassDecoder {
 ```
 
 `decode` is where failing closed happens: production skips an instance
-the decoder rejects, and `decode_instance` itself rejects nothing, so a
+the decoder rejects, and `decode_instance` itself rejects nothing. A
 decoder that only checks the schema name (which is all `SimpleDecoder`
-does) marks every same-class candidate typed, a truncated one or a false
-hit included. Before registering a class of your own, make `decode`
-return an `Error` for an instance missing a field `MyClass` needs, or
-holding one as `Bytes` or in a type the schema does not give it, and for
-any other check Step 4 lists.
+does) is not enough on its own: production drops only the two shapes
+below — one with a `Bytes` field and one its typed view reads nothing
+from — and any other same-class false hit is marked typed. Before
+registering a class of your own, make `decode` return an `Error` for an
+instance missing a field `MyClass` needs, or holding one as `Bytes` or in
+a type the schema does not give it, and for any other check Step 4 lists.
 
 ### Step 3 — Register in the dispatch table
 
@@ -227,7 +228,8 @@ list is also advertised as typed, so the same change:
 ### Step 4 — Write down how it can fail
 
 Unit tests are banned in this repository, synthesized-byte tests
-included. Before writing the decoder, list the ways it could go wrong
+included, the one exception a pure helper in `src/` (CONTRIBUTING.md).
+Before writing the decoder, list the ways it could go wrong
 on real files: a field that is absent on one release, a record of
 another class that happens to parse, a length that runs past the
 stream, a value that is plausible but wrong. Each one becomes a check

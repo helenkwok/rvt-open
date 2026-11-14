@@ -38,13 +38,13 @@ issue that tracks the remainder:
 
 | IFC type | Recovered | Remaining gap tracked in |
 |---|---|---|
-| `IFCWALL` | Revit 2024 set exact; run cut back by the joins the record names, the L corners its join lists leave open decided by its joined-wall lists: 360 of 360 world-exact | (2024 ArcWall records) |
-| `IFCDOOR` | Revit 2024 set and host binding exact | (opening cut from the wall curve) |
+| `IFCWALL` | Revit 2024 set exact; run cut back by the joins the record names, the L corners its join lists leave open decided by its joined-wall lists: 360 of 360 world-exact | nothing wall-specific; are closed |
+| `IFCDOOR` | Revit 2024 set exact; host is the wall the reference list names | (opening cut on releases other than 2024 and 2025) |
 | `IFCSLAB` | Revit 2024 set with sketch-line profiles, 80 of 80; all 80 storey-bound, as are the 20 IFCSHADINGDEVICE plates | nothing slab-specific; plate containment is closed |
-| `IFCSPACE` | Revit 2024 room set 116 of 116 with real names, numbers and storeys; body is the record box, equal to the reference envelope on all 116 | (boundary polygon: the record carries no sketch, measured negative) |
-| `IFCWINDOW` | Revit 2024 set and host binding exact; all 6 storey-bound | nothing window-specific; window containment is closed |
+| `IFCSPACE` | Revit 2024 room set 116 of 116 with real names, numbers and storeys; the outline is the room's stored solid's, and a room whose solid does not close keeps its record box | nothing space-specific; is closed |
+| `IFCWINDOW` | Revit 2024 set exact; host is the wall the reference list names; all 6 storey-bound | nothing window-specific; window containment is closed |
 | `IFCMATERIALLAYERSETUSAGE` | 403, on the floors, shading devices and walls whose types have layers. The walls' single layers take their category's material, "Default Wall" from the document's object styles. The reference export is a `ReferenceView_V1.2` file with no `IfcMaterialLayerSet`, so the sets are scored against the faces its bodies style with each material: 403 of 403 within 0.001 ft | (elements drawn whole get no set) |
-| `IFCOPENINGELEMENT` | opening, void and fill chain per host | (true opening cut) |
+| `IFCOPENINGELEMENT` | opening, void and fill chain per host wall | (opening cut on releases other than 2024 and 2025) |
 
 The table lists exactly the types `catalogued_divergence_notes` in
 `src/ifc/compare.rs` carries a note for; `IFCCOLUMN` has no note because

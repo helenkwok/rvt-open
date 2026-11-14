@@ -208,7 +208,11 @@ fn shell_widths(structure: &Fv) -> Option<[f64; 2]> {
         .collect::<Option<_>>()?;
     let count = |name: &str| usize::try_from(structure.get(name)?.as_u64()?).ok();
     let (exterior, interior) = (count("m_numShellLayersExt")?, count("m_numShellLayersInt")?);
-    if exterior + interior > widths.len() || widths.iter().any(|w| !w.is_finite() || *w < 0.0) {
+    if exterior
+        .checked_add(interior)
+        .is_none_or(|shells| shells > widths.len())
+        || widths.iter().any(|w| !w.is_finite() || *w < 0.0)
+    {
         return None;
     }
     Some([
@@ -377,19 +381,34 @@ pub fn curtain_wall_type_names(
     rf: &mut RevitFile,
     types: &BTreeSet<u64>,
 ) -> anyhow::Result<BTreeMap<u64, String>> {
+    Ok(curtain_wall_types(rf, types, Options::default().releases)?
+        .into_iter()
+        .filter_map(|(id, name)| Some((id, name?)))
+        .collect())
+}
+
+/// Each type in `types` whose native record is a `NewCurtainWallType`, with
+/// its `SymbolInfo.m_name` where the record holds one, read on `releases`. The
+/// class alone says the type is a curtain wall's; the name is only its label
+pub fn curtain_wall_types(
+    rf: &mut RevitFile,
+    types: &BTreeSet<u64>,
+    releases: std::ops::RangeInclusive<u32>,
+) -> anyhow::Result<BTreeMap<u64, Option<String>>> {
     let mut out = BTreeMap::new();
     if types.is_empty() {
         return Ok(out);
     }
     let options = Options {
         selected_ids: types.clone(),
+        releases,
         ..Options::default()
     };
     extract_graphs(rf, &options, |record| {
         if record.class_name.as_deref() != Some("NewCurtainWallType") {
             return Ok(());
         }
-        if let Some(name) = record.graph.as_ref().and_then(|graph| {
+        let name = record.graph.as_ref().and_then(|graph| {
             graph
                 .objects
                 .iter()
@@ -397,9 +416,9 @@ pub fn curtain_wall_type_names(
                 .fields
                 .get("m_name")?
                 .as_str()
-        }) {
-            out.insert(record.identity.element_id, name.to_string());
-        }
+                .map(str::to_string)
+        });
+        out.insert(record.identity.element_id, name);
         Ok(())
     })?;
     Ok(out)
@@ -487,7 +506,7 @@ pub struct EndJoins {
 /// The index of the object `VWallDriver.m_pCrv` of the record names, where it
 /// is one `GLine`: a wall with an edited elevation profile holds more than one
 /// curve, and the pointer says which is its location curve.
-fn location_curve_index(graph: &crate::native_parameters::ObjectGraph) -> Option<usize> {
+pub(crate) fn location_curve_index(graph: &crate::native_parameters::ObjectGraph) -> Option<usize> {
     let token = graph
         .objects
         .iter()
@@ -572,6 +591,21 @@ fn is_top_joined(graph: &crate::native_parameters::ObjectGraph) -> bool {
     })
 }
 
+/// Whether a wall is the host panel of another curtain wall's grid: its record
+/// holds a `HostPanelInfo` object, which names the placeholder panel of the
+/// owner's cell it fills. Revit's exporter writes no such wall as
+/// itself: `WallExporter.Export` returns for a wall whose owner is a curtain
+/// wall, and `CurtainSystemExporter.GetVisiblePanelsForGrid` folds it into
+/// the owner's parts (revit-ifc, CLEANROOM.md source 5). Only the object's
+/// presence is read, so the field list the projected graph builds is
+/// unchanged.
+fn is_host_panel(graph: &crate::native_parameters::ObjectGraph) -> bool {
+    graph
+        .objects
+        .iter()
+        .any(|object| object.class_name == "HostPanelInfo")
+}
+
 /// The fields of an `SWall` and an `ArcWall` graph that [`wall_facts`] reads
 /// (`wall_type_id`: `m_WallAttributesId`; `is_top_joined`: `m_baseOrTop`;
 /// `wall_load_bearing`: `m_isStructuralSignificant`, `m_wallStructuralUsage`),
@@ -603,6 +637,9 @@ pub struct WallFacts {
     pub top_joined: bool,
     /// Whether Revit calls the wall load bearing (`wall_load_bearing`).
     pub load_bearing: Option<bool>,
+    /// Whether the wall is the host panel of another curtain wall's grid
+    /// (`is_host_panel`).
+    pub host_panel: bool,
 }
 
 /// [`WallFacts`] of a wall's graph: the only reader of the graph
@@ -613,6 +650,7 @@ pub fn wall_facts(graph: &crate::native_parameters::ObjectGraph) -> WallFacts {
         type_id: wall_type_id(graph),
         top_joined: is_top_joined(graph),
         load_bearing: wall_load_bearing(graph),
+        host_panel: is_host_panel(graph),
     }
 }
 
@@ -640,6 +678,24 @@ fn wall_read_fields(class: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+thread_local! {
+    static WALL_READ_PASSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static WALL_FACTS_ONLY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The passes over the file [`WallReads`] has made on this thread since it
+/// started: a probe sets it beside an export to see whether a reader found its
+/// walls' facts already read.
+pub fn wall_read_passes() -> u64 {
+    WALL_READ_PASSES.with(std::cell::Cell::get)
+}
+
+/// The walls [`native_walls_and_top_joins_into`] has read on this thread for
+/// their facts alone (its `facts_only`), counting those whose record it read
+pub fn wall_facts_only_reads() -> u64 {
+    WALL_FACTS_ONLY.with(std::cell::Cell::get)
+}
+
 /// What reads of walls' native records have found, kept so that the reader
 /// of the same walls that follows finds it rather than reading the records
 /// again (: each read is a pass over the file, and on a Revit 2015 to
@@ -650,6 +706,9 @@ fn wall_read_fields(class: &str) -> Option<&'static [&'static str]> {
 pub struct WallReads {
     type_ids: BTreeMap<u64, u64>,
     type_ids_read: BTreeSet<u64>,
+    /// The walls read with their type ids whose record holds a
+    /// `HostPanelInfo`.
+    host_panels: BTreeSet<u64>,
     top_joined: BTreeMap<u64, bool>,
     top_joins_read: BTreeSet<u64>,
     functions: BTreeMap<u64, i64>,
@@ -711,6 +770,7 @@ impl WallReads {
         if selected.is_empty() {
             return Ok(());
         }
+        WALL_READ_PASSES.with(|passes| passes.set(passes.get() + 1));
         let options = Options {
             selected_ids: selected,
             releases: crate::native_document::NATIVE_RELEASES,
@@ -719,6 +779,7 @@ impl WallReads {
             ..Options::default()
         };
         let mut type_ids: BTreeMap<u64, u64> = BTreeMap::new();
+        let mut host_panels: BTreeSet<u64> = BTreeSet::new();
         let mut top_joined: BTreeMap<u64, bool> = BTreeMap::new();
         let mut ends: BTreeMap<u64, WallEnds> = BTreeMap::new();
         let mut bearing: BTreeMap<u64, bool> = BTreeMap::new();
@@ -737,6 +798,11 @@ impl WallReads {
                 if let Some(type_id) = facts.type_id {
                     type_ids.insert(id, type_id);
                 }
+                if facts.host_panel
+                    && matches!(record.class_name.as_deref(), Some("SWall" | "ArcWall"))
+                {
+                    host_panels.insert(id);
+                }
             }
             if joins.contains(&id)
                 && matches!(record.class_name.as_deref(), Some("SWall" | "ArcWall"))
@@ -754,6 +820,7 @@ impl WallReads {
         })?;
         self.type_ids.extend(type_ids);
         self.type_ids_read.extend(types);
+        self.host_panels.extend(host_panels);
         self.top_joined.extend(top_joined);
         self.ends.extend(ends);
         self.top_joins_read.extend(joins);
@@ -789,6 +856,33 @@ impl WallReads {
             .iter()
             .filter_map(|id| Some((*id, *self.bearing.get(id)?)))
             .collect())
+    }
+
+    /// The type (`m_WallAttributesId`) of each of `walls` whose record names
+    /// one, reading only the walls not read already: the same read
+    /// [`Self::type_functions`] and `read_wall_records` share.
+    pub fn type_ids(
+        &mut self,
+        rf: &mut RevitFile,
+        walls: &BTreeSet<u64>,
+    ) -> anyhow::Result<BTreeMap<u64, u64>> {
+        self.read(rf, walls, &BTreeSet::new())?;
+        Ok(walls
+            .iter()
+            .filter_map(|id| Some((*id, *self.type_ids.get(id)?)))
+            .collect())
+    }
+
+    /// Each of `walls` whose `SWall` or `ArcWall` record holds a
+    /// `HostPanelInfo` (`is_host_panel`), reading only the walls not
+    /// read already: the same read [`Self::type_ids`] makes.
+    pub fn host_panels(
+        &mut self,
+        rf: &mut RevitFile,
+        walls: &BTreeSet<u64>,
+    ) -> anyhow::Result<BTreeSet<u64>> {
+        self.read(rf, walls, &BTreeSet::new())?;
+        Ok(walls.intersection(&self.host_panels).copied().collect())
     }
 
     /// [`wall_top_joins`], reading only the walls not read already.
@@ -864,21 +958,30 @@ pub fn native_walls_and_top_joins(
     rf: &mut RevitFile,
     walls: &BTreeSet<u64>,
 ) -> anyhow::Result<WallRecords> {
-    native_walls_and_top_joins_into(rf, walls, &mut WallReads::default())
+    native_walls_and_top_joins_into(rf, walls, &BTreeSet::new(), &mut WallReads::default())
 }
 
 /// [`native_walls_and_top_joins`], leaving in `reads` what the same records
 /// give a reader of the walls' types: each of `walls`' type ids, and the
-/// Function of each `BasicWallType` record the read takes besides.
+/// Function of each `BasicWallType` record the read takes besides;
+/// and what they give [`WallReads::top_joins`] and [`WallReads::load_bearing`]
+///
+/// The walls of `facts_only` are read in the same pass for those facts alone,
+/// their type id, top join and load bearing, and are not in the records
+/// returned: the readers that follow ask them of every wall, and a wall the
+/// caller draws no body for would otherwise cost them a pass of their own.
+/// One whose record is not read is left to them.
 pub fn native_walls_and_top_joins_into(
     rf: &mut RevitFile,
     walls: &BTreeSet<u64>,
+    facts_only: &BTreeSet<u64>,
     reads: &mut WallReads,
 ) -> anyhow::Result<WallRecords> {
     if walls.is_empty() {
         return Ok(WallRecords::default());
     }
     let mut type_ids: BTreeMap<u64, u64> = BTreeMap::new();
+    let mut host_panels: BTreeSet<u64> = BTreeSet::new();
     let mut functions: BTreeMap<u64, i64> = BTreeMap::new();
     let mut functions_read: BTreeSet<u64> = BTreeSet::new();
     let mut top_joined: BTreeMap<u64, bool> = BTreeMap::new();
@@ -890,8 +993,14 @@ pub fn native_walls_and_top_joins_into(
     let mut whole: BTreeSet<u64> = BTreeSet::new();
     let mut bounded: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
     let mut end_joins: BTreeMap<u64, EndJoins> = BTreeMap::new();
+    let facts_only: BTreeSet<u64> = facts_only.difference(walls).copied().collect();
+    let mut facts_top_joined: BTreeMap<u64, bool> = BTreeMap::new();
+    // Each wall's ends, as `WallReads::ends` reads them, from the same records:
+    // the top joins below count these walls as read for the ends too.
+    let mut read_ends: BTreeMap<u64, WallEnds> = BTreeMap::new();
+    let mut facts_bearing: BTreeMap<u64, bool> = BTreeMap::new();
     let options = Options {
-        selected_ids: walls.clone(),
+        selected_ids: walls.union(&facts_only).copied().collect(),
         selected_classes: BTreeSet::from(["BasicWallType".to_string()]),
         releases: crate::native_document::NATIVE_RELEASES,
         // A wall whose data copies disagree on its line takes its location
@@ -905,9 +1014,12 @@ pub fn native_walls_and_top_joins_into(
     extract_graphs(rf, &options, |record| {
         if let Some(graph) = record.graph.as_ref() {
             let id = record.identity.element_id;
-            if walls.contains(&id) {
+            if walls.contains(&id) || facts_only.contains(&id) {
                 if let Some(type_id) = wall_type_id(graph) {
                     type_ids.insert(id, type_id);
+                }
+                if is_host_panel(graph) {
+                    host_panels.insert(id);
                 }
             }
         }
@@ -931,7 +1043,22 @@ pub fn native_walls_and_top_joins_into(
             }
             return Ok(());
         }
-        if !matches!(class, "SWall" | "ArcWall") || !walls.contains(&id) {
+        if !matches!(class, "SWall" | "ArcWall") {
+            return Ok(());
+        }
+        if class == "SWall" && (walls.contains(&id) || facts_only.contains(&id)) {
+            if let Some(read) = wall_ends(graph, id) {
+                read_ends.insert(id, read);
+            }
+        }
+        if facts_only.contains(&id) {
+            facts_top_joined.insert(id, is_top_joined(graph));
+            if let Some(load_bearing) = wall_load_bearing(graph) {
+                facts_bearing.insert(id, load_bearing);
+            }
+            return Ok(());
+        }
+        if !walls.contains(&id) {
             return Ok(());
         }
         top_joined.insert(id, is_top_joined(graph));
@@ -1179,10 +1306,29 @@ pub fn native_walls_and_top_joins_into(
     }
     reads.type_ids.extend(type_ids);
     reads.type_ids_read.extend(walls.iter().copied());
+    reads.host_panels.extend(host_panels);
     reads.functions.extend(functions);
     reads.functions_read.extend(functions_read);
     reads.bearing.extend(bearing);
     reads.bearing_read.extend(walls.iter().copied());
+    // The top joins too: on Revit 2015 to 2023, `read_wall_records` and
+    // `attach_wall_top_joins` ask for them next, and would otherwise read every
+    // wall's record again for this one member. Only the walls it found
+    // one for count as read: a wall whose whole graph did not decode (over the
+    // value budget, say) is left to the projected read, which builds far less.
+    reads.ends.extend(read_ends);
+    reads.top_joined.extend(&top_joined);
+    reads.top_joins_read.extend(top_joined.keys().copied());
+    // A wall read for its facts alone counts as read for them only where its
+    // record was read, so one it did not decode is still read by the reader
+    // that asks.
+    let facts_read: Vec<u64> = facts_top_joined.keys().copied().collect();
+    WALL_FACTS_ONLY.with(|count| count.set(count.get() + facts_read.len() as u64));
+    reads.type_ids_read.extend(&facts_read);
+    reads.bearing.extend(facts_bearing);
+    reads.bearing_read.extend(&facts_read);
+    reads.top_joined.extend(facts_top_joined);
+    reads.top_joins_read.extend(facts_read);
     let walls = found
         .into_iter()
         .map(|(id, (mut wall, type_id))| {

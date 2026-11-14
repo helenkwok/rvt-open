@@ -36,8 +36,9 @@ use std::process::ExitCode;
         rvt-gltf model.rvt --format pdf3d       writes model.pdf, a 3D PDF (U3D)\n  \
         rvt-gltf model.rvt --format obj         writes model.obj and its materials, model.mtl\n\n\
         Exit status 3: a resource limit kept part of the file from being read, so\n\
-        nothing was written. Re-run with --large-model, or --allow-partial to write\n\
-        it anyway."
+         nothing was written. Re-run with --large-model, or --allow-partial to write\n\
+         it anyway. A reader that stopped at its work budget is a warning: the output\n\
+         is written."
 )]
 struct Cli {
     /// Revit file to convert (.rvt / .rfa / .rte / .rft).
@@ -210,7 +211,7 @@ fn resolve_paths(
     let output = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| input.with_extension(extension));
-    if output == input {
+    if rvt::cli::same_file(&output, &input) {
         return Err(format!(
             "refusing to overwrite the input {}; pass -o <path>",
             input.display()
@@ -263,6 +264,18 @@ fn run(cli: &Cli) -> Result<(), Failure> {
     for note in notes {
         if cli.verbose || !note.starts_with("openings ") {
             eprintln!("rvt-gltf: {note}");
+        }
+    }
+    // A reader that stopped at its work budget leaves out what it would have
+    // read, and the model is still written, with this warning.
+    let stops = rf.work_budget_stops();
+    if !stops.is_empty() {
+        eprintln!(
+            "rvt-gltf: warning: {} reader(s) stopped at a work budget, so the model leaves out what they would have read:",
+            stops.len()
+        );
+        for line in rvt::cli::work_budget_report(&stops) {
+            eprintln!("{line}");
         }
     }
     let unread = rf.unread_streams().len();

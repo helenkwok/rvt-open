@@ -12,7 +12,8 @@ Everything listed here is:
 - `Sync + Send` where it's a struct (safe to pass across a
   `wasm-bindgen` boundary via JSON).
 - `serde::Serialize + Deserialize` (pass across the JS ↔ WASM
-  bridge as JSON, no binary FFI needed).
+  bridge as JSON, no binary FFI needed), except `ElementParameter`, which
+  is `Serialize` alone, a read result the viewer never sends back.
 - Zero I/O (pure data → data transforms; the only I/O is
   `RevitFile::open` at the entry point).
 
@@ -244,9 +245,13 @@ renderer that runs out of memory takes the tab and the open model with it, with
 no error to show. After a read has run out of memory, or its worker has gone
 without a word, that file is read only when asked.
 
-The page keeps each element's answer, up to 64 elements and the least recently
-selected going first, until a file is opened again, so an element selected a
-second time reads nothing.
+The page keeps each element's answer, up to 64 elements and 8 Mi characters of
+JSON between them (the answers measured below are about 2,300 characters each),
+the least recently selected going first and the answer just read always staying,
+until a file is opened again, so an element selected a second time reads
+nothing. The page's address (`?parametersRemembered=`,
+`?parametersRememberedCharacters=`) can lower either limit, for the browser
+tests, and never raises it.
 
 Measured in the viewer tests on (CI runner, WASM without LTO): a read's wasm
 instance took 17 MiB on Einhoven (the open's worker 23 MiB), 275 MiB on Core
@@ -335,6 +340,31 @@ windows and curtain panels translucent). Element nodes are in the model's
 frame (feet, +Z up) and
 hang under one root node whose matrix, `gltf::Z_UP_FEET_TO_Y_UP_METRES`,
 turns them into glTF's metres with +Y up.
+
+Every material carries `extras: { colourSource, alphaSource }`
+(`gltf::MaterialExtras`), which loaders surface as the material's
+`userData`. Each says where its value comes from:
+
+- `"file"`: the Revit material's own colour, or one minus its own
+  transparency.
+- `"rvt-open"`: rvt-open chose it. That covers the category colours above,
+  translucent windows and faint rooms included, the mid-grey of a material
+  whose colour was not read, and the opaque alpha of one whose transparency
+  was not read.
+
+The two are marked apart because a material decoded from `Global/Latest`
+reads its colour and its transparency from two fields, so either can be read
+without the other. A consumer that stores colour or opacity as model data
+should keep only what is marked `"file"`. Metallic and roughness are always
+rvt-open's, guessed from the material's name.
+
+A view's visibility and graphics overrides (a category or element set to
+50% transparency in one view, say) are not read, and nothing in the GLB or
+the IFC reflects them. Revit's own IFC export ignores them too. In Autodesk's
+`revit-ifc`, `BodyExporter.GetBestColourAndOpacity` takes an element's colour
+and opacity from its material, or else from its category's material, and
+`CategoryUtil` writes `IfcSurfaceStyleRendering.Transparency` from the
+material's own transparency.
 
 ### 2D (SVG plan view)
 
@@ -432,7 +462,7 @@ phase passed is exact. A phase the file lacks
 throws, and its message lists the file's phases.
 
 The result carries `phases`, the project's phases in order, `[{ id, name? }]`,
-the last being the default export's; it is empty for a family, for Revit 2015
+the last being the default export's; it is empty for a family, for Revit 2014
 and earlier, and for a file whose phases could not be read. The viewer lists
 them in the File status panel ("Phase", the last marked as the default) and
 reads the file again with the chosen phase, as it does for the saved-mesh
@@ -647,8 +677,8 @@ describing the error.
 <!-- wasm-bindings -->
 | Binding | Arguments | Returns | What it does |
 |---|---|---|---|
-| `openRvtBytesWithDiagnosticsMode` | `bytes`, `mode: string` | `{ model, diagnostics, phases }` | The same at an export quality mode: `scaffold`, `typed-no-geometry`, `geometry` or `strict`, the stronger ones failing when the file cannot meet them. Doors and windows are drawn from their saved meshes, as in the next row with the default options |
-| `openRvtBytesWithDiagnosticsModeAndOpenLimits` | `bytes`, `mode: string`, `limits: { largeModel?, maxStreamBytes?, maxInflateBytes?, savedMeshes?, phase? }` or `null`, `progress?: (stage: string, done: number, total: number \| null) => void` | `{ model, diagnostics, phases }` | `openRvtBytesWithDiagnosticsMode` under the reader's resource limits: `largeModel` is `rvt-ifc --large-model` (streams up to 2 GiB, inflating up to the 4 GiB wasm32 holds, the walker's scan cap lifted to match), `maxStreamBytes` and `maxInflateBytes` are whole numbers of bytes that win over it, and a field left out keeps its default. `savedMeshes` (default `true`) draws the doors and windows of Revit 2023 to 2027 files from the meshes Revit saved for them, as `rvt-ifc` does by default; `false` keeps their bounding boxes and skips the pass over the saved graphics. `phase` (a phase's name, matched exactly first, or its ElementId as a number) exports that project phase, as `rvt-ifc --phase` does; see [Export phase](#export-phase). A stream a limit stops is listed in the diagnostics (`stream_not_read_resource_limit`, a `Not read whole:` warning each) and the viewer offers "Retry with large-model limits"; unknown fields and fractional or negative limits throw. When the saved graphics cannot be read the model keeps its boxes and the diagnostics carry a warning. `progress`, when given, is called as the decoder works with the stage name (`schema-parse`, `candidate-scan`, `element-decode`, `partition-scan`, `saved-graphics`, `saved-meshes`) and how many of how many it has done (`total` is `null` where the stage has no count yet), at a stage's start, its end and each whole percent between; see [Decode progress](#decode-progress). A function that throws is ignored |
+| `openRvtBytesWithDiagnosticsMode` | `bytes`, `mode: string` | `{ model, diagnostics, phases }` | The same at an export quality mode: `scaffold`, `typed-no-geometry`, `geometry` or `strict`, the stronger ones failing when the file cannot meet them. Every element whose body would be its record's bounding box is drawn from its saved mesh, as in the next row with the default options |
+| `openRvtBytesWithDiagnosticsModeAndOpenLimits` | `bytes`, `mode: string`, `limits: { largeModel?, maxStreamBytes?, maxInflateBytes?, savedMeshes?, phase? }` or `null`, `progress?: (stage: string, done: number, total: number \| null) => void` | `{ model, diagnostics, phases }` | `openRvtBytesWithDiagnosticsMode` under the reader's resource limits: `largeModel` is `rvt-ifc --large-model` (streams up to 2 GiB, inflating up to the 4 GiB wasm32 holds, the walker's scan cap lifted to match), `maxStreamBytes` and `maxInflateBytes` are whole numbers of bytes that win over it, and a field left out keeps its default. `savedMeshes` (default `true`) draws every element of a Revit 2023 to 2027 file that would be a bounding box from the mesh Revit saved for it, as `rvt-ifc` does by default; `false` keeps their bounding boxes and skips the pass over the saved graphics. `phase` (a phase's name, matched exactly first, or its ElementId as a number) exports that project phase, as `rvt-ifc --phase` does; see [Export phase](#export-phase). A stream a limit stops is listed in the diagnostics (`stream_not_read_resource_limit`, a `Not read whole:` warning each) and the viewer offers "Retry with large-model limits"; unknown fields and fractional or negative limits throw. When the saved graphics cannot be read the model keeps its boxes and the diagnostics carry a warning. `progress`, when given, is called as the decoder works with the stage name (`schema-parse`, `candidate-scan`, `element-decode`, `partition-scan`, `saved-graphics`, `saved-meshes`) and how many of how many it has done (`total` is `null` where the stage has no count yet), at a stage's start, its end and each whole percent between; see [Decode progress](#decode-progress). A function that throws is ignored |
 | `quickSummary` | `bytes` | `Summary` | Release, build, PartAtom and the stream inventory, read without decoding the model |
 | `fileMetadata` | `bytes` | `FileMetadata` | Document identity (release, worksharing, last save, GUID, save counter), from the two identity streams only |
 | `scheduleCsv` | `model`, `kind: string`, `metric: boolean`, `excel: boolean` | `string` | The element (`kind` `"elements"`: the elements the IFC export writes, each on the storey it puts it on) or room (`"rooms"`) schedule as CSV, the columns of the [user guide](user-guide.md#get-a-schedule-into-excel) |

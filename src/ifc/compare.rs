@@ -395,22 +395,22 @@ pub fn format_human_report(report: &IfcCompareReport) -> String {
 fn catalogued_divergence_notes(deltas: &BTreeMap<String, CountDelta>) -> Vec<String> {
     let mut notes = Vec::new();
     // Keep these tied to the OPEN issue that tracks each type's remaining
-    // gap so QA reports stay honest. Revit 2024 partition element records
-    // closed the recall issues for walls, doors,
-    // windows and slabs; what is left is geometry residuals, storey
-    // containment, compound layers and spaces.
+    // gap so QA reports stay honest, and in step with the table in
+    // docs/ifc-compare.md. Revit 2024 partition element records ( to)
+    // closed the recall, host, storey and wall-join
+    // gaps of walls, doors, windows and slabs.
     const CATALOGUE: &[(&str, &str)] = &[
         (
             "IFCWALL",
-            "Revit 2024 wall set is exact; bodies match Revit on 351 of 360 after the join reference list, and the 9 remaining over-trimmed ends at true L corners are tracked. Earlier releases: 2023 ArcWall only, 2024 ArcWall records tracked.",
+            "Revit 2024 wall set is exact; each run is cut back by the joins its record names, and the L corners its join lists leave open are decided by its joined-wall lists: 360 of 360 walls world-exact on Core Interior.",
         ),
         (
             "IFCDOOR",
-            "Revit 2024 door set and host binding are exact; the opening cut from the wall location curve is tracked.",
+            "Revit 2024 door set is exact, and each door takes the wall its reference list names as its host; the opening cut on releases other than 2024 and 2025 is tracked.",
         ),
         (
             "IFCSLAB",
-            "Revit 2024 slabs carry sketch-line profiles; plate storey containment is tracked.",
+            "Revit 2024 slabs carry sketch-line profiles, 80 of 80, and all 80 are storey-bound.",
         ),
         (
             "IFCSPACE",
@@ -418,7 +418,7 @@ fn catalogued_divergence_notes(deltas: &BTreeMap<String, CountDelta>) -> Vec<Str
         ),
         (
             "IFCWINDOW",
-            "Revit 2024 window set and host binding are exact; window storey containment is tracked.",
+            "Revit 2024 window set is exact, each window takes the wall its reference list names as its host, and all 6 are storey-bound.",
         ),
         (
             "IFCMATERIALLAYERSETUSAGE",
@@ -426,7 +426,7 @@ fn catalogued_divergence_notes(deltas: &BTreeMap<String, CountDelta>) -> Vec<Str
         ),
         (
             "IFCOPENINGELEMENT",
-            "Opening, void and fill chain is emitted per host binding; the true opening cut is tracked.",
+            "Opening, void and fill chain is emitted per host wall; the opening cut on releases other than 2024 and 2025 is tracked.",
         ),
     ];
     for (ty, note) in CATALOGUE {

@@ -70,7 +70,8 @@ impl From<CliConvention> for ExportConvention {
         history record, so two exports of the same file are the same bytes.\n\n\
         Exit status 3: a resource limit kept part of the file from being read, so\n\
         no IFC was written (the diagnostics sidecar, if asked for, lists the\n\
-        streams). Re-run with --large-model, or --allow-partial to write it anyway."
+        streams). Re-run with --large-model, or --allow-partial to write it anyway.\n\
+        A reader that stopped at its work budget is a warning: the IFC is written."
 )]
 struct Args {
     /// Path to a `.rvt` / `.rfa` / `.rte` / `.rft` file.
@@ -487,6 +488,19 @@ fn main() -> std::process::ExitCode {
 fn run(args: Args) -> anyhow::Result<()> {
     rvt::cli::log_stage_memory();
     let started = std::time::Instant::now();
+    let out_path = args.output.clone().unwrap_or_else(|| {
+        let mut p = args.input.clone();
+        p.set_extension("ifc");
+        p
+    });
+    // Before the export, which can take minutes: the IFC would replace the file
+    // it was read from.
+    if rvt::cli::same_file(&out_path, &args.input) {
+        anyhow::bail!(
+            "refusing to overwrite the input {}; pass -o <path>",
+            args.input.display()
+        );
+    }
     let mut rf = RevitFile::open_with_limits(
         &args.input,
         rvt::cli::open_limits(
@@ -559,12 +573,17 @@ fn run(args: Args) -> anyhow::Result<()> {
         eprintln!("rvt-ifc: {left_out} base quantities left out");
     }
 
-    let out_path = args.output.clone().unwrap_or_else(|| {
-        let mut p = args.input.clone();
-        p.set_extension("ifc");
-        p
-    });
-
+    // A reader that stopped at its work budget leaves out what it would have
+    // read, and the export is still written, with this warning.
+    if let Some(stops) = diagnostics.work_budget_stops() {
+        eprintln!(
+            "rvt-ifc: warning: {} reader(s) stopped at a work budget, so the export leaves out what they would have read:",
+            stops.len()
+        );
+        for line in rvt::cli::work_budget_report(stops) {
+            eprintln!("{line}");
+        }
+    }
     // the steps above may have read more streams than the export did.
     rvt::ifc::record_unread_streams(&mut diagnostics, rf.unread_streams());
     let unread = rf.unread_streams().len();
@@ -1521,8 +1540,10 @@ fn warn_about_export_quality(diagnostics: &ExportDiagnostics) {
     let unexported = diagnostics.confidence.unexported_element_records;
     if unexported > 0 {
         eprintln!(
-            "warning: the IFC is incomplete: {unexported} model element record(s) \
-             use a layout whose ElementId this release cannot locate and were not exported."
+            "warning: {unexported} element record(s) belong to ElementIds the file's element table \
+             does not declare and were not exported. On the one model compared with \
+             Revit's export of the same save, such records were elements deleted since the file's \
+             last Save As; if nothing was deleted, the IFC is likely incomplete."
         );
     }
 }

@@ -124,6 +124,59 @@ fn refuses_to_overwrite_the_input() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The same file under other names is still the input: the paths as
+/// typed differ, so comparing them let `./model.rvt` and a link through, and
+/// the export replaced the file it had been read from.
+#[test]
+fn refuses_to_overwrite_the_input_however_it_is_spelled() {
+    let Some(source) = fixture() else { return };
+    let dir = scratch("overwrite-spelled");
+    let input = dir.join("model.rvt");
+    std::fs::copy(&source, &input).unwrap();
+    let before = std::fs::read(&input).unwrap();
+    #[allow(unused_mut)]
+    let mut spellings = vec![dir.join(".").join("model.rvt")];
+    #[cfg(unix)]
+    {
+        let link = dir.join("link.rvt");
+        std::os::unix::fs::symlink(&input, &link).unwrap();
+        spellings.push(link);
+        let hard = dir.join("hard.rvt");
+        std::fs::hard_link(&input, &hard).unwrap();
+        spellings.push(hard);
+    }
+    for bin in [
+        env!("CARGO_BIN_EXE_rvt-gltf"),
+        env!("CARGO_BIN_EXE_rvt-sheet"),
+        env!("CARGO_BIN_EXE_rvt-schedule"),
+        env!("CARGO_BIN_EXE_rvt-ifc"),
+    ] {
+        for output in &spellings {
+            let out = run(bin, &[input.as_os_str(), "-o".as_ref(), output.as_os_str()]);
+            assert_eq!(
+                out.status.code(),
+                Some(1),
+                "{bin} -o {}: {}",
+                output.display(),
+                stderr(&out)
+            );
+            assert!(
+                stderr(&out).contains("refusing to overwrite"),
+                "{bin} -o {}: {}",
+                output.display(),
+                stderr(&out)
+            );
+            assert_eq!(
+                std::fs::read(&input).unwrap(),
+                before,
+                "{bin} -o {} changed the input",
+                output.display()
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_missing_input_is_named_with_one_error_prefix() {
     for bin in [
@@ -143,6 +196,29 @@ fn a_missing_input_is_named_with_one_error_prefix() {
             "{bin} should name the path exactly once: {err}"
         );
         assert!(!err.contains("panicked"), "{bin}: {err}");
+    }
+}
+
+/// An error opening a file echoes the path it was given, home folder and all
+/// (the test above), so `--redact` has to scrub the error text as well as the
+/// path a successful run prints.
+#[test]
+fn rvt_doc_redact_scrubs_the_path_an_error_names() {
+    let bin = env!("CARGO_BIN_EXE_rvt-doc");
+    // Joined from parts so that no home path is written out whole, which the
+    // PII guard job would flag.
+    let path = ["/home/", "alice", "/OneDrive - Autodesk/models/missing.rvt"].concat();
+    let plain = stderr(&run(bin, &[path.as_ref()]));
+    assert!(
+        plain.contains("alice") && plain.contains("OneDrive - Autodesk"),
+        "the error does not name the folders to scrub: {plain}"
+    );
+    let out = run(bin, &[path.as_ref(), "--redact".as_ref()]);
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.starts_with("error: "), "{err}");
+    for leaked in ["alice", "OneDrive"] {
+        assert!(!err.contains(leaked), "{leaked} survives --redact: {err}");
     }
 }
 
@@ -279,5 +355,120 @@ fn sheet_writes_the_plan_as_dxf_and_dwg() {
             );
         }
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The committed family file every checkout has, with the size of each of its
+/// streams.
+fn family_fixture() -> (PathBuf, Vec<(String, u64)>) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("families")
+        .join("empty.rfa");
+    let compound = cfb::open(&path).unwrap();
+    let sizes = compound
+        .walk()
+        .filter(|entry| entry.is_stream())
+        .map(|entry| (entry.path().to_string_lossy().into_owned(), entry.len()))
+        .collect();
+    (path, sizes)
+}
+
+/// Every `.raw` file under `dir`.
+fn raw_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(raw_files(&path));
+        } else if path.extension().is_some_and(|ext| ext == "raw") {
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// A stream over `--max-stream-bytes` does not stop the dump: it is
+/// listed as not read, the streams that fit are written, the reader's report of
+/// what a limit left unread goes to stderr and the exit status is 3 unless
+/// `--allow-partial` says the partial dump is wanted.
+#[test]
+fn rvt_dump_lists_a_stream_over_the_limit_and_dumps_the_rest() {
+    let dir = scratch("dump-limit");
+    let (model, sizes) = family_fixture();
+    let basic = sizes
+        .iter()
+        .find(|(name, _)| name.ends_with("BasicFileInfo"))
+        .map(|(_, len)| *len)
+        .expect("a BasicFileInfo stream");
+    let limit = basic - 1;
+    let fitting = sizes.iter().filter(|(_, len)| *len <= limit).count();
+    assert!(
+        fitting > 0,
+        "a stream smaller than BasicFileInfo: {sizes:?}"
+    );
+    let whole = dir.join("whole");
+    let out = run(
+        env!("CARGO_BIN_EXE_rvt-dump"),
+        &[
+            model.as_os_str(),
+            "-o".as_ref(),
+            whole.as_os_str(),
+            "--raw".as_ref(),
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(whole.join("BasicFileInfo.raw").exists());
+
+    let limited = dir.join("limited");
+    let limit_text = limit.to_string();
+    let args: [&std::ffi::OsStr; 6] = [
+        model.as_os_str(),
+        "-o".as_ref(),
+        limited.as_os_str(),
+        "--raw".as_ref(),
+        "--max-stream-bytes".as_ref(),
+        limit_text.as_ref(),
+    ];
+    let out = run(env!("CARGO_BIN_EXE_rvt-dump"), &args);
+    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout
+        .lines()
+        .find(|line| line.contains("BasicFileInfo"))
+        .unwrap_or_else(|| panic!("no line for BasicFileInfo in {stdout}"));
+    assert!(line.contains("not read: over the stream limit"), "{line}");
+    let err = stderr(&out);
+    assert!(err.contains("were not read whole"), "{err}");
+    assert!(err.contains("BasicFileInfo"), "{err}");
+    assert!(err.contains("--allow-partial"), "{err}");
+    assert!(
+        !limited.join("BasicFileInfo.raw").exists(),
+        "a stream that was not read is not written"
+    );
+    assert!(
+        !raw_files(&limited).is_empty(),
+        "the streams that fit the limit were dumped"
+    );
+
+    let partial = dir.join("partial");
+    let out = run(
+        env!("CARGO_BIN_EXE_rvt-dump"),
+        &[
+            model.as_os_str(),
+            "-o".as_ref(),
+            partial.as_os_str(),
+            "--max-stream-bytes".as_ref(),
+            limit_text.as_ref(),
+            "--allow-partial".as_ref(),
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("were not read whole"),
+        "{}",
+        stderr(&out)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

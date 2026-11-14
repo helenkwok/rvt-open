@@ -39,11 +39,15 @@ pub const LEVEL_REFERENCE_FIELD: &str = "m_levelId";
 /// Value recorded for where [`LEVEL_REFERENCE_FIELD`] came from.
 pub const LEVEL_REFERENCE_SOURCE: &str = "partition_element_record_reference_list";
 
+/// [`LEVEL_BIND_SOURCE_FIELD`] of a room bound to the Level its own parameter
+/// block names, where its record's reference list names none.
+pub const ROOM_PARAMETER_BLOCK_SOURCE: &str = "partition_room_parameter_block";
+
 /// Property the emitted element carries [`LEVEL_REFERENCE_FIELD`] on.
 pub const LEVEL_ELEMENT_ID_PROPERTY: &str = "LevelElementId";
 
-/// Field carrying the two Levels a record names, in list order, when it
-/// names exactly two.
+/// Field carrying the Levels a record names, in list order, when it names
+/// exactly two, or, for a structural framing record, two or more
 pub const CONSTRAINT_LEVELS_FIELD: &str = "m_constraintLevelIds";
 
 /// Field recording how [`LEVEL_REFERENCE_FIELD`] was chosen when it is not
@@ -53,6 +57,10 @@ pub const LEVEL_BIND_SOURCE_FIELD: &str = "m_levelBindSource";
 /// Value of [`LEVEL_BIND_SOURCE_FIELD`] for a Level chosen by
 /// [`base_constraint_level`].
 pub const BASE_CONSTRAINT_SOURCE: &str = "partition_element_record_base_constraint";
+
+/// Value of [`LEVEL_BIND_SOURCE_FIELD`] for a beam or brace given the highest
+/// Level its record names, its Reference Level.
+pub const FRAMING_REFERENCE_LEVEL_SOURCE: &str = "partition_element_record_reference_level";
 
 /// Field carrying the reference list of a record that names no Level,
 /// less its own id.

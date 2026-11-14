@@ -17,7 +17,13 @@ pub(super) fn attach_ifc_export_overrides(
     // parameter.
     for elements in lists.iter_mut() {
         for element in elements.iter_mut() {
-            if matches!(element.class.as_str(), "Furniture" | "Casework") {
+            let defaults = matches!(element.class.as_str(), "Furniture" | "Casework")
+                || crate::ifc::category_map::lookup(&element.class).is_some_and(|mapping| {
+                    NOTDEFINED_DEFAULTS
+                        .iter()
+                        .any(|(entity, _)| *entity == mapping.ifc_type)
+                });
+            if defaults {
                 element.fields.push((
                     FURNITURE_RELEASE_FIELD.into(),
                     InstanceField::Integer {
@@ -911,8 +917,13 @@ const MODEL_TEXT_TYPE_CLASS: &str = "Text3dAttrSymbol";
 /// its own, the type its native record names
 /// ([`crate::native_element_types::system_type_names`]). Its family
 /// is then its class's system family ([`system_family`]), and a sweep's is
-/// Wall Sweep.
-pub(super) fn attach_native_type_names(rf: &mut RevitFile, products: &mut [DecodedElement]) {
+/// Wall Sweep. A wall sweep and a ramp on the releases of
+/// [`SWEEP_RAMP_NATIVE_TYPE_REVIT_VERSIONS`] only.
+pub(super) fn attach_native_type_names(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    products: &mut [DecodedElement],
+) {
     let has = |element: &DecodedElement, field: &str| {
         element.fields.iter().any(|(name, _)| name == field)
     };
@@ -920,6 +931,8 @@ pub(super) fn attach_native_type_names(rf: &mut RevitFile, products: &mut [Decod
         .iter()
         .filter(|element| {
             crate::native_element_types::reads_class(&element.class)
+                && (!matches!(element.class.as_str(), "WallSweep" | "Ramp")
+                    || SWEEP_RAMP_NATIVE_TYPE_REVIT_VERSIONS.contains(&revit_version))
                 && !has(element, TYPE_NAME_FIELD)
                 && !has(element, ELEMENT_NAME_FIELD)
         })
@@ -1440,13 +1453,22 @@ pub(super) fn attach_system_family_names(
             continue;
         }
         let has_layers = type_of(element).is_some_and(|id| layered.contains(&id));
+        // a floor of the Structural Foundations category is the Floor
+        // system family, which its record names as the class `Floor`.
+        let foundation_floor = element.class == "StructuralFoundation"
+            && element.fields.iter().any(|(name, value)| {
+                matches!(value, InstanceField::String(class)
+                    if name == REVIT_CLASS_FIELD && class == "Floor")
+            });
         let by_class = type_of(element)
             .and_then(|id| class_family.get(&id).copied())
             .filter(|family| match *family {
                 "Sloped Glazing" => element.class == "Roof",
                 _ => element.class == "StructuralFoundation",
             });
-        let family = by_class.or_else(|| system_family(&element.class, has_layers));
+        let family = by_class
+            .or_else(|| system_family(&element.class, has_layers))
+            .or_else(|| foundation_floor.then_some("Floor"));
         let Some(family) = family else {
             continue;
         };

@@ -173,7 +173,7 @@ pub fn recover_partition_schema_mvp(
     // identity, category, box and the readers called here; nothing else 2024
     // decodes on top of records is read. ---
     if crate::partition_element_records_2023::is_32bit_release(revit_version) {
-        let references = recover_2023_records(rf, revit_version, &mut out);
+        let references = recover_2023_records(rf, revit_version, &mut out, &mut wall_reads);
         attach_room_outlines(rf, revit_version, &mut out.rooms);
         // --- Pipes' types and centrelines, from their own native record
         // ---
@@ -230,6 +230,12 @@ pub fn recover_partition_schema_mvp(
             attach_curtain_axes(rf, revit_version, &mut out.products);
             attach_curtain_part_types_32(rf, revit_version, &references, &mut out.products);
         }
+        // --- Each door and window in the wall its own native record names,
+        // as on 2024 to 2027 ---
+        rebind_opening_hosts_to_native(rf, &out.walls, [&mut out.doors, &mut out.windows]);
+        // --- Each door's and window's opening from the outline its symbol
+        // cuts, as on 2024 to 2027 where no type opening is read ---
+        attach_cut_loop_openings_32(rf, revit_version, [&mut out.doors, &mut out.windows]);
         // --- The Level parameters each element's own native record names
         // ---
         attach_levels_32(
@@ -250,7 +256,7 @@ pub fn recover_partition_schema_mvp(
         // readers skip it, since the trim rewrote the record box they would test
         // a line against. ---
         if crate::partition_beam_axes::beam_axis_read_on(revit_version) {
-            attach_beam_rotations(rf, &mut out.products);
+            attach_beam_rotations(rf, revit_version, &mut out.products);
             attach_beam_axes(rf, revit_version, &mut out.products);
         }
         // --- A steel beam's I section from its type ---
@@ -457,6 +463,20 @@ pub fn recover_partition_schema_mvp(
     out.products = product_instances_from_partition_records(rf, revit_version, &level_ids)?;
     // --- Which floors, ceilings and roofs nothing cuts ---
     attach_slab_uncut(rf, &mut [&mut out.slabs, &mut out.products]);
+    // --- The sloped floors whose Depth and GrossVolume are measured ---
+    if SLOPED_FLOOR_QUANTITIES_REVIT_VERSIONS.contains(&revit_version) {
+        for element in out
+            .slabs
+            .iter_mut()
+            .chain(out.products.iter_mut())
+            .filter(|element| slab_top_plane_from_fields(&element.fields).is_some())
+        {
+            element.fields.push((
+                SLOPED_FLOOR_QUANTITIES_FIELD.into(),
+                InstanceField::Bool(true),
+            ));
+        }
+    }
     // --- Base constraints of elements naming two Levels, then
     // railings by their host and elements by the Level objects they name
     // ---
@@ -497,6 +517,7 @@ pub fn recover_partition_schema_mvp(
         &mut out.walls,
         &mut out.products,
         [&mut out.doors, &mut out.windows],
+        &mut wall_reads,
     );
     // --- Doors and windows in the nearest listed wall that is not a curtain wall ---
     bind_opening_hosts(&out.walls, &mut out.doors);
@@ -513,7 +534,7 @@ pub fn recover_partition_schema_mvp(
     // --- Beams' Cross-Section Rotation, from their native records,
     // before the axes, which the level beams longer than their lines
     // need it for ---
-    attach_beam_rotations(rf, &mut out.products);
+    attach_beam_rotations(rf, revit_version, &mut out.products);
     // --- Beams along their location lines ---
     attach_beam_axes(rf, revit_version, &mut out.products);
     // --- Pipes as cylinders along their ends ---
@@ -674,7 +695,7 @@ pub fn recover_partition_schema_mvp(
     // --- Wall sweeps ---
     attach_wall_sweep_types(rf, revit_version, &mut out.products);
     // --- Pipes, wall sweeps and ramps typed in their own record ---
-    attach_native_type_names(rf, &mut out.products);
+    attach_native_type_names(rf, revit_version, &mut out.products);
     // --- Curtain mullions drawn as an extrusion of their section ---
     attach_mullion_plain_hosts(rf, &mut out.products);
     // --- Walls' layers and exterior side ---
@@ -767,6 +788,8 @@ pub fn recover_partition_schema_mvp(
             attach_type_text_parameters(&type_parameters, elements);
         }
     }
+    // --- A door's or window's Fire Rating from its saved parameters ---
+    attach_saved_fire_ratings(rf, revit_version, [&mut out.doors, &mut out.windows]);
 
     // --- Level parameters from the per-element association record,
     // stairs' Base and Top Level from the same record and the Level named in
@@ -882,6 +905,14 @@ pub fn recover_partition_schema_mvp(
                 element
                     .fields
                     .push((COLUMN_UNJOINED_FIELD.into(), InstanceField::Bool(true)));
+                // The hollow section's four quantities are written on the
+                // releases they are measured on only.
+                if HOLLOW_SECTION_QUANTITIES_REVIT_VERSIONS.contains(&revit_version) {
+                    element.fields.push((
+                        COLUMN_HOLLOW_QUANTITIES_FIELD.into(),
+                        InstanceField::Bool(true),
+                    ));
+                }
             }
         }
         // --- The elements each column's pair steps name ---
@@ -1111,8 +1142,20 @@ fn element_record_decoded(
 ) -> DecodedElement {
     let (cx, cy) = record.plan_centre_feet();
     let (dx, dy, dz) = record.extents_feet();
-    let level_id =
-        crate::element_record_level_refs::unique_level_reference(&record.references, level_ids);
+    // a beam's or brace's Level is the one its record's second counted
+    // reference list names where that names any, else the first's, the
+    // list its Reference Level is read from: Revit puts it in that Level's
+    // storey. The first list alone gave 63 beams of each BIM4LCA timber office a
+    // storey other than Revit's.
+    let level_list: &[u64] = if class == "StructuralFraming"
+        && !crate::element_record_level_refs::named_levels(&record.second_references, level_ids)
+            .is_empty()
+    {
+        &record.second_references
+    } else {
+        &record.references
+    };
+    let level_id = crate::element_record_level_refs::unique_level_reference(level_list, level_ids);
     let mut fields = vec![
         (
             "m_locationX".into(),
@@ -1185,7 +1228,7 @@ fn element_record_decoded(
     if level_id.is_none() {
         // Base and top constraint, resolved against the Levels'
         // elevations by `resolve_base_constraint_levels`.
-        let named = crate::element_record_level_refs::named_levels(&record.references, level_ids);
+        let named = crate::element_record_level_refs::named_levels(level_list, level_ids);
         if named.is_empty() {
             // What the record names instead, resolved by
             // `resolve_hosted_levels`.
@@ -1209,7 +1252,9 @@ fn element_record_decoded(
                 ));
             }
         }
-        if named.len() == 2 {
+        // A beam or brace that names more than two keeps them too: its
+        // Reference Level is the highest.
+        if named.len() == 2 || (named.len() > 2 && class == "StructuralFraming") {
             fields.push((
                 crate::element_record_level_refs::CONSTRAINT_LEVELS_FIELD.into(),
                 InstanceField::Vector(

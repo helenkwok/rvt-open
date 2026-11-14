@@ -484,7 +484,16 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
       - run: tools/ci/fetch-tiny-models.sh _tiny
-      - run: cargo build --profile ci --bin rvt-ifc --bin rvt-schedule
+      - run: cargo build --profile ci --bin rvt-ifc --bin rvt-schedule --bin rvt-dump
+      # A second reader of the OLE container (olefile, pinned with hashes):
+      # every tiny model's stream names, stored sizes and stored bytes, and the
+      # committed family fixture's, must be the ones rvt-dump reads. Once, in
+      # the first part.
+      - name: Container streams against a second reader
+        if: matrix.part == 1
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ole" && "$RUNNER_TEMP/ole/bin/pip" install -q --require-hashes -r tools/ci/requirements-olefile.txt
+          "$RUNNER_TEMP/ole/bin/python" tools/ci/olefile_streams.py target/ci/rvt-dump _tiny tests/fixtures/families/empty.rfa
       - name: Export part ${{ matrix.part }} of the models
         run: |
           python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt

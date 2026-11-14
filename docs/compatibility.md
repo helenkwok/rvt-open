@@ -46,13 +46,13 @@ All four extensions share the same Microsoft Compound File Binary container, the
 | Type | Extension | Read | IFC4 export |
 |---|---|---|---|
 | Project | `.rvt` | yes | partial: spatial tree/diagnostics; typed elements depend on decoded coverage |
-| Family | `.rfa` | yes | a valid scaffold (IfcProject and spatial tree); family geometry is not exported and what `rvt-ifc` writes for a family is not measured |
+| Family | `.rfa` | yes | a valid scaffold (IfcProject and spatial tree); a supported standalone Revit 2020 family's one visible positive revolution exports as an analytic solid, confirmed against Revit's own IFC; no other family geometry is exported or measured |
 | Project template | `.rte` | same code, not measured: no `.rte` is in any corpus | not measured |
 | Family template | `.rft` | same code, not measured: no `.rft` is in any corpus | not measured |
 
 Notes:
 
-- The 11-release family corpus is `.rfa` only. Project files are the synthetic `corpus/tier1/` projects, the licensed models of [`reference-models.md`](reference-models.md) and Autodesk's sample projects; no `.rte` or `.rft` file is measured, and nothing is claimed about `.rvt`-specific streams that do not appear in families (worksharing metadata, linked-model tables, transmission data beyond the already-decoded `TransmissionData`).
+- The 12-release family corpus is `.rfa` only. Project files are the synthetic `corpus/tier1/` projects, the licensed models of [`reference-models.md`](reference-models.md) and Autodesk's sample projects; no `.rte` or `.rft` file is measured, and nothing is claimed about `.rvt`-specific streams that do not appear in families (worksharing metadata, linked-model tables, transmission data beyond the already-decoded `TransmissionData`).
 - The CLI binaries (`rvt-info`, `rvt-analyze`, `rvt-schema`, `rvt-history`, `rvt-diff`, `rvt-corpus`, `rvt-dump`, `rvt-doc`, `rvt-ifc`) accept any of the four extensions without special-casing.
 
 ## 3. Element class decode coverage
@@ -143,7 +143,7 @@ Column definitions:
 | Column | IfcColumn (COLUMN) | yes | no helper | yes | no helper | n/a |
 | StructuralColumn | IfcColumn (COLUMN) | yes | no helper | yes | no helper | n/a |
 | StructuralFraming | IfcBeam (BEAM) | yes | no helper | yes | no helper | n/a |
-| StructuralFoundation | IfcFooting | yes | no helper | yes | no helper | n/a |
+| StructuralFoundation | IfcFooting; a floor of the category is `IfcSlab` (`BASESLAB`) | yes | no helper | yes | no helper | n/a |
 | Rebar | IfcReinforcingBar | yes | no helper | yes | no helper | n/a |
 | Room | IfcSpace (SPACE) | yes | no helper | n/a | no helper | n/a |
 | Area | IfcSpace | yes | no helper | n/a | no helper | n/a |
@@ -152,17 +152,17 @@ Column definitions:
 | FurnitureSystem | IfcSystemFurnitureElement | yes | no helper | yes | no helper | n/a |
 | Casework | IfcFurniture | yes | no helper | yes | no helper | n/a |
 | LightingFixture | IfcLightFixture | yes | no helper | yes | no helper | n/a |
-| LightingDevice | IfcLightFixture (USERDEFINED) | yes | no helper | yes | no helper | n/a |
-| ElectricalEquipment | IfcElectricAppliance | yes | no helper | yes | no helper | n/a |
-| ElectricalFixture | IfcLightFixture | yes | no helper | yes | no helper | n/a |
-| MechanicalEquipment | IfcFlowController | yes | no helper | yes | no helper | n/a |
+| LightingDevice | IfcBuildingElementProxy | yes | no helper | yes | no helper | n/a |
+| ElectricalEquipment | IfcBuildingElementProxy | yes | no helper | yes | no helper | n/a |
+| ElectricalFixture | IfcBuildingElementProxy | yes | no helper | yes | no helper | n/a |
+| MechanicalEquipment | IfcBuildingElementProxy | yes | no helper | yes | no helper | n/a |
 | Duct | IfcDuctSegment | yes | no helper | yes | no helper | n/a |
 | DuctFitting | IfcDuctFitting | yes | no helper | yes | no helper | n/a |
 | Pipe | IfcPipeSegment | yes | no helper | yes | no helper | n/a |
 | PipeFitting | IfcPipeFitting | yes | no helper | yes | no helper | n/a |
 | PlumbingFixture | IfcSanitaryTerminal | yes | no helper | yes | no helper | n/a |
-| SpecialtyEquipment | IfcBuildingElementProxy (USERDEFINED) | yes | no helper | yes | no helper | n/a |
-| Mass | IfcBuildingElementProxy (USERDEFINED) | yes | no helper | n/a | no helper | n/a |
+| SpecialtyEquipment | IfcBuildingElementProxy | yes | no helper | yes | no helper | n/a |
+| Mass | IfcBuildingElementProxy | only with an "Export to IFC As" value | no helper | n/a | no helper | n/a |
 | GenericModel | IfcBuildingElementProxy | yes | no helper | n/a | no helper | n/a |
 | (unknown class) | IfcBuildingElementProxy | yes | n/a | n/a | n/a | n/a |
 
