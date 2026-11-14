@@ -389,6 +389,8 @@ pub(crate) fn face_loops_uv(g: &ObjectGraph, fi: usize) -> Result<Vec<Vec<[f64; 
     }
     Ok(loops)
 }
+/// The trim ring of the cylinder face `face`, its loop `li`, held to
+/// [`CYLINDER_RING_POINT_BUDGET`] points.
 fn ring(
     g: &ObjectGraph,
     index: &PointerIndex<'_>,
@@ -1310,6 +1312,10 @@ fn is_false(value: &bool) -> bool {
 }
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GraphicsMeshes {
+    /// A successfully decoded face used a null ruled-profile pointer's point.
+    /// Body admission still requires the owning element's measured category.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub has_collapsed_ruled_profile: bool,
     pub primitives: Vec<Primitive>,
     pub diagnostics: Vec<String>,
     pub unbounded_faces: usize,
@@ -1427,6 +1433,9 @@ fn graphics_from<'a>(
         ..Default::default()
     };
     let mut pointer_indices = BTreeMap::new();
+    // Each owner graph's empty-trim evidence, from one walk of it: the walk
+    // for each unbounded face cost faces × objects.
+    let mut empty_trims = BTreeMap::new();
     for selected in selection.selected {
         let g = match selected.source_owner_id {
             None => g,
@@ -1454,6 +1463,17 @@ fn graphics_from<'a>(
                     let fi = index.resolve(oi, ptr)?.context("null geometry face")?;
                     match face_indexed(g, index, fi)? {
                         Some(m) => {
+                            let face = &g.objects[fi];
+                            if let Some(si) = index.resolve(fi, &face.fields["m_pSurf"])? {
+                                let surface = &g.objects[si];
+                                if surface.class_name == "RuledSurf"
+                                    && ["m_pProfileCurve1", "m_pProfileCurve2"].iter().any(|name| {
+                                        surface.fields[*name]["pointer_token"].as_u64() == Some(0)
+                                    })
+                                {
+                                    out.has_collapsed_ruled_profile = true;
+                                }
+                            }
                             let normals = if m.normals.len() == m.vertices.len() {
                                 m.normals.clone()
                             } else {
@@ -1474,7 +1494,12 @@ fn graphics_from<'a>(
                             })
                         }
                         None => {
-                            if crate::native_empty_faces::is_observed_empty_trim_face(g, fi) {
+                            let empty_trim = empty_trims
+                                .entry(selected.source_owner_id)
+                                .or_insert_with(|| {
+                                    crate::native_empty_faces::EmptyTrimIndex::new(g)
+                                });
+                            if empty_trim.is_observed_empty_trim_face(g, fi) {
                                 out.empty_trim_faces += 1;
                             } else {
                                 out.unbounded_faces += 1;

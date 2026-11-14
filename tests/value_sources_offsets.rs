@@ -827,7 +827,19 @@ const SOURCE_VALUES: &[(&str, &str, Row)] = &[
     ),
     (
         "LevelBindSource",
+        "partition_room_parameter_block",
+        Gap {
+            reason: "a binding of a room to a Level, not a value of its body or placement: the Level is the one the room's own parameter block names, where its record's reference list names none",
+        },
+    ),
+    (
+        "LevelBindSource",
         "partition_element_record_base_constraint",
+        Gap { reason: BINDING },
+    ),
+    (
+        "LevelBindSource",
+        "partition_element_record_reference_level",
         Gap { reason: BINDING },
     ),
     (

@@ -157,8 +157,8 @@ fn export_diagnostics_sidecar_reports_default_ifc_readiness() -> Result<()> {
             .decoded
             .recovered_unit_identifiers
             .iter()
-            .any(|unit| unit == "autodesk.unit.unit:meters-1.0.0"),
-        "2024 family corpus should report its modal metric length unit"
+            .any(|unit| unit == "autodesk.unit.unit:millimeters-1.0.1"),
+        "2024 family corpus should report its own length unit, millimetres"
     );
     assert!(
         !diagnostics
@@ -396,14 +396,12 @@ fn diagnostic_ifc_export_includes_hostobjattr_proxies_with_provenance() -> Resul
 }
 
 #[test]
-fn einhoven_writes_revits_curtain_wall_and_wall() -> Result<()> {
-    // Revit 2023.1's own IFC4RV and IFC4DTV exports of this file (kept
-    // local; counts in tests/fixtures/project-counts/revit-ifc5-einhoven.json):
-    // Wall 2808 as IfcWall, curtain wall 7187 as an IfcCurtainWall with no
-    // body of its own aggregating its 24 Family1 panels as IfcPlate, no
-    // IfcMember. Its 24 ArcWall records are those panels' (typed by the
-    // panel family's symbol), not walls; written as walls they drew a box
-    // over every panel and kept 15 panels out (the "26 walls").
+fn einhoven_exports_its_wall_curtain_wall_and_panels() -> Result<()> {
+    // Revit 2023 Einhoven holds one basic wall (2808), one curtain
+    // wall (7187, a `NewCurtainWallType`) whose grid has 24 cells, each with a
+    // panel, two windows and one Level. The 24 standard ArcWall pattern
+    // matches (.3) are its panels, grid lines and two matches with no
+    // ElementId, none a wall, and are not written.
     let project_dir = match std::env::var("RVT_PROJECT_CORPUS_DIR") {
         Ok(d) => d,
         Err(_) => {
@@ -420,77 +418,114 @@ fn einhoven_writes_revits_curtain_wall_and_wall() -> Result<()> {
     let mut rf = RevitFile::open(&path)?;
     let result = RvtDocExporter.export_with_diagnostics(&mut rf)?;
     let model = result.model;
-    let of_type = |wanted: &str| -> Vec<&IfcEntity> {
-        model
-            .entities
+
+    let elements: Vec<(usize, &str, &str, Option<usize>)> = model
+        .entities
+        .iter()
+        .enumerate()
+        .filter_map(|(index, e)| match e {
+            IfcEntity::BuildingElement {
+                ifc_type,
+                type_guid,
+                storey_index,
+                ..
+            } => Some((
+                index,
+                ifc_type.as_str(),
+                type_guid.as_deref().unwrap_or(""),
+                *storey_index,
+            )),
+            _ => None,
+        })
+        .collect();
+    let of_type = |ifc_type: &str| -> Vec<&str> {
+        elements
             .iter()
-            .filter(
-                |e| matches!(e, IfcEntity::BuildingElement { ifc_type, .. } if ifc_type == wanted),
-            )
+            .filter(|e| e.1 == ifc_type)
+            .map(|e| e.2)
             .collect()
     };
-    let tags = |wanted: &str| -> Vec<String> {
-        of_type(wanted)
-            .into_iter()
-            .filter_map(|e| match e {
-                IfcEntity::BuildingElement { type_guid, .. } => type_guid.clone(),
-                _ => None,
-            })
-            .collect()
-    };
-    assert_eq!(tags("IFCWALL"), ["2808"], "Wall 2808 is the one wall");
-    assert_eq!(tags("IFCCURTAINWALL"), ["7187"], "curtain wall 7187");
-    assert_eq!(of_type("IFCPLATE").len(), 24, "its 24 panels");
-    assert_eq!(of_type("IFCMEMBER").len(), 0, "it has no mullion");
-    assert_eq!(of_type("IFCWINDOW").len(), 2, "Wall 2808's two windows");
-    assert!(
-        model.entities.iter().all(|e| !matches!(
-            e,
-            IfcEntity::BuildingElement { name, .. } if name.starts_with("ArcWall-")
-        )),
-        "no panel's ArcWall record is written as a wall"
+    assert_eq!(of_type("IFCWALL"), ["2808"], "the one basic wall");
+    assert_eq!(of_type("IFCCURTAINWALL"), ["7187"], "the one curtain wall");
+    assert_eq!(of_type("IFCWINDOW").len(), 2, "the two windows");
+    let mut panels = of_type("IFCPLATE");
+    panels.sort_unstable();
+    assert_eq!(
+        panels,
+        [
+            "7197", "7290", "7292", "7294", "7300", "7301", "7302", "7303", "8574", "8575", "8579",
+            "8580", "8638", "8639", "8640", "8641", "8642", "8643", "8681", "8682", "8683", "8684",
+            "8685", "8686"
+        ],
+        "the panels of the curtain wall's 24 cells"
     );
-    // The curtain wall's own solid is degenerate (0 faces in Revit): it is
-    // carried by its panels, with no box of its own.
-    for curtain_wall in of_type("IFCCURTAINWALL") {
+
+    // The curtain wall is named by its type and has no body of its own: its
+    // panels, which it aggregates, carry it.
+    let (wall_index, wall) = model
+        .entities
+        .iter()
+        .enumerate()
+        .find(|(_, e)| matches!(e, IfcEntity::BuildingElement { ifc_type, .. } if ifc_type == "IFCCURTAINWALL"))
+        .expect("curtain wall");
+    let IfcEntity::BuildingElement {
+        name,
+        extrusion,
+        solid_shape,
+        representation_map_index,
+        ..
+    } = wall
+    else {
+        unreachable!()
+    };
+    assert_eq!(name, "Curtain Wall:Curtain Wall 1:7187");
+    assert!(extrusion.is_none() && solid_shape.is_none() && representation_map_index.is_none());
+    let parts: Vec<usize> = model
+        .entities
+        .iter()
+        .filter_map(|e| match e {
+            IfcEntity::Aggregate { whole, parts } if *whole == wall_index => Some(parts.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let plates: Vec<usize> = elements
+        .iter()
+        .filter(|e| e.1 == "IFCPLATE")
+        .map(|e| e.0)
+        .collect();
+    assert_eq!(parts, plates, "the curtain wall aggregates its 24 panels");
+    assert_eq!(
+        result
+            .diagnostics
+            .exported
+            .building_elements_carried_by_parts,
+        1
+    );
+
+    // One storey, the file's one Level, and every element on it.
+    let storeys: Vec<&str> = model
+        .building_storeys
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    assert_eq!(storeys, ["Level 1"]);
+    assert!(elements.iter().all(|e| e.3 == Some(0)));
+
+    // None of the warnings the pattern matches gave.
+    for gone in [
+        "lack recovered thickness",
+        "partition Level-like strings",
+        "elevation fallback labels",
+        "Unsupported or incomplete geometry",
+    ] {
         assert!(
-            matches!(
-                curtain_wall,
-                IfcEntity::BuildingElement {
-                    extrusion: None,
-                    solid_shape: None,
-                    ..
-                }
-            ),
-            "curtain wall 7187 has no body of its own"
+            !result.diagnostics.warnings.iter().any(|w| w.contains(gone)),
+            "no warning should contain {gone:?}: {:?}",
+            result.diagnostics.warnings
         );
     }
-    // The wall keeps its body and its ElementId.
-    assert!(of_type("IFCWALL").iter().all(|e| matches!(
-        e,
-        IfcEntity::BuildingElement {
-            location_feet: Some(_),
-            extrusion: Some(_),
-            ..
-        }
-    )));
-    assert_eq!(
-        result.diagnostics.exported.building_elements_with_geometry, 27,
-        "1 wall, 24 panels and 2 windows have bodies"
-    );
-    assert!(
-        model.building_storeys.iter().any(|s| s.name == "Level 1"),
-        "Level 1 is a storey: {:?}",
-        model.building_storeys
-    );
-    assert!(
-        !result
-            .diagnostics
-            .unsupported_features
-            .iter()
-            .any(|feature| feature == "real_file_element_geometry"),
-        "real_file_element_geometry should not be unsupported"
-    );
+    assert_eq!(result.diagnostics.decoded.arcwall_records, 0);
 
     let step = write_step(&model);
     assert_eq!(step.matches("=IFCWALL(").count(), 1);

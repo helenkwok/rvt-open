@@ -1,6 +1,6 @@
 # Roadmap
 
-Last reviewed: 2026-10-30
+Last reviewed: 2026-11-13
 
 This roadmap is the public, contributor-facing view of where rvt-open is headed.
 The support boundary lives in [`docs/status.md`](docs/status.md) and the
@@ -31,8 +31,7 @@ IFC export of the same model wherever one is measured, and for 2015 to 2018,
 sample projects saved by Revit
 2019, 2023 and 2026 (but 2015's `rst_basic`, another model than its 2019 copy).
 What is not decoded
-(most parameters in IFC, family geometry, roofs by extrusion outside
-Revit 2025, openings whose symbol cuts no outline, the room phase rule against a Revit export made with the default setup) is listed in [`docs/status.md`](docs/status.md), and
+(most parameters in IFC, family geometry, openings whose symbol cuts no outline, the room phase rule against a Revit export made with the default setup) is listed in [`docs/status.md`](docs/status.md), and
 the four levels a file can reach are in the
 [supported profile](docs/supported-profile.md).
 
@@ -40,7 +39,7 @@ the four levels a file can reach are in the
 
 | Area | Status | Current state | Next decision point |
 |---|---|---|---|
-| Container, compression, metadata | Verified | MS-CFB container, Revit's truncated-gzip streams, PartAtom and previews open on every release from 2016 to 2027; 2015 project files open on Autodesk's sample projects, where PartAtom and previews are not measured. | Maintain compatibility and bounds checks against hostile input. |
+| Container, compression, metadata | Verified | MS-CFB container, Revit's truncated-gzip streams and PartAtom open on every release from 2016 to 2027, and a preview is checked on the 2024 family; 2015 project files open on Autodesk's sample projects, where PartAtom and previews are not measured. | Maintain compatibility and bounds checks against hostile input. |
 | `Formats/Latest` schema | Verified | The whole schema is read (4,126 classes on Revit 2024, where 395 were read before). A class's tag is its definition ordinal, and element records name their class by it. | Classify the three fields still unclassified (`ClassDefinitionRef::m_ref`, `VarParam::m_pSubst`, `VarSketchDimObj::m_dimValue`: no instance, or only null pointers), only with byte evidence. |
 | ADocument walker | Partial | Document-level metadata for triage; the root ADocument walk is validated on 2024 to 2026. | Expand confidence across project releases and older files. |
 | Typed project elements | Partial | Elements come from their partition element records, typed by `BuiltInCategory` and matched against Revit's own exports. On Revit 2024 walls, doors, windows, columns, floor slabs and building pads match element for element (verified); 2025 and 2023 are partial; 2026 is experimental (one local model), and so are 2015 to 2022 and 2027, measured against the same sample projects saved by Revit 2019, 2023 and 2026, but 2015's `rst_basic`, another model. Schema-field walls and opening-index doors and windows stay unsupported. | A Revit export of a 2016 to 2022 or 2027 project to measure against, and a second 2015 one, instance and type parameters in IFC, held-out models. |

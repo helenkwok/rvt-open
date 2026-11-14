@@ -1835,22 +1835,34 @@ impl StepWriter<'_> {
                 let rest: Vec<usize> = rest.iter().map(|(id, _)| *id).collect();
                 (self.emit_union(*first, &rest), "CSG")
             }
-            SolidShape::BooleanResult {
-                op,
-                operand_a,
-                operand_b,
-            } => {
-                // Recursively emit operands, then wrap in
-                // IFCBOOLEANRESULT(op, first, second). Nested
-                // booleans compose naturally.
-                let (a_id, _rep_a) = self.emit_solid_shape(operand_a, solid_position, z_axis, true);
-                let (b_id, _rep_b) = self.emit_solid_shape(operand_b, solid_position, z_axis, true);
-                let solid_id = self.id();
-                self.emit_entity(
-                    solid_id,
-                    format!("IFCBOOLEANRESULT({},#{a_id},#{b_id})", op.as_step_keyword()),
-                );
-                (solid_id, "CSG")
+            SolidShape::BooleanResult { .. } => {
+                // Each operand, then IFCBOOLEANRESULT(op, first, second). A
+                // wall's profile cuts nest one level per cut down the first
+                // operand, so the chain is walked as a loop, writing
+                // in the order recursion did: the innermost first operand,
+                // then each level's second operand and its result.
+                let mut chain = Vec::new();
+                let mut at = shape;
+                while let SolidShape::BooleanResult {
+                    op,
+                    operand_a,
+                    operand_b,
+                } = at
+                {
+                    chain.push((op, operand_b.as_ref()));
+                    at = operand_a.as_ref();
+                }
+                let (mut a_id, _) = self.emit_solid_shape(at, solid_position, z_axis, true);
+                for (op, operand_b) in chain.into_iter().rev() {
+                    let (b_id, _) = self.emit_solid_shape(operand_b, solid_position, z_axis, true);
+                    let solid_id = self.id();
+                    self.emit_entity(
+                        solid_id,
+                        format!("IFCBOOLEANRESULT({},#{a_id},#{b_id})", op.as_step_keyword()),
+                    );
+                    a_id = solid_id;
+                }
+                (a_id, "CSG")
             }
             SolidShape::FacetedBrep {
                 vertices_feet,
@@ -2245,12 +2257,16 @@ impl StepWriter<'_> {
 
     fn emit_header(&mut self, model: &IfcModel) {
         let project = escape(model.project_name.as_deref().unwrap_or("Untitled"));
+        // `escape` makes a string literal safe; this text goes in a comment,
+        // where the file's own PartAtom id or version could end it with `*/`
+        // and write the rest as STEP.
         let desc = escape(
             model
                 .description
                 .as_deref()
                 .unwrap_or("Produced by rvt-open — clean-room Apache-2 Revit reader."),
-        );
+        )
+        .replace("*/", "* /");
         self.emit_line("ISO-10303-21;");
         self.emit_line("HEADER;");
         self.emit_line("FILE_DESCRIPTION(('ViewDefinition [CoordinationView]'),'2;1');");
@@ -2719,8 +2735,8 @@ impl StepWriter<'_> {
         // Revit element (Wall, Floor, Roof, Ceiling, Door, Window, Column,
         // Beam…). Each element gets its own `IFCLOCALPLACEMENT` relative
         // to whichever storey contains it (index from
-        // `BuildingElement.storey_index`; falls back to storey[0] when
-        // unset). At the end, elements are grouped by storey and one
+        // `BuildingElement.storey_index`; with none it is placed and
+        // contained in the building). At the end, elements are grouped by storey and one
         // `IFCRELCONTAINEDINSPATIALSTRUCTURE` is emitted per non-empty
         // storey — which is how IFC4 tools (IFC viewers, IfcOpenShell)
         // show "Floor 2 contains Wall-7, Wall-8" in the project
@@ -2735,8 +2751,10 @@ impl StepWriter<'_> {
         // them. Each material gets:
         //   - IFCMATERIAL with just a name (IFC4 minimum)
         //   - If the material has a color: IFCCOLOURRGB +
-        //     IFCSURFACESTYLERENDERING + IFCSURFACESTYLE +
-        //     IFCSTYLEDITEM to surface the color to IFC4 viewers
+        //     IFCSURFACESTYLERENDERING + IFCSURFACESTYLE + IFCSTYLEDITEM,
+        //     in an IFCSTYLEDREPRESENTATION of an
+        //     IFCMATERIALDEFINITIONREPRESENTATION that names the material,
+        //     which is how IFC4 viewers find the colour
         // The color emission is gated because a color-less material
         // is valid IFC4 — we don't want to emit empty rendering
         // records when there's nothing to render.
@@ -2752,11 +2770,16 @@ impl StepWriter<'_> {
                 let colour_id = self.id();
                 self.emit_entity(colour_id, format!("IFCCOLOURRGB($,{r:.6},{g:.6},{b:.6})"));
                 let rendering_id = self.id();
-                let transparency = mat.transparency.unwrap_or(0.0);
+                // A colour can be read without its transparency (the two are
+                // separate fields of a decoded material): the optional attribute
+                // is then left unset rather than written as opaque.
+                let transparency = mat
+                    .transparency
+                    .map_or_else(|| "$".to_string(), |t| format!("{t:.6}"));
                 self.emit_entity(
                     rendering_id,
                     format!(
-                        "IFCSURFACESTYLERENDERING(#{colour_id},{transparency:.6},$,$,$,$,$,$,.FLAT.)"
+                        "IFCSURFACESTYLERENDERING(#{colour_id},{transparency},$,$,$,$,$,$,.FLAT.)"
                     ),
                 );
                 let style_id = self.id();
@@ -2773,6 +2796,44 @@ impl StepWriter<'_> {
                 self.emit_entity(
                     styled_item_id,
                     format!("IFCSTYLEDITEM($,(#{presentation_id}),'{name_escaped}')"),
+                );
+                // A styled item with no `Item` styles nothing until a material
+                // definition representation hangs it on its material: IFC4's
+                // way to give a material its surface style, which a viewer
+                // then applies to every element associated with the material.
+                // Without it the colour was written and reached no consumer.
+                let styled_rep_id = self.id();
+                self.emit_entity(
+                    styled_rep_id,
+                    format!(
+                        "IFCSTYLEDREPRESENTATION(#{geom_ctx},'Style','Material',(#{styled_item_id}))"
+                    ),
+                );
+                let material_rep_id = self.id();
+                self.emit_entity(
+                    material_rep_id,
+                    format!(
+                        "IFCMATERIALDEFINITIONREPRESENTATION($,$,(#{styled_rep_id}),#{mat_id})"
+                    ),
+                );
+                // A styled item with no `Item` styles nothing until a material
+                // definition representation hangs it on its material: IFC4's
+                // way to give a material its surface style, which a viewer
+                // then applies to every element associated with the material.
+                // Without it the colour was written and reached no consumer.
+                let styled_rep_id = self.id();
+                self.emit_entity(
+                    styled_rep_id,
+                    format!(
+                        "IFCSTYLEDREPRESENTATION(#{geom_ctx},'Style','Material',(#{styled_item_id}))"
+                    ),
+                );
+                let material_rep_id = self.id();
+                self.emit_entity(
+                    material_rep_id,
+                    format!(
+                        "IFCMATERIALDEFINITIONREPRESENTATION($,$,(#{styled_rep_id}),#{mat_id})"
+                    ),
                 );
             }
             material_ids.push(mat_id);
@@ -2811,7 +2872,8 @@ impl StepWriter<'_> {
                 };
                 let layer_id = self.id();
                 // IfcMaterialLayer(Material, LayerThickness, IsVentilated=$,
-                //                  Category=$, Priority=$, Name=$, Description=$)
+                //                  Name, Description=$, Category=$, Priority=$),
+                // IFC4's order: the name is the fourth attribute.
                 // Thickness in metres (feet × 0.3048).
                 let thickness_m = layer.thickness_feet * 0.3048;
                 let name_slot = match &layer.name {
@@ -2821,7 +2883,7 @@ impl StepWriter<'_> {
                 self.emit_entity(
                     layer_id,
                     format!(
-                        "IFCMATERIALLAYER({material_slot},{thickness_m:.6},$,$,$,{name_slot},$)"
+                        "IFCMATERIALLAYER({material_slot},{thickness_m:.6},$,{name_slot},$,$,$)"
                     ),
                 );
                 layer_ids.push(layer_id);

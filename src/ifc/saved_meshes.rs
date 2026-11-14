@@ -47,7 +47,9 @@
 //! or a mesh that did not decode whole keeps the body it had, as does
 //! one whose mesh starts at its base.
 
-use super::entities::{BrepTriangle, IfcEntity, Property, PropertySet, PropertyValue, SolidShape};
+use super::entities::{
+    BrepTriangle, IfcEntity, ProfileDef, Property, PropertySet, PropertyValue, SolidShape,
+};
 use super::export_content::{
     BEAM_AXIS_BODY_SOURCE, BEAM_BOX_BODY_SOURCE, INSTANCE_ORIENTED_BODY_SOURCE,
     INSTANCE_TURNED_BODY_SOURCE, RECORD_BBOX_BODY_SOURCE, SAVED_MESH_ELEMENT_ID_SHARED,
@@ -70,6 +72,10 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `BodySource` of a body drawn from the element's saved graphics.
 pub const SAVED_MESH_BODY_SOURCE: &str = "saved_graphics_mesh";
 
+/// only duct fittings meet the measured native-reference body bound.
+const COLLAPSED_RULED_CATEGORY_REFUSAL: &str =
+    "collapsed ruled profile outside the measured duct fittings";
+
 /// How far above its base a wall's saved mesh must start, and below its top,
 /// for [`attach_scoped_with_control`] to draw a wall that embeds a curtain
 /// wall from it, feet. On the BIM4LCA office as built and at
@@ -78,6 +84,12 @@ pub const SAVED_MESH_BODY_SOURCE: &str = "saved_graphics_mesh";
 /// 9.514 ft above their base, the curtain wall's height, and the other 99 on
 /// it to within 0.001 ft.
 const EMBED_RAISE_MIN_FEET: f64 = 0.5;
+
+/// The releases whose walls' native records name what embeds in them, and so
+/// the releases a wall that embeds a curtain wall is drawn from its saved mesh
+/// on: the walls' records of 2023 name no embed step, so the rule
+/// found none there and the scope's 2023 was never exercised.
+const EMBED_HOST_REVIT_VERSIONS: std::ops::RangeInclusive<u32> = 2024..=2027;
 
 /// What [`attach`] did.
 #[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
@@ -88,7 +100,7 @@ pub struct SavedMeshReport {
     /// Of those, elements now drawn from their saved mesh.
     pub replaced: usize,
     /// Of those, elements keeping their box because part of their saved
-    /// graphics did not decode.
+    /// graphics did not decode or is outside the measured category.
     pub partial: usize,
     /// Triangles written in all.
     pub triangles: usize,
@@ -114,7 +126,7 @@ pub struct SavedMeshReport {
     /// their base to the top of the curtain wall.
     pub embed_raised: usize,
     /// Of those, walls keeping their body because part of their saved
-    /// graphics did not decode.
+    /// graphics did not decode or is outside the measured category.
     pub embed_partial: usize,
     /// Why the walls' native records were not read, where they were not: no
     /// wall that embeds a curtain wall is then drawn from its mesh.
@@ -452,6 +464,10 @@ pub fn attach_scoped_in_batches(
     batch_size: usize,
 ) -> anyhow::Result<SavedMeshReport> {
     let mut report = SavedMeshReport::default();
+    // Read the source record's category, never the possibly overridden IFC class.
+    // An attach without a production walk cannot qualify a collapsed body.
+    let categories = rf.walked_builtin_categories();
+
     // the volume of each body drawn from a closed mesh of flat faces.
     let mut volumes: Vec<(usize, f64)> = Vec::new();
     let mut by_id: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
@@ -565,7 +581,7 @@ pub fn attach_scoped_in_batches(
     // over the record's height (a resolved profile, which the pass leaves alone:
     // `is_replaceable_box`), whose base quantities their saved mesh gives all the
     // same. That body is Revit's own form for a plain section and stays so, as a
-    // beam's does.
+    // beam's does, unless the mesh shows another section.
     let mut column_rectangles: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for (index, entity) in model.entities.iter().enumerate() {
         if wholes.contains(&index) {
@@ -727,6 +743,29 @@ pub fn attach_scoped_in_batches(
             if by_id.contains_key(&element_id) {
                 seen.insert(element_id);
             }
+            let category = u32::try_from(element_id)
+                .ok()
+                .and_then(|id| categories.get(&id).copied().flatten());
+            if element.meshes.has_collapsed_ruled_profile
+                && category != Some(crate::partition_element_records::OST_DUCT_FITTING)
+            {
+                // Preserve an existing decoder refusal for a body already partial.
+                // Complete bodies outside the measured category keep their boxes;
+                // their meshes must not supply quantities or raised wall bodies either.
+                let reason = partial_refusal(&element.meshes)
+                    .unwrap_or_else(|| COLLAPSED_RULED_CATEGORY_REFUSAL.into());
+                if let Some(indices) = by_id.get(&element_id) {
+                    report.partial += indices.len();
+                    refusals.extend(indices.iter().map(|index| (*index, reason.clone())));
+                }
+                if let Some(&index) = hosts.get(&element_id) {
+                    report.embed_partial += 1;
+                    refusals.push((index, reason));
+                }
+                continue;
+            }
+            // a column drawn from its mesh rather than its rectangle.
+            let mut mesh_body: Option<[usize; 1]> = None;
             // a wall's, a beam's or a column's quantities from its saved mesh,
             // whether or not its body is drawn from it; the mesh is moved into
             // the model's frame first, as these read it.
@@ -770,19 +809,31 @@ pub fn attach_scoped_in_batches(
                     && whole
                     && let Some(found) = column_mesh_quantities(&world.primitives)
                 {
-                    columns.push((*index, found));
+                    // a column whose mesh is a vertical prism of another
+                    // section than its type's rectangle is drawn from its
+                    // mesh, as a box is.
+                    if section_not_rectangle(&model.entities[*index], found.cross_section_area) {
+                        report.candidates += 1;
+                        mesh_body = Some([*index]);
+                    } else {
+                        columns.push((*index, found));
+                    }
                 }
             }
             if let Some(&index) = hosts.get(&element.identity.element_id) {
                 raise_embed_host(model, index, &in_world(&element.meshes), &mut report);
                 continue;
             }
-            let Some(indices) = by_id.get(&element.identity.element_id) else {
-                continue;
+            let indices: &[usize] = match &mesh_body {
+                Some(index) => index,
+                None => match by_id.get(&element.identity.element_id) {
+                    Some(indices) => indices,
+                    None => continue,
+                },
             };
             // A Tag carried by several entities (a slab's pieces) is ambiguous:
             // leave them as they are.
-            let [index] = indices.as_slice() else {
+            let [index] = indices else {
                 refusals.extend(
                     indices
                         .iter()
@@ -1268,6 +1319,40 @@ fn element_quantities(
         column_volume,
         plate_width,
     }
+}
+
+/// How far, relative to the rectangle's, the section of a column's mesh may
+/// differ from its type's rectangle and the rectangle still be the column's
+/// section: the mesh's single-precision corners move a section's area
+/// by far less, and the BIM4LCA housing's chamfered columns are 0.3% and 1.1%
+/// under their rectangles.
+const COLUMN_SECTION_TOLERANCE: f64 = 1e-3;
+
+/// Whether `entity`, a column drawn as its type's rectangle, has a mesh whose
+/// section, of area `mesh_area` (square feet), is not that rectangle:
+/// a chamfered or thin-walled section, which the mesh draws and the rectangle
+/// does not. False where the body is not a rectangle's extrusion.
+fn section_not_rectangle(entity: &IfcEntity, mesh_area: f64) -> bool {
+    let IfcEntity::BuildingElement {
+        extrusion: Some(extrusion),
+        ..
+    } = entity
+    else {
+        return false;
+    };
+    let (width, depth) = match &extrusion.profile_override {
+        None => (extrusion.width_feet, extrusion.depth_feet),
+        Some(ProfileDef::Rectangle {
+            width_feet,
+            depth_feet,
+        }) => (*width_feet, *depth_feet),
+        Some(_) => return false,
+    };
+    let area = width * depth;
+    area.is_finite()
+        && area > 0.0
+        && mesh_area.is_finite()
+        && (mesh_area - area).abs() > COLUMN_SECTION_TOLERANCE * area
 }
 
 /// How far a column's box volume may differ from the volume of the mesh Revit
@@ -1905,11 +1990,12 @@ fn wall_frame_and_openings(model: &IfcModel) -> BTreeMap<usize, WallOpenings> {
             [cut.x_dim_feet, cut.y_dim_feet]
         });
         let [cx, cy] = cut.map_or([0.0, 0.0], |cut| cut.centre_feet);
+        // `z_range_feet` is where the opening starts and how high it is,
+        // as the writer extrudes it: its top is `start + height`, so the start
+        // is added once, below.
         let [start, height] = cut
             .and_then(|cut| cut.z_range_feet)
-            .map_or([0.0, body.height_feet], |[start, height]| {
-                [start, start + height]
-            });
+            .unwrap_or([0.0, body.height_feet]);
         let (sin, cos) = rotation_radians.unwrap_or(0.0).sin_cos();
         let mut x = [f64::INFINITY, f64::NEG_INFINITY];
         let mut y = [f64::INFINITY, f64::NEG_INFINITY];
@@ -3196,13 +3282,20 @@ fn plain_or_stepped(solid_shape: &Option<SolidShape>, property_set: &Option<Prop
 /// hosted in them but the opening their own curtain wall cuts (an
 /// `IfcEntity::WallCutOpening` whose Tag is the curtain wall's: Revit's export
 /// holds that void and the raised strip both). Nothing where the model has no
-/// curtain wall, so a file without one reads no wall record here. An `Err`
+/// curtain wall, so a file without one reads no wall record here, and nothing
+/// on a release outside [`EMBED_HOST_REVIT_VERSIONS`]. An `Err`
 /// names why the walls' native records were not read.
 fn embed_hosts(
     rf: &mut crate::RevitFile,
     model: &IfcModel,
     taken: &BTreeMap<u64, Vec<usize>>,
 ) -> Result<BTreeMap<u64, usize>, String> {
+    if !rf
+        .basic_file_info()
+        .is_ok_and(|info| EMBED_HOST_REVIT_VERSIONS.contains(&info.version))
+    {
+        return Ok(BTreeMap::new());
+    }
     let element_id = |entity: &IfcEntity, wanted: &str| match entity {
         IfcEntity::BuildingElement {
             ifc_type,

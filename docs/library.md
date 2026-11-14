@@ -29,7 +29,7 @@ archives each GitHub Release carries.
 
 ### In the browser
 
-Drop a `.rvt` / `.rfa` / `.rte` / `.rft` at <https://helenkwok.github.io/rvt-open/>: the file is read and converted inside the tab and is not uploaded. The viewer runs the core library compiled to WebAssembly by the `rvt-wasm` crate (`wasm-pack build rvt-wasm --target web --out-dir../viewer/pkg --out-name rvt`, as [`docs/install.md`](install.md) describes), parses in a dedicated worker, and renders 3D with Three.js. One-click buttons export the model as **glTF 2.0 binary**, **IFC4 STEP**, or **plan-view SVG**. URL state (camera pose + category filters) is shareable via the hash fragment. Multi-megabyte projects fit inside wasm32's 4 GiB linear-memory ceiling: each gzip member reserves at most 1 MiB before decoding and the decoded buffer is trimmed, which is what lets the 33.7 MB Core Interior demo finish at 419 MB of linear memory instead of growing to 4057 MB in 139 ms and trapping. A Rust panic in the wasm build is reported through `console.error` with its message and source location instead of a bare `RuntimeError: unreachable`.
+Drop a `.rvt` / `.rfa` / `.rte` / `.rft` at <https://helenkwok.github.io/rvt-open/>: the file is read and converted inside the tab and is not uploaded. The viewer runs the core library compiled to WebAssembly by the `rvt-wasm` crate (`wasm-pack build rvt-wasm --target web --out-dir../viewer/pkg --out-name rvt`, as [`docs/install.md`](install.md) describes), parses in a dedicated worker, and renders 3D with Three.js. One-click buttons export the model as **glTF 2.0 binary**, **IFC4 STEP**, or **plan-view SVG**. Multi-megabyte projects fit inside wasm32's 4 GiB linear-memory ceiling: each gzip member reserves at most 1 MiB before decoding and the decoded buffer is trimmed, which is what lets the 33.7 MB Core Interior demo finish at 419 MB of linear memory instead of growing to 4057 MB in 139 ms and trapping. A Rust panic in the wasm build is reported through `console.error` with its message and source location instead of a bare `RuntimeError: unreachable`.
 
 The landing dropzone also includes a **demo gallery** staged from [`docs/viewer-demos.json`](viewer-demos.json) (license/provenance + expected quality labels). It opens two real projects, `Revit_IFC5_Einhoven.rvt` (2023) and `2024_Core_Interior.rvt` (2024) from the MIT-licensed [magnetar-io/revit-test-datasets](https://github.com/magnetar-io/revit-test-datasets), hash-verified at staging time, alongside the tier1 synthetics. Einhoven is 913 KB and opens in about half a second; Core Interior is 33.7 MB and decodes in about 3 seconds on the deployed site (about 7 seconds including the 32 MB download), reporting 889 entities and 854 elements carrying geometry. Two Playwright tests gate both cards, and staging refuses a file whose sha256 does not match the catalog. Demo bytes are same-origin static assets only.
 
@@ -126,6 +126,17 @@ cargo build --release
 
 # Compare two versions of the same file (cross-version byte diff)
 ./target/release/rvt-diff --decompress 2018.rfa 2024.rfa
+
+# Two saves of one project, element by element: what was added, removed or
+# changed (class, storey, type, material, placement, body, properties), keyed
+# by the GlobalId the IFC export writes. Where in the file rvt-open read
+# an element (its stream, its offsets) is not compared: a later save moves it.
+# Compare with one build: a change in how rvt-open reads a file shows as a change
+# too. An element whose GlobalId an export writes twice is not compared, and
+# the summary says so. A difference only in which rule read a value (its
+# LevelBindSource, or its BodySource where the body is equal) leaves the
+# element unchanged and is listed apart, as a label change.
+./target/release/rvt-diff --elements monday.rvt tuesday.rvt --json changes.json
 
 # Dump the full class schema (4,126 classes and 11,562 fields on a Revit 2024 file)
 ./target/release/rvt-schema my-project.rvt

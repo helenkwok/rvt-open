@@ -343,6 +343,9 @@ pub fn refine_with_control(
     }
     if opts.revit_property_sets && !opts.placeholder {
         revit_properties(rf, model, notes);
+        // The sets are entities of the model: the counts follow them, as
+        // after every other step that changes the model.
+        crate::ifc::recount_exported(diagnostics, model);
     }
     let without_before = count_without_material(model);
     // a family file's own forms become its elements, in one

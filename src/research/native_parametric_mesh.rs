@@ -263,13 +263,17 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
         }
         let axis = if side % 2 == 0 { 0 } else { 1 };
         if intervals.is_empty() {
-            // A revolution's horizontal UV edge can collapse to a pole. The
-            // half-turn distance is exactly twice the profile's radial norm.
+            // A revolution's pole, or the explicitly saved point at one
+            // end of a ruled patch, collapses a horizontal UV side.
+            let v = if side == 0 { min[1] } else { max[1] };
+            let ruled_pole = matches!(&surface,
+                ParametricSurface::RuledSurf { profile1: Curve::Point(_), .. } if v == 0.)
+                || matches!(&surface,
+                    ParametricSurface::RuledSurf { profile2: Curve::Point(_), .. } if v == 1.);
             ensure!(
-                axis == 0 && matches!(surface, ParametricSurface::SurfRev { .. }),
+                axis == 0 && (matches!(surface, ParametricSurface::SurfRev { .. }) || ruled_pole),
                 "missing rectangular trim side"
             );
-            let v = if side == 0 { min[1] } else { max[1] };
             let a = surface.evaluate(min[0], v)?;
             let b = surface.evaluate((min[0] + max[0]) * 0.5, v)?;
             let c = surface.evaluate(max[0], v)?;
@@ -297,6 +301,7 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
     };
     let (du, dv) = match &surface {
         ParametricSurface::SurfRev { profile, .. } => match profile {
+            Curve::Point(_) => anyhow::bail!("point revolution profile is unqualified"),
             Curve::Line {
                 origin, direction, ..
             } => {

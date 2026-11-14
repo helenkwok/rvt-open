@@ -53,8 +53,45 @@ that reads `mcpServers` from a JSON configuration, such as a project's
 
 Give the full path to the binary as `command` when the client does not search
 your `PATH`. Add `--large-model` to `args` for models with a partition of
-hundreds of megabytes, and `--output-dir <folder>` to confine the exports to one
-folder.
+hundreds of megabytes, and `--output-dir <folder>` to send the exports to a
+folder of their own.
+
+Name the folder that holds your models with `--root`, as in
+`"args": ["--root", "/path/to/models"]`. Some clients start the server in the
+project's folder, which then is the root; some clients start their servers from
+`/` or the home folder, which are too broad to be one (next section).
+
+### The root folder
+
+The server reads models from, and writes exports to, one folder. Its
+setup picks it, in this order:
+
+1. `--root <folder>`;
+2. the environment variable `RVT_MCP_ROOT`, for a client that passes only an
+   environment (`"env": {"RVT_MCP_ROOT": "/path/to/models"}`);
+3. the folder the server was started in, unless that is the top of a file
+   system (`/`, a drive such as `C:\`), the home folder, or a folder that holds
+   the home folder. An MCP client chooses a server's working directory, and
+   some start theirs from `/`.
+
+With none of the three the server still starts, and every tool that takes a
+file or writes one answers with an error that names `--root`, so the client
+shows what to set. A relative `model` or `out_path` is taken from the root. A
+path is compared with the root after both are made canonical, so `..` and
+symbolic links cannot leave it, and a path whose text alone puts it outside is
+refused before any file is looked at, so the refusal does not say whether the
+file exists. What this does not do is defend against another process that
+rewrites the links inside the folder while a call runs.
+
+Reaching more is something the setup types: `--root /` for a whole file system,
+or `--unconfined` for no limit at all (every drive, and exports anywhere unless
+`--output-dir` names a folder). `--output-dir <folder>` sends the exports to a
+folder that need not be inside the root; reading stays inside it.
+
+**Upgrading from an earlier version.** Earlier servers read any file the account
+could read. A setup that opens files outside the folder its client starts the
+server in now needs `--root <folder>` (or `RVT_MCP_ROOT`) naming a folder that
+holds them, or `--unconfined` to keep the old reach.
 
 ## Protocol
 
@@ -83,7 +120,7 @@ or roots), so it works with a client that offers none of them.
   scan, element decode, partition scan, saved graphics and saved meshes), and a
   last one when the call ends. A cancelled call is cancelled by the client's
   `notifications/cancelled`, which rmcp turns into a cancelled `context.ct`
-  (`rmcp` 3.8 `src/service.rs`, the serve loop: it removes the request from its
+  (`rmcp` 3.9 `src/service.rs`, the serve loop: it removes the request from its
   table and cancels its token, and `context.ct` is a child of that token), and
   the server hands that to `WalkerControl`. The decode and the saved-mesh pass
   stop at their next checkpoint, and an export being written stops at its next
@@ -126,7 +163,10 @@ server remembers the answer, so asking again does not read the file again.
 The handle lives while the server process runs and while the model is among the
 most recently used ones the server keeps (2 by default, `--max-open-models`):
 opening another model drops the least recently used one, and a decoded large
-model needs several GB. A `model_id` this server did not issue, one it evicted,
+model needs several GB, so no more than that many files are read from disk or
+models decoded at the same time: a call that needs a place waits for one, and a
+cancelled call leaves the queue. A call that has read its file and waits
+to decode it keeps the file's bytes meanwhile, which the gate does not bound. A `model_id` this server did not issue, one it evicted,
 one from before a restart, or one whose file changed on disk is a tool error
 that says to call `open_model` again. The tool descriptions say the same.
 
@@ -180,8 +220,9 @@ rows, 3 of RE1 Electrical's 49 and 52 of the BIM4LCA office's 12,974 as built
 
 An export goes to the path the caller names. The path must end in `.ifc` or
 `.glb`, must not be the model being read, must not exist unless `overwrite` is
-true, and must be inside `--output-dir` when the server is started with one (a
-relative path is taken from it, otherwise from the server's working directory).
+true, and must be inside `--output-dir` when the server is started with one and
+otherwise inside the root (a relative path is taken from that folder; with
+`--unconfined` and no `--output-dir` it may lie anywhere).
 The file is written to a uniquely named temporary file in the target's folder,
 created exclusively (so a link planted at a guessable name is not followed, and
 two exports to one target do not share it), and put in place when whole: with
@@ -243,9 +284,9 @@ keeps it in memory beside the model and does not return it: `get_diagnostics`
 and the exports' summaries are the diagnostics without it, as `rvt-ifc` writes
 them by default. Building it is one pass over the walk the decode already made
 and a re-read of the first bytes of each partition record. Its time on each
-model is printed by `tests/element_provenance_offsets.rs` (the `build` line of
-its report, Corpus health's `element-provenance` artifact); no figure is stated
-here yet. The fields are never written into the IFC.
+model is printed by `tests/element_provenance_offsets.rs` (the `table built in`
+time of its per-model line, Corpus health's `element-provenance` artifact); no
+figure is stated here yet. The fields are never written into the IFC.
 
 When an element has several partition element record frames, `offset` is the
 one the exporter selected. It is the newest, the highest-numbered partition: on
@@ -304,7 +345,6 @@ here yet.
 
 ### Not provided yet
 
-- A Measure scorer for the server's answers.
 - Lookup by the Revit Mark parameter: nothing in rvt-open decodes it.
 - The Tasks extension (`io.modelcontextprotocol/tasks`). A long export is one
   call with progress and cancellation; a client moves a call that runs long to
@@ -335,7 +375,33 @@ The resource limits are `rvt-ifc`'s, with the same flags: `--large-model`,
 limits (`rvt-open-mcp --help`). A stream the limits keep from being read is
 reported, never read partially without saying so. A model's decode peaks at
 several GB for the largest files, which is why only the two most recently used
-models are kept by default.
+models are kept by default, and why no more files than that are read or
+models decoded at once.
+
+What an answer carries is bounded too, since a crafted file can make
+any name, value or list in it as large as it likes:
+
+- A name or value from the file is cut at 1,000 characters
+  (`--max-field-chars`), with the number of characters left out written where
+  it was cut (`…[+137 characters]`). A message that quotes the file, such as a
+  list of its phases, and each string of the diagnostics document are cut at
+  eight times that, since rvt-open writes most of the long ones itself.
+- The lists are paged: `list_elements` (100 by default) and `list_rooms` (1000)
+  by `limit` (1 to 1000) and `offset`. The diagnostics document, which no
+  `limit` pages, keeps at most 5,000 entries of a list or object, and `notes`
+  names each one it held. Of 1,094 diagnostics documents from five Measure runs
+  (the reference models, Autodesk's samples 2015 to 2027, the BIM4LCA files)
+  the longest string is 1,129 characters, the longest list 1,070 entries and the
+  largest object 1,019, so none of them is changed.
+- An answer over 4 MiB of JSON (`--max-answer-bytes`), counted once although
+  the wire message carries it twice, as structured content and as text, is
+  refused with a tool error that says how to ask for less. An export's summary
+  is cut as above but never refused, since its file is written by then.
+- A phase name over 256 characters is refused, and a file whose modification
+  time the system will not give is refused, since the server tells a changed
+  file by its size and that time.
+- The tool descriptions say that names, values and messages in an answer are
+  text from the file: data for a client to report, never instructions for it.
 
 ## Privacy
 

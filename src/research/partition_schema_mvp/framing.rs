@@ -382,10 +382,20 @@ pub(super) fn attach_beam_axes(
 /// parameter (CLEANROOM.md source 5). A beam whose copies disagree, or whose
 /// record is not read, gets none, nor does one a column cuts, which
 /// is not drawn along a line.
-pub(super) fn attach_beam_rotations(rf: &mut RevitFile, products: &mut [DecodedElement]) {
+///
+/// The same pass gives every framing element its structural usage in
+/// [`STRUCT_USAGE_FIELD`], the `m_structUsage` of its record's root: a
+/// usage whose copies disagree, or whose record is not read, is not given. A
+/// horizontal bracing on [`BRACE_TYPE_REVIT_VERSIONS`] also carries
+/// [`BRACE_TYPE_FIELD`].
+pub(super) fn attach_beam_rotations(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    products: &mut [DecodedElement],
+) {
     let beams: BTreeSet<u64> = products
         .iter()
-        .filter(|element| element.class == "StructuralFraming" && !beam_column_cut(element))
+        .filter(|element| element.class == "StructuralFraming")
         .filter_map(|element| element.id)
         .map(u64::from)
         .collect();
@@ -398,6 +408,7 @@ pub(super) fn attach_beam_rotations(rf: &mut RevitFile, products: &mut [DecodedE
         ..Default::default()
     };
     let mut rotations: BTreeMap<u64, Option<f64>> = BTreeMap::new();
+    let mut usages: BTreeMap<u64, Option<u64>> = BTreeMap::new();
     let read = crate::native_document::extract_graphs(rf, &options, |record| {
         let Some(graph) = record.graph.as_ref() else {
             return Ok(());
@@ -409,7 +420,13 @@ pub(super) fn attach_beam_rotations(rf: &mut RevitFile, products: &mut [DecodedE
             .find_map(|object| object.fields.get("m_rotation"))
             .and_then(crate::graph_value::Fv::as_f64)
             .filter(|rotation| rotation.is_finite());
+        let usage = graph
+            .objects
+            .first()
+            .and_then(|root| root.fields.get("m_structUsage"))
+            .and_then(crate::graph_value::Fv::as_u64);
         crate::native_json::agree(&mut rotations, record.identity.element_id, rotation);
+        crate::native_json::agree(&mut usages, record.identity.element_id, usage);
         Ok(())
     });
     if read.is_err() {
@@ -419,10 +436,35 @@ pub(super) fn attach_beam_rotations(rf: &mut RevitFile, products: &mut [DecodedE
         .iter_mut()
         .filter(|element| element.class == "StructuralFraming")
     {
-        let Some(Some(value)) = element
-            .id
-            .and_then(|id| rotations.get(&u64::from(id)).copied())
-        else {
+        let Some(id) = element.id.map(u64::from) else {
+            continue;
+        };
+        let usage = usages
+            .get(&id)
+            .copied()
+            .flatten()
+            .and_then(|value| i64::try_from(value).ok());
+        if let Some(value) = usage {
+            element.fields.push((
+                STRUCT_USAGE_FIELD.into(),
+                InstanceField::Integer {
+                    value,
+                    signed: false,
+                    size: 4,
+                },
+            ));
+            if u64::try_from(value) == Ok(crate::ifc::category_map::HORIZONTAL_BRACING_USAGE)
+                && BRACE_TYPE_REVIT_VERSIONS.contains(&revit_version)
+            {
+                element
+                    .fields
+                    .push((BRACE_TYPE_FIELD.into(), InstanceField::Bool(true)));
+            }
+        }
+        if beam_column_cut(element) {
+            continue;
+        }
+        let Some(Some(value)) = rotations.get(&id).copied() else {
             continue;
         };
         element.fields.push((

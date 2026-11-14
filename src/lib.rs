@@ -162,6 +162,7 @@ pub mod basic_file_info;
 pub mod beam_reference_levels;
 pub mod beam_system_layout;
 pub mod builtin_parameters;
+mod budget;
 pub mod capability;
 pub mod class_index;
 #[doc(hidden)]
@@ -234,7 +235,7 @@ pub(crate) use research::{
     native_family_forms, native_form_geometry, native_graphics_traversal, native_index,
     native_instance_materials, native_json, native_metadata, native_mullion_hosts,
     native_parameter_definitions, native_parameters, native_parametric_mesh,
-    native_parametric_surface, native_phases, native_plan_curves, native_rendered_content,
+    native_parametric_surface, native_phases, native_plan_curves, native_project_units, native_rendered_content,
     native_saved_materials, native_saved_mesh, native_saved_scene, native_segments, native_stairs,
     native_symbol_cuts, native_type_materials, native_wall_cuts, native_wall_types, native_walls,
     partition_arc_walls, partition_area_boundaries, partition_area_records, partition_beam_axes,

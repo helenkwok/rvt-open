@@ -19,7 +19,7 @@
 //!
 //! ```text
 //! +0x00  u64  ElementId of this record (declared in Global/ElemTable)
-//! +0x08  u32  record flags (0x87 on every standalone Level)
+//! +0x08  u32  record flags (0x8f on the Level a later reading shows; kept, never tested)
 //! +0x0c  u32  0x0000059f, as on every element record
 //! +0x10  u16  0
 //! +0x12  i64  BuiltInCategory = OST_Levels (-2000240)
@@ -808,8 +808,17 @@ pub fn levels_from_records_and_blocks(
 
 /// Whether a recovered level list is usable as a storey set.
 ///
-/// Fail closed: at least two levels and one block per Level. A partial
-/// recovery is not silently emitted as a smaller building.
+/// Fail closed: at least one level, one block per Level, and no two
+/// building-storey levels sharing an elevation. A partial recovery is not
+/// silently emitted as a smaller building. A single Level passes here;
+/// [`scan_partition_levels`] keeps it on Revit 2024 to 2027 only
+/// when the broader [`scan_partition_level_ids`] finds no other Level
+/// either, as on a one-storey project (R2025 `01_Walls`, whose Revit export
+/// has that one storey). On 2015 to 2023 it keeps a single Level only when
+/// the file's native `Level` records are that Level alone: Revit
+/// 2023 `Revit_IFC5_Einhoven.rvt` holds one, `Level 1`, and the "walls at
+/// two or more base elevations" that once argued for a missed Level were
+/// its curtain wall's panels and grid lines, not walls.
 ///
 /// Levels may share an elevation, storeys too: Revit's own IFC export
 /// writes two `IfcBuildingStorey` at one elevation in some project
@@ -911,7 +920,9 @@ struct EnclosedLevels {
 /// category, opened by the 32-bit chain header 2023's element records
 /// carry: a `u32` ElementId, the record size and the
 /// `ElementHeader` tag, 14 bytes before the category; the container
-/// reference 8 bytes after it, the placement kind 24 after it, and the
+/// reference, a `u32`, 16 bytes after it (a later reading first read it at 8; see
+/// `reports/element-framing/32bit-container-and-building-story.md`), the
+/// placement kind 24 after it, and the
 /// record `marker` (`ff ff ff ff` and the `ElementParents` tag) 38 after
 /// it.
 pub fn find_level_records_2023(
@@ -1259,11 +1270,20 @@ pub fn scan_partition_levels(
     if !recovered_levels_are_a_storey_set(&records, &levels) {
         return Ok(Vec::new());
     }
-    // One Level is the storey set only when no other Level frames anywhere:
-    // a second Level the full recovery missed would otherwise leave its
-    // elements on the wrong storey.
-    if levels.len() == 1 && scan_partition_level_ids(rf, revit_version, declared_ids)?.len() != 1 {
-        return Ok(Vec::new());
+    // One Level is the storey set only when no other Level is in the file: a
+    // second Level the full recovery missed would otherwise leave its
+    // elements on the wrong storey. On 2024 to 2027 no other Level frames
+    // anywhere; on 2015 to 2023, where that scan does not read, the file's
+    // native `Level` records are that one Level alone.
+    if levels.len() == 1 {
+        let alone = if crate::partition_element_records_2023::is_32bit_release(revit_version) {
+            native_level_ids(rf) == Some(BTreeSet::from([u64::from(levels[0].element_id)]))
+        } else {
+            scan_partition_level_ids(rf, revit_version, declared_ids)?.len() == 1
+        };
+        if !alone {
+            return Ok(Vec::new());
+        }
     }
     if recording {
         use crate::ifc::element_provenance::{CopyRule, ValueSource};
@@ -1285,6 +1305,28 @@ pub fn scan_partition_levels(
         }
     }
     Ok(levels)
+}
+
+/// The ElementIds of the file's native `Level` records, on the releases
+/// whose records frame ([`crate::native_document::NATIVE_RELEASES`]); `None`
+/// where they cannot be read. Only the records' classes are read.
+fn native_level_ids(rf: &mut RevitFile) -> Option<BTreeSet<u64>> {
+    use crate::native_document::{NATIVE_RELEASES, Options, extract_graphs};
+    let options = Options {
+        selected_classes: BTreeSet::from(["Level".to_string()]),
+        graph_classes: Some(BTreeSet::new()),
+        releases: NATIVE_RELEASES,
+        ..Options::default()
+    };
+    let mut ids = BTreeSet::new();
+    extract_graphs(rf, &options, |record| {
+        if record.class_name.as_deref() == Some("Level") {
+            ids.insert(record.identity.element_id);
+        }
+        Ok(())
+    })
+    .ok()?;
+    Some(ids)
 }
 
 /// The reader name of the value source of a Level's name, elevation and

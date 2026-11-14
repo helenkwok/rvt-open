@@ -4,8 +4,6 @@
 //! path the caller names, and returns a summary of what went in and what was
 //! left out, with the SHA-256 of the file. The file itself is never returned.
 
-use std::io::Write;
-
 use rmcp::model::Resource;
 use rvt::control::WalkerControl;
 use rvt::ifc::gltf::{GltfOptions, model_to_glb_with};
@@ -17,7 +15,7 @@ use crate::config::Failure;
 use crate::output::{self, Written};
 use crate::schema::{ExportOut, OutputOut};
 use crate::store::{Entry, Store, note_texts, run_decode};
-use crate::views::unread_out;
+use crate::views::{bounded_diagnostics, unread_out};
 
 /// An export's summary, and the link to its file.
 pub struct Exported {
@@ -51,14 +49,16 @@ fn source_date_epoch() -> Result<Option<i64>, String> {
 
 /// The refusal `rvt-ifc` gives with exit status 3: a resource limit kept
 /// streams from being read, and the caller did not accept an incomplete file.
-fn refuse_partial(unread: &[UnreadStream], allow_partial: bool) -> Result<(), Failure> {
-    if unread.is_empty() || allow_partial {
+/// A reader that stopped at its work budget refuses nothing: the file
+/// is written and the result's notes name it.
+fn refuse_partial(source: &Source<'_>, allow_partial: bool) -> Result<(), Failure> {
+    if !source.diagnostics.is_partial() || allow_partial {
         return Ok(());
     }
     let mut message = String::from(
-        "No file written: a resource limit kept part of the model from being read, so the export would be missing what these streams hold:",
+        "No file written: a resource limit kept part of the model from being read, so the export would be missing what these hold:",
     );
-    for stream in unread {
+    for stream in source.unread {
         message.push_str(&format!("\n  {stream}"));
     }
     message.push_str(
@@ -88,12 +88,22 @@ fn finish(
             entry.id, written.sha256
         ));
     let mut notes = source.notes.to_vec();
+    // `unread_streams` lists the streams; the readers that stopped at a work
+    // budget are listed here, since the glb's summary carries no diagnostics.
+    for (reader, times) in diagnostics.work_budget_stops().into_iter().flatten() {
+        notes.push(format!(
+            "Warning: {reader} stopped {times} time(s) at its work budget, so the export leaves out what it would have read."
+        ));
+    }
     let folded: usize = diagnostics.exported.body_pieces_folded.values().sum();
     if format == "glb" && folded > 0 {
         notes.push(format!(
             "The glb also draws {folded} piece(s) of elements of separate loops that the IFC export folds into the body of another element (exported.body_pieces_folded): building_elements and entity_counts count the elements the IFC writes and leave them out."
         ));
     }
+    // Bounded as `get_diagnostics` bounds it, and named in `notes` where a
+    // list was held.
+    let bounded = with_diagnostics.then(|| bounded_diagnostics(diagnostics, &mut notes));
     let out = ExportOut {
         model_id: entry.id.clone(),
         format: format.to_string(),
@@ -105,14 +115,10 @@ fn finish(
         building_elements: diagnostics.exported.building_elements,
         building_elements_with_geometry: diagnostics.exported.building_elements_with_geometry,
         entity_counts: diagnostics.exported.by_ifc_type.clone(),
-        partial: !source.unread.is_empty(),
+        partial: diagnostics.is_partial(),
         unread_streams: unread_out(source.unread),
         notes,
-        diagnostics: if with_diagnostics {
-            serde_json::to_value(diagnostics).ok()
-        } else {
-            None
-        },
+        diagnostics: bounded,
     };
     Exported { out, link }
 }
@@ -122,7 +128,7 @@ pub fn ifc(
     args: &ExportIfcArgs,
     control: &WalkerControl,
 ) -> Result<Exported, Failure> {
-    let entry = store.open(&args.model, phase_of(&args.phase))?;
+    let entry = store.open(&args.model, phase_of(&args.phase), control)?;
     let config = store.config();
     let timestamp = source_date_epoch()?;
     let target = output::plan(
@@ -158,7 +164,7 @@ pub fn ifc(
         unread: &custom.unread,
         notes: &custom_notes,
     };
-    refuse_partial(source.unread, args.options.allow_partial)?;
+    refuse_partial(&source, args.options.allow_partial)?;
     switches
         .mode
         .validate(source.diagnostics)
@@ -183,7 +189,7 @@ pub fn gltf(
     args: &ExportGltfArgs,
     control: &WalkerControl,
 ) -> Result<Exported, Failure> {
-    let entry = store.open(&args.model, phase_of(&args.phase))?;
+    let entry = store.open(&args.model, phase_of(&args.phase), control)?;
     let config = store.config();
     let target = output::plan(
         config,
@@ -225,6 +231,14 @@ pub fn gltf(
         unread: &unread,
         notes: &notes,
     };
+    refuse_partial(&source, args.allow_partial)?;
+    control.check().map_err(|_| Failure::Cancelled)?;
+    // The binary buffer is written from where it was built: the GLB is never
+    // assembled whole beside it, as `model_to_glb` does.
+    let (document, binary) = build_gltf(&computed.model);
+    let written = output::write(&target, args.overwrite, control, |writer| {
+        write_glb_to(&document, &binary, writer)
+    })?;
     Ok(finish(
         &entry,
         "glb",

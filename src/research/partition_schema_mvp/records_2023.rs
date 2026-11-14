@@ -15,6 +15,7 @@ pub(super) fn recover_2023_records(
     rf: &mut RevitFile,
     revit_version: u32,
     out: &mut PartitionSchemaMvp,
+    wall_reads: &mut crate::native_walls::WallReads,
 ) -> BTreeMap<u32, Vec<u64>> {
     use crate::partition_element_records as per;
     // The frames that stop are listed only for the log of decisions.
@@ -184,6 +185,7 @@ pub(super) fn recover_2023_records(
         [&mut out.doors, &mut out.windows],
         gridded,
         |_, element| Some(selected.get(&element.id?)?.references.clone()),
+        None,
     );
     bind_opening_hosts(&out.walls, &mut out.doors);
     bind_opening_hosts(&out.walls, &mut out.windows);

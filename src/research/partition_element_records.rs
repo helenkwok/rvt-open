@@ -86,8 +86,8 @@
 //! - A *second* counted list follows the first, framed identically.
 //!   Its last slot is named [`PartitionElementRecord::owner_reference`]
 //!   because on every [`OST_SKETCH_LINES`] record of the recorded edge
-//!   it names the element whose sketch the line belongs to: the 3106
-//!   sketch-line records on `2024_Core_Interior.rvt` name 135 owners,
+//!   it names the element whose sketch the line belongs to: the 3688
+//!   sketch-line records on `2024_Core_Interior.rvt` name 126 owners,
 //!   and 100 of them are exactly the 80 `IfcSlab` + 20
 //!   `IfcShadingDevice` ElementIds the reference export tags.
 //!   On other categories it is only what the byte says.
@@ -329,8 +329,9 @@ pub const OST_PIPE_FITTING: i64 = -2_008_049;
 pub const OST_GUTTER: i64 = -2_001_391;
 
 // Structural categories. Nearly every frame of these uses the
-// second prologue, so their instances export through the inferred
-// ElementIds; the oracle is the VIM export of the same sample.
+// second prologue, so their instances export with the ElementId of the
+// record that encloses the frame (`assign_second_prologue_ids`); the oracle
+// is the VIM export of the same sample.
 
 /// Autodesk `BuiltInCategory.OST_StructuralFraming` — beams, joists,
 /// girders and purlins.
@@ -711,10 +712,12 @@ pub struct PartitionElementRecord {
     /// record's own id, names it in the first slot, or when the slot
     /// before it holds a value outside the `u32` ElementId range.
     ///
-    /// On a door or window record this is the host wall; on other
-    /// categories it is only what the byte says. Nothing here checks
-    /// that the value is a wall — the caller does
-    /// (`partition_schema_mvp::opening_instances_from_records`).
+    /// A later reading took this slot as a door's or window's host wall. A later reading
+    /// replaced that rule (the slot is only the nearest smaller id, and
+    /// a host with a larger id comes after the door's own), and the
+    /// export now picks the host from the whole list
+    /// (`partition_schema_mvp::records`); only probes read this field.
+    /// Nothing here checks that the value is a wall.
     pub preceding_reference: Option<u32>,
     /// Last slot of the *second* counted reference list at `+0x88`.
     ///
@@ -735,6 +738,12 @@ pub struct PartitionElementRecord {
     /// exactly as framed.
     #[serde(default)]
     pub references: Vec<u64>,
+    /// The second counted reference list at `+0x88`, which follows the first
+    /// and is framed like it, verbatim: the list a free-standing
+    /// beam's Reference Level is a member of. Empty when either list does not
+    /// decode, and on Revit 2008 to 2023, whose records are not read this way.
+    #[serde(default)]
+    pub second_references: Vec<u64>,
     /// `true` when the frame carries no ElementId at `+0x00` (the second
     /// prologue) and [`Self::element_id`] is the id of the partition
     /// record the frame sits in ([`assign_second_prologue_ids`]; on
@@ -972,6 +981,17 @@ pub fn decode_owner_reference(buf: &[u8], at: usize) -> Option<u32> {
     Some(last as u32)
 }
 
+/// Decode the *second* counted reference list whose first list's `u32`
+/// length prefix sits at `at`, framed like the first. `None` unless
+/// both decode through [`decode_reference_list`].
+pub fn decode_second_reference_list(buf: &[u8], at: usize) -> Option<Vec<u64>> {
+    let first = decode_reference_list(buf, at)?;
+    let second_at = at
+        .checked_add(4)?
+        .checked_add(first.len().checked_mul(8)?)?;
+    decode_reference_list(buf, second_at)
+}
+
 /// The slot immediately before `element_id`'s last occurrence in
 /// `entries`, when that slot is a `u32`-range ElementId.
 fn slot_before(entries: &[u64], element_id: u32) -> Option<u32> {
@@ -1048,7 +1068,9 @@ pub fn decode_frame_as(
     let mut bbox_feet = [0.0f64; 6];
     for (index, slot) in bbox_feet.iter_mut().enumerate() {
         let value = le_bytes::f64_at(buf, offset + BBOX_OFFSET + index * 8)?;
-        if !value.is_finite() {
+        // A finite but huge corner made the box's centre or extent infinite
+        // downstream.
+        if !le_bytes::physical(value) {
             return None;
         }
         *slot = value;
@@ -1065,6 +1087,10 @@ pub fn decode_frame_as(
     let references = offset
         .checked_add(REFERENCE_LIST_OFFSET)
         .and_then(|at| decode_reference_list(buf, at))
+        .unwrap_or_default();
+    let second_references = offset
+        .checked_add(REFERENCE_LIST_OFFSET)
+        .and_then(|at| decode_second_reference_list(buf, at))
         .unwrap_or_default();
     let preceding_reference = slot_before(&references, element_id);
     let owner_reference = offset
@@ -1085,6 +1111,7 @@ pub fn decode_frame_as(
         preceding_reference,
         owner_reference,
         references,
+        second_references,
         id_from_enclosing_record: false,
         design_option,
     })

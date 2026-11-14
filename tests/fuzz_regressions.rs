@@ -884,3 +884,170 @@ fn partition_scan_tag_in_the_last_three_bytes_does_not_panic() {
         });
     }
 }
+
+// ---- research::native_form_geometry::walk -> native_document::group_records ----
+
+/// A native record group whose length field is `0xFFFF_FFF5` puts the record's
+/// end within 4 of `usize::MAX` on a 32-bit target, where the dual-length
+/// check's `end + 4` overflowed: a panic under overflow checks (CI's i686 job
+/// runs this file) and an out-of-range slice without them (wasm32, which the
+/// viewer runs). On 64-bit the group is refused cleanly before and after the
+/// fix; the walk's counts show the file reached `group_records`.
+#[test]
+fn native_group_record_length_overflow_does_not_panic() {
+    use rvt::research::native_form_geometry;
+
+    const CHANNEL: u64 = 101;
+
+    // `Formats/Latest` as the native schema registry reads it: four classes,
+    // tags 12 to 15, each with a parent reference to tag 0 and no fields, then
+    // eight zero bytes.
+    let mut schema = Vec::new();
+    for name in [
+        "ContentMarker",
+        "ContentKey",
+        "SegmentMarker",
+        "SegmentCheckback",
+    ] {
+        schema.extend_from_slice(&0u16.to_le_bytes());
+        schema.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        schema.extend_from_slice(name.as_bytes());
+        schema.extend_from_slice(&0u16.to_le_bytes());
+        schema.extend_from_slice(&0u32.to_le_bytes());
+        schema.extend_from_slice(&0u32.to_le_bytes());
+        schema.extend_from_slice(&0u32.to_le_bytes());
+    }
+    schema.extend_from_slice(&[0u8; 8]);
+
+    // One channel-101 group of 2023 framing: a 4-byte id, a length field of
+    // 0xFFFF_FFF5 and the 4 bytes a record would repeat its length in.
+    let mut group = Vec::new();
+    group.extend_from_slice(&0u32.to_le_bytes());
+    group.extend_from_slice(&0xFFFF_FFF5u32.to_le_bytes());
+    group.extend_from_slice(&0u32.to_le_bytes());
+    let member = rvt::compression::gzip_member_encode(&group).expect("encode the group");
+
+    // The partition: an 8-byte prefix, one segment (SegmentMarker, one member,
+    // no continuation) holding the group, then the opaque terminal
+    // (ContentMarker, token 0, count u32::MAX).
+    let mut partition = vec![0u8; 8];
+    partition.extend_from_slice(&14u16.to_le_bytes());
+    partition.extend_from_slice(&4u32.to_le_bytes());
+    partition.extend_from_slice(&1u32.to_le_bytes());
+    partition.extend_from_slice(&(8 + member.len() as u32).to_le_bytes());
+    partition.extend_from_slice(&(group.len() as u32).to_le_bytes());
+    partition.extend_from_slice(&CHANNEL.to_le_bytes());
+    partition.extend_from_slice(&member);
+    partition.extend_from_slice(&12u16.to_le_bytes());
+    partition.extend_from_slice(&0u32.to_le_bytes());
+    partition.extend_from_slice(&u32::MAX.to_le_bytes());
+
+    // A 2023 save, as BasicFileInfo's UTF-16LE text names it.
+    let basic_file_info: Vec<u8> = "2023  20230101_0000(x64)"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+
+    let file = compound_file(&[
+        ("/BasicFileInfo", basic_file_info),
+        (
+            "/Formats/Latest",
+            rvt::compression::gzip_member_encode(&schema).expect("encode the schema"),
+        ),
+        ("/Partitions/66", partition),
+    ]);
+
+    assert_no_panic("native group record length 0xFFFFFFF5", &file, |bytes| {
+        let mut rf = RevitFile::open_bytes(bytes.to_vec()).expect("open the crafted file");
+        let document = native_form_geometry::open(&mut rf).expect("a 2023 schema and partition");
+        assert_eq!(document.release, 2023);
+        let walked = native_form_geometry::walk(&mut rf, &document, &[CHANNEL], |_| Ok(()))
+            .expect("the partition walks to its terminal");
+        // The group reached `group_records` and was refused there.
+        assert_eq!((walked.groups, walked.unframed_groups), (1, 1));
+    });
+}
+
+// ---- research::native_saved_mesh::cylinder_face, the trim ring's point budget ----
+
+/// A cylinder face's trim ring holds at most 20,000 points
+/// (`CYLINDER_RING_POINT_BUDGET`), counted from each edge's stored points
+/// before any is parsed or refined. Without it a loop of E edges could each be
+/// refined to 100,000 points. No real face comes near it (Measure 43293778765),
+/// so this face is built by hand: one loop of one edge whose stored interior
+/// points alone pass the budget. It is refused as `cylinder trim budget
+/// exceeded`, the error the saved-mesh pass turns into drawing the element
+/// without its saved mesh. One point fewer passes the budget's check and is
+/// refused later for something else, so the refusal is the budget's own.
+#[test]
+fn cylinder_trim_ring_over_its_point_budget_is_refused() {
+    use rvt::research::native_parameters::ObjectGraph;
+    use rvt::research::native_saved_mesh::{CylinderTessellationProfile, cylinder_face};
+    use serde_json::json;
+
+    // Pointers resolve through each object's token, as the graph lists no edge.
+    let to = |token: u32| json!({ "pointer_token": token, "offset": 0 });
+    let face = |interior: usize| -> ObjectGraph {
+        let object = |class: &str, token: u32, fields: serde_json::Value| {
+            json!({ "class_tag": 1, "class_name": class, "token": token,
+                    "start": 0, "fields_end": 0, "fields": fields })
+        };
+        let point = |u: f64, v: f64| json!({ "uv": [[u, v], [0.0, 0.0]] });
+        let interior: Vec<_> = (0..interior)
+            .map(|i| point((i + 1) as f64 / (interior + 1) as f64, 0.5))
+            .collect();
+        serde_json::from_value(json!({
+            "consumed_bytes": 0,
+            "edges": [],
+            "objects": [
+                object("Face", 1, json!({
+                    "m_faceRegions": [], "m_pSurf": to(2), "m_pFirstLoop": to(3) })),
+                object("CylSurf", 2, json!({
+                    "m_center": [0.0, 0.0, 0.0], "m_radius": 1.0,
+                    "m_xVec": [1.0, 0.0, 0.0], "m_yVec": [0.0, 1.0, 0.0],
+                    "m_zVec": [0.0, 0.0, 1.0],
+                    "m_Envelope": { "m_corners": [[0.0, 0.0], [3.0, 1.0]] } })),
+                object("EdgeLoop", 3, json!({
+                    "m_open": false, "m_pFace": to(1), "m_next": to(4), "m_nextLoop": to(0) })),
+                object("Edge", 4, json!({
+                    "m_pFace": [to(1), to(0)],
+                    "m_next": [to(3), to(0)],
+                    "m_firstAndLastEdgePnts": [point(0.0, 0.5), point(1.0, 0.5)],
+                    "m_interiorEdgePnts": interior })),
+            ],
+        }))
+        .expect("a graph of four objects")
+    };
+    const BUDGET: usize = 20_000;
+    let error = |graph: &ObjectGraph| {
+        cylinder_face(graph, 0, CylinderTessellationProfile::default())
+            .expect_err("a loop of one edge never makes a trim")
+            .to_string()
+    };
+
+    // The edge's two ends and its interior points, less the first, which the
+    // ring shares with the edge before it: BUDGET + 1 once the interior holds BUDGET.
+    assert_eq!(error(&face(BUDGET)), "cylinder trim budget exceeded");
+    assert_ne!(error(&face(BUDGET - 2)), "cylinder trim budget exceeded");
+}
+
+/// An MS-CFB file holding `streams`, built in memory, with the storages their
+/// paths name created first.
+fn compound_file(streams: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut file = cfb::CompoundFile::create(std::io::Cursor::new(Vec::new()))
+        .expect("create a compound file");
+    for (path, data) in streams {
+        let parent = std::path::Path::new(path)
+            .parent()
+            .filter(|parent| *parent != std::path::Path::new("/"));
+        if let Some(parent) = parent {
+            file.create_storage_all(parent).expect("create the storage");
+        }
+        let mut stream = file.create_stream(path).expect("create the stream");
+        stream.write_all(data).expect("write the stream");
+    }
+    file.flush().expect("flush the compound file");
+    file.into_inner().into_inner()
+}

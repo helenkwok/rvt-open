@@ -501,6 +501,15 @@ a {
 .tree-node.tree-storey-unassigned {
   color: var(--rv-warn);
 }
+/* The row at the end of a group that builds its next rows: an action, so its label reads as one. */
+.tree-node.tree-more {
+  font-weight: 400;
+  color: var(--rv-text-3);
+}
+.tree-node.tree-more .tree-label {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .tree-caret {
   display: inline-flex;
   flex: none;

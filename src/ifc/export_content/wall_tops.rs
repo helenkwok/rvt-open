@@ -152,6 +152,10 @@ const STEP_TOLERANCE_SQUARE_FEET: f64 = COVER_TOLERANCE_SQUARE_FEET;
 /// The most convex pieces a wall's plan outside the elements may come to.
 const MAX_RISERS: usize = 32;
 
+/// The most parts of a wall's plan that an element covers, before they are
+/// joined into at most [`MAX_RISERS`] pieces: thirty-two times that.
+const MAX_COVERED_PARTS: usize = 32 * MAX_RISERS;
+
 /// The area under which what a floor leaves of a wall's plan, all of it inside
 /// other walls, may be a stub that Revit cuts although the floor does not cover
 /// it, square feet: the one measured, 0.0243 ft2 at the end of a wall, inside
@@ -459,6 +463,16 @@ fn embedded(pieces: &[Ring], neighbours: &[&Wall]) -> bool {
             .iter()
             .flat_map(|piece| subtract_convex(piece, part))
             .collect();
+        // Each neighbour piece can split each piece left in three, so a
+        // crafted file's neighbours grew `left` without end. Nothing
+        // left is all inside; more than `steps` holds is no stub.
+        if left.is_empty() {
+            return true;
+        }
+        if left.len() > 4 * MAX_RISERS {
+            crate::budget::stopped("wall_top_embedded_pieces");
+            return false;
+        }
     }
     left.iter().map(|piece| area(piece)).sum::<f64>() <= 0.01 * size
 }
@@ -531,6 +545,7 @@ fn steps(wall: &Wall, levels: &[(f64, Vec<&Cutter>)], neighbours: &[&Wall]) -> O
                     .flat_map(|piece| subtract_convex(piece, &clip))
                     .collect();
                 if pieces.len() > 4 * MAX_RISERS {
+                    crate::budget::stopped("wall_top_pieces");
                     return None;
                 }
             }
@@ -558,6 +573,7 @@ fn steps(wall: &Wall, levels: &[(f64, Vec<&Cutter>)], neighbours: &[&Wall]) -> O
                 }
                 held.extend(parts);
                 if held.len() > 4 * MAX_RISERS {
+                    crate::budget::stopped("wall_top_pieces");
                     return None;
                 }
             }
@@ -751,32 +767,27 @@ enum Cut {
     },
 }
 
-/// Whether the slab, roof or footing made of `pieces` (ElementId `id`) has an
-/// underside a wall's top may be cut at: any slab or footing, and a roof only
-/// where it is one of `plates`, its record box exactly its type's layers and
-/// its plan outline read. A roof whose box is deeper than its layers
-/// is not a level plate (a roof by extrusion, a slope its reader does not
-/// read): its box is drawn as a plain extrusion, but the box's underside is
-/// its lowest point, not a level the walls under it stop at. The layers are
-/// the proof that the underside is level; the outline is what the roof covers.
-fn level_underside(
-    entities: &[IfcEntity],
-    pieces: &[usize],
-    id: u32,
-    plates: &HashSet<u32>,
-) -> bool {
-    plates.contains(&id)
-        || !pieces.iter().any(|&index| {
-            matches!(
-                entities.get(index),
-                Some(IfcEntity::BuildingElement { ifc_type, .. }) if ifc_type.as_str() == "IFCROOF"
-            )
-        })
+/// Every Roof element record read, by ElementId, and whether it is a level
+/// plate: its record box exactly its type's layers and its plan outline read.
+/// Keyed on the record's class, not the IFC entity it is exported
+/// as, so a Floor exported as `IfcRoof` keeps its cut and a Roof exported as
+/// `IfcSlab` is held to the plate rule.
+pub(super) type Roofs = HashMap<u32, bool>;
+
+/// Whether the slab, roof or footing `id` has an underside a wall's top may be
+/// cut at: any element whose record is not a Roof, and a Roof only where it is
+/// a level plate (`Roofs`). A roof whose box is deeper than its layers is not
+/// a level plate (a roof by extrusion, a slope its reader does not read): its
+/// box is drawn as a plain extrusion, but the box's underside is its lowest
+/// point, not a level the walls under it stop at. The layers are the proof
+/// that the underside is level; the outline is what the roof covers.
+fn level_underside(id: u32, roofs: &Roofs) -> bool {
+    roofs.get(&id).is_none_or(|plate| *plate)
 }
 
 /// For each of `pending` (a wall's entity index and the ElementIds its top
 /// join and cut pairs name) that is cut: its index and how.
-fn decide(entities: &[IfcEntity], pending: &[Pending], plates: &HashSet<u32>) -> Vec<(usize, Cut)> {
+fn decide(entities: &[IfcEntity], pending: &[Pending], plates: &Roofs) -> Vec<(usize, Cut)> {
     let Gathered {
         pieces,
         voids,
@@ -807,7 +818,7 @@ fn decide(entities: &[IfcEntity], pending: &[Pending], plates: &HashSet<u32>) ->
             let Some(found) = pieces.get(&id) else {
                 continue;
             };
-            if !level_underside(entities, found, id, plates) {
+            if !level_underside(id, plates) {
                 continue;
             }
             let Some(cutter) = cutters
@@ -925,11 +936,7 @@ fn to_local(placement: &Placement, point: Point2) -> Point2 {
 /// covers it (see the module): a whole wall's extrusion height becomes the
 /// underside less its base, and a wall a floor covers in part gets the stepped
 /// body of the module as its `solid_shape`.
-pub(super) fn cut_wall_tops(
-    entities: &mut [IfcEntity],
-    pending: &[Pending],
-    plates: &HashSet<u32>,
-) {
+pub(super) fn cut_wall_tops(entities: &mut [IfcEntity], pending: &[Pending], plates: &Roofs) {
     if pending.is_empty() {
         return;
     }
@@ -1085,6 +1092,14 @@ fn covered_pieces(cutter: &Cutter, wall: &Wall) -> Option<Vec<Ring>> {
                 inside.push(part);
             }
         }
+        // The outline is every triangle of every entity sharing the
+        // element's Tag, so a crafted file made millions of parts before the
+        // `MAX_RISERS` check below, and `join_pieces` is quadratic in them.
+        // Joining merges parts, so this bound is the looser one.
+        if inside.len() > MAX_COVERED_PARTS {
+            crate::budget::stopped("wall_top_covered_parts");
+            return None;
+        }
     }
     let inside: Vec<Ring> = join_pieces(inside.into_iter().map(tidy).collect());
     if inside.is_empty() || inside.len() > MAX_RISERS {
@@ -1161,6 +1176,7 @@ struct BaseContext<'a> {
     entities: &'a [IfcEntity],
     gathered: Gathered<'a>,
     shapes: &'a HashMap<u32, SlabTop>,
+    plates: &'a Roofs,
 }
 
 /// How the base of `wall` is cut at the one element of
@@ -1189,6 +1205,7 @@ fn decide_base(
         entities,
         gathered,
         shapes,
+        plates,
     } = context;
     let Some(wall) = wall else {
         return BaseDecision::Left("wall_not_one_plain_extrusion");
@@ -1221,6 +1238,13 @@ fn decide_base(
         let Some(found) = gathered.pieces.get(&id) else {
             continue;
         };
+        // A roof's top is a level the wall's base stops at only where the roof
+        // is a level plate (`level_underside`'s rule for the tops): a
+        // roof drawn as its record box has the box's top, not its own
+        // (section 4).
+        if !level_underside(id, plates) {
+            continue;
+        }
         let Some(cutter) = cutters
             .entry(id)
             .or_insert_with(|| build_cutter(entities, found, &gathered.voids, plane.is_some()))
@@ -1330,11 +1354,13 @@ fn decide_bases(
     entities: &[IfcEntity],
     pending: &[PendingBase],
     shapes: &HashMap<u32, SlabTop>,
+    plates: &Roofs,
 ) -> Vec<(usize, BaseDecision)> {
     let context = BaseContext {
         entities,
         gathered: gather(entities),
         shapes,
+        plates,
     };
     let mut cutters: HashMap<u32, Option<Cutter>> = HashMap::new();
     let mut decisions = Vec::new();
@@ -1366,11 +1392,12 @@ pub(super) fn cut_wall_bases(
     pending: &[PendingBase],
     shapes: &HashMap<u32, SlabTop>,
     steps: &HashMap<usize, SteppedPlan>,
+    plates: &Roofs,
 ) {
     if pending.is_empty() {
         return;
     }
-    let decisions = decide_bases(entities, pending, shapes);
+    let decisions = decide_bases(entities, pending, shapes, plates);
     for (index, decision) in decisions {
         let Some(IfcEntity::BuildingElement {
             extrusion: Some(body),
@@ -2543,6 +2570,7 @@ fn decide_ends(
     pending: &[PendingBase],
     joined: &[PendingEnds],
     shapes: &HashMap<u32, SlabTop>,
+    plates: &Roofs,
     refused: &mut BTreeMap<usize, &'static str>,
     unmarked: &mut BTreeMap<usize, &'static str>,
 ) -> Vec<WallEnds> {
@@ -2574,6 +2602,7 @@ fn decide_ends(
         entities,
         gathered: gather(entities),
         shapes,
+        plates,
     };
     let mut cutters: HashMap<u32, Option<Cutter>> = HashMap::new();
     let mut accepted = Vec::new();
@@ -2858,6 +2887,7 @@ pub(super) fn extend_wall_ends(
     pending: &[PendingBase],
     joined: &[PendingEnds],
     shapes: &HashMap<u32, SlabTop>,
+    plates: &Roofs,
     handoffs: &mut BTreeMap<usize, Vec<Property>>,
 ) -> HashMap<usize, SteppedPlan> {
     let mut stepped = HashMap::new();
@@ -2876,6 +2906,7 @@ pub(super) fn extend_wall_ends(
         pending,
         joined,
         shapes,
+        plates,
         &mut refused,
         &mut unmarked,
     );
@@ -2907,14 +2938,14 @@ pub(super) fn extend_wall_ends(
     // past the walls the record joins; an end the rule could not read and has no
     // such evidence for is Revit's end for all the record shows, so the wall
     // carries nothing and the reason is counted from the hand-off instead
-    // (`exported.wall_end_reads_unmarked`).
+    // (`exported.wall_end_reads_unmarked`). Each end is in one map or the other,
+    // so a wall in both had one end refused with face evidence and the other
+    // without: both are counted, each in its own counter.
     for (index, reason) in unmarked {
-        if !refused.contains_key(&index) {
-            handoffs.entry(index).or_default().push(Property {
-                name: WALL_END_NOT_MARKED_PROPERTY.into(),
-                value: PropertyValue::Text(reason.into()),
-            });
-        }
+        handoffs.entry(index).or_default().push(Property {
+            name: WALL_END_NOT_MARKED_PROPERTY.into(),
+            value: PropertyValue::Text(reason.into()),
+        });
     }
     for (index, reason) in refused {
         mark_end_refusal(entities, index, reason);
