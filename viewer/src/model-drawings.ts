@@ -101,7 +101,7 @@ export function initModelDrawings(
         shown = pending;
         pending = null;
         listEl.removeAttribute('aria-busy');
-        if (!view.show(msg.drawn.svg)) {
+        if (!view.show(msg.drawn.svg, true)) {
           host.toast('The drawing could not be shown: the renderer returned no SVG.', 'bad');
           return;
         }

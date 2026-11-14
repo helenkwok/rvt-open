@@ -77,8 +77,11 @@ export function sanitizeSvg(text: string): SVGSVGElement | null {
 
 /** A drawing shown as SVG in a pane: drag to pan, wheel or + / - to zoom, 0 to fit. */
 export interface SvgView {
-  /** Shows `text` (sanitised) fitted to the pane; null when it is not an SVG. */
-  show(text: string): SVGSVGElement | null;
+  /**
+   * Shows `text` (sanitised) fitted to the pane, to its view box or, with `fitDrawn`, to what it
+   * draws; null when it is not an SVG.
+   */
+  show(text: string, fitDrawn?: boolean): SVGSVGElement | null;
   fit(): void;
   clear(): void;
   svg(): SVGSVGElement | null;
@@ -114,7 +117,7 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
     setViewBox();
   };
 
-  const show = (text: string): SVGSVGElement | null => {
+  const show = (text: string, fitDrawn = false): SVGSVGElement | null => {
     const el = sanitizeSvg(text);
     sheet.replaceChildren();
     svgEl = null;
@@ -125,6 +128,14 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
     fitBox = vb && vb.width > 0 && vb.height > 0 ? { x: vb.x, y: vb.y, w: vb.width, h: vb.height } : { x: 0, y: 0, w: 1, h: 1 };
     svgEl = el;
     sheet.appendChild(el);
+    if (fitDrawn) {
+      // A sheet's viewport frame can reach far past the sheet: fit what is drawn.
+      const b = el.getBBox();
+      const pad = Math.max(b.width, b.height) * 0.02;
+      if (b.width > 0 && b.height > 0 && Number.isFinite(b.width + b.height)) {
+        fitBox = { x: b.x - pad, y: b.y - pad, w: b.width + 2 * pad, h: b.height + 2 * pad };
+      }
+    }
     fit();
     return el;
   };

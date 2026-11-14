@@ -33,12 +33,16 @@ async function drawn(page: Page): Promise<{ lines: number; texts: number; viewpo
 
 test('lists the sheets and views, draws a sheet and a section, and saves them', async ({ page }) => {
   test.skip(!MODEL || !fs.existsSync(MODEL), 'RVT_DRAWINGS_MODEL is not set or absent');
-  test.slow();
+  // Opening the project and the first drawing (which exports the model in wasm) take minutes in CI.
+  test.setTimeout(900_000);
+  const t0 = Date.now();
+  const at = (what: string): void => console.log(`${what} at ${Math.round((Date.now() - t0) / 1000)} s`);
   await page.goto('/');
   await expect(page.locator('#status')).toHaveText(/Ready/);
   await page.locator('#file-input').setInputFiles(MODEL);
   await expect(page.locator('#status')).toHaveText(/Loaded/);
 
+  at('loaded');
   const list = page.locator('#drawings');
   const sheets = list.locator('button[data-key^="sheet:"]');
   const sections = list.locator('button[data-key^="section:"]');
@@ -74,6 +78,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   expect(sheetCounts.viewports).toBeGreaterThan(0);
   await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
   await shot(page, 'sheet');
+  at('sheet drawn');
 
   // The saves are the sheet's, as rvt-sheet writes them. The menu closes after each export.
   for (const [format, magic] of [
@@ -92,6 +97,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
     expect(download.suggestedFilename()).toMatch(new RegExp(`\\.${format}$`));
     const head = fs.readFileSync((await download.path())!).subarray(0, 32).toString('latin1');
     expect(head).toMatch(magic);
+    at(`${format} saved`);
   }
 
   // Back to the 3D view and to the sheet again: nothing is drawn again, and the
@@ -117,6 +123,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   const sectionCounts = await drawn(page);
   console.log('section', sectionName, JSON.stringify(sectionCounts));
   expect(sectionCounts.lines).toBeGreaterThan(0);
+  at('section drawn');
   await shot(page, 'section');
 
   await list.getByRole('button', { name: '3D model' }).click();
