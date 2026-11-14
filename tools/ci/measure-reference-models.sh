@@ -606,19 +606,6 @@ spawn() { # command...: run it once fewer than JOBS are running, and while
   "$@" &
 }
 
-# The gates job: the two same-project gates over the exports a samples
-# shard kept in GATE_DIR, and nothing else, so that the verdict is scored by a
-# job that ran no measured code. OUT_DIR holds those exports (sample-<file>/
-# model.ifc) and receives the results; SAMPLE_DIR holds an empty <year>-<project>
-# .rvt for each sample the run holds, which the workflow writes from its own
-# inputs and not from anything the measured job left.
-if [ -n "${MEASURE_GATES_ONLY:-}" ]; then
-  [ -d "${SAMPLE_DIR:-}" ] || { echo "::error::MEASURE_GATES_ONLY needs SAMPLE_DIR" >&2; exit 2; }
-  [ -z "${AREAS_ACROSS_SAVES:-}" ] || areas_across_saves
-  bodies_across_saves
-  exit 0
-fi
-
 # The definitions are fetched once here, before the items read them at once.
 python -c 'import sys; sys.path.insert(0, sys.argv[1]); import ifc4_property_sets; ifc4_property_sets.definitions(sys.argv[2])' \
   "$(dirname "$0")" "$PSET_DEFINITIONS"
