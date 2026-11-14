@@ -121,7 +121,7 @@ pub(crate) fn split_by_face_material(
 
 /// a translation, and the points stay small for float readers.
 fn shared_points(mesh: &super::body_geometry::Mesh) -> (Vec<[f64; 3]>, String, [f64; 3]) {
-    let (q, _) = super::body_geometry::mesh_key(mesh, FT);
+    let q = super::body_geometry::grid_points(mesh, FT);
     let mut lo = [i64::MAX; 3];
     for p in &q {
         for k in 0..3 {
