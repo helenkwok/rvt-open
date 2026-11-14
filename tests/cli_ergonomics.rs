@@ -404,7 +404,10 @@ fn rvt_dump_lists_a_stream_over_the_limit_and_dumps_the_rest() {
         .expect("a BasicFileInfo stream");
     let limit = basic - 1;
     let fitting = sizes.iter().filter(|(_, len)| *len <= limit).count();
-    assert!(fitting > 0, "a stream smaller than BasicFileInfo: {sizes:?}");
+    assert!(
+        fitting > 0,
+        "a stream smaller than BasicFileInfo: {sizes:?}"
+    );
     let whole = dir.join("whole");
     let out = run(
         env!("CARGO_BIN_EXE_rvt-dump"),

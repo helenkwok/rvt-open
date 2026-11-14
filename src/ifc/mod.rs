@@ -3578,7 +3578,6 @@ pub(crate) fn roof_slab_wholes(model: &IfcModel) -> std::collections::HashMap<us
 /// next slab is one more.
 const ROOF_FIRST_SLAB: usize = 2;
 
-
 /// How far, in feet, a cut solid's corner may lie from its plan footprint's
 /// and its ends from the host's faces.
 const HOSTED_CUT_TOLERANCE_FEET: f64 = 1e-6;
