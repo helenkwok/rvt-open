@@ -624,38 +624,25 @@ fn scan_export_parameters_by_header(
 /// no value or the wrong class while Revit's export writes the current one.
 /// An element it has no current copy for, one whose current partition carries
 /// no entry for the key, and one whose current copy disagrees with itself,
-/// leave the key out.
+/// leave the key out. Copies that agree are checked against the current copy
+/// too when the element's data also sits in a partition without the key, so
+/// a key the current copy cleared is left out however many older copies
+/// agree on it.
 fn choose_copies(
     rf: &mut RevitFile,
     revit_version: u32,
     copies: &BTreeMap<(u32, i64), KeyCopies>,
 ) -> BTreeMap<u32, ExportParameters> {
     let by_current_copy = revit_version >= 2024;
-    let mut chosen: BTreeMap<(u32, i64), String> = BTreeMap::new();
-    let mut disagreeing: BTreeSet<(u32, i64)> = BTreeSet::new();
-    for (&(owner, key), held) in copies {
-        let mut values = held.values();
-        let Some(first) = values.next() else {
-            continue;
-        };
-        if values.all(|value| value == first) {
-            if let Some(value) = first {
-                chosen.insert((owner, key), value.clone());
-            }
-        } else if by_current_copy {
-            disagreeing.insert((owner, key));
-        } else if let Some(value) = held.values().rev().flatten().next() {
-            chosen.insert((owner, key), value.clone());
-        }
-    }
-    if !disagreeing.is_empty() {
+    let mut holders = Holders::new();
+    let mut current: BTreeMap<u32, u32> = BTreeMap::new();
+    if by_current_copy && !copies.is_empty() {
         // A parameter cleared in the current partition is no entry there, so
         // the partitions to choose among are those where the element's data
         // object appears at all, not only those that hold the key: a current
         // partition without the key leaves it out and does not give way to an
         // older partition's value.
-        let owners: BTreeSet<u32> = disagreeing.iter().map(|&(owner, _)| owner).collect();
-        let mut holders = Holders::new();
+        let owners: BTreeSet<u32> = copies.keys().map(|&(owner, _)| owner).collect();
         for stream in rf.partition_stream_names() {
             let Ok(objects) = rf.memoised_partition_data_objects(&stream) else {
                 continue;
@@ -670,31 +657,75 @@ fn choose_copies(
                 }
             }
         }
-        // The pairs it leaves out are the ones whose current copy cannot be
-        // told: an element the index does not route, or one whose current copy
-        // sits in a stream too large to read. The native record read leaves
-        // those elements out too, and a latest-copy guess here would read a
-        // stale value.
-        let current = crate::native_document::current_partitions(rf, &holders);
-        for (owner, key) in disagreeing {
-            let Some(partition) = current.get(&owner) else {
-                continue;
-            };
-            if let Some(Some(value)) = copies
-                .get(&(owner, key))
-                .and_then(|held| held.get(partition))
-            {
-                chosen.insert((owner, key), value.clone());
-            }
-        }
+        let needing: Holders = copies
+            .iter()
+            .filter(|&(&(owner, _), held)| needs_current_copy(held, holders.get(&owner)))
+            .filter_map(|(&(owner, _), _)| Some((owner, holders.get(&owner)?.clone())))
+            .collect();
+        // The elements it leaves out are the ones whose current copy cannot
+        // be told: an element the index does not route, or one whose current
+        // copy sits in a stream too large to read. The native record read
+        // leaves those elements out too, and a latest-copy guess here would
+        // read a stale value.
+        current = crate::native_document::current_partitions(rf, &needing);
     }
     let mut merged: BTreeMap<u32, ExportParameters> = BTreeMap::new();
-    for ((owner, key), value) in chosen {
+    for (&(owner, key), held) in copies {
+        let Some(value) = resolve_copies(
+            by_current_copy,
+            held,
+            holders.get(&owner),
+            current.get(&owner).copied(),
+        ) else {
+            continue;
+        };
         if let Some(slot) = merged.entry(owner).or_default().slot(key) {
             *slot = Some(value);
         }
     }
     merged
+}
+
+/// Whether, on Revit 2024 and later, a key's value must come from the
+/// element's current copy: its copies disagree, or the element's data also
+/// sits in a partition that carries no entry for the key, which may be the
+/// current copy that cleared it.
+fn needs_current_copy(held: &KeyCopies, holders: Option<&BTreeSet<u32>>) -> bool {
+    let mut values = held.values();
+    let Some(first) = values.next() else {
+        return false;
+    };
+    !values.all(|value| value == first)
+        || holders.is_some_and(|holders| holders.iter().any(|p| !held.contains_key(p)))
+}
+
+/// The value one `(owner, key)` takes from its copies, given the partitions
+/// holding the element's data and its current partition where known (see
+/// [`choose_copies`]).
+fn resolve_copies(
+    by_current_copy: bool,
+    held: &KeyCopies,
+    holders: Option<&BTreeSet<u32>>,
+    current: Option<u32>,
+) -> Option<String> {
+    let first = held.values().next()?;
+    let agree = held.values().all(|value| value == first);
+    if !by_current_copy {
+        return if agree {
+            first.clone()
+        } else {
+            held.values().rev().flatten().next().cloned()
+        };
+    }
+    if !needs_current_copy(held, holders) {
+        return first.clone();
+    }
+    match current {
+        Some(partition) => held.get(&partition).cloned().flatten(),
+        // Copies that agree with no sign of which is current keep their value.
+        None if agree => first.clone(),
+        None => None,
+    }
 }
 
 /// Names of the shared parameters Revit's IFC exporter reads as "Export to
@@ -886,4 +917,82 @@ pub fn scan_export_parameters_schema(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn copies(entries: &[(u32, Option<&str>)]) -> KeyCopies {
+        entries
+            .iter()
+            .map(|&(partition, value)| (partition, value.map(str::to_owned)))
+            .collect()
+    }
+
+    #[test]
+    fn current_copy_without_the_key_leaves_one_older_value_out() {
+        let held = copies(&[(10, Some("IfcSlab"))]);
+        let holders = BTreeSet::from([10, 20]);
+        assert_eq!(resolve_copies(true, &held, Some(&holders), Some(20)), None);
+    }
+
+    #[test]
+    fn current_copy_without_the_key_leaves_identical_older_values_out() {
+        let held = copies(&[(10, Some("IfcSlab")), (15, Some("IfcSlab"))]);
+        let holders = BTreeSet::from([10, 15, 20]);
+        assert_eq!(resolve_copies(true, &held, Some(&holders), Some(20)), None);
+    }
+
+    #[test]
+    fn current_copy_with_the_key_gives_its_value() {
+        let held = copies(&[(10, Some("IfcSlab")), (20, Some("IfcRoof"))]);
+        let holders = BTreeSet::from([10, 20, 30]);
+        assert_eq!(
+            resolve_copies(true, &held, Some(&holders), Some(20)).as_deref(),
+            Some("IfcRoof")
+        );
+        let held = copies(&[(10, Some("IfcSlab"))]);
+        assert_eq!(
+            resolve_copies(true, &held, Some(&BTreeSet::from([10, 5])), Some(10)).as_deref(),
+            Some("IfcSlab")
+        );
+    }
+
+    #[test]
+    fn copies_held_everywhere_need_no_current_copy() {
+        let held = copies(&[(10, Some("IfcSlab")), (20, Some("IfcSlab"))]);
+        let holders = BTreeSet::from([10, 20]);
+        assert!(!needs_current_copy(&held, Some(&holders)));
+        assert_eq!(
+            resolve_copies(true, &held, Some(&holders), None).as_deref(),
+            Some("IfcSlab")
+        );
+    }
+
+    #[test]
+    fn unknown_current_copy_keeps_agreement_and_drops_disagreement() {
+        let holders = BTreeSet::from([10, 20]);
+        let agree = copies(&[(10, Some("IfcSlab"))]);
+        assert_eq!(
+            resolve_copies(true, &agree, Some(&holders), None).as_deref(),
+            Some("IfcSlab")
+        );
+        let disagree = copies(&[(10, Some("IfcSlab")), (20, Some("IfcRoof"))]);
+        assert_eq!(resolve_copies(true, &disagree, Some(&holders), None), None);
+    }
+
+    #[test]
+    fn before_2024_the_newest_value_wins() {
+        let held = copies(&[(10, Some("IfcSlab")), (20, Some("IfcRoof")), (30, None)]);
+        assert_eq!(
+            resolve_copies(false, &held, None, None).as_deref(),
+            Some("IfcRoof")
+        );
+        let single = copies(&[(10, Some("IfcSlab"))]);
+        assert_eq!(
+            resolve_copies(false, &single, Some(&BTreeSet::from([10, 20])), Some(20)).as_deref(),
+            Some("IfcSlab")
+        );
+    }
 }
