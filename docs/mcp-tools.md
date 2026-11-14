@@ -474,10 +474,10 @@ Which bodies are drawn from the mesh Revit saved for display.
 
 | Value | Meaning |
 |---|---|
-| "default" | Every element that would be its record's bounding box, on Revit 2014 to 2027 (the default). |
-| "doors_and_windows" | Doors and windows only, on Revit 2014 to 2027: cheaper in time and memory. |
+| "default" | Every element that would be its record's bounding box, on Revit 2014 to 2027, and the walls that embed a curtain wall where Revit raised their base, on Revit 2024 to 2027 (the default). |
+| "doors_and_windows" | Doors and windows only, on Revit 2014 to 2027, and the walls that embed a curtain wall as for the default: cheaper in time and memory. |
 | "all" | The same as `default`, kept for old callers. |
-| "off" | None: every element keeps its record's box. |
+| "off" | None: every element keeps its record's box, and a wall that embeds a curtain wall its record's body. |
 
 ### ModeArg
 

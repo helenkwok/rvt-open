@@ -766,12 +766,12 @@
           "oneOf": [
             {
               "const": "default",
-              "description": "Every element that would be its record's bounding box, on Revit 2014 to\n2027 (the default).",
+              "description": "Every element that would be its record's bounding box, on Revit 2014 to\n2027, and the walls that embed a curtain wall where Revit raised their\nbase, on Revit 2024 to 2027 (the default).",
               "type": "string"
             },
             {
               "const": "doors_and_windows",
-              "description": "Doors and windows only, on Revit 2014 to 2027: cheaper in time and\nmemory.",
+              "description": "Doors and windows only, on Revit 2014 to 2027, and the walls that embed\na curtain wall as for the default: cheaper in time and memory.",
               "type": "string"
             },
             {
