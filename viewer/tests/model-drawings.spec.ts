@@ -53,8 +53,8 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
     sections: await sections.count(),
   };
   console.log('drawings listed', JSON.stringify(counts));
-  expect(counts.sheets).toBeGreaterThan(0);
-  expect(counts.sections).toBeGreaterThan(0);
+  // Templates and loaded families' own plan views are not listed (51 plan views read before).
+  expect(counts).toEqual({ sheets: 40, plans: 12, sections: 2 });
   await expect(list.getByRole('button', { name: '3D model' })).toHaveAttribute('aria-pressed', 'true');
 
   // A sheet with a view placed on it: its paper space, title block and viewports.
@@ -74,8 +74,9 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
       return JSON.stringify({ viewBox: svg.getAttribute('viewBox'), bbox: [b.x, b.y, b.width, b.height] });
     }),
   );
-  expect(sheetCounts.lines).toBeGreaterThan(0);
-  expect(sheetCounts.viewports).toBeGreaterThan(0);
+  // As rvt-sheet draws sheet AR01: its site plan in one viewport, its title block and notes.
+  expect(sheetName).toBe('AR01 · ASEMAPIIRUSTUS');
+  expect(sheetCounts).toEqual({ lines: 880, texts: 17, viewports: 1 });
   await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
   await shot(page, 'sheet');
   at('sheet drawn');
@@ -123,7 +124,8 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   await expect(page.locator('#drawing-title')).toHaveText(sectionName);
   const sectionCounts = await drawn(page);
   console.log('section', sectionName, JSON.stringify(sectionCounts));
-  expect(sectionCounts.lines).toBeGreaterThan(0);
+  expect(sectionName).toBe('A');
+  expect(sectionCounts).toEqual({ lines: 88, texts: 0, viewports: 0 });
   at('section drawn');
   await shot(page, 'section');
 
