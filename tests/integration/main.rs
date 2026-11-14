@@ -161,6 +161,8 @@ mod family_instance_ports;
 mod field_type_coverage;
 #[path = "../fitting_nominal_diameter.rs"]
 mod fitting_nominal_diameter;
+#[path = "../floor_plane_joint.rs"]
+mod floor_plane_joint;
 #[path = "../frag_writer.rs"]
 mod frag_writer;
 #[path = "../fuzz_regressions.rs"]
