@@ -101,6 +101,9 @@ export function initModelDrawings(
         shown = pending;
         pending = null;
         listEl.removeAttribute('aria-busy');
+        // Shown before the SVG goes in, so that it is laid out when it is fitted to what it draws.
+        titleEl.textContent = shown.label;
+        showDrawing();
         if (!view.show(msg.drawn.svg, true)) {
           host.toast('The drawing could not be shown: the renderer returned no SVG.', 'bad');
           return;
@@ -111,8 +114,6 @@ export function initModelDrawings(
           svg.dataset.texts = String(msg.drawn.counts.texts);
           svg.dataset.viewports = String(msg.drawn.counts.viewports);
         }
-        titleEl.textContent = shown.label;
-        showDrawing();
         const c = msg.drawn.counts;
         host.setStatus(
           `${shown.label} · ${c.lines} lines · ${c.texts} texts${c.viewports > 0 ? ` · ${c.viewports} viewport${c.viewports === 1 ? '' : 's'}` : ''}`,

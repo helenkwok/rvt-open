@@ -114,6 +114,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   expect(await svgBefore!.evaluate((el) => el.isConnected)).toBe(true);
   await expect(page.locator('#drawing-sheet > svg')).toHaveAttribute('viewBox', zoomed!);
 
+  at('back to the 3D view and the sheet');
   // A section: its elements' edges in its crop box.
   const section = sections.first();
   const sectionName = (await section.textContent()) ?? '';
