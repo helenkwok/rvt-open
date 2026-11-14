@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { drawnBox } from '../src/drawn-box';
 
 /**
  * The DWG / DXF 2D pane (src/drawing.ts): a hand-made R12 ASCII DXF with two
@@ -53,4 +54,27 @@ test('opens a DXF in the 2D pane with layers, layouts and entity details', async
   await pane.locator('line[data-handle]').click();
   await expect(page.locator('#info')).toContainText('LINE');
   await expect(pane.locator('line.drawing-picked')).toHaveCount(1);
+});
+
+test('fits a sheet to what its viewports show, not the model clipped away', async ({ page }) => {
+  // A sheet as rvt-dwg writes one: the model in <defs>, drawn through a clipped <use>
+  // viewport, and a paper-space rectangle. The model's line runs far past the viewport.
+  await page.setContent(`<svg id="s" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="400" height="400">
+    <defs><g id="model-space"><line x1="-100000" y1="0" x2="100000" y2="0" stroke="#000"/></g>
+    <clipPath id="vp0"><rect x="10" y="10" width="20" height="20"/></clipPath></defs>
+    <g transform="scale(1 -1)"><g clip-path="url(#vp0)"><use href="#model-space" transform="matrix(0.005 0 0 0.005 20 20)"/></g>
+    <rect x="0" y="-50" width="50" height="40"/></g></svg>`);
+  const [box, whole] = await page.evaluate((src) => {
+    const fit = new Function(`return (${src})`)() as (s: SVGSVGElement) => DOMRect | null;
+    const svg = document.getElementById('s') as unknown as SVGSVGElement;
+    const b = svg.getBBox();
+    return [fit(svg), { x: b.x, y: b.y, width: b.width, height: b.height }];
+  }, drawnBox.toString());
+  // getBBox counts the clipped line's whole length; the fit is the paper rectangle (0..50 by
+  // 10..50) and the line's visible piece (10..30 at y -20).
+  expect(whole.width).toBeGreaterThan(900);
+  expect(box).not.toBeNull();
+  for (const [k, v] of Object.entries({ x: 0, y: -20, width: 50, height: 70 })) {
+    expect(box![k as 'x']).toBeCloseTo(v, 3);
+  }
 });

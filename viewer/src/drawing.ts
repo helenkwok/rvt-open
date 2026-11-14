@@ -4,6 +4,7 @@
  * requests. The SVG it renders is untrusted file content: it is parsed as
  * image/svg+xml, stripped of anything active or external, and imported as DOM.
  */
+import { drawnBox } from './drawn-box';
 
 /** What the pane needs from main.ts; passed in so this module has no import cycle. */
 export interface DrawingHost {
@@ -129,10 +130,11 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
     svgEl = el;
     sheet.appendChild(el);
     if (fitDrawn) {
-      // A sheet's viewport frame can reach far past the sheet: fit what is drawn.
-      const b = el.getBBox();
-      const pad = Math.max(b.width, b.height) * 0.02;
-      if (b.width > 0 && b.height > 0 && Number.isFinite(b.width + b.height)) {
+      // A sheet's viewport frame can reach far past the sheet: fit what is drawn, a viewport
+      // counting only what its clip shows.
+      const b = drawnBox(el);
+      if (b && b.width > 0 && b.height > 0 && Number.isFinite(b.width + b.height)) {
+        const pad = Math.max(b.width, b.height) * 0.02;
         fitBox = { x: b.x - pad, y: b.y - pad, w: b.width + 2 * pad, h: b.height + 2 * pad };
       }
     }
