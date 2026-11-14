@@ -185,7 +185,7 @@ pub(super) fn recover_2023_records(
         [&mut out.doors, &mut out.windows],
         gridded,
         |_, element| Some(selected.get(&element.id?)?.references.clone()),
-        None,
+        Some(wall_reads),
     );
     bind_opening_hosts(&out.walls, &mut out.doors);
     bind_opening_hosts(&out.walls, &mut out.windows);

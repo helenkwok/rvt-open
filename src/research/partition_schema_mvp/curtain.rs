@@ -102,7 +102,6 @@ fn data_confirmed_wall(
 /// for a part with no curtain wall or a curtain wall with no value; and a part
 /// that names two or more and has none of them as its wall takes the
 /// value all of them have, where they have one and agree.
-
 pub(super) fn attach_curtain_member_is_external(
     walls: &[DecodedElement],
     products: &mut [DecodedElement],
@@ -505,7 +504,6 @@ fn curtain_walls_by_type(
 /// release (`scan_walls_in_element_data`). A part for which that gives no one
 /// wall stands alone and keeps the walls it names
 /// ([`CURTAIN_NAMED_WALLS_FIELD`]) for [`attach_curtain_member_is_external`].
-
 pub(super) fn attach_curtain_walls(
     rf: &mut RevitFile,
     revit_version: u32,

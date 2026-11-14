@@ -323,7 +323,7 @@ pub struct Material {
 }
 
 /// Where a material's colour and its alpha come from, each [`SOURCE_FILE`] or
-/// [`SOURCE_RVT_RS`]. glTF loaders surface it as the material's `userData`.
+/// [`SOURCE_RVT_OPEN`]. glTF loaders surface it as the material's `userData`.
 /// A consumer that stores colour or opacity as the model's data keeps only
 /// what is marked `"file"`. Metallic and roughness are always rvt-open's,
 /// guessed from the material's name.
@@ -346,7 +346,7 @@ pub struct MaterialExtras {
 /// A [`MaterialExtras`] value read from the file.
 pub const SOURCE_FILE: &str = "file";
 /// A [`MaterialExtras`] value rvt-open chose.
-pub const SOURCE_RVT_RS: &str = "rvt-open";
+pub const SOURCE_RVT_OPEN: &str = "rvt-open";
 
 fn sources(colour: &str, alpha: &str) -> Option<MaterialExtras> {
     Some(MaterialExtras {
@@ -356,7 +356,7 @@ fn sources(colour: &str, alpha: &str) -> Option<MaterialExtras> {
 }
 
 fn read_or_chosen(read: bool) -> &'static str {
-    if read { SOURCE_FILE } else { SOURCE_RVT_RS }
+    if read { SOURCE_FILE } else { SOURCE_RVT_OPEN }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -591,7 +591,7 @@ fn primitives_of(
         if let Some(edges) = edges {
             let m = *edge_material.get_or_insert_with(|| {
                 doc.materials
-                    .push(colour_material("Edges".into(), 0x000000, 1.0));
+                    .push(colour_material("Edges".into(), 0x000000, 1.0, SOURCE_RVT_OPEN));
                 doc.materials.len() - 1
             });
             // The triangles' points (and normals, when they carry them).
@@ -1480,7 +1480,7 @@ pub fn category_colour(ifc_type: &str) -> (u32, f32) {
 /// The material a category's colour makes, named for the category.
 fn category_material(ifc_type: &str) -> Material {
     let (rgb, alpha) = category_colour(ifc_type);
-    colour_material(format!("Category {ifc_type}"), rgb, alpha, SOURCE_RVT_RS)
+    colour_material(format!("Category {ifc_type}"), rgb, alpha, SOURCE_RVT_OPEN)
 }
 
 /// A material of one sRGB colour (`0xRRGGBB`) and alpha, both from `source`.
@@ -1817,7 +1817,6 @@ pub fn write_glb(doc: &GltfDocument, bin: &[u8], out: &mut Vec<u8>) {
 ///
 /// The writer's error, or `InvalidInput` for a document that does not
 /// serialize or a GLB over 4 GiB.
-
 pub fn write_glb_to<W: std::io::Write>(
     doc: &GltfDocument,
     bin: &[u8],

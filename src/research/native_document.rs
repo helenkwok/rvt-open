@@ -432,6 +432,7 @@ fn walk_partition(
         inflated.as_deref(),
         registry,
         budget,
+        |_| true,
         |source, bytes, span| {
             match (span, groups.as_mut()) {
                 (Some(span), Some(kept)) => kept.push((source.clone(), span)),
@@ -1204,7 +1205,7 @@ fn extract_records(
     });
     let record_index = channel.and_then(|channel| file.native_record_index_of(channel));
     let mut indexed: Option<Vec<IndexedRecord>> =
-        (indexable && record_index.is_none()).then(Vec::new);
+        (channel.is_some() && record_index.is_none()).then(Vec::new);
     let walked: Option<BTreeSet<u32>> = record_index.as_ref().map(|record_index| {
         for &(channel, id, partition, tag, _) in &record_index.records {
             if !options.channels.contains(&channel) {
@@ -1254,15 +1255,8 @@ fn extract_records(
             },
         )?;
     }
-    if let (Some(groups), Some(_)) = (groups, inflated) {
-        file.keep_partition_walk(
-            name,
-            budget,
-            native_segments::PartitionWalk {
-                groups,
-                stats: stats.clone(),
-            },
-        );
+    if let (Some(records), Some(channel)) = (indexed, channel) {
+        file.remember_native_record_index(channel, RecordIndex { records });
     }
     let mut seen = BTreeSet::new();
     let mut seen_ids = BTreeSet::new();

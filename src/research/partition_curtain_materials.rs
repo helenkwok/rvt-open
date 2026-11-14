@@ -22,7 +22,6 @@
 //! native read is taken first; the offsets fill only the types it does not
 //! read.
 
-use crate::partition_room_parameters::verified_data_object;
 use crate::{Result, RevitFile, native_document};
 use std::collections::{BTreeMap, BTreeSet};
 

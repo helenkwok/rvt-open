@@ -162,6 +162,7 @@ pub fn walk_selected(
         inflated,
         registry,
         max_group_bytes,
+        &mut wanted,
         |source, bytes, _| callback(source, bytes),
     )
 }
@@ -173,6 +174,7 @@ pub(crate) fn walk_inflated_spans(
     inflated: Option<&InflatedStream>,
     registry: &Registry,
     max_group_bytes: usize,
+    mut wanted: impl FnMut(&GroupSource) -> bool,
     mut callback: impl FnMut(&GroupSource, &[u8], Option<(usize, usize)>) -> Result<()>,
 ) -> Result<Statistics> {
     ensure!(max_group_bytes > 0, "zero partition group budget");

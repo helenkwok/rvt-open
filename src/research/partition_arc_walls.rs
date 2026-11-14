@@ -369,7 +369,7 @@ pub fn element_arc_walls(
     if scan.walls.iter().all(|wall| wall.type_id().is_none()) {
         return scan.walls.clone();
     }
-    let panel_types: std::collections::BTreeSet<u32> =
+    let panel_types: BTreeSet<u32> =
         crate::partition_element_records_2023::scan_records(rf, revit_version)
             .iter()
             .filter(|record| {

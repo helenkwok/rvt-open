@@ -546,6 +546,7 @@ fn symbol_polyline(
     m: &crate::native_graphics_traversal::GraphicsTransform,
 ) -> PlanPolyline {
     let (range, arc) = match curve {
+        Curve::Point(_) => ([0.0, 1.0], false),
         Curve::Line { range, .. } => (*range, false),
         Curve::Arc { range, .. } | Curve::Hermite { range, .. } | Curve::Ellipse { range, .. } => {
             (*range, true)

@@ -764,7 +764,7 @@ impl RevitFile {
     }
 
     /// [`Self::budget_stops`] by reader name, for a caller outside the crate.
-    pub fn work_budget_stops(&self) -> std::collections::BTreeMap<String, usize> {
+    pub fn work_budget_stops(&self) -> BTreeMap<String, usize> {
         self.budget_stops
             .iter()
             .map(|(reader, times)| ((*reader).to_string(), *times))
