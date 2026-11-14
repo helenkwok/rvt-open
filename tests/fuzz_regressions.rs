@@ -950,10 +950,7 @@ fn native_group_record_length_overflow_does_not_panic() {
 
     let file = compound_file(&[
         ("/BasicFileInfo", basic_file_info),
-        (
-            "/Formats/Latest",
-            gzip_member(&schema),
-        ),
+        ("/Formats/Latest", gzip_member(&schema)),
         ("/Partitions/66", partition),
     ]);
 

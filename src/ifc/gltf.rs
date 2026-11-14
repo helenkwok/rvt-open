@@ -590,8 +590,12 @@ fn primitives_of(
         });
         if let Some(edges) = edges {
             let m = *edge_material.get_or_insert_with(|| {
-                doc.materials
-                    .push(colour_material("Edges".into(), 0x000000, 1.0, SOURCE_RVT_OPEN));
+                doc.materials.push(colour_material(
+                    "Edges".into(),
+                    0x000000,
+                    1.0,
+                    SOURCE_RVT_OPEN,
+                ));
                 doc.materials.len() - 1
             });
             // The triangles' points (and normals, when they carry them).

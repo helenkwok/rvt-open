@@ -763,7 +763,8 @@ impl RevitFile {
         &self.budget_stops
     }
 
-    /// [`Self::budget_stops`] by reader name, for a caller outside the crate.
+    /// The readers that stopped at a work budget since this handle was
+    /// opened, with how often, by reader name.
     pub fn work_budget_stops(&self) -> BTreeMap<String, usize> {
         self.budget_stops
             .iter()
