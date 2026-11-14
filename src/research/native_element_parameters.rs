@@ -119,6 +119,16 @@ pub struct ElementParameters {
     /// ElementIds its record's own fields that name a type hold (`m_typeId`,
     /// `m_masterSymbolId`, `m_WallAttributesId`, ...).
     pub named_ids: BTreeMap<u64, (String, Vec<i64>)>,
+    /// For each requested element with an `ElementHeader`: the design
+    /// option it holds (`m_designOptionId`, -1 for the main model), whether
+    /// or not its body saves a Design Option parameter.
+    pub header_design_options: BTreeMap<u64, i64>,
+    /// For each requested element with an `ElementHeader`: its category
+    /// (`m_categroryId`, a `BuiltInCategory` or a subcategory's ElementId).
+    pub header_categories: BTreeMap<u64, i64>,
+    /// With [`read_with_records`]: the objects (class and fields) of each
+    /// requested element's record whose root class the caller keeps.
+    pub records: BTreeMap<u64, Vec<(String, Fv)>>,
 }
 
 impl ElementParameters {
@@ -199,7 +209,17 @@ pub fn read_defined(
     ids: &BTreeSet<u64>,
     filter: Option<fn(&str) -> bool>,
 ) -> Result<ElementParameters> {
-    read_selected(file, ids, filter, Types::Named, false)
+    read_selected(file, ids, filter, Types::Named, false, None)
+}
+
+/// [`read`], also keeping in [`ElementParameters::records`] the objects of
+/// each requested element's record whose root class `keep` accepts.
+pub fn read_with_records(
+    file: &mut RevitFile,
+    ids: &BTreeSet<u64>,
+    keep: fn(&str) -> bool,
+) -> Result<ElementParameters> {
+    read_selected(file, ids, None, Types::Named, false, Some(keep))
 }
 
 /// The values of the parameters of `ids` whose definitions' captions
@@ -235,9 +255,9 @@ pub fn read_property_values(
     if inherited {
         // A type's value can be one the reader uses: every record whose
         // value it may take is read.
-        return read_selected(file, ids, Some(accepts), Types::Values, false);
+        return read_selected(file, ids, Some(accepts), Types::Values, false, None);
     }
-    read_selected(file, ids, Some(accepts), Types::None, true)
+    read_selected(file, ids, Some(accepts), Types::None, true, None)
 }
 
 /// [`read_defined`] reading the records of `ids` alone: no type, family or
@@ -248,7 +268,7 @@ pub fn read_own_defined(
     ids: &BTreeSet<u64>,
     filter: Option<fn(&str) -> bool>,
 ) -> Result<ElementParameters> {
-    read_selected(file, ids, filter, Types::None, false)
+    read_selected(file, ids, filter, Types::None, false, None)
 }
 
 /// Which records besides those of the selected ids a read selects by class.
@@ -268,6 +288,7 @@ fn read_selected(
     filter: Option<fn(&str) -> bool>,
     types: Types,
     filtered_only: bool,
+    keep: Option<fn(&str) -> bool>,
 ) -> Result<ElementParameters> {
     if !native_document::NATIVE_RELEASES.contains(&file.layout_release()?) || ids.is_empty() {
         return Ok(ElementParameters::default());
@@ -298,6 +319,8 @@ fn read_selected(
     };
     let mut records: BTreeMap<i64, RecordParameters> = BTreeMap::new();
     let mut header_options: BTreeMap<i64, Fv> = BTreeMap::new();
+    let mut header_categories: BTreeMap<u64, i64> = BTreeMap::new();
+    let mut kept_records: BTreeMap<u64, Vec<(String, Fv)>> = BTreeMap::new();
     let mut materials: BTreeMap<i64, String> = BTreeMap::new();
     let mut families: BTreeMap<i64, String> = BTreeMap::new();
     let mut symbols: BTreeMap<i64, (Option<i64>, String)> = BTreeMap::new();
@@ -309,17 +332,41 @@ fn read_selected(
                 return Ok(());
             };
             if record.channel == 101 {
-                let option = record
+                let header = record
                     .graph
                     .as_ref()
                     .and_then(|graph| graph.objects.first())
-                    .filter(|header| header.class_name == "ElementHeader")
-                    .and_then(|header| header.fields.get("m_designOptionId"))
-                    .and_then(|value| crate::native_metadata::identifier(value).ok());
-                if let Some(option) = option {
+                    .filter(|header| header.class_name == "ElementHeader");
+                let field = |name: &str| {
+                    header
+                        .and_then(|header| header.fields.get(name))
+                        .and_then(|value| crate::native_metadata::identifier(value).ok())
+                };
+                if let Some(option) = field("m_designOptionId") {
                     header_options.insert(id, Fv::from_i64(option));
                 }
+                // The field's name as the file's schema spells it.
+                if let Some(category) = field("m_categroryId") {
+                    header_categories.insert(record.identity.element_id, category);
+                }
                 return Ok(());
+            }
+            if let (Some(keep), Some(graph)) = (keep, &record.graph) {
+                if ids.contains(&record.identity.element_id)
+                    && graph
+                        .objects
+                        .first()
+                        .is_some_and(|root| keep(&root.class_name))
+                {
+                    kept_records.insert(
+                        record.identity.element_id,
+                        graph
+                            .objects
+                            .iter()
+                            .map(|o| (o.class_name.clone(), o.fields.clone()))
+                            .collect(),
+                    );
+                }
             }
             let (Some(graph), Some(metadata)) = (&record.graph, &record.saved_metadata) else {
                 return Ok(());
@@ -493,6 +540,18 @@ fn read_selected(
     // category by the name Revit shows.
     let names = file.memoised_element_names();
     let mut result = ElementParameters::default();
+    result.header_categories = header_categories
+        .into_iter()
+        .filter(|(id, _)| ids.contains(id))
+        .collect();
+    result.records = kept_records;
+    for (&id, option) in &header_options {
+        if let (Ok(id), Some(option)) = (u64::try_from(id), option.as_i64()) {
+            if ids.contains(&id) {
+                result.header_design_options.insert(id, option);
+            }
+        }
+    }
     for &element_id in ids {
         let Some(record) = i64::try_from(element_id)
             .ok()
