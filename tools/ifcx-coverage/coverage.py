@@ -23,7 +23,7 @@ Exports compared: rvt-open's IFC4 and IFCX (run with `--bin`, or read from
 
 Usage:
   coverage.py FIXTURES_DIR WORK_DIR [--bin BIN_DIR [--rvt-ifc-arg ARG ...]] [--exports DIR]
-              [--revit-ifc DIR ...] [--floor TSV] [--write-floor TSV]
+              [--revit-ifc DIR ...] [--floor TSV] [--write-floor TSV] [--jobs N]
 
 Writes WORK_DIR/ifcx-coverage.tsv (one row per model and kind) and
 WORK_DIR/ifcx-coverage.md (totals per set and kind), and the markdown to
@@ -33,7 +33,9 @@ floor's, or when IFCX carries fewer than rvt-open's IFC4 for a kind.
 """
 import argparse
 import collections
+import concurrent.futures
 import csv
+import functools
 import glob
 import json
 import math
@@ -385,6 +387,36 @@ def models(fixtures):
         yield folder.rsplit("-", 1)[-1], folder, release, recipe, dump
 
 
+def model_rows_of(a, revit_dirs, model):
+    """The rows of one model, and its progress line."""
+    tiny_set, folder, release, recipe, dump_path = model
+    rows = []
+    with open(dump_path, encoding="utf-8") as fh:
+        dump = json.load(fh)
+    exports = {}
+    if a.bin:
+        ifc, ifcx = run_rvt_ifc(a.bin, dump_path[: -len(".api-dump.json")] + ".rvt",
+                                os.path.join(a.work, "exports", folder, release), a.rvt_ifc_arg)
+    elif a.exports:
+        stem = os.path.join(a.exports, folder, release, recipe)
+        ifc, ifcx = stem + ".ifc", stem + ".ifcx"
+    else:
+        ifc = ifcx = None
+    for name, path, loader in (("rvtopen_ifc4", ifc, load_ifc), ("rvtopen_ifcx", ifcx, load_ifcx)):
+        if path and os.path.exists(path):
+            exports[name] = loader(path)
+        elif path:
+            exports[name] = Export()  # a failed export carries nothing
+    if tiny_set in revit_dirs:
+        p = os.path.join(revit_dirs[tiny_set], release, recipe + ".ifc4rv.ifc")
+        if os.path.exists(p):
+            exports["revit_ifc4"] = load_ifc(p)
+    for kind, r in score(dump, exports).items():
+        for what in ("objects", "parameters"):
+            rows.append([tiny_set, release, recipe, kind, what] + r[what])
+    return rows, "%s %s %s" % (tiny_set, release, recipe)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("fixtures")
@@ -397,35 +429,17 @@ def main():
                     help="SET=DIR: Revit's exports, DIR/RELEASE/RECIPE.ifc4rv.ifc (repeatable)")
     ap.add_argument("--floor", help="TSV of IFCX totals per set and kind that must not drop")
     ap.add_argument("--write-floor", help="write the IFCX totals per set and kind to this TSV")
+    ap.add_argument("--jobs", type=int, default=os.cpu_count(), help="models exported and scored at once")
     a = ap.parse_args()
     revit_dirs = dict(x.split("=", 1) for x in a.revit_ifc)
     os.makedirs(a.work, exist_ok=True)
     rows = []
-    for tiny_set, folder, release, recipe, dump_path in models(a.fixtures):
-        with open(dump_path, encoding="utf-8") as fh:
-            dump = json.load(fh)
-        exports = {}
-        if a.bin:
-            ifc, ifcx = run_rvt_ifc(a.bin, dump_path[: -len(".api-dump.json")] + ".rvt",
-                                    os.path.join(a.work, "exports", folder, release), a.rvt_ifc_arg)
-        elif a.exports:
-            stem = os.path.join(a.exports, folder, release, recipe)
-            ifc, ifcx = stem + ".ifc", stem + ".ifcx"
-        else:
-            ifc = ifcx = None
-        for name, path, loader in (("rvtopen_ifc4", ifc, load_ifc), ("rvtopen_ifcx", ifcx, load_ifcx)):
-            if path and os.path.exists(path):
-                exports[name] = loader(path)
-            elif path:
-                exports[name] = Export()  # a failed export carries nothing
-        if tiny_set in revit_dirs:
-            p = os.path.join(revit_dirs[tiny_set], release, recipe + ".ifc4rv.ifc")
-            if os.path.exists(p):
-                exports["revit_ifc4"] = load_ifc(p)
-        for kind, r in score(dump, exports).items():
-            for what in ("objects", "parameters"):
-                rows.append([tiny_set, release, recipe, kind, what] + r[what])
-        print("%s %s %s" % (tiny_set, release, recipe), flush=True)
+    # Each model is exported and scored on its own, so they run in parallel; the rows are gathered
+    # in the models' order, as before.
+    with concurrent.futures.ProcessPoolExecutor(a.jobs) as pool:
+        for model_rows, line in pool.map(functools.partial(model_rows_of, a, revit_dirs), models(a.fixtures)):
+            rows += model_rows
+            print(line, flush=True)
     head = ["set", "release", "recipe", "kind", "what", "api"] + list(EXPORTS)
     with open(os.path.join(a.work, "ifcx-coverage.tsv"), "w", newline="") as fh:
         w = csv.writer(fh, delimiter="\t", lineterminator="\n")
