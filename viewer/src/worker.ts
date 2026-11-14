@@ -72,7 +72,7 @@
  * page sends the file's bytes again with each request, so none are kept here.
  *   main → worker: { type: 'drawing-list', bytes }
  *   worker → main: { type: 'drawing-list', list }   drawingList's { sheets,
- *                  plans, sections }
+ *                  plans, sections }: what drawingOpen draws of the open model
  *   main → worker: { type: 'drawing-open', bytes, kind: 'sheet' | 'plan' |
  *                  'section', id }
  *   worker → main: { type: 'drawing-open', kind, id, drawn }   drawingOpen's
@@ -267,7 +267,7 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
       if (parsedModel === null) throw new Error('no model is open');
       switch (m.type) {
         case 'drawing-list':
-          send({ type: 'drawing-list', list: plain(drawingList(m.bytes)) });
+          send({ type: 'drawing-list', list: plain(drawingList(m.bytes, parsedModel)) });
           return;
         case 'drawing-open':
           send({ type: 'drawing-open', kind: m.kind, id: m.id, drawn: plain(drawingOpen(m.bytes, parsedModel, m.kind, m.id)) });

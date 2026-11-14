@@ -109,8 +109,9 @@ struct Cli {
     #[arg(long)]
     verbose: bool,
 
-    /// Draw only what this view shows: a plan view (its name; see `--list-views`), or a section
-    /// or elevation by its name (DXF, DWG or PDF: its elements' edges in its crop box).
+    /// Draw only what this view shows: a plan view (its name, or its ElementId where views share
+    /// a name; see `--list-views`), or a section or elevation by its name or ElementId (DXF, DWG
+    /// or PDF: its elements' edges in its crop box).
     #[arg(long, conflicts_with = "level")]
     view: Option<String>,
 
@@ -131,7 +132,8 @@ struct Cli {
     #[arg(long, default_value_t = 1200.0, requires = "level")]
     cut_height: f64,
 
-    /// Print the plan views (name, level, view range, crop, in feet) as JSON and exit.
+    /// Print the plan views `--view` draws (id, name, level, view range, crop, in feet; view
+    /// templates left out) as JSON and exit.
     #[arg(long)]
     list_views: bool,
 }
@@ -180,9 +182,12 @@ fn run(cli: &Cli) -> Result<(), String> {
     let mut rf = RevitFile::open(&input).map_err(|e| e.to_string())?;
     if cli.list_views {
         let facts = rvt::plan_views::read(&mut rf).map_err(|e| e.to_string())?;
+        // The views `--view` draws: view templates set other views' visibility and draw nothing.
+        let views: Vec<&rvt::plan_views::PlanView> =
+            facts.views.iter().filter(|v| !v.template).collect();
         println!(
             "{}",
-            serde_json::to_string_pretty(&facts.views).map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&views).map_err(|e| e.to_string())?
         );
         return Ok(());
     }
@@ -262,6 +267,10 @@ fn run(cli: &Cli) -> Result<(), String> {
                 .sections
                 .iter()
                 .find(|v| !v.template && v.name.eq_ignore_ascii_case(name))
+                .or_else(|| {
+                    let id: i64 = name.trim().parse().ok()?;
+                    facts.sections.iter().find(|v| !v.template && v.id == id)
+                })
             {
                 if cli.format == "svg" {
                     return Err(format!(

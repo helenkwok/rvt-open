@@ -550,6 +550,8 @@ jobs:
         leg: [1, 2]
     env:
       LEG2: "butt-joins|stops against at T joints|dragging to orbit|exposes geometry diagnostics|raises a toast"
+      # A public project with sheets for tests/model-drawings.spec.ts (BIM4LCA, CC BY-SA 4.0).
+      RVT_DRAWINGS_MODEL: ${{ github.workspace }}/_bim4lca/ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -561,6 +563,13 @@ jobs:
       - name: Family samples for the demo gallery
         uses: ./.github/actions/fetch-corpus
         with: { repository: phi-ag/rvt, path: _corpus }
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _bim4lca, key: "bim4lca-office-terrain-${{ hashFiles('research/bim4lca-models.tsv') }}" }
+      # Read by byte range from the archive and checked against its pin; an unreachable host skips that test.
+      - run: |
+          st=0; python3 tools/ci/fetch-bim4lca.py research/bim4lca-models.tsv _bim4lca ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt || st=$?
+          [ $st = 2 ] && echo "::warning::BIM4LCA host unreachable; the drawings test skips"
+          [ $st = 0 ] || [ $st = 2 ]
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "24.22.1" }
       - name: Shell, exports (3D PDF included) and the no-network invariant

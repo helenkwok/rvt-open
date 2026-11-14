@@ -4,6 +4,12 @@ import { expect, test, type Page } from '@playwright/test';
 import { openExportMenu } from './export-menu';
 
 /**
+ * A public project with sheets: BIM4LCA's Office Terrain Concrete BuildingPermit
+ * (VTT, CC BY-SA 4.0), which CI fetches into RVT_DRAWINGS_MODEL. Skipped without it.
+ */
+const MODEL = process.env.RVT_DRAWINGS_MODEL ?? '';
+
+/**
  * A Revit model's sheets and views (src/model-drawings.ts): the Drawings list
  * beside the scene tree, a sheet and a section drawn in the 2D pane on request,
  * switching to the 3D view and back without drawing again, and the shown
@@ -26,10 +32,11 @@ async function drawn(page: Page): Promise<{ lines: number; texts: number; viewpo
 }
 
 test('lists the sheets and views, draws a sheet and a section, and saves them', async ({ page }) => {
+  test.skip(!MODEL || !fs.existsSync(MODEL), 'RVT_DRAWINGS_MODEL is not set or absent');
   test.slow();
   await page.goto('/');
   await expect(page.locator('#status')).toHaveText(/Ready/);
-  await page.locator('[data-demo-id="einhoven-2023"]').click();
+  await page.locator('#file-input').setInputFiles(MODEL);
   await expect(page.locator('#status')).toHaveText(/Loaded/);
 
   const list = page.locator('#drawings');
@@ -46,8 +53,8 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   expect(counts.sections).toBeGreaterThan(0);
   await expect(list.getByRole('button', { name: '3D model' })).toHaveAttribute('aria-pressed', 'true');
 
-  // A sheet: its paper space, title block and viewports.
-  const sheet = sheets.first();
+  // A sheet with a view placed on it: its paper space, title block and viewports.
+  const sheet = list.locator('button[data-key^="sheet:"]:not([title^="0 views"])').first();
   const sheetName = (await sheet.textContent()) ?? '';
   await sheet.click();
   await expect(page.locator('#drawing-pane')).toBeVisible();

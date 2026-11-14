@@ -1979,13 +1979,15 @@ thread_local! {
     static VIEW_DRAWING: RefCell<Option<rvt::ifc::sheet_views::ViewDrawing>> = const { RefCell::new(None) };
 }
 
-/// The sheets and views a model can show as drawings, view templates left out:
-/// `{ sheets: [{ id, number, name, views: [id] }], plans: [{ id, name, level, ceiling, scale,
-/// onSheet }], sections: [{ id, name, scale }] }`. A section or elevation is listed only where its
-/// crop box is decoded (it has nothing to draw without one). Reads the views only, not the model.
+/// The sheets and views of `model`'s file that [`drawing_open`] draws: `{ sheets: [{ id, number,
+/// name, views: [id] }], plans: [{ id, name, level, ceiling, scale, onSheet }], sections: [{ id,
+/// name, scale }] }`. View templates and loaded families' own views are left out, and so is a plan
+/// with no view range or level decoded and a section or elevation with no crop box decoded.
 #[wasm_bindgen(js_name = drawingList)]
-pub fn drawing_list(bytes: &js_sys::Uint8Array) -> Result<JsValue, JsValue> {
+pub fn drawing_list(bytes: &js_sys::Uint8Array, model: JsValue) -> Result<JsValue, JsValue> {
+    use rvt::ifc::sheet_views::{section_window, view_window};
     install_panic_hook();
+    let model: IfcModel = serde_wasm_bindgen::from_value(model).map_err(err_str)?;
     let mut rf = open(bytes)?;
     let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
     let out = serde_json::json!({
@@ -1993,9 +1995,9 @@ pub fn drawing_list(bytes: &js_sys::Uint8Array) -> Result<JsValue, JsValue> {
             "id": s.id,
             "number": s.number,
             "name": s.name,
-            "views": facts.viewports.iter().filter(|v| v.sheet == s.id).map(|v| v.view).collect::<Vec<_>>(),
+            "views": facts.viewports.iter().filter(|v| v.sheet == s.id && v.view != s.id).map(|v| v.view).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
-        "plans": facts.views.iter().filter(|v| !v.template).map(|v| serde_json::json!({
+        "plans": facts.views.iter().filter(|v| !v.template && view_window(&model, &facts, v).is_ok()).map(|v| serde_json::json!({
             "id": v.id,
             "name": v.name,
             "level": v.level,
@@ -2004,7 +2006,7 @@ pub fn drawing_list(bytes: &js_sys::Uint8Array) -> Result<JsValue, JsValue> {
             "scale": v.scale,
             "onSheet": v.on_sheet,
         })).collect::<Vec<_>>(),
-        "sections": facts.sections.iter().filter(|v| !v.template && v.crop.is_some()).map(|v| serde_json::json!({
+        "sections": facts.sections.iter().filter(|v| !v.template && section_window(&facts, v).is_some()).map(|v| serde_json::json!({
             "id": v.id,
             "name": v.name,
             "scale": v.scale,

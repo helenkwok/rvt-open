@@ -322,6 +322,17 @@ pub fn sheet_drawing(
     };
     let mut next_x = 0.0;
     let mut viewport_id = 2;
+    // The sheet's own viewport (a view of itself) is not a view placed on it.
+    if !facts
+        .viewports
+        .iter()
+        .any(|v| v.sheet == sheet.id && v.view != sheet.id)
+    {
+        notes.push(format!(
+            "sheet {}: no view is placed on it, so only its title block and notes are drawn",
+            sheet.number
+        ));
+    }
     for vp in facts.viewports.iter().filter(|v| v.sheet == sheet.id) {
         let plan = facts.views.iter().find(|v| v.id == vp.view && !v.template);
         let section = facts

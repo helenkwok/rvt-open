@@ -449,7 +449,8 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
             };
             let owner = id(root, "m_ownerDBViewId");
             match wanted.get(&o.frame.header.tag).copied() {
-                Some("DBViewPlan") => out.views.push(PlanView {
+                // A loaded family's own plan views (its `Ref. Level` plans) are not the project's.
+                Some("DBViewPlan") if !in_family(o) => out.views.push(PlanView {
                     id: element,
                     name: text(root, "m_viewName").unwrap_or_default(),
                     template: flag(root, "m_isTemplate"),
@@ -480,7 +481,7 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                     template_id: id(root, "m_viewTemplateId"),
                     on_sheet: id(root, "m_sheetViewportElemId").is_some(),
                 }),
-                Some("DBViewSection") => {
+                Some("DBViewSection") if !in_family(o) => {
                     let dir = |name: &str| point(root, name).unwrap_or_default();
                     out.sections.push(SectionView {
                         id: element,
@@ -1101,7 +1102,7 @@ impl ViewFacts {
     /// then one where `_` stands for any character a file name cannot hold (`/ \ : * ? " < > |`)
     /// and accents are ignored.
     /// Among several, a floor plan is preferred, then one placed on a sheet, then one with a crop
-    /// box (a project view rather than one of an embedded family), then the lowest id.
+    /// box, then the lowest id. A name no view has is read as a view's ElementId.
     pub fn find(&self, name: &str) -> std::result::Result<&PlanView, String> {
         let candidates: Vec<&PlanView> = self.views.iter().filter(|v| !v.template).collect();
         // Combining marks dropped, so a decomposed name (a file name written on macOS) meets its
@@ -1148,6 +1149,16 @@ impl ViewFacts {
             });
             return Ok(hits[0]);
         }
+        // A view's ElementId names it where its name does not, as two plans of one level (a
+        // floor plan and a ceiling plan) can share a name.
+        if let Some(view) = name
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .and_then(|id| candidates.iter().find(|v| v.id == id))
+        {
+            return Ok(view);
+        }
         let mut names: Vec<&str> = candidates.iter().map(|v| v.name.as_str()).collect();
         names.sort();
         names.dedup();
@@ -1192,5 +1203,38 @@ mod tests {
                 .unwrap_err()
                 .contains("Live/Work Core A")
         );
+    }
+
+    /// A floor plan and a ceiling plan of one level share its name: the name draws the floor
+    /// plan and each one's ElementId draws that one, so every listed view can be drawn.
+    #[test]
+    fn a_view_whose_name_another_shares_is_found_by_its_id() {
+        let facts = super::ViewFacts {
+            views: vec![
+                super::PlanView {
+                    id: 10,
+                    name: "Level 1".into(),
+                    plan_type: Some(2),
+                    ..Default::default()
+                },
+                super::PlanView {
+                    id: 11,
+                    name: "Level 1".into(),
+                    plan_type: Some(super::FLOOR_PLAN),
+                    ..Default::default()
+                },
+                super::PlanView {
+                    id: 12,
+                    name: "Template".into(),
+                    template: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(facts.find("Level 1").unwrap().id, 11);
+        assert_eq!(facts.find("10").unwrap().id, 10);
+        assert_eq!(facts.find("11").unwrap().id, 11);
+        assert!(facts.find("12").is_err(), "a template is not drawn");
     }
 }
