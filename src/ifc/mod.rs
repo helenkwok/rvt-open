@@ -3406,36 +3406,20 @@ fn revit_model_global_ids(
     out.site = stored.site.clone();
     out.building = stored.building.clone();
     out.history = crate::revit_global_ids::history_identity(rf).ok().flatten();
-    // The project's own GUID, on the releases its storey rule was measured on.
-    let revit_year = out.revit_version.unwrap_or(0);
-    let project_guid = crate::revit_global_ids::project_guid_of(rf)
-        .filter(|_| crate::revit_global_ids::PROJECT_GUID_RELEASES.contains(&revit_year));
     let ids = crate::revit_global_ids::revit_global_ids(rf).unwrap_or_default();
-    let revit_version = revit_year;
-    // the storeys of a file of 2017 to 2022 are the project's GUID with
-    // the Level's ElementId XORed in, and of 2023 to 2027 each Level's own
-    // episode's; before that, or after, none is written and the writer derives it.
-    let from_project = project_guid
-        .filter(|_| crate::revit_global_ids::PROJECT_GUID_STOREY_RELEASES.contains(&revit_year));
+    let revit_version = out.revit_version.unwrap_or(0);
+    // A storey takes the GlobalId the file stores, else its Level's own
+    // episode's, the GlobalId Revit derives from the Level's UniqueId (what
+    // the IFCX coverage of the Revit API's Levels matches on every release).
     for (index, storey) in storeys.iter().enumerate() {
         let mut named = levels.iter().filter(|level| level.name == storey.name);
         if let (Some(level), None) = (named.next(), named.next()) {
-            let global_id = stored
+            if let Some(global_id) = stored
                 .levels
                 .get(&level.element_id)
-                .cloned()
-                .or_else(|| {
-                    from_project.map(|guid| {
-                        crate::revit_global_ids::revit_ifc_global_id(guid, level.element_id)
-                    })
-                })
-                .or_else(|| {
-                    ids.get(&level.element_id).cloned().filter(|_| {
-                        crate::revit_global_ids::STOREY_EPISODE_RELEASES.contains(&revit_year)
-                    })
-                });
-            if let Some(global_id) = global_id {
-                out.storeys.insert(index, global_id);
+                .or_else(|| ids.get(&level.element_id))
+            {
+                out.storeys.insert(index, global_id.clone());
             }
         }
     }

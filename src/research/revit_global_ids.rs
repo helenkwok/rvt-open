@@ -43,14 +43,9 @@
 //! The project's own GUID, which the header of `Global/History` holds four
 //! times ([`project_guid`], the document's lasting identity of
 //! [`history_identity`]), with the fake ElementId -16, -15 or -14 XORed into
-//! its last 32 bits, is Revit's IfcProject, IfcBuilding and one IfcSite (63 of
-//! the 64 files of 2017 to 2027 with a Revit export of their own project); a
+//! its last 32 bits, is Revit's IfcProject, IfcBuilding and one IfcSite; a
 //! file whose history gives none takes the GlobalIds it stores. A storey takes
-//! the GlobalId the file stores, else, on 2017 to 2022, that GUID with its
-//! Level's ElementId (69 of 69 storeys on 11 files), and from Revit 2023 its
-//! Level's own episode's. Revit 2015 and 2016 have no file to measure the storey
-//! rule on, and a Revit 2028 file is not measured either: their storeys keep the
-//! ids the writer derives.
+//! the GlobalId the file stores, else its Level's own episode's.
 
 use crate::le_bytes;
 use crate::{Result, RevitFile, compression, elem_table, streams};
@@ -78,29 +73,6 @@ pub const RECORD_EPISODE_OFFSET_28: usize = 8;
 /// project keeps: three copies in a row from `0x16`, 16 zero bytes, and a fourth
 /// that ends where the count at [`EPISODE_TABLE_OFFSET`] begins.
 pub const PROJECT_GUID_OFFSETS: [usize; 4] = [0x16, 0x26, 0x36, 0x56];
-/// The releases whose project, building and site GlobalIds were measured to be the
-/// project's GUID with a fake id XORed in: 63 of the 64 files of 2017 to 2027 that
-/// have a Revit export of their own project. Revit 2015 and 2016 have no
-/// file to measure it on, and Revit 2028 is not measured.
-pub const PROJECT_GUID_RELEASES: std::ops::RangeInclusive<u32> = 2017..=2027;
-/// The releases whose storeys were measured to be the project's GUID with the
-/// Level's ElementId XORed in: 69 of 69 storeys on 11 of the 12 files of 2017 to 2022
-/// with a Revit export of their own project. From 2023 they are 0 of 229 and each
-/// Level's own episode's GUID is Revit's.
-pub const PROJECT_GUID_STOREY_RELEASES: std::ops::RangeInclusive<u32> = 2017..=2022;
-/// The releases whose storeys were measured to be the GUID of the Level's own episode
-/// with its ElementId XORed in (: Core Interior 15 of 15, the Revit 2025
-/// models, the BIM4LCA office and the held-out files of 2023 to 2027). On 2015 to 2022
-/// they are not, so there that id is not written.
-pub const STOREY_EPISODE_RELEASES: std::ops::RangeInclusive<u32> = 2023..=2027;
-/// The ElementId Revit's exporter XORs into the project's GUID for the IfcProject's
-/// GlobalId, the IfcBuilding's and the IfcSite's: the fake ids of revit-ifc's
-/// `GUIDUtil.ProjectLevelGUIDType`.
-pub const PROJECT_ELEMENT_ID: i32 = -16;
-/// See [`PROJECT_ELEMENT_ID`]: the building's.
-pub const BUILDING_ELEMENT_ID: i32 = -15;
-/// See [`PROJECT_ELEMENT_ID`]: the site's.
-pub const SITE_ELEMENT_ID: i32 = -14;
 
 /// The episode GUIDs of a file, in stored order (newest first).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -327,12 +299,6 @@ pub fn project_level_global_id(identity: &str, kind: &str) -> Option<String> {
     let id = PROJECT_LEVEL_IDS.iter().find(|(k, _)| *k == kind)?.1;
     // `revit_ifc_global_id` takes Windows byte order.
     Some(revit_ifc_global_id(canonical_guid(value), id))
-}
-
-/// The project's own GUID of a file, in Windows byte order ([`project_guid`]), `None`
-/// when its `Global/History` cannot be read or holds none.
-pub fn project_guid_of(rf: &mut RevitFile) -> Option<[u8; 16]> {
-    project_guid(&inflate_history(rf).ok()?)
 }
 
 /// Built-in parameter under which Revit's exporter stores an element's
