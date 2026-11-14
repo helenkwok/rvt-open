@@ -1,24 +1,20 @@
 # Checks rvt-open does not pass yet. tools/ci/tiny_models_check.py reports these without failing, and fails when one passes: remove it then.
 release	recipe	check	reason
 2018	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
-2018	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
 2018	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2018	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2018	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
 2019	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
-2019	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
 2019	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2019	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2019	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
 2020	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
-2020	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
 2020	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2020	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2020	20-levels-grids-site	count:Grids	grids are not read: the schedule has no row for them
 2021	7-slope-arrow-roof	roof1:slab-globalids	a footprint roof with no slope-defining edge (flat, or sloped by an arrow) is not written as its one slab before 2024
 2021	7-slope-arrow-roof	roof1:slabs	a footprint roof with no slope-defining edge (flat, or sloped by an arrow) is not written as its one slab before 2024
 2021	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
-2021	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
 2021	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2021	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2021	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
@@ -26,7 +22,6 @@ release	recipe	check	reason
 2022	7-slope-arrow-roof	roof1:slab-globalids	a footprint roof with no slope-defining edge (flat, or sloped by an arrow) is not written as its one slab before 2024
 2022	7-slope-arrow-roof	roof1:slabs	a footprint roof with no slope-defining edge (flat, or sloped by an arrow) is not written as its one slab before 2024
 2022	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
-2022	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
 2022	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2022	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2022	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
@@ -34,7 +29,6 @@ release	recipe	check	reason
 2023	7-slope-arrow-roof	roof1:slab-globalids	a footprint roof with no slope-defining edge (flat, or sloped by an arrow) is not written as its one slab before 2024
 2023	7-slope-arrow-roof	roof1:slabs	a footprint roof with no slope-defining edge (flat, or sloped by an arrow) is not written as its one slab before 2024
 2023	14-curtain-wall	wall1:length	curtain wall length not read before 2024: the schedule row has no length
-2023	15-wall-profile-openings	count:Rectangular Straight Wall Opening	wall openings are not read: the schedule has no row for them
 2023	18-phases	count:Rooms	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2023	18-phases	count:Walls	elements outside the last phase (the wall demolished in it, the room of the earlier phase) are left out of the schedule
 2023	19-design-options	count:Walls	the wall in the non-primary design option is left out of the schedule
