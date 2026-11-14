@@ -98,6 +98,7 @@ const CASES: [Case; 5] = [
         reasons: &[
             "body_is_record_box",
             "low_confidence_schema_scan_candidate",
+            "saved_mesh_not_used",
             "unsupported_geometry_missing_dimensions",
             "unsupported_geometry_profile",
             "unsupported_geometry_unresolved_host",
@@ -127,6 +128,7 @@ const CASES: [Case; 5] = [
             // No room of this office keeps its record box as its outline:
             // rvt-open reads every one from its stored solid or its family's
             // graphics, so the reason is counted (0) but not required.
+            "saved_mesh_not_used",
             "unsupported_geometry_unresolved_host",
         ],
         frames: true,
@@ -280,6 +282,7 @@ fn check_model(model: &str, path: &Path, case: Option<&Case>) {
             "wall_profile_extension_refused",
             &exported.wall_profile_refusals,
         ),
+        ("saved_mesh_not_used", &exported.saved_mesh_refusals),
     ] {
         aggregate.insert(reason.to_string(), refusals.values().sum());
         classes.insert(reason.to_string(), refusals.clone());
@@ -330,6 +333,7 @@ fn check_model(model: &str, path: &Path, case: Option<&Case>) {
                 | "wall_base_cut_refused"
                 | "wall_end_extension_refused"
                 | "wall_profile_extension_refused"
+                | "saved_mesh_not_used"
         ) {
             let found = counted(&entries, |entry| entry.detail.as_ref());
             assert_eq!(&found, &classes[reason], "{name}: {reason} by detail");

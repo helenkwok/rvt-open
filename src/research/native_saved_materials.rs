@@ -1,4 +1,5 @@
 //! Saved material ownership and the default viewport conversion.
+use crate::graph_value::Fv;
 use crate::{native_document::Record, native_metadata::identifier, native_parameters::ObjectGraph};
 use anyhow::{Result, ensure};
 use serde::Serialize;
@@ -103,7 +104,7 @@ impl Resolver {
                 let (i, s) = target(g, 0, &f["m_pGStyle"], "GStyle")?;
                 if let (Some(category), Some(kind)) = (
                     f.get("m_categoryId"),
-                    f.get("m_gstyleType").and_then(Value::as_i64),
+                    f.get("m_gstyleType").and_then(Fv::as_i64),
                 ) {
                     self.category_styles.entry((identifier(category)?, kind)).or_default().push((identifier(&s["m_materialElemId"])?, json!({"style_owner": source(r, 0, "m_categoryId/m_gstyleType"), "material_reference": source(r, i, "m_materialElemId")})));
                 }
@@ -309,12 +310,7 @@ impl Resolver {
 fn source(r: &Record, i: usize, field: &str) -> Value {
     json!({"owner_id":r.identity.element_id,"unique_id":r.identity.unique_id,"object_index":i,"field":field,"record_source":r.source})
 }
-fn target<'a>(
-    g: &'a ObjectGraph,
-    owner: usize,
-    p: &Value,
-    class: &str,
-) -> Result<(usize, &'a Value)> {
+fn target<'a>(g: &'a ObjectGraph, owner: usize, p: &Fv, class: &str) -> Result<(usize, &'a Fv)> {
     let offset = p["offset"]
         .as_u64()
         .ok_or_else(|| anyhow::anyhow!("missing pointer offset"))?;
@@ -337,7 +333,7 @@ fn project_material(
     r: &Record,
     g: &ObjectGraph,
     i: usize,
-    m: &Value,
+    m: &Fv,
     initialized_context: bool,
 ) -> Result<RenderMaterial> {
     ensure!(
@@ -362,7 +358,7 @@ fn project_material(
                 && identifier(&m["m_appearanceAssetId"])? == -1
                 && asset["m_aAProperties"]
                     .as_array()
-                    .is_some_and(Vec::is_empty)
+                    .is_some_and(|items| items.is_empty())
             {
                 1.0
             } else if schema == "HardwoodSchema" && initialized_context {
@@ -448,7 +444,7 @@ fn project_material(
         provenance,
     })
 }
-fn packed_color(m: &Value) -> Result<[f64; 4]> {
+fn packed_color(m: &Fv) -> Result<[f64; 4]> {
     let color = m["m_color"]
         .as_u64()
         .ok_or_else(|| anyhow::anyhow!("missing packed color"))?;

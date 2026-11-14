@@ -310,7 +310,8 @@ pub enum IfcEntity {
     /// `OpeningUtil`). Its `Pset_OpeningElementCommon.Reference` is the type
     /// name of the entity at `reference_from`; `recess` says it does not pass
     /// through the wall; `quantities` says its `Qto_OpeningElementBaseQuantities`
-    /// are written.
+    /// holds `Width` too, `Height` and `Depth` being written on every one of
+    /// them.
     WallCutOpening {
         host: usize,
         number: u32,
@@ -577,6 +578,19 @@ pub enum SolidShape {
         axis_direction: [f64; 3],
         /// Sweep angle in radians. 2π = full rotation (dome /
         /// turned column / sphere-of-revolution).
+        angle_radians: f64,
+    },
+    /// An analytic revolution of a radial/axial profile in its own frame.
+    /// Profile X is radius, profile Y is distance along `axis_direction`.
+    /// IFC places that XY plane at `origin_feet`, with X along
+    /// `radial_direction`, and revolves about local +Y. A nonzero starting
+    /// angle is represented by rotating `radial_direction` before construction.
+    PlacedRevolvedArea {
+        profile: ProfileDef,
+        origin_feet: [f64; 3],
+        axis_direction: [f64; 3],
+        radial_direction: [f64; 3],
+        /// Positive sweep, at most one full turn, in radians.
         angle_radians: f64,
     },
     /// CSG combination of two nested solids. Emits

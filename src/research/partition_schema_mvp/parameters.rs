@@ -137,9 +137,9 @@ pub(super) fn attach_is_external(
 }
 
 /// Whether `value` is a Yes/No parameter's: a boolean, or a 0 or 1.
-fn yes_no(value: &serde_json::Value) -> Option<bool> {
+fn yes_no(value: &crate::graph_value::Fv) -> Option<bool> {
     match value {
-        serde_json::Value::Bool(flag) => Some(*flag),
+        crate::graph_value::Fv::Bool(flag) => Some(*flag),
         other => match other.as_i64() {
             Some(0) => Some(false),
             Some(1) => Some(true),
@@ -152,7 +152,7 @@ fn yes_no(value: &serde_json::Value) -> Option<bool> {
 /// `kind`, as [`attach_named_parameters`] reads it from the partition data.
 fn named_field(
     kind: crate::ifc::standard_property_sets::StandardPropertyKind,
-    value: &serde_json::Value,
+    value: &crate::graph_value::Fv,
 ) -> Option<InstanceField> {
     use crate::ifc::standard_property_sets::StandardPropertyKind as Kind;
     match kind {
@@ -217,8 +217,8 @@ pub(super) fn attach_native_named_parameters<'a>(
         let Some(parameters) = element.id.and_then(|id| saved.elements.get(&u64::from(id))) else {
             continue;
         };
-        let mut qualified: Vec<(String, Kind, &serde_json::Value)> = Vec::new();
-        let mut bare: Vec<(String, Kind, &serde_json::Value)> = Vec::new();
+        let mut qualified: Vec<(String, Kind, &crate::graph_value::Fv)> = Vec::new();
+        let mut bare: Vec<(String, Kind, &crate::graph_value::Fv)> = Vec::new();
         let mut flags: Vec<(String, bool)> = Vec::new();
         for parameter in parameters {
             let Some(name) = parameter.name.as_deref() else {
@@ -308,6 +308,50 @@ pub(super) fn attach_load_bearing<'a>(elements: impl IntoIterator<Item = &'a mut
                 .fields
                 .push((LOAD_BEARING_FIELD.into(), InstanceField::Bool(true)));
         }
+    }
+}
+
+/// Give each of `elements` that holds the Structural check box
+/// (`FLOOR_PARAM_IS_STRUCTURAL`,
+/// [`crate::partition_room_parameters::FLOOR_STRUCTURAL_PARAMETER`]) the
+/// `LoadBearing` Revit's IFC exporter's `LoadBearingCalculator` (CLEANROOM.md source 5)
+/// takes from it, on Revit 2024 and later. Unchecked is false for any
+/// element; checked is true for a floor alone, the one class Revit's exports
+/// of the BIM4LCA housing and the held-out models hold checked boxes on (the
+/// housing's stairs hold only unchecked ones), so a checked stair gets none.
+/// An element that already has a [`LOAD_BEARING_FIELD`] keeps it, and a
+/// parameter named for the property replaces it in the export as it does every
+/// value ([`attach_named_parameters`]).
+pub(super) fn attach_structural_load_bearing<'a>(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    elements: impl IntoIterator<Item = &'a mut DecodedElement>,
+) {
+    use crate::partition_room_parameters as prp;
+    let mut elements: Vec<&mut DecodedElement> = elements
+        .into_iter()
+        .filter(|element| {
+            !element
+                .fields
+                .iter()
+                .any(|(name, _)| name == LOAD_BEARING_FIELD)
+        })
+        .collect();
+    let ids: BTreeSet<u32> = elements.iter().filter_map(|element| element.id).collect();
+    let boxes =
+        prp::scan_integer_parameter(rf, revit_version, &ids, prp::FLOOR_STRUCTURAL_PARAMETER);
+    for element in elements.iter_mut() {
+        let Some(&checked) = element.id.and_then(|id| boxes.get(&id)) else {
+            continue;
+        };
+        let bearing = match checked {
+            0 => false,
+            1 if element.class == "Floor" => true,
+            _ => continue,
+        };
+        element
+            .fields
+            .push((LOAD_BEARING_FIELD.into(), InstanceField::Bool(bearing)));
     }
 }
 

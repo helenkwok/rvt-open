@@ -53,8 +53,12 @@ def sub_element_guid(global_id, index):
 
 
 def mesh(prod):
-    """World vertices (n, 3) and faces (m, 3) in metres of a product and its aggregated parts."""
-    parts = [prod] + [p for r in prod.IsDecomposedBy or [] for p in r.RelatedObjects]
+    """World vertices (n, 3) and faces (m, 3) in metres of a product and its aggregated parts.
+
+    A railing aggregated under its stair, as Revit's IFC4 export aggregates it, is no part of the
+    stair's own body: the Revit API's bounding box of the stair, which the answer keys hold, leaves
+    its railings out."""
+    parts = [prod] + [p for r in prod.IsDecomposedBy or [] for p in r.RelatedObjects if not p.is_a("IfcRailing")]
     verts, faces, n = [], [], 0
     for p in parts:
         if not p.Representation:

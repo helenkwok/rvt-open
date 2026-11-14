@@ -150,7 +150,7 @@ pub(crate) fn revit_values(step: &str) -> BTreeMap<u64, BTreeMap<String, Written
 /// Whether rvt-open's value is the one Revit writes.
 fn equal(ours: &ElementParameter, written: &Written) -> bool {
     match (written, &ours.value) {
-        (Written::Boolean(b), serde_json::Value::Bool(v)) => b == v,
+        (Written::Boolean(b), rvt::research::graph_value::Fv::Bool(v)) => b == v,
         (Written::Boolean(b), v) => v.as_i64().is_some_and(|n| (n != 0) == *b),
         (Written::Integer(n), v) => v.as_i64() == Some(*n),
         (Written::Text(t), v) => v.as_str() == Some(t.as_str()),
@@ -360,7 +360,7 @@ fn design_options(model: &Path, ids: &[u64]) -> BTreeMap<u64, serde_json::Value>
                 .iter()
                 .find(|p| p.parameter_id == -1013201)?;
             assert_eq!(value.level, ParameterLevel::Instance, "{id}");
-            Some((*id, value.value.clone()))
+            Some((*id, value.value.to_json()))
         })
         .collect()
 }

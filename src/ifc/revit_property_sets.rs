@@ -159,7 +159,7 @@ fn revit_property(parameter: &ElementParameter, raw_enums: bool) -> Option<Prope
             _ => return None,
         },
         "Integer" => match &parameter.value {
-            serde_json::Value::Bool(b) => PropertyValue::Boolean(*b),
+            crate::graph_value::Fv::Bool(b) => PropertyValue::Boolean(*b),
             // No spec: an enumeration, written by its display text.
             value if spec.is_empty() => {
                 let n = value.as_i64()?;

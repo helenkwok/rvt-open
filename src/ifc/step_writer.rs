@@ -473,6 +473,7 @@ fn type_entity_for(ifc_upper: &str, predefined: Option<&str>) -> Option<(String,
         | "IFCPIPEFITTING"
         | "IFCPIPESEGMENT"
         | "IFCSANITARYTERMINAL"
+        | "IFCSOLARDEVICE"
         | "IFCTRANSPORTELEMENT"
         | "IFCGEOGRAPHICELEMENT" => pt,
         _ => return None,
@@ -489,8 +490,9 @@ pub struct TypeObject {
     pub entity: String,
     /// Its `Name`.
     pub name: String,
-    /// Its `Tag`: the ElementId of the type, or of the room an `IfcSpaceType`
-    /// is made for.
+    /// The ElementId of the type, or of the room an `IfcSpaceType` is made for.
+    /// It is the type object's `Tag` as written, except on an `IFCPLATETYPE`,
+    /// which is written with none.
     pub tag: String,
     /// The property sets it holds, in the order the writer writes them.
     pub property_sets: Vec<PropertySet>,
@@ -634,6 +636,7 @@ fn revit_ifc_type_entity_name(step_name: &str) -> Option<&'static str> {
         "IFCFIRESUPPRESSIONTERMINALTYPE" => "IfcFireSuppressionTerminalType",
         "IFCVALVETYPE" => "IfcValveType",
         "IFCWASTETERMINALTYPE" => "IfcWasteTerminalType",
+        "IFCSOLARDEVICETYPE" => "IfcSolarDeviceType",
         "IFCDUCTFITTINGTYPE" => "IfcDuctFittingType",
         "IFCDUCTSEGMENTTYPE" => "IfcDuctSegmentType",
         "IFCELECTRICAPPLIANCETYPE" => "IfcElectricApplianceType",
@@ -773,6 +776,7 @@ fn solid_kind(shape: &SolidShape) -> &'static str {
     match shape {
         SolidShape::ExtrudedArea(_)
         | SolidShape::RevolvedArea { .. }
+        | SolidShape::PlacedRevolvedArea { .. }
         | SolidShape::PlacedExtrusion { .. } => "SweptSolid",
         SolidShape::SweptPath { .. } => "AdvancedSweptSolid",
         SolidShape::FacetedBrep { .. } => "Brep",
@@ -1717,6 +1721,92 @@ impl StepWriter<'_> {
                     ),
                 );
                 (solid_id, "SweptSolid")
+            }
+            SolidShape::PlacedRevolvedArea {
+                profile,
+                origin_feet,
+                axis_direction,
+                radial_direction,
+                angle_radians,
+            } => {
+                // IFC's profile and revolution axis share the Position XY
+                // plane. Local Y is the revolution axis; local X is radial.
+                let unit = |v: [f64; 3]| {
+                    let length = v.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-12);
+                    v.map(|x| x / length)
+                };
+                let y = unit(*axis_direction);
+                let x = unit(*radial_direction);
+                let z = unit([
+                    x[1] * y[2] - x[2] * y[1],
+                    x[2] * y[0] - x[0] * y[2],
+                    x[0] * y[1] - x[1] * y[0],
+                ]);
+                let x = [
+                    y[1] * z[2] - y[2] * z[1],
+                    y[2] * z[0] - y[0] * z[2],
+                    y[0] * z[1] - y[1] * z[0],
+                ];
+                let origin = self.id();
+                self.emit_entity(
+                    origin,
+                    format!(
+                        "IFCCARTESIANPOINT(({:.6},{:.6},{:.6}))",
+                        origin_feet[0] * 0.3048,
+                        origin_feet[1] * 0.3048,
+                        origin_feet[2] * 0.3048
+                    ),
+                );
+                let normal = self.id();
+                self.emit_entity(
+                    normal,
+                    format!("IFCDIRECTION(({:.15},{:.15},{:.15}))", z[0], z[1], z[2]),
+                );
+                let radial = self.id();
+                self.emit_entity(
+                    radial,
+                    format!("IFCDIRECTION(({:.15},{:.15},{:.15}))", x[0], x[1], x[2]),
+                );
+                let position = self.id();
+                self.emit_entity(
+                    position,
+                    format!("IFCAXIS2PLACEMENT3D(#{origin},#{normal},#{radial})"),
+                );
+                let local_origin = self.id();
+                self.emit_entity(local_origin, "IFCCARTESIANPOINT((0.,0.,0.))");
+                let local_axis = self.id();
+                self.emit_entity(local_axis, "IFCDIRECTION((0.,1.,0.))");
+                let axis = self.id();
+                self.emit_entity(
+                    axis,
+                    format!("IFCAXIS1PLACEMENT(#{local_origin},#{local_axis})"),
+                );
+                let profile_origin = self.id();
+                self.emit_entity(profile_origin, "IFCCARTESIANPOINT((0.,0.))");
+                let profile_position = self.id();
+                self.emit_entity(
+                    profile_position,
+                    format!("IFCAXIS2PLACEMENT2D(#{profile_origin},$)"),
+                );
+                let wrapped = Extrusion {
+                    width_feet: 0.0,
+                    depth_feet: 0.0,
+                    height_feet: 0.0,
+                    profile_override: Some(profile.clone()),
+                };
+                let profile = self.emit_profile_def(&wrapped, profile_position);
+                let id = self.id();
+                // Six decimals would turn 2*pi into an almost-closed solid.
+                let angle = if (angle_radians - std::f64::consts::TAU).abs() < 1e-10 {
+                    std::f64::consts::TAU
+                } else {
+                    *angle_radians
+                };
+                self.emit_entity(
+                    id,
+                    format!("IFCREVOLVEDAREASOLID(#{profile},#{position},#{axis},{angle:.15})"),
+                );
+                (id, "SweptSolid")
             }
             SolidShape::Compound(items) => {
                 // Nested in another solid, the items are one: their union.
@@ -3588,7 +3678,22 @@ impl StepWriter<'_> {
                 // IFC4 CorrectPredefinedType: USERDEFINED needs an
                 // `ObjectType`; without a family and type name it is
                 // NOTDEFINED (an untyped entourage).
+                //
+                // From 2027 the occurrence of the classes
+                // `category_map::predefined_type_left_out` names states none at
+                // all, as Revit's own export does, where its type objects still
+                // state theirs: the types take the enumerator from the element as
+                // before, so the types, their GlobalIds and the property sets that
+                // depend on it do not change.
+                let predefined_left_out = super::category_map::predefined_type_left_out(
+                    &ifc_upper,
+                    model.global_ids.revit_version,
+                );
+                // A roof's slabs keep `.ROOF.`: Revit 2027's own export of the
+                // tiny reference roofs writes it on all of them.
                 let predefined = match predefined_type.as_deref() {
+                    Some("ROOF") if ifc_upper == "IFCSLAB" => Some("ROOF"),
+                    _ if predefined_left_out => None,
                     Some("USERDEFINED") if object_type_quoted == "$" => Some("NOTDEFINED"),
                     other => other,
                 };
@@ -3886,7 +3991,18 @@ impl StepWriter<'_> {
         // geometry below.
         let host_references = super::host_references(model);
 
-        // An opening nothing fills, a hole in a floor's sketch.
+        // whether rvt-open writes the base quantities at all, which
+        // `--no-base-quantities` stops by emptying every `Qto_` set, as
+        // Revit's export made with "Export base quantities" off holds no
+        // opening quantity either.
+        let base_quantities_written = model.entities.iter().any(|entity| match entity {
+            super::entities::IfcEntity::ElementPropertySet { set, .. } => {
+                set.name.starts_with("Qto_") && !set.properties.is_empty()
+            }
+            _ => false,
+        });
+
+        // an opening nothing fills, a hole in a floor's sketch.
         // As in Revit's export it is placed in its host's frame, its outline
         // extruded up through the host, and it voids the host without being
         // contained in a storey.: so is the opening a face-hosted door
@@ -4002,6 +4118,56 @@ impl StepWriter<'_> {
                         &set,
                         &gid(&["property-set", opening_gid.as_str(), set_name]),
                         &gid(&["defines-by-properties", opening_gid.as_str(), set_name]),
+                    );
+                }
+            }
+            // Revit's export gives an opening a floor's
+            // sketch makes its `Area`, its outline's, where that outline is
+            // not a rectangle, and its `Width` and `Height` where it is: on
+            // the office as built the 36 such openings are the 5 whose outline
+            // has a notch, whose `Area` this is to 1e-6 m2, and the 31
+            // rectangles, which Revit's export gives no `Area` on. A notched
+            // outline is what is measured; a quadrilateral that is not a
+            // rectangle, and every other kind of unfilled opening, stay
+            // without. So does an outline with a corner that is not a right
+            // angle: an arc of the sketch is chords there, whose polygon is
+            // short of the area Revit takes from the curves themselves.
+            if number.is_none() && base_quantities_written {
+                let area = outline_feet
+                    .iter()
+                    .zip(outline_feet.iter().cycle().skip(1))
+                    .map(|(from, to)| from.0 * to.1 - to.0 * from.1)
+                    .sum::<f64>()
+                    .abs()
+                    / 2.0;
+                // More than four square corners: a rectangle one of whose
+                // edges is two sketch lines has four, and whether Revit calls
+                // that loop a rectangle is not measured.
+                if area > 0.0
+                    && super::export_content::square_corner_count(outline_feet)
+                        .is_some_and(|corners| corners > 4)
+                {
+                    let quantities = PropertySet {
+                        name: "Qto_OpeningElementBaseQuantities".into(),
+                        properties: vec![super::entities::Property {
+                            name: "Area".into(),
+                            value: super::entities::PropertyValue::AreaSquareFeet(area),
+                        }],
+                    };
+                    self.emit_property_set(
+                        owner_hist,
+                        opening_id,
+                        &quantities,
+                        &gid(&[
+                            "property-set",
+                            opening_gid.as_str(),
+                            "Qto_OpeningElementBaseQuantities",
+                        ]),
+                        &gid(&[
+                            "defines-by-properties",
+                            opening_gid.as_str(),
+                            "Qto_OpeningElementBaseQuantities",
+                        ]),
                     );
                 }
             }
@@ -4338,7 +4504,15 @@ impl StepWriter<'_> {
             // which are the right way round on a rectangular opening (not on
             // a door's). With base quantities off the wall has none
             // and the opening none either.
-            if *with_quantities && wall_widths.contains_key(host) {
+            // the opening a door cuts in a second wall is a rectangle
+            // extruded across that wall as the ones above are, and Revit's
+            // export measures it the same way round, not swapped as on a
+            // door's own opening: its `Depth` is that extrusion's
+            // extent, the door's width, and its `Height` the outline's. Its
+            // `Width` stays out: Revit's is the thickness of the wall the
+            // door stands in, and the outline here is 0.2 mm wider than that
+            // on two of the four openings read on the BIM4LCA office.
+            if wall_widths.contains_key(host) {
                 let extent = |axis: fn(&(f64, f64)) -> f64| {
                     let low = outline_feet.iter().map(axis).fold(f64::INFINITY, f64::min);
                     let high = outline_feet
@@ -4351,13 +4525,15 @@ impl StepWriter<'_> {
                     name: name.into(),
                     value: super::entities::PropertyValue::PositiveLengthFeet(feet),
                 };
+                let mut properties = Vec::new();
+                if *with_quantities {
+                    properties.push(length("Width", extent(|point| point.0)));
+                }
+                properties.push(length("Height", extent(|point| point.1)));
+                properties.push(length("Depth", *thickness_feet));
                 let quantities = PropertySet {
                     name: "Qto_OpeningElementBaseQuantities".into(),
-                    properties: vec![
-                        length("Width", extent(|point| point.0)),
-                        length("Height", extent(|point| point.1)),
-                        length("Depth", *thickness_feet),
-                    ],
+                    properties,
                 };
                 self.emit_property_set(
                     owner_hist,
@@ -5136,11 +5312,19 @@ impl StepWriter<'_> {
                 self.emit_entity(
                     type_el_id,
                     format!(
-                        "{}('{type_gid}',#{owner_hist},{},$,$,({}),{maps},'{}',{}{})",
+                        "{}('{type_gid}',#{owner_hist},{},$,$,({}),{maps},{},{}{})",
                         t.entity,
                         quoted_or_dollar(&escape(&t.name)),
                         set_ids.join(","),
-                        t.tag,
+                        // Revit gives an `IfcPlateType` the Tag of one of its
+                        // plates, the first of its group in an order of the curtain
+                        // grid no record holds, so the panel type's own ElementId
+                        // is a wrong Tag on every plate type; none is written.
+                        if t.entity == "IFCPLATETYPE" {
+                            "$".to_string()
+                        } else {
+                            format!("'{}'", t.tag)
+                        },
                         // IFC4 CorrectPredefinedType: a USERDEFINED type names
                         // itself in `ElementType`; Revit 27.1 writes the family
                         // name there (Nordic terrain models).
@@ -5505,7 +5689,9 @@ fn solid_plan_points(shape: &SolidShape) -> Vec<(f64, f64)> {
                 })
                 .collect()
         }
-        SolidShape::SweptPath { .. } | SolidShape::RevolvedArea { .. } => Vec::new(),
+        SolidShape::SweptPath { .. }
+        | SolidShape::RevolvedArea { .. }
+        | SolidShape::PlacedRevolvedArea { .. } => Vec::new(),
     }
 }
 

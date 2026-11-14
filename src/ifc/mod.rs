@@ -96,6 +96,7 @@ mod export_pipeline;
 pub mod family_bodies;
 pub mod family_extrusions;
 pub mod family_file;
+pub(crate) mod family_revolutions;
 pub mod frag_writer;
 pub mod from_decoded;
 pub mod gltf;
@@ -106,6 +107,7 @@ pub mod ifcx_revit_elements;
 pub mod ifcx_writer;
 pub mod instancing;
 mod mesh_volume;
+mod mesh_wall_quantities;
 pub mod meshopt;
 pub mod obj;
 pub mod pbr;
@@ -959,6 +961,17 @@ pub struct ExportedModelDiagnostics {
     /// `interior_edge_vertices_or_creases` or `corners_not_in_one_plane`.
     #[serde(default)]
     pub slab_shape_refusals: std::collections::BTreeMap<String, usize>,
+    /// Of the exported bodies that are still their record's box after the
+    /// pass that draws a box from the mesh Revit saved for it, why that mesh
+    /// was not used, by reason: the `SavedMeshRefusal` property of each:
+    /// `no_saved_graphics`, `no_saved_mesh`, `no_triangles`,
+    /// `element_id_shared`, `partial: ` and the decoder diagnostics that
+    /// left the mesh partial, their digits written as `#` and joined
+    /// by `; `, or `not_a_candidate: ` and why the pass did not look at the
+    /// element's saved graphics (`whole_drawn_by_its_parts`, `no_location`,
+    /// `no_element_id`, `class_not_in_scope`).
+    #[serde(default)]
+    pub saved_mesh_refusals: std::collections::BTreeMap<String, usize>,
     /// Of the exported walls whose base join names a floor, roof or ceiling
     /// with shape-edited corners and that keep their base, why, by reason: the
     /// `BaseCoverRefusal` property of each, such as
@@ -6751,6 +6764,7 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
     let mut bounding_box_spaces = 0usize;
     let mut area_body_refusals = std::collections::BTreeMap::<String, usize>::new();
     let mut slab_shape_refusals = std::collections::BTreeMap::<String, usize>::new();
+    let mut saved_mesh_refusals = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_base_refusals = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_end_refusals = std::collections::BTreeMap::<String, usize>::new();
     let mut wall_end_sources = std::collections::BTreeMap::<String, usize>::new();
@@ -6811,6 +6825,10 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
                         export_content::SLAB_SHAPE_REFUSAL_PROPERTY,
                         entities::PropertyValue::Text(text),
                     ) => *slab_shape_refusals.entry(text.clone()).or_insert(0) += 1,
+                    (
+                        export_content::SAVED_MESH_REFUSAL_PROPERTY,
+                        entities::PropertyValue::Text(text),
+                    ) => *saved_mesh_refusals.entry(text.clone()).or_insert(0) += 1,
                     (
                         export_content::WALL_BASE_REFUSAL_PROPERTY,
                         entities::PropertyValue::Text(text),
@@ -6955,6 +6973,7 @@ fn exported_model_diagnostics(model: &IfcModel) -> ExportedModelDiagnostics {
         bounding_box_spaces,
         area_body_refusals,
         slab_shape_refusals,
+        saved_mesh_refusals,
         wall_base_refusals,
         wall_end_refusals,
         wall_end_sources,
@@ -7142,8 +7161,9 @@ fn geometry_gap_skipped_items(
 /// The decisions behind `exported.bounding_box_bodies`,
 /// `exported.bounding_box_spaces`, `exported.area_body_refusals`,
 /// `exported.slab_shape_refusals`, `exported.wall_base_refusals`,
-/// `exported.wall_end_refusals` and `exported.wall_profile_refusals`,
-/// read from `model` as
+/// `exported.wall_end_refusals`, `exported.wall_profile_refusals` and
+/// `exported.saved_mesh_refusals`, read
+/// from `model` as
 /// [`exported_model_diagnostics`] counts them: a body that is only its
 /// record's box, a room or space whose outline is its record's box, an Area
 /// with no body, a shape-edited floor kept as its box, a wall that keeps its
@@ -7178,6 +7198,7 @@ pub(crate) fn model_decisions(model: &IfcModel) -> Vec<export_decisions::ExportD
         let mut base_refusals: Vec<&String> = Vec::new();
         let mut end_refusals: Vec<&String> = Vec::new();
         let mut profile_refusals: Vec<&String> = Vec::new();
+        let mut saved_refusals: Vec<&String> = Vec::new();
         let mut profile_resolved = false;
         for property in property_set.iter().flat_map(|set| &set.properties) {
             match (property.name.as_str(), &property.value) {
@@ -7201,6 +7222,10 @@ pub(crate) fn model_decisions(model: &IfcModel) -> Vec<export_decisions::ExportD
                     export_content::WALL_PROFILE_REFUSAL_PROPERTY,
                     entities::PropertyValue::Text(text),
                 ) => profile_refusals.push(text),
+                (
+                    export_content::SAVED_MESH_REFUSAL_PROPERTY,
+                    entities::PropertyValue::Text(text),
+                ) => saved_refusals.push(text),
                 ("BodySource", entities::PropertyValue::Text(text)) => source = Some(text),
                 (
                     export_content::SPACE_OUTLINE_SOURCE_PROPERTY,
@@ -7251,6 +7276,13 @@ pub(crate) fn model_decisions(model: &IfcModel) -> Vec<export_decisions::ExportD
             push(
                 DecisionStage::BodyLeftAsBox,
                 "wall_profile_extension_refused",
+                Some(text),
+            );
+        }
+        for text in saved_refusals {
+            push(
+                DecisionStage::BodyLeftAsBox,
+                "saved_mesh_not_used",
                 Some(text),
             );
         }

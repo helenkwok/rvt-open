@@ -159,7 +159,7 @@ pub fn wall_sides(
         let Some(flipped) = root
             .fields
             .get("m_isFlipped")
-            .and_then(serde_json::Value::as_bool)
+            .and_then(crate::graph_value::Fv::as_bool)
         else {
             return Ok(());
         };

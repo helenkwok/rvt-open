@@ -12,7 +12,6 @@
 use super::IfcModel;
 use crate::RevitFile;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// One grid line: its ElementId, its name and its ends, plan model feet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,7 +76,7 @@ fn grid_line(graph: &crate::native_parameters::ObjectGraph, id: u32) -> Option<G
     };
     let (origin, x) = (triple("m_origin")?, triple("m_xVec")?);
     let corners = plane.fields.pointer("/m_Envelope/m_corners")?.as_array()?;
-    let along = |corner: &Value| corner.as_array()?.first()?.as_f64();
+    let along = |corner: &crate::graph_value::Fv| corner.as_array()?.first()?.as_f64();
     let (a, b) = (along(corners.first()?)?, along(corners.get(1)?)?);
     // A vertical datum plane: its X vector is level.
     if x[2].abs() > 1e-9 || !(b - a).is_finite() || (b - a).abs() < 1e-9 {

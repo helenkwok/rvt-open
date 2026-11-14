@@ -67,6 +67,7 @@ def main():
     exported = both = 0
     by_class = collections.Counter()
     wrong = collections.Counter()
+    left_out = collections.Counter()
     shown = collections.Counter()
     for tag, (occurrence, *expected) in revit.items():
         if tag not in ours_tags:
@@ -80,6 +81,11 @@ def main():
         for field, e, g in zip(fields, expected, got[1:]):
             if e == g or (field == "entity" and entity_agrees(e, g)):
                 agree[field] += 1
+            elif field == "tag" and g is None:
+                # A Tag Revit writes that rvt-open leaves out is not a wrong one
+                # (a plate type's Tag, which no record gives). Any other
+                # field left out is a disagreement.
+                left_out[(field, occurrence)] += 1
             else:
                 wrong[(field, occurrence)] += 1
                 if VERBOSE and shown[(field, occurrence)] < 3:
@@ -94,7 +100,9 @@ def main():
     print(f"untyped in ours, by class: {dict(by_class)}")
     if wrong:
         print(f"disagreements: {dict(wrong)}")
-    # The TypeName property, which an element carries even where
+    if left_out:
+        print(f"left out, Revit writes a value: {dict(left_out)}")
+    # the TypeName property, which an element carries even where
     # rvt-open does not know its family, against the type half of Revit's
     # type Name.
     type_names = {}
@@ -112,7 +120,9 @@ def main():
         if tag in type_names and name.split(":", 1)[-1] == type_names[tag]
     )
     print(f"TypeName carried: {carried} of {exported}; equal to Revit's type: {same}")
-    types = {t.Tag for t in ours_file.by_type("IfcTypeObject")}
+    # By GlobalId, so the count is of objects whether or not one has a Tag (an
+    # IfcPlateType has none) and several can share a type's ElementId.
+    types = {t.GlobalId for t in ours_file.by_type("IfcTypeObject")}
     print(f"type objects in ours: {len(types)}")
 
 

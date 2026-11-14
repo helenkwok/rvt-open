@@ -13,7 +13,7 @@ pub struct ParametricMesh {
     pub triangles: Vec<[u32; 3]>,
 }
 
-fn uv_point(v: &serde_json::Value) -> Result<[f64; 2]> {
+fn uv_point(v: &crate::graph_value::Fv) -> Result<[f64; 2]> {
     let a = v.as_array().context("UV array")?;
     ensure!(a.len() == 2, "UV dimension");
     let p = [
@@ -117,7 +117,7 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
     ensure!(
         f.fields["m_faceRegions"]
             .as_array()
-            .is_some_and(Vec::is_empty),
+            .is_some_and(|items| items.is_empty()),
         "face regions need subdivision"
     );
     let si = pointer(g, fi, &f.fields["m_pSurf"])?.context("face surface")?;
@@ -319,6 +319,20 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
                 angular(center[0].hypot(center[1]) + 2. * radius),
                 angular(*radius),
             ),
+            // a revolved dome's elliptic meridian, stepped as an arc of its
+            // larger radius.
+            Curve::Ellipse {
+                center,
+                x_len,
+                y_len,
+                ..
+            } => {
+                let radius = x_len.max(*y_len);
+                (
+                    angular(center[0].hypot(center[1]) + 2. * radius),
+                    angular(radius),
+                )
+            }
         },
         ParametricSurface::ConeSurf { half_angle, .. } => {
             // The generators are straight: only the angle needs a chord bound.
@@ -422,12 +436,7 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
 /// Segments a curved profile needs: its turning in 0.1 rad steps or its
 /// length in 1 ft steps, whichever is more (sampled at 64 points).
 fn curve_segments(c: &crate::native_parametric_surface::Curve) -> f64 {
-    use crate::native_parametric_surface::Curve;
-    let range = match c {
-        Curve::Line { range, .. } | Curve::Arc { range, .. } | Curve::Hermite { range, .. } => {
-            *range
-        }
-    };
+    let range = c.range();
     let at = |i: usize| range[0] + (range[1] - range[0]) * i as f64 / 64.;
     let norm = |p: [f64; 3]| p.iter().map(|x| x * x).sum::<f64>().sqrt();
     let (mut turn, mut length) = (0., 0.);

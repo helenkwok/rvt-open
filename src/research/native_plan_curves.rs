@@ -7,12 +7,12 @@
 //! of the symbol holds those curves under `GFilter` nodes whose conditions
 //! name a view direction, a view type and a detail level; this walks the graph
 //! as a plan view sees it (direction +Z, view type 1).
+use crate::graph_value::Fv;
 use crate::native_graphics_traversal::{
     GraphicsTransform, condition_in_view, direction_condition_for, graphics_visibility,
 };
 use crate::native_parameters::ObjectGraph;
 use crate::native_parametric_surface::Curve;
-use serde_json::Value;
 use std::collections::BTreeMap;
 
 const IDENTITY: GraphicsTransform = [
@@ -93,7 +93,7 @@ pub fn plan_curves(graph: &ObjectGraph, view: &PlanView) -> PlanCurves {
     out
 }
 
-fn alignment(v: &Value, m: GraphicsTransform) -> Result<f64, String> {
+fn alignment(v: &Fv, m: GraphicsTransform) -> Result<f64, String> {
     let a = v["m_dir"]
         .as_array()
         .filter(|a| a.len() == 3)
@@ -180,8 +180,7 @@ fn visit(
     match obj.class_name.as_str() {
         "GElement" | "GGroup" | "GFilter" => {
             if obj.class_name == "GFilter" {
-                let conditions: &[Value] =
-                    obj.fields["m_oConditions"].as_array().map_or(&[], |v| v);
+                let conditions: &[Fv] = obj.fields["m_oConditions"].as_array().map_or(&[], |v| v);
                 for p in conditions {
                     let Some(ci) = crate::native_saved_mesh::pointer(g, index, p)
                         .ok()

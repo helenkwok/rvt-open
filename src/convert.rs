@@ -373,6 +373,34 @@ pub fn refine_with_control(
     } else {
         None
     };
+    // a family file whose forms drew no body: a standalone revolution
+    // rebuilt from its saved records as an analytic solid, in the
+    // scaffold mode alone (it has no measured IFC product category, so the
+    // modes that need mapped types gain no proxy here).
+    if !opts.placeholder
+        && rf.is_family_document()
+        && opts.quality == ExportQualityMode::Scaffold
+        && !model.entities.iter().any(|entity| {
+            matches!(
+                entity,
+                crate::ifc::entities::IfcEntity::BuildingElement {
+                    solid_shape: Some(_),
+                    ..
+                }
+            )
+        })
+    {
+        match crate::ifc::family_revolutions::attach(rf, model, control) {
+            Ok(0) => {}
+            Ok(added) => {
+                crate::ifc::recount_exported(diagnostics, model);
+                notes.push(format!(
+                    "{added} standalone family revolution bodies decoded from native records"
+                ));
+            }
+            Err(e) => notes.push(format!("family revolution bodies unchanged: {e:#}")),
+        }
+    }
     // Bodies for an instance that has only its record box: the saved
     // graphics and the family document, in the order asked, then the box.
     if opts.family_geometry && opts.family_first {
@@ -420,7 +448,26 @@ pub fn refine_with_control(
                     ));
                 }
             }
-            Err(e) => notes.push(format!("saved graphics not read, bodies unchanged: {e}")),
+            Err(e) => {
+                notes.push(format!("saved graphics not read, bodies unchanged: {e}"));
+                // the boxes the pass was to look at keep their body, and say why.
+                if crate::ifc::saved_meshes::note_not_offered(model, "pass_failed") > 0 {
+                    crate::ifc::recount_exported(diagnostics, model);
+                }
+            }
+        }
+    } else if !opts.placeholder {
+        // no pass was offered, so each box says why it is one: the caller
+        // turned the pass off, or the release's saved graphics are not read.
+        let why = if opts.no_saved_meshes {
+            "saved_meshes_off"
+        } else if rf.basic_file_info().is_ok() {
+            "release_outside_2014_to_2027"
+        } else {
+            "release_not_read"
+        };
+        if crate::ifc::saved_meshes::note_not_offered(model, why) > 0 {
+            crate::ifc::recount_exported(diagnostics, model);
         }
     }
     // walls, floors and roofs a door, window or opening cuts are
