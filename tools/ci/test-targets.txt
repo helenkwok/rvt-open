@@ -78,6 +78,8 @@ real      family_blend_transitions
 real      export_decisions_counts
 real      family_instance_ports
 real      fitting_nominal_diameter
+real      floor_plane_joint
+real      floor_outline_mesh
 real      frag_writer
 real      georeference
 real      export_as_2018_2023
@@ -132,6 +134,7 @@ real      revit_maps_and_types
 real      plan_maps_and_spaces
 real      rooms_floors_from_records_only
 real      roof_extrusion_holes
+real      shaft_sketch_loops
 real      samples
 real      saved_mesh_budget
 real      scan_limits

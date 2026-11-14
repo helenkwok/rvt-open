@@ -615,6 +615,7 @@ pub fn attach_scoped_in_batches(
             column_rectangles.entry(id).or_default().push(index);
         }
     }
+    let outline_checks = outline_checks(model, &wholes, scope);
     let hosts = match embed_hosts(rf, model, &by_id) {
         Ok(hosts) => hosts,
         Err(error) => {
@@ -628,6 +629,7 @@ pub fn attach_scoped_in_batches(
         && walls.is_empty()
         && beam_lines.is_empty()
         && column_rectangles.is_empty()
+        && outline_checks.is_empty()
     {
         for (index, reason) in refusals {
             note_refusal(model, index, reason);
@@ -659,6 +661,7 @@ pub fn attach_scoped_in_batches(
         .chain(walls.keys())
         .chain(beam_lines.keys())
         .chain(column_rectangles.keys())
+        .chain(outline_checks.keys())
         .copied()
         .collect::<BTreeSet<u64>>()
         .into_iter()
@@ -824,9 +827,42 @@ pub fn attach_scoped_in_batches(
                 raise_embed_host(model, index, &in_world(&element.meshes), &mut report);
                 continue;
             }
-            let indices: &[usize] = match &mesh_body {
-                Some(index) => index,
-                None => match by_id.get(&element.identity.element_id) {
+            // A floor or ceiling drawn as its outline whose saved mesh, whole,
+            // covers another plan area is drawn from the mesh.
+            let outline_index: Vec<usize>;
+            let indices: &[usize] = match (&mesh_body, outline_checks.get(&element_id)) {
+                // a column drawn from its non-rectangular mesh
+                (Some(index), _) => index,
+                (None, Some(&(index, outline_area, cut_area))) => {
+                    if element.meshes.primitives.is_empty()
+                        || partial_refusal(&element.meshes).is_some()
+                    {
+                        continue;
+                    }
+                    // The openings may overlap each other or run past the
+                    // outline, so the outline is drawn right wherever the mesh
+                    // lies between it less all of them and it whole.
+                    let mesh_area = up_area(&in_world(&element.meshes).primitives);
+                    let tolerance = OUTLINE_MESH_AREA_TOLERANCE;
+                    if mesh_area <= outline_area * (1.0 + tolerance)
+                        && mesh_area >= (outline_area - cut_area) * (1.0 - tolerance)
+                    {
+                        continue;
+                    }
+                    if let IfcEntity::BuildingElement {
+                        property_set: Some(set),
+                        ..
+                    } = &mut model.entities[index]
+                    {
+                        set.properties.push(Property {
+                            name: OUTLINE_AREA_REPLACED_PROPERTY.into(),
+                            value: PropertyValue::AreaSquareFeet(outline_area),
+                        });
+                    }
+                    outline_index = vec![index];
+                    &outline_index
+                }
+                (None, None) => match by_id.get(&element.identity.element_id) {
                     Some(indices) => indices,
                     None => continue,
                 },
@@ -1210,6 +1246,127 @@ pub fn attach_scoped_in_batches(
         report.unify_closest_miss_mm,
     ) = unify_instances(model);
     Ok(report)
+}
+
+/// How far, as a share, the plan area of a floor's or ceiling's saved mesh may
+/// lie outside its outline's, whole and less every opening cut in it, before
+/// the mesh is drawn instead ([`outline_checks`]).
+const OUTLINE_MESH_AREA_TOLERANCE: f64 = 0.02;
+
+/// Property of a floor or ceiling drawn from its saved mesh in place of its
+/// outline: the outline's plan area, square feet.
+pub const OUTLINE_AREA_REPLACED_PROPERTY: &str = "ReplacedOutlineArea";
+
+/// The floors and ceilings drawn as the extrusion of their sketch outline whose
+/// saved mesh is checked against it, by ElementId: the entity, the outline's
+/// plan area and the sum of the areas of the openings cut in it, square feet.
+/// Where the mesh decodes whole and its upward faces cover more than the
+/// outline or less than the outline less every opening, by more than
+/// [`OUTLINE_MESH_AREA_TOLERANCE`], the mesh is Revit's body and is drawn: on Snowdon Towers (2024) lawns 1227304 and 1235943 and slab 2238597
+/// are cut by what they join (21%, 16% and 7% over Revit's Area as outlines)
+/// and slab 727212 is 11% under it, where each saved mesh is Revit's Area
+/// within 1%.
+fn outline_checks(
+    model: &IfcModel,
+    wholes: &BTreeSet<usize>,
+    scope: SavedMeshScope,
+) -> BTreeMap<u64, (usize, f64, f64)> {
+    use super::entities::ProfileDef;
+    let ring = |points: &[(f64, f64)]| {
+        let n = points.len();
+        (0..n)
+            .map(|i| {
+                let (a, b) = (points[i], points[(i + 1) % n]);
+                a.0 * b.1 - b.0 * a.1
+            })
+            .sum::<f64>()
+            .abs()
+            / 2.0
+    };
+    let mut cut: BTreeMap<usize, f64> = BTreeMap::new();
+    for entity in &model.entities {
+        if let IfcEntity::VoidOpening {
+            host, outline_feet, ..
+        } = entity
+        {
+            *cut.entry(*host).or_default() += ring(outline_feet);
+        }
+    }
+    let mut tags: BTreeMap<u64, Vec<(usize, f64, f64)>> = BTreeMap::new();
+    for (index, entity) in model.entities.iter().enumerate() {
+        let IfcEntity::BuildingElement {
+            ifc_type,
+            type_guid: Some(tag),
+            extrusion,
+            solid_shape,
+            property_set,
+            ..
+        } = entity
+        else {
+            continue;
+        };
+        let Ok(id) = tag.parse::<u64>() else {
+            continue;
+        };
+        let outline = match extrusion.as_ref().and_then(|e| e.profile_override.as_ref()) {
+            Some(ProfileDef::ArbitraryClosed { points }) => Some(ring(points)),
+            Some(ProfileDef::ArbitraryWithVoids { points, voids }) => {
+                Some(ring(points) - voids.iter().map(|void| ring(void.as_slice())).sum::<f64>())
+            }
+            _ => None,
+        };
+        let outlined = property_set.as_ref().is_some_and(|set| {
+            set.properties.iter().any(|p| {
+                p.name == "ProfileResolved" && matches!(p.value, PropertyValue::Boolean(true))
+            }) && set.properties.iter().any(|p| {
+                p.name == "BodySource"
+                    && matches!(&p.value, PropertyValue::Text(t) if t == RECORD_BBOX_BODY_SOURCE)
+            })
+        });
+        let area = outline
+            .filter(|_| {
+                matches!(ifc_type.as_str(), "IFCSLAB" | "IFCCOVERING")
+                    && outlined
+                    && solid_shape.is_none()
+                    && !wholes.contains(&index)
+                    && scope.includes(ifc_type)
+            })
+            .unwrap_or(f64::NAN);
+        // every entity of a tag, so a floor written in pieces is left alone.
+        let openings = cut.get(&index).copied().unwrap_or(0.0);
+        tags.entry(id).or_default().push((index, area, openings));
+    }
+    tags.into_iter()
+        .filter_map(|(id, entries)| match entries.as_slice() {
+            [(index, area, openings)] if area.is_finite() && *area > 0.0 => {
+                Some((id, (*index, *area, *openings)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The area, square feet, of the faces of `primitives` that look up (their
+/// normal more than 0.1 up), in the model's frame.
+fn up_area(primitives: &[Primitive]) -> f64 {
+    primitives
+        .iter()
+        .flat_map(|p| {
+            p.triangles.iter().filter_map(|t| {
+                let [a, b, c] = t.map(|i| p.vertices.get(i as usize).copied());
+                let (a, b, c) = (a?, b?, c?);
+                let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                let n = [
+                    u[1] * v[2] - u[2] * v[1],
+                    u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0],
+                ];
+                let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                (length > 0.0 && n[2] / length > 0.1).then_some(length / 2.0)
+            })
+        })
+        .sum()
 }
 
 /// What a mesh that replaces a body gives of its element's quantities

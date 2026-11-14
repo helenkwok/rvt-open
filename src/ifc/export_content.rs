@@ -724,6 +724,9 @@ pub const SHAFT_OPENING_CLASS: &str = "ShaftOpening";
 /// An element record's box, model feet: its minimum and maximum corners.
 type RecordBox = ([f64; 3], [f64; 3]);
 
+/// A shaft opening's ElementId, record box and sketch loops, where read.
+type ShaftCut = (u32, RecordBox, Option<Vec<Vec<(f64, f64)>>>);
+
 /// The record box a decoded element carries (its plan centre, base and
 /// extents), where it has one.
 fn record_box(decoded: &DecodedElement) -> Option<RecordBox> {
@@ -768,59 +771,103 @@ fn host_opening_name(decoded: &DecodedElement, name: &str) -> String {
     }
 }
 
-/// The opening the shaft opening `id` cuts in the slab at `host`, where their
-/// record boxes overlap in a volume: the shaft's plan box in the slab's frame,
-/// through the slab's whole depth. Revit's export writes it as an
-/// `IfcOpeningElement` voiding the slab, named for its type, tagged with the
-/// shaft's ElementId (tiny reference models set 2, recipe 10: the shaft from
-/// Level 1 to Level 2 voids the Level 2 floor it crosses and not the Level 1
-/// floor its base stands on, in all 10 releases). The box is the outline: a
-/// shaft sketched as anything but a rectangle along the plan axes is cut as
-/// its box.
+/// The openings the shaft opening `id` cuts in the floor or ceiling at `host`, where their
+/// record boxes overlap in a volume: each loop of the shaft's sketch that
+/// overlaps the slab's plan box, in the slab's frame, through the slab's whole
+/// depth, or the shaft's plan box where its sketch is not read
+/// ([`crate::partition_beam_axes::SHAFT_SKETCH_SUPPORTED_REVIT_VERSIONS`]).
+/// Revit's export writes it as an `IfcOpeningElement` voiding the slab, named
+/// for its type, tagged with the shaft's ElementId (tiny reference models set
+/// 2, recipe 10: the shaft from Level 1 to Level 2 voids the Level 2 floor it
+/// crosses and not the Level 1 floor its base stands on, in all 10 releases).
+/// A ceiling it crosses is cut as a floor is where the sketch was read:
+/// rac_advanced's ceilings 242937 and 247617 are 719 ft² over Revit's Area
+/// where shaft 157484 is left uncut.
+/// A shaft sketched as several loops cuts each: rac_advanced's shaft 156935
+/// is four rectangles in a 189 by 176 ft box, and cut as that box it took
+/// 71% of the hollow-core floors 139803 and 139829, where Revit's Area leaves
+/// them 93% of their outline.
 fn shaft_void(
     id: u32,
     shaft: &RecordBox,
+    loops: Option<&[Vec<(f64, f64)>]>,
     host: usize,
     slab: &RecordBox,
     name: &str,
     entities: &[entities::IfcEntity],
-) -> Option<entities::IfcEntity> {
+) -> Vec<entities::IfcEntity> {
     const EPS: f64 = 1e-6;
     let overlaps = (0..3).all(|k| shaft.0[k].max(slab.0[k]) + EPS < shaft.1[k].min(slab.1[k]));
     if !overlaps {
-        return None;
+        return Vec::new();
     }
-    let entities::IfcEntity::BuildingElement {
+    let Some(entities::IfcEntity::BuildingElement {
         ifc_type,
         location_feet: Some(at),
         rotation_radians,
         ..
-    } = entities.get(host)?
+    }) = entities.get(host)
     else {
-        return None;
+        return Vec::new();
     };
     let depth_feet = slab.1[2] - at[2];
-    if ifc_type != "IFCSLAB" || !depth_feet.is_finite() || depth_feet <= EPS {
-        return None;
+    if !matches!(ifc_type.as_str(), "IFCSLAB" | "IFCCOVERING")
+        || !depth_feet.is_finite()
+        || depth_feet <= EPS
+    {
+        return Vec::new();
     }
     let (sin, cos) = rotation_radians.unwrap_or(0.0).sin_cos();
-    let local = |x: f64, y: f64| {
+    let local = |&(x, y): &(f64, f64)| {
         let (dx, dy) = (x - at[0], y - at[1]);
         (cos * dx + sin * dy, -sin * dx + cos * dy)
     };
     let (lo, hi) = (shaft.0, shaft.1);
-    Some(entities::IfcEntity::VoidOpening {
-        host,
-        tag: id.to_string(),
-        name: name.to_string(),
-        outline_feet: vec![
-            local(lo[0], lo[1]),
-            local(hi[0], lo[1]),
-            local(hi[0], hi[1]),
-            local(lo[0], hi[1]),
-        ],
-        depth_feet,
-    })
+    let rectangle = vec![
+        (lo[0], lo[1]),
+        (hi[0], lo[1]),
+        (hi[0], hi[1]),
+        (lo[0], hi[1]),
+    ];
+    // A ceiling is cut only along a sketch that was read.
+    if ifc_type == "IFCCOVERING" && loops.is_none() {
+        return Vec::new();
+    }
+    let outlines: Vec<&Vec<(f64, f64)>> = match loops {
+        Some(loops) => loops
+            .iter()
+            .filter(|ring| {
+                let (mut min, mut max) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+                for &(x, y) in ring.iter() {
+                    min = [min[0].min(x), min[1].min(y)];
+                    max = [max[0].max(x), max[1].max(y)];
+                }
+                (0..2).all(|k| min[k].max(slab.0[k]) + EPS < max[k].min(slab.1[k]))
+            })
+            .collect(),
+        None => vec![&rectangle],
+    };
+    outlines
+        .into_iter()
+        .map(|ring| entities::IfcEntity::VoidOpening {
+            host,
+            tag: id.to_string(),
+            name: name.to_string(),
+            outline_feet: ring.iter().map(local).collect(),
+            depth_feet,
+        })
+        .collect()
+}
+
+/// The loops of a shaft opening's sketch, where it was read: its outer loop and
+/// the outer loop of each further piece.
+fn shaft_loops(decoded: &DecodedElement) -> Option<Vec<Vec<(f64, f64)>>> {
+    let profile = crate::element_record_plan_profiles::plan_profile_from_fields(&decoded.fields)?;
+    Some(
+        std::iter::once(profile.outer_xy)
+            .chain(profile.pieces.into_iter().map(|piece| piece.outer_xy))
+            .collect(),
+    )
 }
 
 /// Accumulate production walker hits into IFC entities + storeys + materials.
@@ -896,9 +943,10 @@ pub fn append_typed_production_elements(
     // What each type object's common set holds, by type and type
     // entity; `None` once two of its elements disagree.
     let mut type_commons: BTreeMap<(u32, String), Option<TypeCommon>> = BTreeMap::new();
-    // Each shaft opening's record box, and each slab's with the name its
-    // openings take, for the openings shafts cut in the slabs they cross.
-    let mut shafts: Vec<(u32, RecordBox)> = Vec::new();
+    // Each shaft opening's record box and sketch loops, and each floor's and
+    // ceiling's box with the name its openings take, for the openings shafts
+    // cut in the floors and ceilings they cross.
+    let mut shafts: Vec<ShaftCut> = Vec::new();
     let mut shaft_hosts: Vec<(usize, RecordBox, String)> = Vec::new();
 
     for decoded in decoded_iter {
@@ -914,7 +962,7 @@ pub fn append_typed_production_elements(
         // the opening it cuts in each slab it crosses, written below.
         if decoded.class == SHAFT_OPENING_CLASS {
             if let (Some(id), Some(record_box)) = (decoded.id, record_box(&decoded)) {
-                shafts.push((id, record_box));
+                shafts.push((id, record_box, shaft_loops(&decoded)));
             }
             continue;
         }
@@ -1776,7 +1824,7 @@ pub fn append_typed_production_elements(
         }
         let opening_name = (!void_bodies.is_empty() || !profile_openings.is_empty())
             .then(|| host_opening_name(&decoded, &name));
-        if ifc_type == "IFCSLAB" {
+        if matches!(ifc_type.as_str(), "IFCSLAB" | "IFCCOVERING") {
             if let Some(record_box) = record_box(&decoded) {
                 shaft_hosts.push((entity_index, record_box, host_opening_name(&decoded, &name)));
             }
@@ -2421,11 +2469,10 @@ pub fn append_typed_production_elements(
     for (whole, parts) in parts_by_whole.into_iter().chain(roof_slabs) {
         entities.push(entities::IfcEntity::Aggregate { whole, parts });
     }
-    for (id, shaft) in &shafts {
+    for (id, shaft, loops) in &shafts {
         for (host, slab, name) in &shaft_hosts {
-            if let Some(opening) = shaft_void(*id, shaft, *host, slab, name, entities) {
-                entities.push(opening);
-            }
+            let openings = shaft_void(*id, shaft, loops.as_deref(), *host, slab, name, entities);
+            entities.extend(openings);
         }
     }
 

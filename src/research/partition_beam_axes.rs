@@ -69,6 +69,12 @@ pub const SKETCH_CURVE_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 20
 /// item counts it.
 pub const SHAFT_OUTLINE_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024];
 
+/// Releases a shaft opening's own sketch is read on, as the loops the openings
+/// it cuts in the slabs it crosses follow: 2024 to 2027. rac_advanced's two
+/// shafts read as the same three and four rectangles on its 2024, 2025, 2026
+/// and 2027 saves.
+pub const SHAFT_SKETCH_SUPPORTED_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
+
 /// The bytes a bounded line starts with.
 pub const BOUNDED_LINE_TAG: [u8; 4] = [0x04, 0x00, 0x08, 0x01];
 
@@ -102,6 +108,12 @@ pub fn supports_revit_version(revit_version: u32) -> bool {
 /// ([`SKETCH_CURVE_SUPPORTED_REVIT_VERSIONS`]).
 pub fn supports_sketch_curves(revit_version: u32) -> bool {
     SKETCH_CURVE_SUPPORTED_REVIT_VERSIONS.contains(&revit_version)
+}
+
+/// Whether `revit_version` is a release a shaft opening's sketch is read on
+/// ([`SHAFT_SKETCH_SUPPORTED_REVIT_VERSIONS`]).
+pub fn supports_shaft_sketches(revit_version: u32) -> bool {
+    SHAFT_SKETCH_SUPPORTED_REVIT_VERSIONS.contains(&revit_version)
 }
 
 /// Whether `revit_version` is a release a shaft opening is cut on
