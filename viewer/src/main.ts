@@ -198,9 +198,13 @@ function advanceCameraTween(now: number): void {
 }
 
 function tick(now: number = performance.now()): void {
-  advanceCameraTween(now);
-  controls.update();
-  renderer.render(scene, camera);
+  // While a sheet or view covers the 3D view (model-drawings.ts) it is not drawn; its camera
+  // and scene are kept as they are.
+  if (appEl.dataset.view !== 'drawing') {
+    advanceCameraTween(now);
+    controls.update();
+    renderer.render(scene, camera);
+  }
   requestAnimationFrame(tick);
 }
 tick();
