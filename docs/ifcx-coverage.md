@@ -58,8 +58,44 @@ ElementId, its record's class (`rvtopen::revit::Class`), its name and its own
 parameters under `rvtopen::revit::<Group>::<Name>`, all under one
 `RevitElements` node of the project. A phase also gets its order
 (`Sequence Number`), a design option its set (`Design Option Set Id`). An
-element or type the IFC4 model already holds gets the parameters it lacked. An
-enumeration whose text is not known keeps its integer.
+element or type the IFC4 model already holds gets the parameters it lacked.
+
+What Revit's own export leaves out of a parameter it saves is written as saved:
+a parameter of the IFC group (`Export to IFC`), an enumeration whose text is
+not known as its integer, a real of a spec the export does not list as its
+number in Revit's internal units, and an ElementId that names nothing with a
+name (no design option, no phase demolished, no template) as its id, `-1`
+where it names nothing, as the API shows it.
+
+Beside its parameters, every element IFCX holds gets what its record saves
+outside them, as the parameters the API shows (read with our own probes of
+the records of the tiny models, the API dumps the answer key):
+
+- its `Category` and `Design Option`, from the header every record has;
+- the type its record names (a view's view type, a level's or grid's type, a
+  project location's site location) as `Type Id`, `Type` (the type's name),
+  `Family` and `Family and Type` (by the type's ElementId: a system type does
+  not save its family's name);
+- a view: `View Name`, `View Scale` and `Scale Value 1:`, `View Template`,
+  `Parts Visibility`, `Display Model`, `Wall Join Display`, `Underlay
+  Orientation`, `Range: Base Level` and `Range: Top Level`, `Default Analysis
+  Display Style`, its sketch plane, `Orientation`, `Title on Sheet`, `Show
+  Hidden Lines`, `Color Scheme Location`, a plan's `Associated Level`, and its
+  viewer's `Annotation Crop` and `Scope Box`;
+- a level: `Building Story`, `Computation Height`; a level or grid: `Name`;
+- a wall: `Room Bounding`, `Cross-Section`, `Structural`, `Location Line`;
+- a revision, a node of its own: `Revision Number`, `Revision Sequence`,
+  `Revision Date`, `Revision Description`, `Issued`, `Issued by`, `Issued to`
+  and (to Revit 2023) `Numbering`;
+- the survey point and project base point, nodes of their own: `E/W`, `N/S`
+  and `Elev` in shared coordinates and, the project base point, `Angle to True
+  North`, as the georeference reads them; project locations (with their name),
+  site locations and the internal origin are nodes too.
+
+A wall also gets Revit's `Volume` and `Area`, which Revit computes and does
+not save, from the net volume and net side area of the IFC4 model (the same
+values on 451 of the 470 measured walls; other categories are left out, their
+net volumes not Revit's).
 The types no element uses (most come from the project template) are left out
 unless `--ifcx-unused-types` is given; CI measures with it, so the unused type
 objects below are counted. `--no-ifcx-revit-elements` leaves all of it out;
