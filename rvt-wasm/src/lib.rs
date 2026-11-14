@@ -1981,12 +1981,32 @@ thread_local! {
 }
 
 /// What the drawings of one file are made from, as `rvt-sheet` makes them: its exported model, its
-/// views and its family instances' plan symbols. `size` tells the file apart from another.
+/// views and its family instances' plan symbols. `size` and `digest` tell the file apart from
+/// another, including one of the same length.
 struct DrawingSource {
     size: u32,
+    digest: u64,
     model: IfcModel,
     facts: rvt::plan_views::ViewFacts,
     symbols: BTreeMap<usize, Vec<rvt::ifc::entities::PlanPolyline>>,
+}
+
+/// A digest of a file's bytes, read a piece at a time so that no second copy of the file is held.
+fn bytes_digest(bytes: &js_sys::Uint8Array) -> u64 {
+    use std::hash::Hasher;
+    const PIECE: u32 = 1 << 20;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut piece = vec![0u8; PIECE as usize];
+    let len = bytes.length();
+    let mut at = 0u32;
+    while at < len {
+        let end = len.min(at.saturating_add(PIECE));
+        let part = &mut piece[..(end - at) as usize];
+        bytes.subarray(at, end).copy_to(part);
+        hasher.write(part);
+        at = end;
+    }
+    hasher.finish()
 }
 
 /// The sheets and views of `model`'s file that [`drawing_open`] draws: `{ sheets: [{ id, number,
@@ -2055,7 +2075,11 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
     let source = DRAWING_SOURCE.with(|cell| -> Result<_, JsValue> {
         let mut cell = cell.borrow_mut();
         let size = bytes.length();
-        if cell.as_ref().is_none_or(|s: &DrawingSource| s.size != size) {
+        let digest = bytes_digest(bytes);
+        if cell
+            .as_ref()
+            .is_none_or(|s: &DrawingSource| s.size != size || s.digest != digest)
+        {
             let model = RvtDocExporter.export(&mut rf).map_err(err_str)?;
             let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
             let symbols = rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model)
@@ -2065,6 +2089,7 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
                 });
             *cell = Some(DrawingSource {
                 size,
+                digest,
                 model,
                 facts,
                 symbols,
