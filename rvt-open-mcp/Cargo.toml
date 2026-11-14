@@ -38,7 +38,7 @@ rvt = { package = "rvt-open", path = "..", version = "=0.1.0" }
 rmcp = { version = "=3.8.0", features = ["server", "macros", "schemars"] }
 # Pinned with rmcp: the published 3.8.0 crates match the rmcp-v3.8.0 tag
 # of modelcontextprotocol/rust-sdk (commit cd88056f), source for source.
-rmcp-macros = "=3.8.0"
+rmcp-macros = "=3.9.0"
 # The tool schemas rmcp publishes come from this crate's derive.
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
