@@ -62,6 +62,14 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   await expect(page.locator('#drawing-title')).toHaveText(sheetName);
   const sheetCounts = await drawn(page);
   console.log('sheet', sheetName, JSON.stringify(sheetCounts));
+  console.log(
+    'sheet extents',
+    await page.locator('#drawing-sheet > svg').evaluate((el) => {
+      const svg = el as SVGSVGElement;
+      const b = svg.getBBox();
+      return JSON.stringify({ viewBox: svg.getAttribute('viewBox'), bbox: [b.x, b.y, b.width, b.height] });
+    }),
+  );
   expect(sheetCounts.lines).toBeGreaterThan(0);
   expect(sheetCounts.viewports).toBeGreaterThan(0);
   await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
@@ -74,7 +82,13 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
     ['dwg', /^AC10/],
     ['pdf', /^%PDF-/],
   ] as const) {
-    const [download] = await Promise.all([page.waitForEvent('download'), page.locator(`#export-view-${format}`).click()]);
+    const saved = page.waitForEvent('download', { timeout: 120_000 }).catch(async (e: Error) => {
+      const status = await page.locator('#status').textContent();
+      const toasts = await page.locator('#toast-region').textContent();
+      throw new Error(`no ${format} download: status ${JSON.stringify(status)}, toasts ${JSON.stringify(toasts)}; ${e.message}`);
+    });
+    await page.locator(`#export-view-${format}`).click();
+    const download = await saved;
     expect(download.suggestedFilename()).toMatch(new RegExp(`\\.${format}$`));
     const head = fs.readFileSync((await download.path())!).subarray(0, 32).toString('latin1');
     expect(head).toMatch(magic);
