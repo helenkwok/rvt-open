@@ -142,6 +142,27 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   at('section drawn');
   await shot(page, 'section');
 
+  // The sheet asked for and left for the 3D view before it came does not cover the 3D view.
+  // The worker then keeps the sheet, so the section is drawn again when chosen, and its save is
+  // the section's, not the sheet's.
+  await sheet.click();
+  await back.click({ timeout: 15_000 }).catch(() => back.click());
+  await expect(page.locator('#drawing-pane')).toBeHidden();
+  await page.waitForTimeout(10_000);
+  await expect(page.locator('#drawing-pane')).toBeHidden();
+  await expect(list.getByRole('button', { name: '3D model' })).toHaveAttribute('aria-pressed', 'true');
+  await section.click();
+  await expect(list).not.toHaveAttribute('aria-busy', 'true', { timeout: 120_000 });
+  await expect(page.locator('#drawing-pane')).toBeVisible();
+  await expect(page.locator('#drawing-title')).toHaveText(sectionName);
+  expect(await drawn(page)).toEqual(sectionCounts);
+  const sectionSaved = page.waitForEvent('download', { timeout: 120_000 });
+  await openExportMenu(page);
+  await page.locator('#export-view-dxf').click();
+  const sectionDxf = fs.readFileSync((await (await sectionSaved).path())!);
+  expect(sectionDxf.equals(fs.readFileSync(path.join(SHOTS, 'sheet.dxf')))).toBe(false);
+  at('section saved after a cancelled sheet');
+
   await list.getByRole('button', { name: '3D model' }).click();
   await shot(page, 'model');
 });

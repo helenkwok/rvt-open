@@ -39,9 +39,17 @@ interface Drawn {
 
 type Reply =
   | { type: 'drawing-list'; list: DrawingList }
-  | { type: 'drawing-open'; kind: Kind; id: number; drawn: Drawn }
+  | { type: 'drawing-open'; kind: Kind; id: number; req: number; drawn: Drawn }
   | { type: 'drawing-save'; format: string; bytes: Uint8Array }
-  | { type: 'drawing-error'; request: string; message: string };
+  | { type: 'drawing-error'; request: string; req?: number; message: string };
+
+/** A drawing asked for: `req` numbers the request, as the worker's reply repeats it. */
+interface Request {
+  kind: Kind;
+  id: number;
+  label: string;
+  req: number;
+}
 
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
@@ -61,13 +69,24 @@ export function initModelDrawings(
   const listEl = $('drawings');
   const titleEl = $('drawing-title');
 
-  let shown: { kind: Kind; id: number; label: string } | null = null;
-  let pending: { kind: Kind; id: number; label: string } | null = null;
+  let shown: Request | null = null;
+  let pending: Request | null = null;
+  let nextReq = 0;
+  // The worker draws one drawing at a time, in the order asked, keeps the last and saves what it
+  // keeps: `posted` is the last request sent to it, `held` the one it keeps after its last
+  // drawing reply (null when that failed, as a failed open has dropped the drawing before it).
+  let posted: number | null = null;
+  let held: number | null = null;
   let listening: Worker | null = null;
 
-  const bytes = async (): Promise<Uint8Array | null> => {
-    const file = host.file();
-    return file ? new Uint8Array(await file.arrayBuffer()) : null;
+  /** Whether the worker keeps the drawing shown, with no other drawing asked for after it. */
+  const holdsShown = (): boolean => shown !== null && posted === shown.req && held === shown.req;
+
+  /** A request still waiting is not shown when it comes. */
+  const cancelPending = (): void => {
+    if (!pending) return;
+    pending = null;
+    listEl.removeAttribute('aria-busy');
   };
 
   const setPressed = (key: string): void => {
@@ -78,6 +97,7 @@ export function initModelDrawings(
 
   /** Back to the 3D view; the drawing stays in the pane for the next time. */
   const showModel = (): void => {
+    cancelPending();
     if (app.dataset.view !== 'drawing') return;
     delete app.dataset.view;
     pane.hidden = true;
@@ -97,7 +117,8 @@ export function initModelDrawings(
         renderList(msg.list);
         return;
       case 'drawing-open': {
-        if (!pending || pending.kind !== msg.kind || pending.id !== msg.id) return;
+        held = msg.req;
+        if (!pending || pending.req !== msg.req) return;
         shown = pending;
         pending = null;
         listEl.removeAttribute('aria-busy');
@@ -131,8 +152,13 @@ export function initModelDrawings(
         return;
       }
       case 'drawing-error':
+        if (msg.request === 'drawing-open') {
+          held = null;
+          // A request replaced by another fails silently: the one that replaced it reports itself.
+          if (!pending || pending.req !== msg.req) return;
+          pending = null;
+        }
         listEl.removeAttribute('aria-busy');
-        if (msg.request === 'drawing-open') pending = null;
         host.setStatus(`Drawing: ${msg.message}`);
         host.toast(msg.message, 'bad');
         return;
@@ -149,6 +175,19 @@ export function initModelDrawings(
     }
     w.postMessage(m, transfer);
     return true;
+  };
+
+  /**
+   * Reads the open file and posts what `make` builds from it, unless the file or the worker
+   * changed, or `current()` turned false, while it was read.
+   */
+  const postWithBytes = async (make: (data: Uint8Array) => unknown, current: () => boolean): Promise<boolean> => {
+    const file = host.file();
+    const worker = host.worker();
+    if (!file || !worker) return false;
+    const data = new Uint8Array(await file.arrayBuffer());
+    if (host.file() !== file || host.worker() !== worker || !current()) return false;
+    return post(make(data), [data.buffer as ArrayBuffer]);
   };
 
   const item = (key: string, label: string, title?: string): HTMLButtonElement => {
@@ -217,41 +256,49 @@ export function initModelDrawings(
       return;
     }
     const [kind, id] = key.split(':') as [Kind, string];
-    // The drawing already drawn shows again at once, as it was left.
-    if (shown && `${shown.kind}:${shown.id}` === key) {
+    // The drawing already drawn shows again at once, as it was left, while the worker keeps it.
+    if (shown && `${shown.kind}:${shown.id}` === key && holdsShown()) {
+      cancelPending();
       showDrawing();
       return;
     }
-    const label = b.textContent ?? key;
-    pending = { kind, id: Number(id), label };
+    const request: Request = { kind, id: Number(id), label: b.textContent ?? key, req: ++nextReq };
+    pending = request;
     listEl.setAttribute('aria-busy', 'true');
-    host.setStatus(`Drawing ${label}…`);
-    void bytes().then((data) => {
-      if (!data || !post({ type: 'drawing-open', bytes: data, kind, id: Number(id) }, [data.buffer as ArrayBuffer])) {
-        pending = null;
-        listEl.removeAttribute('aria-busy');
-      }
-    });
+    host.setStatus(`Drawing ${request.label}…`);
+    void (async () => {
+      const sent = await postWithBytes(
+        (data) => ({ type: 'drawing-open', bytes: data, kind, id: request.id, req: request.req }),
+        () => pending === request,
+      );
+      if (sent) posted = request.req;
+      else if (pending === request) cancelPending();
+    })();
   });
 
   $('drawing-back').addEventListener('click', showModel);
   for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>('#export-view-drawing [data-format]'))) {
     btn.addEventListener('click', () => {
-      if (shown) post({ type: 'drawing-save', format: btn.dataset.format });
+      if (!shown) return;
+      if (!holdsShown()) {
+        host.toast('The drawing shown is not the one kept for saving: choose it again to save it.', 'info');
+        return;
+      }
+      post({ type: 'drawing-save', format: btn.dataset.format });
     });
   }
 
   return {
     /** Lists the open model's sheets and views. */
     async load(): Promise<void> {
-      const data = await bytes();
-      if (data) post({ type: 'drawing-list', bytes: data }, [data.buffer as ArrayBuffer]);
+      await postWithBytes((data) => ({ type: 'drawing-list', bytes: data }), () => true);
     },
     /** A new file: no list, no drawing, the 3D view. */
     reset(): void {
       showModel();
       shown = null;
-      pending = null;
+      posted = null;
+      held = null;
       listEl.replaceChildren();
       listEl.removeAttribute('aria-busy');
       delete listEl.dataset.count;

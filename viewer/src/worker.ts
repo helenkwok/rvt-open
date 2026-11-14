@@ -74,14 +74,16 @@
  *   worker → main: { type: 'drawing-list', list }   drawingList's { sheets,
  *                  plans, sections }: what drawingOpen draws of the open model
  *   main → worker: { type: 'drawing-open', bytes, kind: 'sheet' | 'plan' |
- *                  'section', id }
- *   worker → main: { type: 'drawing-open', kind, id, drawn }   drawingOpen's
+ *                  'section', id, req }   `req` numbers the request
+ *   worker → main: { type: 'drawing-open', kind, id, req, drawn }   drawingOpen's
  *                  { svg, layers, notDrawn, truncated, layout, scale, counts,
  *                  notes }, drawn as rvt-sheet draws it
  *   main → worker: { type: 'drawing-save', format: 'dxf' | 'dwg' | 'pdf' }
  *   worker → main: { type: 'drawing-save', format, bytes }
- *   A failure replies { type: 'drawing-error', request, message }, which leaves
- *   the open model as it is.
+ *   A failure replies { type: 'drawing-error', request, req, message }, which
+ *   leaves the open model as it is (a failed open has dropped the last drawing).
+ *   Every drawing reply also carries `wasmMemoryBytes`, the wasm linear memory
+ *   after it: drawing grows it and it never shrinks.
  */
 
 import init, {
@@ -157,7 +159,7 @@ type ParseMsg =
 
 type DrawingMsg =
   | { type: 'drawing-list'; bytes: Uint8Array }
-  | { type: 'drawing-open'; bytes: Uint8Array; kind: string; id: number }
+  | { type: 'drawing-open'; bytes: Uint8Array; kind: string; id: number; req: number }
   | { type: 'drawing-save'; format: string };
 
 /** serde-wasm-bindgen hands Rust maps over as `Map`s; the pane wants plain objects. */
@@ -208,6 +210,8 @@ async function handleDwg(msg: DwgMsg): Promise<void> {
 // Retained so `info` requests can re-run element_info_panel (host /
 // hosted relationships, M4-04) without shipping a panel per element.
 let parsedModel: unknown = null;
+/** The open model's wasm memory, reported with each drawing reply: drawing grows it. */
+let instanceMemory: WebAssembly.Memory | null = null;
 
 // The panic hook the bindings install writes `rvt-open wasm panic: <info>` to
 // `console.error` before the trap; wasm-failure.ts says how a stop without one
@@ -263,25 +267,28 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
   if (msg.type.startsWith('drawing-')) {
     const m = msg as DrawingMsg;
     lastPanic = null;
+    const reply = (r: Record<string, unknown>, transfer?: Transferable[]): void =>
+      send({ ...r, wasmMemoryBytes: instanceMemory?.buffer.byteLength ?? 0 }, transfer);
     try {
       if (parsedModel === null) throw new Error('no model is open');
       switch (m.type) {
         case 'drawing-list':
-          send({ type: 'drawing-list', list: plain(drawingList(m.bytes, parsedModel)) });
+          reply({ type: 'drawing-list', list: plain(drawingList(m.bytes, parsedModel)) });
           return;
         case 'drawing-open':
-          send({ type: 'drawing-open', kind: m.kind, id: m.id, drawn: plain(drawingOpen(m.bytes, m.kind, m.id)) });
+          reply({ type: 'drawing-open', kind: m.kind, id: m.id, req: m.req, drawn: plain(drawingOpen(m.bytes, m.kind, m.id)) });
           return;
         case 'drawing-save': {
           const bytes = drawingSave(m.format);
-          send({ type: 'drawing-save', format: m.format, bytes }, [bytes.buffer as ArrayBuffer]);
+          reply({ type: 'drawing-save', format: m.format, bytes }, [bytes.buffer as ArrayBuffer]);
           return;
         }
       }
     } catch (err) {
-      send({
+      reply({
         type: 'drawing-error',
         request: m.type,
+        req: m.type === 'drawing-open' ? m.req : undefined,
         message: lastPanic ?? (err instanceof Error ? err.message : String(err)),
       });
     }
@@ -315,6 +322,7 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
     const wasmModule = msg.wasmModule ?? (await compileWasm(msg.wasmUrl));
     const wasm = await init({ module_or_path: wasmModule });
     wasmMemory = wasm.memory;
+    instanceMemory = wasm.memory;
     // The first open's module is the page's from here on.
     if (!msg.wasmModule) send({ type: 'wasm', module: wasmModule });
 

@@ -1517,8 +1517,13 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
       failLoad(file, msg.message);
       return;
     }
-    // Replies to the Drawings list (model-drawings.ts) are its own.
-    if ((msg as { type: string }).type !== 'ready') return;
+    // Replies to the Drawings list (model-drawings.ts) are its own, but drawing grows the
+    // worker's wasm memory, which never shrinks: the saved-parameter guard counts it.
+    const reply = msg as { type: string; wasmMemoryBytes?: unknown };
+    if (reply.type.startsWith('drawing-') && typeof reply.wasmMemoryBytes === 'number') {
+      loadedWasmMemoryBytes = Math.max(loadedWasmMemoryBytes, reply.wasmMemoryBytes);
+    }
+    if (reply.type !== 'ready') return;
     model = msg.model;
     loadedWasmMemoryBytes = msg.stats.wasmMemoryBytes;
     sceneGraph = msg.scene;
@@ -3106,7 +3111,7 @@ let parametersReads = 0;
 let decoderWasm: WebAssembly.Module | null = null;
 /** Whether a read of this file has run out of memory: it is read only when asked from then on. */
 let parametersRanOutOfMemory = false;
-/** The wasm linear memory the open left (worker.ts `stats`), which a read in a second instance comes on top of. */
+/** The wasm linear memory the open left (worker.ts `stats`, then its drawing replies), which a read in a second instance comes on top of. */
 let loadedWasmMemoryBytes = 0;
 const infoLiveEl = $('info-live');
 
