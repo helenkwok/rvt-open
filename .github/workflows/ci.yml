@@ -573,9 +573,17 @@ jobs:
           for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt; do
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          specs=(tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts)
+          specs=(tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts)
           if [ "${{ matrix.leg }}" = 2 ]; then
             pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
           else
             pnpm exec playwright test "${specs[@]}" --grep-invert "$LEG2"
           fi
+      # The model-drawings test's screenshots of the sheet and section it draws.
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: "viewer-drawings-leg-${{ matrix.leg }}"
+          path: viewer/drawing-shots
+          if-no-files-found: ignore
+          retention-days: 7

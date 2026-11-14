@@ -75,30 +75,23 @@ export function sanitizeSvg(text: string): SVGSVGElement | null {
   return document.importNode(root, true) as unknown as SVGSVGElement;
 }
 
-export function initDrawing(host: DrawingHost): {
-  open(file: File): Promise<void>;
-  close(): void;
-  isOpen(): boolean;
-} {
-  const app = $('app');
-  const pane = $('drawing-pane');
-  const sheet = $('drawing-sheet');
-  const layoutSel = $('drawing-layout') as HTMLSelectElement;
-  const layersEl = $('drawing-layers');
-  const infoEl = $('info');
-  const statusPanelEl = $('status-panel');
-  const fileMetaEl = $('file-meta');
+/** A drawing shown as SVG in a pane: drag to pan, wheel or + / - to zoom, 0 to fit. */
+export interface SvgView {
+  /** Shows `text` (sanitised) fitted to the pane; null when it is not an SVG. */
+  show(text: string): SVGSVGElement | null;
+  fit(): void;
+  clear(): void;
+  svg(): SVGSVGElement | null;
+}
 
-  let worker: Worker | null = null;
-  let stem = 'drawing';
-  let summary: DwgSummary | null = null;
-  let current: DwgSvg | null = null;
+/**
+ * The pane's SVG view, shared by the DWG / DXF pane and a Revit model's sheets and views
+ * (model-drawings.ts). `onClick` gets the element under a press that did not pan.
+ */
+export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null) => void): SvgView {
   let svgEl: SVGSVGElement | null = null;
   let fitBox = { x: 0, y: 0, w: 1, h: 1 };
   let box = { ...fitBox };
-  const hidden = new Set<string>();
-  let pendingHandle: string | null = null;
-  let picked: Element | null = null;
 
   const setViewBox = (): void => {
     svgEl?.setAttribute('viewBox', `${box.x} ${box.y} ${box.w} ${box.h}`);
@@ -121,7 +114,108 @@ export function initDrawing(host: DrawingHost): {
     setViewBox();
   };
 
+  const show = (text: string): SVGSVGElement | null => {
+    const el = sanitizeSvg(text);
+    sheet.replaceChildren();
+    svgEl = null;
+    if (!el) return null;
+    el.removeAttribute('width');
+    el.removeAttribute('height');
+    const vb = el.viewBox.baseVal;
+    fitBox = vb && vb.width > 0 && vb.height > 0 ? { x: vb.x, y: vb.y, w: vb.width, h: vb.height } : { x: 0, y: 0, w: 1, h: 1 };
+    svgEl = el;
+    sheet.appendChild(el);
+    fit();
+    return el;
+  };
+
+  // Pan by drag; a press that barely moves is a click.
+  let drag: { x: number; y: number; moved: boolean; id: number } | null = null;
+  sheet.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    drag = { x: ev.clientX, y: ev.clientY, moved: false, id: ev.pointerId };
+  });
+  sheet.addEventListener('pointermove', (ev) => {
+    if (!drag || ev.pointerId !== drag.id || !svgEl) return;
+    const dx = ev.clientX - drag.x;
+    const dy = ev.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      sheet.setPointerCapture(ev.pointerId);
+      sheet.classList.add('is-panning');
+    }
+    const r = sheet.getBoundingClientRect();
+    const k = Math.max(box.w / r.width, box.h / r.height);
+    box.x -= dx * k;
+    box.y -= dy * k;
+    drag.x = ev.clientX;
+    drag.y = ev.clientY;
+    setViewBox();
+  });
+  sheet.addEventListener('pointerup', (ev) => {
+    if (!drag || ev.pointerId !== drag.id) return;
+    const wasClick = !drag.moved;
+    drag = null;
+    sheet.classList.remove('is-panning');
+    if (wasClick) onClick(ev.target as Element | null);
+  });
+  sheet.addEventListener('pointercancel', (ev) => {
+    if (drag && ev.pointerId === drag.id) drag = null;
+    sheet.classList.remove('is-panning');
+  });
+  sheet.addEventListener(
+    'wheel',
+    (ev) => {
+      ev.preventDefault();
+      zoom(Math.exp(ev.deltaY * 0.0015), ev.clientX, ev.clientY);
+    },
+    { passive: false },
+  );
+  sheet.addEventListener('keydown', (ev) => {
+    if (ev.key === '+' || ev.key === '=') zoom(1 / 1.25);
+    else if (ev.key === '-' || ev.key === '_') zoom(1.25);
+    else if (ev.key === '0') fit();
+    else return;
+    ev.preventDefault();
+  });
+
+  return {
+    show,
+    fit,
+    clear: () => {
+      sheet.replaceChildren();
+      svgEl = null;
+    },
+    svg: () => svgEl,
+  };
+}
+
+export function initDrawing(host: DrawingHost, view: SvgView): {
+  open(file: File): Promise<void>;
+  close(): void;
+  isOpen(): boolean;
+  pick(target: Element | null): void;
+} {
+  const app = $('app');
+  const pane = $('drawing-pane');
+  const sheet = $('drawing-sheet');
+  const layoutSel = $('drawing-layout') as HTMLSelectElement;
+  const layersEl = $('drawing-layers');
+  const infoEl = $('info');
+  const statusPanelEl = $('status-panel');
+  const fileMetaEl = $('file-meta');
+
+  let worker: Worker | null = null;
+  let stem = 'drawing';
+  let summary: DwgSummary | null = null;
+  let current: DwgSvg | null = null;
+  const hidden = new Set<string>();
+  let pendingHandle: string | null = null;
+  let picked: Element | null = null;
+
   const applyLayerVisibility = (): void => {
+    const svgEl = view.svg();
     if (!svgEl) return;
     for (const g of Array.from(svgEl.querySelectorAll<SVGGElement>('g.layer[data-layer]'))) {
       g.style.display = hidden.has(g.dataset.layer ?? '') ? 'none' : '';
@@ -130,21 +224,11 @@ export function initDrawing(host: DrawingHost): {
 
   const showSvg = (s: DwgSvg): void => {
     current = s;
-    const el = sanitizeSvg(s.svg);
-    sheet.replaceChildren();
     picked = null;
-    svgEl = null;
-    if (!el) {
+    if (!view.show(s.svg)) {
       host.toast('The drawing could not be shown: the renderer returned no SVG.', 'bad');
       return;
     }
-    el.removeAttribute('width');
-    el.removeAttribute('height');
-    const vb = el.viewBox.baseVal;
-    fitBox = vb && vb.width > 0 && vb.height > 0 ? { x: vb.x, y: vb.y, w: vb.width, h: vb.height } : { x: 0, y: 0, w: 1, h: 1 };
-    svgEl = el;
-    sheet.appendChild(el);
-    fit();
     applyLayerVisibility();
     if (s.truncated) host.toast('The drawing is larger than the render limit; part of it is not drawn.', 'info');
   };
@@ -321,7 +405,6 @@ export function initDrawing(host: DrawingHost): {
   const post = (m: unknown, transfer: Transferable[] = []): void => worker?.postMessage(m, transfer);
 
   layoutSel.addEventListener('change', () => post({ type: 'dwg-svg', layout: layoutSel.value || null }));
-  $('drawing-fit').addEventListener('click', fit);
   for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>('#export-drawing [data-table]'))) {
     btn.addEventListener('click', () => post({ type: 'dwg-table', name: btn.dataset.table }));
   }
@@ -335,37 +418,10 @@ export function initDrawing(host: DrawingHost): {
     host.toast(`Downloaded ${file}`, 'ok');
   });
 
-  // Pan by drag; a press that barely moves is a click on an entity.
-  let drag: { x: number; y: number; moved: boolean; id: number } | null = null;
-  sheet.addEventListener('pointerdown', (ev) => {
-    if (ev.button !== 0) return;
-    drag = { x: ev.clientX, y: ev.clientY, moved: false, id: ev.pointerId };
-  });
-  sheet.addEventListener('pointermove', (ev) => {
-    if (!drag || ev.pointerId !== drag.id || !svgEl) return;
-    const dx = ev.clientX - drag.x;
-    const dy = ev.clientY - drag.y;
-    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
-    if (!drag.moved) {
-      drag.moved = true;
-      sheet.setPointerCapture(ev.pointerId);
-      sheet.classList.add('is-panning');
-    }
-    const r = sheet.getBoundingClientRect();
-    const k = Math.max(box.w / r.width, box.h / r.height);
-    box.x -= dx * k;
-    box.y -= dy * k;
-    drag.x = ev.clientX;
-    drag.y = ev.clientY;
-    setViewBox();
-  });
-  const endDrag = (ev: PointerEvent): void => {
-    if (!drag || ev.pointerId !== drag.id) return;
-    const wasClick = !drag.moved;
-    drag = null;
-    sheet.classList.remove('is-panning');
-    if (!wasClick) return;
-    const target = (ev.target as Element | null)?.closest?.('[data-handle]');
+  /** A click on an entity of an open DWG / DXF shows its row. */
+  const pickEntity = (el: Element | null): void => {
+    if (app.dataset.mode !== 'drawing') return;
+    const target = el?.closest?.('[data-handle]');
     if (!target || !sheet.contains(target)) return;
     picked?.classList.remove('drawing-picked');
     picked = target;
@@ -374,34 +430,13 @@ export function initDrawing(host: DrawingHost): {
     infoEl.setAttribute('aria-busy', 'true');
     post({ type: 'dwg-entity', handle: pendingHandle });
   };
-  sheet.addEventListener('pointerup', endDrag);
-  sheet.addEventListener('pointercancel', (ev) => {
-    if (drag && ev.pointerId === drag.id) drag = null;
-    sheet.classList.remove('is-panning');
-  });
-  sheet.addEventListener(
-    'wheel',
-    (ev) => {
-      ev.preventDefault();
-      zoom(Math.exp(ev.deltaY * 0.0015), ev.clientX, ev.clientY);
-    },
-    { passive: false },
-  );
-  sheet.addEventListener('keydown', (ev) => {
-    if (ev.key === '+' || ev.key === '=') zoom(1 / 1.25);
-    else if (ev.key === '-' || ev.key === '_') zoom(1.25);
-    else if (ev.key === '0') fit();
-    else return;
-    ev.preventDefault();
-  });
 
   function close(): void {
     if (app.dataset.mode !== 'drawing') return;
     delete app.dataset.mode;
     pane.hidden = true;
-    sheet.replaceChildren();
+    view.clear();
     layersEl.replaceChildren();
-    svgEl = null;
     summary = null;
     current = null;
     picked = null;
@@ -429,7 +464,7 @@ export function initDrawing(host: DrawingHost): {
     current = null;
     app.dataset.mode = 'drawing';
     pane.hidden = false;
-    sheet.replaceChildren();
+    view.clear();
     host.setDropzoneVisible(false);
     for (const b of host.rvtButtons) b.disabled = true;
     host.setExportHint(null);
@@ -442,5 +477,5 @@ export function initDrawing(host: DrawingHost): {
     post({ type: 'dwg-open', bytes, wasmUrl: host.wasmUrl }, [bytes.buffer as ArrayBuffer]);
   }
 
-  return { open, close, isOpen: () => app.dataset.mode === 'drawing' };
+  return { open, close, isOpen: () => app.dataset.mode === 'drawing', pick: pickEntity };
 }

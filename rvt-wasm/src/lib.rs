@@ -1972,3 +1972,125 @@ pub fn dwg_save(format: &str, version: &str) -> Result<Vec<u8>, JsValue> {
         resave(r, format, v).map(|(b, _)| b).map_err(err_str)
     })
 }
+
+// The model's sheets and views as 2D drawings, as `rvt-sheet --sheet` and `--view` draw them. One
+// is drawn at a time, on request, and kept here until the next, so saving it does not draw it again.
+thread_local! {
+    static VIEW_DRAWING: RefCell<Option<rvt::ifc::sheet_views::ViewDrawing>> = const { RefCell::new(None) };
+}
+
+/// The sheets and views a model can show as drawings, view templates left out:
+/// `{ sheets: [{ id, number, name, views: [id] }], plans: [{ id, name, level, ceiling, scale,
+/// onSheet }], sections: [{ id, name, scale }] }`. A section or elevation is listed only where its
+/// crop box is decoded (it has nothing to draw without one). Reads the views only, not the model.
+#[wasm_bindgen(js_name = drawingList)]
+pub fn drawing_list(bytes: &js_sys::Uint8Array) -> Result<JsValue, JsValue> {
+    install_panic_hook();
+    let mut rf = open(bytes)?;
+    let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
+    let out = serde_json::json!({
+        "sheets": facts.sheets.iter().map(|s| serde_json::json!({
+            "id": s.id,
+            "number": s.number,
+            "name": s.name,
+            "views": facts.viewports.iter().filter(|v| v.sheet == s.id).map(|v| v.view).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "plans": facts.views.iter().filter(|v| !v.template).map(|v| serde_json::json!({
+            "id": v.id,
+            "name": v.name,
+            "level": v.level,
+            // `m_planViewType` 2 is a reflected ceiling plan.
+            "ceiling": v.plan_type == Some(2),
+            "scale": v.scale,
+            "onSheet": v.on_sheet,
+        })).collect::<Vec<_>>(),
+        "sections": facts.sections.iter().filter(|v| !v.template && v.crop.is_some()).map(|v| serde_json::json!({
+            "id": v.id,
+            "name": v.name,
+            "scale": v.scale,
+        })).collect::<Vec<_>>(),
+    });
+    serde_wasm_bindgen::to_value(&out).map_err(err_str)
+}
+
+/// Draw a sheet or view of the open file: `kind` is `sheet`, `plan` or `section`, `id` its
+/// ElementId, `model` the model the viewer opened (so the drawing shows the same phase and
+/// elements). Keeps the drawing for [`drawing_save`] and returns `{ svg, layers, notDrawn,
+/// truncated, layout, scale, counts: { lines, texts, viewports, entities }, notes }`, the SVG
+/// being the sheet's paper space (its viewports showing the views) or the view's model space.
+#[wasm_bindgen(js_name = drawingOpen)]
+pub fn drawing_open(
+    bytes: &js_sys::Uint8Array,
+    model: JsValue,
+    kind: &str,
+    id: f64,
+) -> Result<JsValue, JsValue> {
+    use rvt::ifc::sheet_views::{DrawingKey, view_drawing};
+    install_panic_hook();
+    let id = id as i64;
+    let key = match kind {
+        "sheet" => DrawingKey::Sheet(id),
+        "plan" => DrawingKey::Plan(id),
+        "section" => DrawingKey::Section(id),
+        other => {
+            return Err(JsValue::from_str(&format!(
+                "unknown drawing kind {other:?}: sheet, plan or section"
+            )));
+        }
+    };
+    // The last drawing is dropped before this one is drawn, so the two are never held together.
+    VIEW_DRAWING.with(|d| d.borrow_mut().take());
+    let model: IfcModel = serde_wasm_bindgen::from_value(model).map_err(err_str)?;
+    let mut rf = open(bytes)?;
+    let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
+    let mut notes = Vec::new();
+    let symbols = rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model).unwrap_or_else(|e| {
+        notes.push(format!("plan symbols not read: {e}"));
+        Default::default()
+    });
+    let drawn =
+        view_drawing(&mut rf, &model, &facts, key, &symbols, &mut notes).map_err(err_str)?;
+    drop(model);
+    let svg = rvt_dwg::svg::render(&drawn.drawing, drawn.layout, &rvt_dwg::Limits::DEFAULT)
+        .map_err(err_str)?;
+    let count = |kinds: &[&str]| {
+        drawn
+            .drawing
+            .entities
+            .iter()
+            .filter(|e| kinds.contains(&e.kind.as_str()))
+            .count()
+    };
+    let out = serde_json::json!({
+        "svg": svg.svg,
+        "layers": svg.layers,
+        "notDrawn": svg.not_drawn,
+        "truncated": svg.truncated,
+        "layout": drawn.layout,
+        "scale": drawn.scale,
+        "counts": {
+            "lines": count(&["LINE", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE"]),
+            "texts": count(&["TEXT", "MTEXT"]),
+            "viewports": count(&["VIEWPORT"]),
+            "entities": drawn.drawing.entities.len(),
+        },
+        "notes": notes,
+    });
+    VIEW_DRAWING.with(|d| *d.borrow_mut() = Some(drawn));
+    serde_wasm_bindgen::to_value(&out).map_err(err_str)
+}
+
+/// The drawing [`drawing_open`] drew, as `dxf` or `dwg` (2018) or `pdf` (a sheet at full size, a
+/// view at its scale): the bytes `rvt-sheet --format` writes.
+#[wasm_bindgen(js_name = drawingSave)]
+pub fn drawing_save(format: &str) -> Result<Vec<u8>, JsValue> {
+    install_panic_hook();
+    VIEW_DRAWING.with(|d| match d.borrow().as_ref() {
+        Some(v) => {
+            rvt::ifc::sheet_views::drawing_bytes(&v.drawing, v.layout, v.scale, format, "2018")
+                .map(|(bytes, _)| bytes)
+                .map_err(err_str)
+        }
+        None => Err(JsValue::from_str("no sheet or view is drawn")),
+    })
+}

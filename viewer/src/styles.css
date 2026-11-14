@@ -2028,8 +2028,14 @@ select:focus:not(:focus-visible),
 /* ---- DWG / DXF 2D pane (src/drawing.ts) ------------------------------------------------- */
 
 #app[data-mode='drawing'] .rvt-only,
-#app:not([data-mode='drawing']) .drawing-only {
+#app:not([data-mode='drawing']) .drawing-only,
+#app:not([data-view='drawing']) .view-drawing-only {
   display: none !important;
+}
+/* A model's sheet or view shown (model-drawings.ts): the 3-D view keeps its state underneath. */
+#app[data-view='drawing'] #viewport canvas,
+#app[data-view='drawing'] #scaffold-note {
+  visibility: hidden;
 }
 /* !important: the 3-D renderer sets display: block inline on its canvas. */
 #app[data-mode='drawing'] #viewport canvas,
@@ -2115,4 +2121,67 @@ dl.info-group {
 }
 dl.info-group dd {
   margin: 0;
+}
+
+/* ---- A model's sheets and views (src/model-drawings.ts) --------------------------------- */
+
+#drawings:empty::before {
+  content: 'Open a Revit file to list its sheets and views.';
+  display: block;
+  padding: 4px 2px;
+  font-size: var(--rv-fs-xs);
+  color: var(--rv-text-3);
+}
+#drawings[aria-busy='true'] {
+  cursor: progress;
+}
+.drawing-group > summary {
+  cursor: pointer;
+  padding: 4px 2px;
+  font-size: var(--rv-fs-xs);
+  color: var(--rv-text-2);
+}
+.drawing-item {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--rv-radius-sm);
+  background: none;
+  color: var(--rv-text);
+  font: inherit;
+  font-size: var(--rv-fs-sm);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.drawing-group .drawing-item {
+  padding-left: 18px;
+}
+.drawing-item:hover {
+  background: var(--rv-accent-softer);
+}
+.drawing-item:focus-visible {
+  outline: 2px solid var(--rv-focus);
+  outline-offset: -2px;
+}
+.drawing-item[aria-pressed='true'] {
+  background: var(--rv-accent-soft);
+  color: var(--rv-accent);
+  font-weight: var(--rv-fw-semibold);
+}
+.drawings-empty {
+  margin: 4px 2px;
+  font-size: var(--rv-fs-xs);
+  color: var(--rv-text-2);
+}
+#drawing-title {
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--rv-fw-semibold);
+  color: var(--rv-text);
 }

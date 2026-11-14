@@ -21,8 +21,9 @@ workspace = true
 [dependencies]
 # `unstable-research` only adds paths to the readers the stable API already
 # reads through (src/research.rs): `savedParameters` calls the saved-parameter
-# reader `rvt-elements` uses, and the release range it reads, directly.
-rvt = { package = "rvt-open", path = "..", default-features = false, features = ["unstable-research"] }
+# reader `rvt-elements` uses, and the release range it reads, directly. `dwg`
+# draws the sheets and views (`drawingOpen`) as `rvt-sheet` does.
+rvt = { package = "rvt-open", path = "..", default-features = false, features = ["unstable-research", "dwg"] }
 # DWG/DXF reading for the 2D pane, without the engine's native-only parallel decoding.
 rvt-dwg = { path = "../rvt-dwg", default-features = false }
 wasm-bindgen = "0.2"
