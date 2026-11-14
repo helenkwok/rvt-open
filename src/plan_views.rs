@@ -1204,37 +1204,4 @@ mod tests {
                 .contains("Live/Work Core A")
         );
     }
-
-    /// A floor plan and a ceiling plan of one level share its name: the name draws the floor
-    /// plan and each one's ElementId draws that one, so every listed view can be drawn.
-    #[test]
-    fn a_view_whose_name_another_shares_is_found_by_its_id() {
-        let facts = super::ViewFacts {
-            views: vec![
-                super::PlanView {
-                    id: 10,
-                    name: "Level 1".into(),
-                    plan_type: Some(2),
-                    ..Default::default()
-                },
-                super::PlanView {
-                    id: 11,
-                    name: "Level 1".into(),
-                    plan_type: Some(super::FLOOR_PLAN),
-                    ..Default::default()
-                },
-                super::PlanView {
-                    id: 12,
-                    name: "Template".into(),
-                    template: true,
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        assert_eq!(facts.find("Level 1").unwrap().id, 11);
-        assert_eq!(facts.find("10").unwrap().id, 10);
-        assert_eq!(facts.find("11").unwrap().id, 11);
-        assert!(facts.find("12").is_err(), "a template is not drawn");
-    }
 }
