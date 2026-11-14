@@ -874,11 +874,14 @@ pub fn space_predefined_type_for(value: &str) -> Option<&'static str> {
 /// type (`HANDRAIL` on its `KAI-4` and `KJO-1`, `GUARDRAIL` on its `KAI-1`,
 /// `KAI-2`, `KAI-3` and `KAI-5`, `NOTDEFINED` on its `KAI-6`), and the railing's
 /// host does not decide it: 26 of the 41 name a stair and 8 a ramp, where 32 are
-/// `HANDRAIL`. `IfcStair` and `IfcDoor`, honoured as targets,
-/// are not listed, because listing them would apply every door's
-/// and stair's own predefined type as well, which is not measured. An
-/// element exported as either through its value takes the target's
-/// default, the one Revit writes on the elements measured.
+/// `HANDRAIL`. `IfcStair`, honoured as a target, is not listed,
+/// because listing it would apply every stair's own predefined type as well,
+/// which is not measured. An element exported as a stair through its value
+/// takes the target's default, the one Revit writes on the elements measured.
+/// `IfcDoor` is listed: Revit's export of the BIM4LCA files writes
+/// `TRAPDOOR` on 52 doors (3 on each of the four housing files, 10 on each of
+/// the four office files) and `DOOR` on every other door of every model
+/// measured, where rvt-open wrote `DOOR` on all.
 ///
 /// adds four more, each measured on the BIM4LCA office (Revit 2024)
 /// against Revit's export of it: `IfcWall`, whose 607 walls Revit writes
@@ -889,7 +892,7 @@ pub fn space_predefined_type_for(value: &str) -> Option<&'static str> {
 /// own before its type's, as reads it: Revit writes two type objects
 /// for the wall type `KS-3`, `SOLIDWALL` and `STANDARD`, and types its 4
 /// `SOLIDWALL` walls by the first and its 2 `NOTDEFINED` ones by the second.
-/// The reason `IfcStair` and `IfcDoor` are not listed does not apply to the
+/// The reason `IfcStair` is not listed does not apply to the
 /// four: their elements are measured, and each class is reached by the rows
 /// of one or two Revit categories (Wall and ArcWall, Ramp, LightingFixture,
 /// Pipe and Gutter). A wall with no value keeps the mapping's `NOTDEFINED`,
@@ -1444,6 +1447,10 @@ const PREDEFINED_TYPE_ENUMERATORS: &[(&str, &[&str])] = &[
             "USERDEFINED",
             "NOTDEFINED",
         ],
+    ),
+    (
+        "IFCDOOR",
+        &["DOOR", "GATE", "TRAPDOOR", "USERDEFINED", "NOTDEFINED"],
     ),
 ];
 

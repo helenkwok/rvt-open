@@ -73,6 +73,7 @@
 //! - [`native_instance_materials`]: The materials a family instance's own parameters give it
 //! - [`native_metadata`]: Lossless projections of selected saved metadata from a complete native graph
 //! - [`native_mullion_hosts`]: Which curtain mullions Revit's export draws as an extrusion of their section
+//! - [`native_multistory_stairs`]: The sets of a multistory stair and the Levels each spans, read by member name
 //! - [`native_parameter_definitions`]: Parameter definitions recovered through native owner-to-definition edges
 //! - [`native_parameters`]: Schema-directed native value prefixes and deferred parameter sets
 //! - [`native_parametric_mesh`]: Bounded UV-grid meshing for decoded parametric surfaces
@@ -128,6 +129,7 @@ pub mod native_instance_materials;
 pub(crate) mod native_json;
 pub mod native_metadata;
 pub mod native_mullion_hosts;
+pub mod native_multistory_stairs;
 pub mod native_parameter_definitions;
 pub mod native_parameters;
 pub mod native_parametric_mesh;
