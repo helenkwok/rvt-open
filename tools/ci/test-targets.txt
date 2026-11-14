@@ -169,6 +169,7 @@ cli       reproducible_outputs
 cli       resource_limits_cli
 cli       rvt_dump_cli
 cli       sheet_view
+real      sheet_listing
 cli       gltf_normals
 cli       pdf3d_export
 cli       rvt_gltf_progress_cli

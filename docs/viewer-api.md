@@ -691,6 +691,9 @@ describing the error.
 | `modelToPdf3d` | `model` | `Uint8Array` | The model as a one-page 3D PDF: the glTF meshes as U3D in a 3D annotation, with a flat poster |
 | `modelToIfcStep` | `model` | `string` | The model as an IFC4 STEP document |
 | `renderPlanSvg` | `model`, `options: SheetOptions` or `null` | `string` | A plan view as SVG |
+| `drawingList` | `bytes: Uint8Array`, `model` | `{ sheets, plans, sections }` | What `drawingOpen` draws of `model`: the sheets (`id`, `number`, `name`, the ElementIds of the views placed on them), plan views (`id`, `name`, `level`, `ceiling`, `scale`, `onSheet`) and sections and elevations (`id`, `name`, `scale`). View templates, loaded families' own views, plans with no view range or level decoded and sections with no crop box decoded are left out |
+| `drawingOpen` | `bytes: Uint8Array`, `kind: "sheet" \| "plan" \| "section"`, `id: number` | `{ svg, layers, notDrawn, truncated, layout, scale, counts: { lines, texts, viewports, entities }, notes }` | Draws one sheet or view as `rvt-sheet --sheet` or `--view` draws it to DXF, from the model `rvt-sheet` exports, and returns it as SVG: a sheet's paper space with its title block and its views in viewports, or a view's model space. The first call exports that model and keeps it, with the file's views, for the next calls; only the last drawing is kept, for `drawingSave` |
+| `drawingSave` | `format: "dxf" \| "dwg" \| "pdf"` | `Uint8Array` | The drawing `drawingOpen` drew as DXF 2018, DWG 2018 or a vector PDF (a sheet at full size, a view at its scale), the bytes `rvt-sheet --format` writes |
 | `openRvtBytes` | `bytes` | `{ model }` | Open a file and decode its model |
 | `openRvtBytesWithLimits` | `bytes`, `limits` | `{ model }` | The same with explicit reader resource limits |
 | `openRvtBytesWithDiagnostics` | `bytes` | `{ model, diagnostics }` | Open a file and report what was approximated or left out |

@@ -127,6 +127,7 @@ pub mod scene_graph;
 pub mod schedule_csv;
 pub mod share;
 pub mod sheet;
+pub mod sheet_views;
 pub mod standard_property_sets;
 pub mod step_writer;
 mod storey_properties;

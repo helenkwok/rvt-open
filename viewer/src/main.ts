@@ -16,7 +16,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import supportMatrix from '../../docs/support-matrix.json';
-import { initDrawing, isDrawingFile } from './drawing';
+import { initDrawing, initSvgView, isDrawingFile } from './drawing';
+import { initModelDrawings } from './model-drawings';
 import * as wasmGlue from '../pkg/rvt.js';
 import DecoderWorker from './worker.ts?worker&inline';
 import ParametersWorker from './parameters-worker.ts?worker&inline';
@@ -38,6 +39,7 @@ const $ = (id: string): HTMLElement => {
   if (!el) throw new Error(`missing element: #${id}`);
   return el;
 };
+const appEl = $('app');
 const viewport = $('viewport');
 const dropzone = $('dropzone');
 const fileInput = $('file-input') as HTMLInputElement;
@@ -196,9 +198,13 @@ function advanceCameraTween(now: number): void {
 }
 
 function tick(now: number = performance.now()): void {
-  advanceCameraTween(now);
-  controls.update();
-  renderer.render(scene, camera);
+  // While a sheet or view covers the 3D view (model-drawings.ts) it is not drawn; its camera
+  // and scene are kept as they are.
+  if (appEl.dataset.view !== 'drawing') {
+    advanceCameraTween(now);
+    controls.update();
+    renderer.render(scene, camera);
+  }
   requestAnimationFrame(tick);
 }
 tick();
@@ -1310,6 +1316,7 @@ interface LoadStats {
 }
 
 async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> {
+  modelDrawings.reset();
   if (isDrawingFile(file.name)) {
     await drawing.open(file);
     return;
@@ -1510,6 +1517,8 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
       failLoad(file, msg.message);
       return;
     }
+    // Replies to the Drawings list (model-drawings.ts) are its own.
+    if ((msg as { type: string }).type !== 'ready') return;
     model = msg.model;
     loadedWasmMemoryBytes = msg.stats.wasmMemoryBytes;
     sceneGraph = msg.scene;
@@ -1554,6 +1563,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     maybeShowScaffoldNote(currentDiagnostics);
     const elapsed = Math.max(1, Math.round((performance.now() - loadStartedAt) / 1000));
     toast(`Loaded ${file.name} · ${msg.types.length} categories · ${elapsed} s`, 'ok');
+    void modelDrawings.load();
   });
   w.postMessage(
     {
@@ -4439,7 +4449,9 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// ---------- DWG / DXF 2D pane (drawing.ts) ----------
+// ---------- 2D pane: DWG / DXF files (drawing.ts) and a model's sheets and views (model-drawings.ts) ----------
+const drawingView = initSvgView($('drawing-sheet'), (target) => drawing.pick(target));
+$('drawing-fit').addEventListener('click', () => drawingView.fit());
 const drawing = initDrawing({
   resetWorker,
   wasmUrl,
@@ -4459,7 +4471,18 @@ const drawing = initDrawing({
     downloadScheduleBtn,
     downloadRoomsBtn,
   ],
-});
+}, drawingView);
+const modelDrawings = initModelDrawings(
+  {
+    worker: () => worker,
+    file: () => currentFile,
+    stem: () => lastFileStem,
+    setStatus,
+    toast,
+    download: (filename, blob) => download(filename, blob),
+  },
+  drawingView,
+);
 
 // ---------- Drag & drop / file picker ----------
 pickBtn.addEventListener('click', () => fileInput.click());
@@ -4474,7 +4497,7 @@ document.addEventListener('keydown', (ev) => {
   if ((ev.key !== 'f' && ev.key !== 'F') || ev.metaKey || ev.ctrlKey || ev.altKey) return;
   const target = ev.target as HTMLElement | null;
   if (target?.closest('input, select, textarea, [contenteditable="true"]')) return;
-  if (!currentModel) return;
+  if (!currentModel || appEl.dataset.view === 'drawing') return;
   ev.preventDefault();
   if (selectedIndex !== null) {
     frameEntities(new Set([selectedIndex]), entityLabel(selectedIndex));

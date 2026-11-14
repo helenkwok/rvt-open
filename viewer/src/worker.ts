@@ -67,6 +67,21 @@
  *   main → worker: { type: 'dwg-save', format: 'dxf' | 'dwg', version: string }
  *   worker → main: { type: 'dwg-save', format, version, bytes: Uint8Array }
  *   Any failure replies { type: 'error', message } as for RVT files.
+ *
+ * A Revit model's sheets and views (src/model-drawings.ts), after a parse: the
+ * page sends the file's bytes again with each request, so none are kept here.
+ *   main → worker: { type: 'drawing-list', bytes }
+ *   worker → main: { type: 'drawing-list', list }   drawingList's { sheets,
+ *                  plans, sections }: what drawingOpen draws of the open model
+ *   main → worker: { type: 'drawing-open', bytes, kind: 'sheet' | 'plan' |
+ *                  'section', id }
+ *   worker → main: { type: 'drawing-open', kind, id, drawn }   drawingOpen's
+ *                  { svg, layers, notDrawn, truncated, layout, scale, counts,
+ *                  notes }, drawn as rvt-sheet draws it
+ *   main → worker: { type: 'drawing-save', format: 'dxf' | 'dwg' | 'pdf' }
+ *   worker → main: { type: 'drawing-save', format, bytes }
+ *   A failure replies { type: 'drawing-error', request, message }, which leaves
+ *   the open model as it is.
  */
 
 import init, {
@@ -83,6 +98,9 @@ import init, {
   dwgEntity,
   dwgTable,
   dwgSave,
+  drawingList,
+  drawingOpen,
+  drawingSave,
 } from '../pkg/rvt.js';
 import { PANIC_PREFIX, outOfMemory } from './wasm-failure';
 
@@ -134,7 +152,13 @@ type ParseMsg =
       wasmModule?: WebAssembly.Module;
     }
   | { type: 'info'; index: number }
-  | DwgMsg;
+  | DwgMsg
+  | DrawingMsg;
+
+type DrawingMsg =
+  | { type: 'drawing-list'; bytes: Uint8Array }
+  | { type: 'drawing-open'; bytes: Uint8Array; kind: string; id: number }
+  | { type: 'drawing-save'; format: string };
 
 /** serde-wasm-bindgen hands Rust maps over as `Map`s; the pane wants plain objects. */
 function plain(v: unknown): unknown {
@@ -233,6 +257,33 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
       await handleDwg(msg as DwgMsg);
     } catch (err) {
       send({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+  if (msg.type.startsWith('drawing-')) {
+    const m = msg as DrawingMsg;
+    lastPanic = null;
+    try {
+      if (parsedModel === null) throw new Error('no model is open');
+      switch (m.type) {
+        case 'drawing-list':
+          send({ type: 'drawing-list', list: plain(drawingList(m.bytes, parsedModel)) });
+          return;
+        case 'drawing-open':
+          send({ type: 'drawing-open', kind: m.kind, id: m.id, drawn: plain(drawingOpen(m.bytes, m.kind, m.id)) });
+          return;
+        case 'drawing-save': {
+          const bytes = drawingSave(m.format);
+          send({ type: 'drawing-save', format: m.format, bytes }, [bytes.buffer as ArrayBuffer]);
+          return;
+        }
+      }
+    } catch (err) {
+      send({
+        type: 'drawing-error',
+        request: m.type,
+        message: lastPanic ?? (err instanceof Error ? err.message : String(err)),
+      });
     }
     return;
   }
