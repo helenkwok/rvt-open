@@ -1814,11 +1814,7 @@ pub fn plan_outline(body: Body<'_>, placement: &Placement) -> Option<(Ring, Vec<
 /// points and their triangles are equal.
 pub fn mesh_key(mesh: &Mesh, feet_to_m: f64) -> (Vec<[i64; 3]>, String) {
     use std::fmt::Write;
-    let q: Vec<[i64; 3]> = mesh
-        .vertices
-        .iter()
-        .map(|v| v.map(|c| (c * feet_to_m * 1e7).round() as i64))
-        .collect();
+    let q = grid_points(mesh, feet_to_m);
     let mut key = String::with_capacity(q.len() * 24 + mesh.triangles.len() * 12);
     for p in &q {
         let _ = write!(key, "{},{},{};", p[0], p[1], p[2]);
@@ -1828,6 +1824,14 @@ pub fn mesh_key(mesh: &Mesh, feet_to_m: f64) -> (Vec<[i64; 3]>, String) {
         let _ = write!(key, "{},{},{};", t[0], t[1], t[2]);
     }
     (q, key)
+}
+
+/// The points of [`mesh_key`] without its key.
+pub(crate) fn grid_points(mesh: &Mesh, feet_to_m: f64) -> Vec<[i64; 3]> {
+    mesh.vertices
+        .iter()
+        .map(|v| v.map(|c| (c * feet_to_m * 1e7).round() as i64))
+        .collect()
 }
 
 /// The exact body definition of a building element that can share a map:
