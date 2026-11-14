@@ -389,8 +389,7 @@ pub(crate) fn face_loops_uv(g: &ObjectGraph, fi: usize) -> Result<Vec<Vec<[f64; 
     }
     Ok(loops)
 }
-/// The trim ring of the cylinder face `face`, its loop `li`, held to
-/// [`CYLINDER_RING_POINT_BUDGET`] points.
+/// The trim ring of the cylinder face `face`, its loop `li`.
 fn ring(
     g: &ObjectGraph,
     index: &PointerIndex<'_>,
