@@ -33,8 +33,7 @@ async function drawn(page: Page): Promise<{ lines: number; texts: number; viewpo
 
 test('lists the sheets and views, draws a sheet and a section, and saves them', async ({ page }) => {
   test.skip(!MODEL || !fs.existsSync(MODEL), 'RVT_DRAWINGS_MODEL is not set or absent');
-  // The one sheet with a view placed on it shows a site plan of about 768,000 lines.
-  test.setTimeout(600_000);
+  test.slow();
   await page.goto('/');
   await expect(page.locator('#status')).toHaveText(/Ready/);
   await page.locator('#file-input').setInputFiles(MODEL);

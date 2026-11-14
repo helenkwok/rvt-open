@@ -1,8 +1,8 @@
 /*
  * A Revit model's sheets and views as 2D drawings, beside the 3D view. The
  * Drawings list (left panel) comes from the views the file holds; a sheet or
- * view is drawn only when it is chosen, by the parse worker (worker.ts, which
- * keeps the model it opened) as `rvt-sheet --sheet` or `--view` draws it, and
+ * view is drawn only when it is chosen, by the parse worker (worker.ts) as
+ * `rvt-sheet --sheet` or `--view` draws it, and
  * shown in the 2D pane as SVG. The 3D view and the drawing stay as they are
  * while the other is shown: switching only hides one.
  */

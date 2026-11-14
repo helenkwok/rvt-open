@@ -77,7 +77,7 @@
  *                  'section', id }
  *   worker → main: { type: 'drawing-open', kind, id, drawn }   drawingOpen's
  *                  { svg, layers, notDrawn, truncated, layout, scale, counts,
- *                  notes }, drawn from the model this worker opened
+ *                  notes }, drawn as rvt-sheet draws it
  *   main → worker: { type: 'drawing-save', format: 'dxf' | 'dwg' | 'pdf' }
  *   worker → main: { type: 'drawing-save', format, bytes }
  *   A failure replies { type: 'drawing-error', request, message }, which leaves
@@ -270,7 +270,7 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
           send({ type: 'drawing-list', list: plain(drawingList(m.bytes, parsedModel)) });
           return;
         case 'drawing-open':
-          send({ type: 'drawing-open', kind: m.kind, id: m.id, drawn: plain(drawingOpen(m.bytes, parsedModel, m.kind, m.id)) });
+          send({ type: 'drawing-open', kind: m.kind, id: m.id, drawn: plain(drawingOpen(m.bytes, m.kind, m.id)) });
           return;
         case 'drawing-save': {
           const bytes = drawingSave(m.format);

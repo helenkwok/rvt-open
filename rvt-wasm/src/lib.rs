@@ -1977,6 +1977,16 @@ pub fn dwg_save(format: &str, version: &str) -> Result<Vec<u8>, JsValue> {
 // is drawn at a time, on request, and kept here until the next, so saving it does not draw it again.
 thread_local! {
     static VIEW_DRAWING: RefCell<Option<rvt::ifc::sheet_views::ViewDrawing>> = const { RefCell::new(None) };
+    static DRAWING_SOURCE: RefCell<Option<DrawingSource>> = const { RefCell::new(None) };
+}
+
+/// What the drawings of one file are made from, as `rvt-sheet` makes them: its exported model, its
+/// views and its family instances' plan symbols. `size` tells the file apart from another.
+struct DrawingSource {
+    size: u32,
+    model: IfcModel,
+    facts: rvt::plan_views::ViewFacts,
+    symbols: BTreeMap<usize, Vec<rvt::ifc::entities::PlanPolyline>>,
 }
 
 /// The sheets and views of `model`'s file that [`drawing_open`] draws: `{ sheets: [{ id, number,
@@ -2015,18 +2025,16 @@ pub fn drawing_list(bytes: &js_sys::Uint8Array, model: JsValue) -> Result<JsValu
     serde_wasm_bindgen::to_value(&out).map_err(err_str)
 }
 
-/// Draw a sheet or view of the open file: `kind` is `sheet`, `plan` or `section`, `id` its
-/// ElementId, `model` the model the viewer opened (so the drawing shows the same phase and
-/// elements). Keeps the drawing for [`drawing_save`] and returns `{ svg, layers, notDrawn,
-/// truncated, layout, scale, counts: { lines, texts, viewports, entities }, notes }`, the SVG
-/// being the sheet's paper space (its viewports showing the views) or the view's model space.
+/// Draw a sheet or view of the file: `kind` is `sheet`, `plan` or `section`, `id` its ElementId.
+/// Drawn from the model `rvt-sheet` exports, so the drawing is the one `rvt-sheet --sheet` or
+/// `--view` writes. The first drawing exports that model and reads the file's views; both are kept
+/// for the next drawing of the same file (a worker opens one file). Keeps the drawing for
+/// [`drawing_save`] and returns `{ svg, layers, notDrawn, truncated, layout, scale, counts: {
+/// lines, texts, viewports, entities }, notes }`, the SVG being the sheet's paper space (its
+/// viewports showing the views) or the view's model space.
 #[wasm_bindgen(js_name = drawingOpen)]
-pub fn drawing_open(
-    bytes: &js_sys::Uint8Array,
-    model: JsValue,
-    kind: &str,
-    id: f64,
-) -> Result<JsValue, JsValue> {
+pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<JsValue, JsValue> {
+    use rvt::ifc::Exporter;
     use rvt::ifc::sheet_views::{DrawingKey, view_drawing};
     install_panic_hook();
     let id = id as i64;
@@ -2042,17 +2050,32 @@ pub fn drawing_open(
     };
     // The last drawing is dropped before this one is drawn, so the two are never held together.
     VIEW_DRAWING.with(|d| d.borrow_mut().take());
-    let model: IfcModel = serde_wasm_bindgen::from_value(model).map_err(err_str)?;
     let mut rf = open(bytes)?;
-    let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
     let mut notes = Vec::new();
-    let symbols = rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model).unwrap_or_else(|e| {
-        notes.push(format!("plan symbols not read: {e}"));
-        Default::default()
-    });
-    let drawn =
-        view_drawing(&mut rf, &model, &facts, key, &symbols, &mut notes).map_err(err_str)?;
-    drop(model);
+    let source = DRAWING_SOURCE.with(|cell| -> Result<_, JsValue> {
+        let mut cell = cell.borrow_mut();
+        let size = bytes.length();
+        if cell.as_ref().is_none_or(|s: &DrawingSource| s.size != size) {
+            let model = RvtDocExporter.export(&mut rf).map_err(err_str)?;
+            let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
+            let symbols = rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model)
+                .unwrap_or_else(|e| {
+                    notes.push(format!("plan symbols not read: {e}"));
+                    Default::default()
+                });
+            *cell = Some(DrawingSource {
+                size,
+                model,
+                facts,
+                symbols,
+            });
+        }
+        Ok(cell.take().expect("set above"))
+    })?;
+    let (model, facts, symbols) = (&source.model, &source.facts, &source.symbols);
+    let drawn = view_drawing(&mut rf, model, facts, key, symbols, &mut notes);
+    DRAWING_SOURCE.with(|cell| *cell.borrow_mut() = Some(source));
+    let drawn = drawn.map_err(err_str)?;
     let svg = rvt_dwg::svg::render(&drawn.drawing, drawn.layout, &rvt_dwg::Limits::DEFAULT)
         .map_err(err_str)?;
     let count = |kinds: &[&str]| {
