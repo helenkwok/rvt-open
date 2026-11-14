@@ -529,6 +529,7 @@ pub(super) fn attach_curtain_walls(
 /// reference list read by `list_of`: the 2023 records path reads both from
 /// its 32-bit records (`recover_2023_records`). Given `wall_reads`, the walls
 /// of a curtain wall type are curtain walls too (`curtain_walls_by_type`).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn attach_curtain_walls_by(
     rf: &mut RevitFile,
     revit_version: u32,
