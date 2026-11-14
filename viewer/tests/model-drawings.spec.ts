@@ -79,6 +79,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   expect(sheetCounts).toEqual({ lines: 880, texts: 17, viewports: 1 });
   await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
   await shot(page, 'sheet');
+  fs.writeFileSync(path.join(SHOTS, 'sheet.svg'), await page.locator('#drawing-sheet > svg').evaluate((el) => el.outerHTML));
   at('sheet drawn');
 
   // The saves are the sheet's, as rvt-sheet writes them. The menu closes after each export.
@@ -98,6 +99,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
     expect(download.suggestedFilename()).toMatch(new RegExp(`\\.${format}$`));
     const head = fs.readFileSync((await download.path())!).subarray(0, 32).toString('latin1');
     expect(head).toMatch(magic);
+    fs.copyFileSync((await download.path())!, path.join(SHOTS, `sheet.${format}`));
     at(`${format} saved`);
   }
 
@@ -107,9 +109,12 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   await page.locator('#drawing-sheet').focus();
   await page.keyboard.press('+');
   const zoomed = await page.locator('#drawing-sheet > svg').getAttribute('viewBox');
+  at('zoomed');
   await list.getByRole('button', { name: '3D model' }).click();
+  at('3D clicked');
   await expect(page.locator('#drawing-pane')).toBeHidden();
   await expect(page.locator('#viewport canvas')).toBeVisible();
+  at('3D shown');
   await sheet.click();
   await expect(page.locator('#drawing-pane')).toBeVisible();
   expect(await svgBefore!.evaluate((el) => el.isConnected)).toBe(true);
