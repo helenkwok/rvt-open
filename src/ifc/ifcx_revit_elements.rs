@@ -176,7 +176,10 @@ pub fn read(
     // Every element's category and design option, from its ElementHeader.
     for e in &mut out {
         if let Some(&category) = saved.header_categories.get(&e.id) {
-            let value = crate::builtin_parameters::category_name(category)
+            // No category (-1) as the API shows it.
+            let value = (category < -1)
+                .then(|| crate::builtin_parameters::category_name(category))
+                .flatten()
                 .map_or_else(|| category.to_string(), str::to_string);
             put(
                 e,
@@ -203,12 +206,13 @@ pub fn read(
 const ELEM_CATEGORY_PARAM: i64 = -1_140_362;
 
 /// The records whose fields [`record_fields`] reads: views, levels, grids,
-/// their types, revisions, base points, project and site locations, and the
-/// internal origin.
+/// their types, walls, revisions, base points, project and site locations,
+/// and the internal origin.
 fn kept_record(class: &str) -> bool {
     class.starts_with("DBView")
         || class.starts_with("Level")
         || class.starts_with("Grid")
+        || class.ends_with("Wall")
         || matches!(
             class,
             "ProjectRevision"
@@ -236,7 +240,8 @@ enum Field {
     Scale,
 }
 
-/// Fields of a record's root object that are a built-in parameter's value
+/// Fields of a record's root object (or, as `Class:path`, of its object of
+/// that class) that are a built-in parameter's value
 /// (the API's, read on the tiny reference models of Revit 2019 and 2024): the
 /// root class's prefix, the field, the built-in's `BuiltInParameter` name
 /// and how it is written.
@@ -300,7 +305,57 @@ const RECORD_FIELDS: &[(&str, &str, &str, Field)] = &[
         "VIEW_DESCRIPTION",
         Field::Text,
     ),
+    (
+        "DBView",
+        "ViewDisplayMgr:m_model.m_showHiddenLinesVal",
+        "VIEW_SHOW_HIDDEN_LINES",
+        Field::Int,
+    ),
+    (
+        "DBView",
+        "ColorFillSchemaSetting:m_bBackground",
+        "COLOR_SCHEME_LOCATION",
+        Field::Int,
+    ),
     ("DBViewPlan", "m_genElemId", "PLAN_VIEW_LEVEL", Field::Id),
+    (
+        "SWall",
+        "m_roomBounding",
+        "WALL_ATTR_ROOM_BOUNDING",
+        Field::Bool,
+    ),
+    (
+        "SWall",
+        "m_wallCrossSection",
+        "WALL_CROSS_SECTION",
+        Field::Int,
+    ),
+    (
+        "SWall",
+        "m_isStructuralSignificant",
+        "WALL_STRUCTURAL_SIGNIFICANT",
+        Field::Bool,
+    ),
+    ("SWall", "m_wallKeyRef", "WALL_KEY_REF_PARAM", Field::Int),
+    (
+        "ArcWall",
+        "m_roomBounding",
+        "WALL_ATTR_ROOM_BOUNDING",
+        Field::Bool,
+    ),
+    (
+        "ArcWall",
+        "m_wallCrossSection",
+        "WALL_CROSS_SECTION",
+        Field::Int,
+    ),
+    (
+        "ArcWall",
+        "m_isStructuralSignificant",
+        "WALL_STRUCTURAL_SIGNIFICANT",
+        Field::Bool,
+    ),
+    ("ArcWall", "m_wallKeyRef", "WALL_KEY_REF_PARAM", Field::Int),
     ("Level", "m_text", "DATUM_TEXT", Field::Text),
     (
         "Level",
@@ -417,6 +472,33 @@ fn record_fields(
                 .map(|e| e.name.clone())
         })
     };
+    // The type an element's record names: a view's `m_dbViewTypeId`, a
+    // level's or grid's `m_attrId`, a project location's
+    // `InstanceInfo.m_symbolId`.
+    let type_of = |class: &str, fields: &Fv, objects: &[(String, Fv)]| -> Option<i64> {
+        let id = if class.starts_with("DBView") && class != "DBViewType" {
+            fields.get("m_dbViewTypeId").and_then(id_of)
+        } else if class == "Level" || class == "Grid" {
+            fields.get("m_attrId").and_then(id_of)
+        } else if class == "GeoLocation" {
+            objects
+                .iter()
+                .find(|(c, _)| c == "InstanceInfo")
+                .and_then(|(_, f)| f.get("m_symbolId"))
+                .and_then(id_of)
+        } else {
+            None
+        };
+        id.filter(|&t| t > 0)
+    };
+    let named: BTreeSet<i64> = saved
+        .records
+        .values()
+        .filter_map(|objects| {
+            let (class, fields) = objects.first()?;
+            type_of(class, fields, objects)
+        })
+        .collect();
     for (&id, objects) in &saved.records {
         let Some((class, fields)) = objects.first() else {
             continue;
@@ -432,7 +514,15 @@ fn record_fields(
             let Some(parameter) = crate::builtin_parameters::parameter_by_enum(builtin) else {
                 continue;
             };
-            let Some(v) = fields.get(field) else {
+            // `Class:path` names a field of the record's object of that class.
+            let v = match field.split_once(':') {
+                Some((object, path)) => objects
+                    .iter()
+                    .find(|(class, _)| class == object)
+                    .and_then(|(_, f)| path.split('.').try_fold(f, |v, key| v.get(key))),
+                None => fields.get(field),
+            };
+            let Some(v) = v else {
                 continue;
             };
             let value = match how {
@@ -472,20 +562,8 @@ fn record_fields(
             };
             properties.push((parameter.id, parameter.name, value));
         }
-        let type_id = if class.starts_with("DBView") && class != "DBViewType" {
-            fields.get("m_dbViewTypeId").and_then(id_of)
-        } else if class == "Level" || class == "Grid" {
-            fields.get("m_attrId").and_then(id_of)
-        } else if class == "GeoLocation" {
-            objects
-                .iter()
-                .find(|(c, _)| c == "InstanceInfo")
-                .and_then(|(_, f)| f.get("m_symbolId"))
-                .and_then(id_of)
-        } else {
-            None
-        };
-        if let Some(type_id) = type_id.filter(|&t| t > 0) {
+        let type_id = type_of(class, fields, objects);
+        if let Some(type_id) = type_id {
             let type_name = symbol_name(type_id);
             let id_text = type_id.to_string();
             properties.push((
@@ -509,7 +587,8 @@ fn record_fields(
                 PropertyValue::Label(id_text),
             ));
         }
-        if class == "GeoSite" || class.ends_with("Attributes") || class == "DBViewType" {
+        let is_type = class == "GeoSite" || class.ends_with("Attributes") || class == "DBViewType";
+        if is_type {
             if let Some(name) = symbol_name(id) {
                 properties.push((TYPE_NAME, "Type Name", PropertyValue::Text(name)));
             }
@@ -535,8 +614,14 @@ fn record_fields(
             "CoordinateSystemDisplayElem" => "InternalOrigin",
             other => other,
         };
+        let added = !out.iter().any(|e| i64::try_from(e.id) == Ok(id));
         ensure(out, global_ids, id, revit_class, name.as_ref());
         if let Some(e) = out.iter_mut().find(|e| i64::try_from(e.id) == Ok(id)) {
+            // A type no record here names, read only for its name, is
+            // written only with the types no element uses.
+            if added && is_type {
+                e.unused_type = !named.contains(&id);
+            }
             for property in properties {
                 put(e, property);
             }
