@@ -158,6 +158,12 @@ js-sys = "0.3"
 # Not in the browser build, which writes nothing to disk itself.
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 craft-atomic = { path = "vendor/craft-atomic", version = "=0.1.0" }
+# The command-line tools' allocator (MIT). A conversion makes many short-lived
+# allocations across threads, and the system allocator on Linux held well
+# above the live heap afterwards; with mimalloc the same exports peak lower
+# and finish sooner. Its version 2 peaked lower than version 3 on the same
+# exports at the same time. The library itself sets no allocator.
+mimalloc = { version = "=0.1.52", features = ["v2"] }
 
 [dev-dependencies]
 # stream-evidence harness. Only

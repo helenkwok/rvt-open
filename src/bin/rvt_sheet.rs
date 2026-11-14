@@ -44,6 +44,11 @@ use rvt::plan_views::LineKind;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+// The process's allocator (see `mimalloc` in Cargo.toml).
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "rvt-sheet",
