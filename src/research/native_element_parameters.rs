@@ -539,12 +539,14 @@ fn read_selected(
     // Any other element an ElementId value names, by its name entry, and a
     // category by the name Revit shows.
     let names = file.memoised_element_names();
-    let mut result = ElementParameters::default();
-    result.header_categories = header_categories
-        .into_iter()
-        .filter(|(id, _)| ids.contains(id))
-        .collect();
-    result.records = kept_records;
+    let mut result = ElementParameters {
+        header_categories: header_categories
+            .into_iter()
+            .filter(|(id, _)| ids.contains(id))
+            .collect(),
+        records: kept_records,
+        ..Default::default()
+    };
     for (&id, option) in &header_options {
         if let (Ok(id), Some(option)) = (u64::try_from(id), option.as_i64()) {
             if ids.contains(&id) {
