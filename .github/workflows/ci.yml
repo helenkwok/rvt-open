@@ -5,8 +5,9 @@ name: CI
 on:
   push:
     branches: [main]
-  # A draft pull request runs the fast jobs (samples, box check, fmt, clippy);
-  # marking it ready runs the rest.
+  # A draft pull request runs the fast jobs (samples, box check, fmt, clippy,
+  # rvt-dwg); marking it ready runs the rest. No job waits for another unless
+  # it uses what that job makes, so they all start together.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
@@ -96,6 +97,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      # The one job that saves the ci-profile cache (the others only restore
+      # it), so the cache holds what it held when every job waited for this one.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with: { shared-key: ci-profile }
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -122,7 +125,8 @@ jobs:
 
   clippy:
     name: clippy and docs
-    needs: box-check
+    needs: scope
+    if: needs.scope.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -138,8 +142,8 @@ jobs:
 
   build:
     name: build / ${{ matrix.os }}
-    needs: box-check
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     strategy:
       fail-fast: false
       matrix:
@@ -160,19 +164,47 @@ jobs:
           df -h /
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build --workspace --lib --bins --all-features
-      # ClamAV (GPL-2.0) runs here as a separate program only; it is never linked into or shipped with rvt-open.
-      - name: ClamAV scan of the built binaries (official clamav image, pinned in the script)
-        if: runner.os == 'Linux'
-        run: |
-          tools/ci/clamav-scan.sh "$RUNNER_TEMP/clamav.md" "$RUNNER_TEMP/clamav.log" $(find target/debug -maxdepth 1 -type f -executable -name 'rvt-*')
-          cat "$RUNNER_TEMP/clamav.md" >> "$GITHUB_STEP_SUMMARY"
       - run: cargo test --profile ci --doc
       - run: cargo run --profile ci --example basics_inspect
       - run: cargo run --profile ci --example basics_elements
 
+  # The same binaries build / ubuntu-24.04 builds (the same command on the same
+  # runner image, restoring the same cache), scanned beside it rather than after it.
+  clamav:
+    name: ClamAV scan of the built binaries
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      # The hosted image ships about 30 GB of SDKs this job never uses; the debug build of the whole
+      # workspace plus the ClamAV image do not fit beside them. Removed while the build runs.
+      - run: |
+          (sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; touch "$RUNNER_TEMP/freed") &
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: build, save-if: false }
+      - run: cargo build --workspace --lib --bins --all-features
+      # The signature database, a day at a time: freshclam then fetches only what changed since.
+      - id: date
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: "${{ runner.temp }}/clamav-db", key: "clamav-db-${{ steps.date.outputs.day }}", restore-keys: clamav-db- }
+      # ClamAV (GPL-2.0) runs here as a separate program only; it is never linked into or shipped with rvt-open.
+      - name: ClamAV scan of the built binaries (official clamav image, pinned in the script)
+        env: { CLAMAV_DB: "${{ runner.temp }}/clamav-db" }
+        run: |
+          while [ ! -e "$RUNNER_TEMP/freed" ]; do sleep 5; done; df -h /
+          tools/ci/clamav-scan.sh "$RUNNER_TEMP/clamav.md" "$RUNNER_TEMP/clamav.log" $(find target/debug -maxdepth 1 -type f -executable -name 'rvt-*')
+          cat "$RUNNER_TEMP/clamav.md" >> "$GITHUB_STEP_SUMMARY"
+          grep '^TIME: ' "$RUNNER_TEMP/clamav.log"
+
   dwg:
     name: rvt-dwg (DWG/DXF, ACadSharp samples)
-    needs: box-check
+    needs: scope
+    if: needs.scope.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -180,7 +212,7 @@ jobs:
         with: { persist-credentials: false }
       - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { shared-key: ci-profile }
+        with: { shared-key: ci-profile, save-if: false }
       - id: dwg-samples
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _dwg_samples, key: "dwg-samples-${{ hashFiles('rvt-dwg/tools/fetch-acadsharp-samples.sh') }}" }
@@ -191,7 +223,7 @@ jobs:
 
   test:
     name: tests ${{ matrix.part }}/4
-    needs: box-check
+    needs: samples
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     strategy:
       fail-fast: false
@@ -204,7 +236,7 @@ jobs:
         with: { persist-credentials: false }
       - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { shared-key: ci-profile }
+        with: { shared-key: ci-profile, save-if: false }
       # A failed prebuilt download is built from crates.io instead.
       - id: tools5
         continue-on-error: true
@@ -219,10 +251,13 @@ jobs:
       - name: Real-file, CLI and contract tests (partition ${{ matrix.part }} of ${{ env.PARTITIONS }})
         run: tools/ci/verify-real-files.sh --profile ci --partition "count:${{ matrix.part }}/${{ env.PARTITIONS }}" --no-fail-fast
 
-  wasm:
-    name: wasm32 and wasm64
-    needs: box-check
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+  # The browser package is built in two jobs side by side, one per module,
+  # with the scripts tools/ci/wasm-package.sh runs for the release; the job
+  # "wasm32 and wasm64" then puts them together and checks the package.
+  wasm32:
+    name: wasm32 module
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -231,7 +266,6 @@ jobs:
       - run: |
           tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy -t wasm32-unknown-unknown
           rustup default "$RUST_VERSION"
-          tools/ci/retry.sh 3 rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
           echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # A failed prebuilt download is built from crates.io instead.
@@ -244,22 +278,70 @@ jobs:
         run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9"
       - run: cargo clippy -p rvt-wasm --all-targets -- -D warnings
       # The release's SBOMs for both browser targets, so a tag is never the first run of these commands.
-      - name: SBOMs for the wasm package
+      - name: SBOM for the 32-bit module
         run: |
           cargo cyclonedx --manifest-path rvt-wasm/Cargo.toml --format json --spec-version 1.5 --all \
             --target wasm32-unknown-unknown --override-filename sbom32
+          test -s rvt-wasm/sbom32.json
+      - run: tools/ci/wasm32-build.sh pkg
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: wasm32-module, path: pkg, retention-days: 1 }
+      # The viewer's package, from the same 32-bit build, under the name the viewer loads.
+      - run: wasm-bindgen --target web --out-dir viewer/pkg --out-name rvt target/wasm32-unknown-unknown/release/rvt_wasm.wasm
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: viewer-pkg, path: viewer/pkg, retention-days: 3 }
+
+  wasm64:
+    name: wasm64 module
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: |
+          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          tools/ci/retry.sh 3 rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
+          echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # A failed prebuilt download is built from crates.io instead.
+      - id: tools8
+        continue-on-error: true
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with: { tool: "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9" }
+      - if: steps.tools8.outcome == 'failure'
+        shell: bash
+        run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }},cargo-cyclonedx@0.5.9"
+      - name: SBOM for the 64-bit module
+        run: |
           RUSTUP_TOOLCHAIN=nightly-2026-10-30 cargo cyclonedx --manifest-path rvt-wasm/Cargo.toml --format json --spec-version 1.5 --all \
             --target wasm64-unknown-unknown --override-filename sbom64
-          test -s rvt-wasm/sbom32.json && test -s rvt-wasm/sbom64.json
+          test -s rvt-wasm/sbom64.json
+      - run: tools/ci/wasm64-build.sh pkg
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: wasm64-module, path: pkg, retention-days: 1 }
+
+  wasm:
+    name: wasm32 and wasm64
+    needs: [wasm32, wasm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { pattern: wasm*-module, merge-multiple: true, path: pkg }
       # The package the release ships: 32-bit and 64-bit builds and the loader, in one folder.
-      - run: tools/ci/wasm-package.sh pkg
+      - run: tools/ci/wasm-package.sh pkg --assemble
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: wasm-pkg, path: pkg }
 
   mcp:
     name: MCP server (rvt-open-mcp)
-    needs: box-check
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -267,7 +349,7 @@ jobs:
         with: { persist-credentials: false }
       - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -c clippy && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { shared-key: ci-profile }
+        with: { shared-key: ci-profile, save-if: false }
       # A crate of its own (rmcp and tokio stay out of the core library), so
       # the workspace jobs do not reach its lints or its end-to-end test.
       - run: cargo clippy -p rvt-open-mcp --all-targets --no-deps -- -D warnings
@@ -291,7 +373,7 @@ jobs:
 
   formats:
     name: Format validators
-    needs: box-check
+    needs: samples
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -300,7 +382,7 @@ jobs:
         with: { persist-credentials: false }
       - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { shared-key: ci-profile }
+        with: { shared-key: ci-profile, save-if: false }
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
       - run: cargo build --profile ci --features sqlite --bin rvt-ifc --bin rvt-gltf --bin rvt-schedule --bin rvt-sheet && cargo build --profile ci -p rvt-dwg --bin rvt-dwg
@@ -375,10 +457,19 @@ jobs:
       - name: Sheet and plan view PDF (qpdf, poppler render, segments against the DXF)
         run: tools/ci/sheet-pdf-check.sh target/ci _samples/2024/racbasicsampleproject.rvt A102 "Level 1"
 
-  tiny-models:
-    name: tiny reference models
-    needs: box-check
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+  # The tiny reference models are exported in four parts side by side (each
+  # model once: rvt-ifc writes the IFC4 and the IFCX, with --ifcx-unused-types
+  # so the unused types are measured too, and rvt-schedule the element table),
+  # then one job scores every export against the answer keys and measures the
+  # IFCX coverage, as one job did before.
+  tiny-export:
+    name: tiny reference models / export ${{ matrix.part }}/4
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -386,7 +477,7 @@ jobs:
         with: { persist-credentials: false }
       - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with: { shared-key: ci-profile }
+        with: { shared-key: ci-profile, save-if: false }
       # Small projects saved in every release from 2018 to 2027, each with an
       # answer key read from the Revit API: recipes 1-5 (release fixtures-tiny-1)
       # and 6-22 (fixtures-tiny-2), both MIT. The key changes with either pin.
@@ -394,17 +485,36 @@ jobs:
         with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
       - run: tools/ci/fetch-tiny-models.sh _tiny
       - run: cargo build --profile ci --bin rvt-ifc --bin rvt-schedule
+      - name: Export part ${{ matrix.part }} of the models
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt
+          "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny target/ci "$RUNNER_TEMP/tiny-out" --ifcx --rvt-ifc-arg=--ifcx-unused-types --convert-only "${{ matrix.part }}/4"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: "tiny-exports-${{ matrix.part }}", path: "${{ runner.temp }}/tiny-out", retention-days: 1 }
+
+  tiny-models:
+    name: tiny reference models
+    needs: tiny-export
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
+      - run: tools/ci/fetch-tiny-models.sh _tiny
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { pattern: tiny-exports-*, merge-multiple: true, path: "${{ runner.temp }}/tiny-out" }
       - name: Exports against the answer keys
         run: |
           python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt
-          "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny target/ci "$RUNNER_TEMP/tiny-out"
+          "$RUNNER_TEMP/ifc/bin/python" tools/ci/tiny_models_check.py _tiny target/ci "$RUNNER_TEMP/tiny-out" --no-run
       # How much of what the Revit API reports (each model's api-dump.json) the
       # IFC4 and IFCX exports carry, by kind; fails when an IFCX total drops
       # below tools/ifcx-coverage/floor.tsv or below IFC4's (docs/ifcx-coverage.md).
-      # With --ifcx-unused-types, so the unused types are measured too.
       - name: IFCX coverage of the Revit API's information
         run: |
-          "$RUNNER_TEMP/ifc/bin/python" tools/ifcx-coverage/coverage.py _tiny "$RUNNER_TEMP/ifcx-coverage" --bin target/ci --rvt-ifc-arg=--ifcx-unused-types --floor tools/ifcx-coverage/floor.tsv
+          "$RUNNER_TEMP/ifc/bin/python" tools/ifcx-coverage/coverage.py _tiny "$RUNNER_TEMP/ifcx-coverage" --exports "$RUNNER_TEMP/tiny-out" --floor tools/ifcx-coverage/floor.tsv
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -414,43 +524,15 @@ jobs:
             ${{ runner.temp }}/ifcx-coverage/ifcx-coverage.tsv
           if-no-files-found: ignore
 
-  viewer-wasm:
-    name: viewer wasm package
-    needs: box-check
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
-      - run: |
-          tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-unknown
-          rustup default "$RUST_VERSION"
-          echo "WB=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, ""); print }' Cargo.lock)" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # A failed prebuilt download is built from crates.io instead.
-      - id: tools7
-        continue-on-error: true
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with: { tool: "wasm-bindgen@${{ env.WB }}" }
-      - if: steps.tools7.outcome == 'failure'
-        shell: bash
-        run: tools/ci/install-cargo-tools.sh "wasm-bindgen@${{ env.WB }}"
-      - name: Build the wasm package into viewer/pkg
-        run: |
-          cargo build -p rvt-wasm --release --target wasm32-unknown-unknown
-          wasm-bindgen --target web --out-dir viewer/pkg --out-name rvt target/wasm32-unknown-unknown/release/rvt_wasm.wasm
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: viewer-pkg, path: viewer/pkg, retention-days: 3 }
-
-  # The browser tests run in two legs on the one wasm package, split by the
+  # The browser tests run in two legs on the one wasm package (the 32-bit build
+  # the release's package is made from), split by the
   # tests' measured times (2026-11-09: 237 s in all; the four Core Interior
   # tests 40 to 60 s each, the rest under 15 s): leg 2 holds two of the long
   # tests and the orbit, diagnostics and toast tests (about 110 s), leg 1 the
   # rest (about 127 s). Re-balance when a leg runs much longer than the other.
   viewer:
     name: viewer (Playwright) / leg ${{ matrix.leg }}
-    needs: viewer-wasm
+    needs: wasm32
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
