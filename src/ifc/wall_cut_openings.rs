@@ -294,6 +294,10 @@ struct Cut {
     up: [f64; 2],
     recess: bool,
     reference_from: usize,
+    /// Whether `Width` is written beside `Height` and `Depth`: the opening a
+    /// door cuts in a second wall takes the two only, since Revit's `Width`
+    /// there is the thickness of the wall the door stands in and this
+    /// outline is not always that to the scorer's tolerance.
     quantities: bool,
 }
 
@@ -514,9 +518,13 @@ pub(super) fn attach_wall_cut_openings(
     if hosts.is_empty() {
         return left_out;
     }
-    let Ok(steps) = native_wall_cuts::wall_cut_steps(rf, &walls) else {
+    let Ok(mut steps) = native_wall_cuts::wall_cut_steps(rf, &walls) else {
         return left_out;
     };
+    // a shadow cutout step stands for the cut of the other wall it
+    // names; it is read as that kind of step, with its own flag, so its wall's
+    // opening is written by the same rule as any other wall the cutter reaches.
+    native_wall_cuts::resolve_shadow_steps(&mut steps);
     let mut framed: BTreeSet<u64> = BTreeSet::new();
     let mut rects: BTreeSet<u64> = BTreeSet::new();
     let mut placed: BTreeSet<u64> = BTreeSet::new();

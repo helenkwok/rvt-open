@@ -1,4 +1,4 @@
-//! A family's extrusions rebuilt from its own records.
+//! A family's extrusion and revolution profiles from its own records.
 //!
 //! A family file's elements are the plain groups of its own partitions,
 //! framed as a project's are; `native_document` reads a
@@ -13,7 +13,7 @@
 //!
 //! - its `ExtrusionElemExtrusionHelper` names the sketch (`m_sketchId`);
 //! - the sketch's curves are the `CurveElem` records whose `SketchMembership`
-//!   names it, each holding one `GLine` or `GArc` (a line's origin,
+//!   names it, with a driven `GLine` or `GArc` (a line's origin,
 //!   direction and parameter range; an arc's centre, axes, radius and angle
 //!   range) in the sketch plane's own coordinates;
 //! - [`assemble_loops`] chains them, ends to ends, into closed loops, and
@@ -26,12 +26,20 @@
 //! The extrusion record also stores the loops it was last built from
 //! (`m_pCurveLoops`), which [`FormDocument::extrusion`] compares with the
 //! sketch's curves.
+//!
+//! [`FormDocument::sketch_curves`] resolves the saved curve-driver links for
+//! both forms, excluding auxiliary centre markers. [`FormDocument::revolution`]
+//! separates the marked axis, reads the sweep angles, and projects the saved
+//! family-coordinate curves into a radial/axial profile.
 
+mod revolution;
+pub use revolution::{Revolution, RevolutionMesh};
+
+use crate::graph_value::Fv;
 use crate::le_bytes;
 use crate::native_parameters::{GraphObject, ObjectGraph};
 use crate::{RevitFile, native_document, native_saved_mesh, native_segments};
 use anyhow::{Result, ensure};
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::{PI, TAU};
 
@@ -242,7 +250,7 @@ fn orient(a: V2, b: V2, c: V2) -> f64 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
 
-fn pair(value: Option<&Value>) -> Option<V2> {
+fn pair(value: Option<&Fv>) -> Option<V2> {
     let items = value?.as_array()?;
     if items.len() != 2 {
         return None;
@@ -251,7 +259,7 @@ fn pair(value: Option<&Value>) -> Option<V2> {
     point.iter().all(|n| n.is_finite()).then_some(point)
 }
 
-fn triple(value: Option<&Value>) -> Option<V3> {
+fn triple(value: Option<&Fv>) -> Option<V3> {
     let items = value?.as_array()?;
     if items.len() != 3 {
         return None;
@@ -262,13 +270,13 @@ fn triple(value: Option<&Value>) -> Option<V3> {
 
 /// An ElementId field as either shape of the schema saves it: `m_id64` from
 /// Revit 2024 and a 4-byte `m_id` before.
-fn identifier(value: &Value) -> Option<i64> {
+fn identifier(value: &Fv) -> Option<i64> {
     let inner = value.get("m_id")?;
     inner.as_i64().or_else(|| {
         inner
             .get("m_id64")
             .or_else(|| inner.get("m_id"))
-            .and_then(Value::as_i64)
+            .and_then(Fv::as_i64)
     })
 }
 
@@ -574,7 +582,7 @@ fn read_curve(object: &GraphObject) -> Result<Curve3, String> {
             let y_axis = triple(fields.get("m_yVec")).ok_or("arc y axis")?;
             let radius = fields
                 .get("m_radius")
-                .and_then(Value::as_f64)
+                .and_then(Fv::as_f64)
                 .filter(|r| r.is_finite() && *r > 0.0)
                 .ok_or("arc radius")?;
             let range = pair(fields.get("m_endParams")).ok_or("arc angle range")?;
@@ -1125,23 +1133,62 @@ impl Extrusion {
     }
 }
 
-fn element_curve(graph: &ObjectGraph) -> Result<Curve3, String> {
-    let (index, driver) = graph
+fn linked_object<'a>(
+    graph: &'a ObjectGraph,
+    source: usize,
+    field: &str,
+) -> Result<(usize, &'a GraphObject), String> {
+    let pointer = graph
         .objects
+        .get(source)
+        .and_then(|o| o.fields.get(field))
+        .ok_or_else(|| format!("missing {field}"))?;
+    let offset = pointer
+        .get("offset")
+        .and_then(Fv::as_u64)
+        .ok_or("pointer offset")?;
+    if graph
+        .edges
         .iter()
-        .enumerate()
-        .find(|(_, object)| object.class_name == "CurveElemDriver")
-        .ok_or("no curve driver")?;
-    let pointer = driver.fields.get("m_pCrv").ok_or("no driver curve")?;
-    let target = native_saved_mesh::pointer(graph, index, pointer)
+        .filter(|e| e.source_object_index == source && e.pointer_offset as u64 == offset)
+        .count()
+        != 1
+    {
+        return Err(format!("missing or ambiguous edge for {field}"));
+    }
+    let target = native_saved_mesh::pointer(graph, source, pointer)
         .map_err(|e| e.to_string())?
-        .ok_or("null driver curve")?;
-    read_curve(
+        .ok_or_else(|| format!("null {field}"))?;
+    Ok((
+        target,
         graph
             .objects
             .get(target)
-            .ok_or("driver curve out of range")?,
-    )
+            .ok_or("pointer target out of range")?,
+    ))
+}
+
+fn curve_driver(graph: &ObjectGraph) -> Result<(usize, &GraphObject), String> {
+    let (index, driver) = linked_object(graph, 0, "m_pCurveDriver")?;
+    if driver.class_name != "CurveElemDriver" {
+        return Err("unsupported curve driver".into());
+    }
+    Ok((index, driver))
+}
+
+fn element_curve(graph: &ObjectGraph) -> Result<Curve3, String> {
+    let (index, _) = curve_driver(graph)?;
+    let (_, curve) = linked_object(graph, index, "m_pCrv")?;
+    read_curve(curve)
+}
+
+/// A driven sketch curve shared by extrusion and revolution readers.
+/// Coordinates are preserved as stored; each form establishes its own frame.
+#[derive(Clone, Debug)]
+pub struct SketchCurve {
+    pub id: u64,
+    pub plane_id: u64,
+    pub curve: Curve3,
 }
 
 /// The curves of the loops an extrusion record stores: its helper's
@@ -1150,7 +1197,7 @@ fn stored_curves(graph: &ObjectGraph, helper: usize) -> Result<Vec<Curve3>, Stri
     let pointers = graph.objects[helper]
         .fields
         .get("m_pCurveLoops")
-        .and_then(Value::as_array)
+        .and_then(Fv::as_array)
         .ok_or("no stored curve loops")?;
     let mut curves = Vec::new();
     for pointer in pointers {
@@ -1161,7 +1208,7 @@ fn stored_curves(graph: &ObjectGraph, helper: usize) -> Result<Vec<Curve3>, Stri
             .objects
             .get(target)
             .and_then(|object| object.fields.get("m_curves"))
-            .and_then(Value::as_array)
+            .and_then(Fv::as_array)
             .ok_or("curve loop has no curves")?;
         for member in members {
             let at = native_saved_mesh::pointer(graph, target, member)
@@ -1250,6 +1297,7 @@ pub struct FormDocument {
     graphs: BTreeMap<u64, ObjectGraph>,
     /// The `CurveElem` records of each sketch, by the sketch's ElementId.
     sketch_curves: BTreeMap<u64, Vec<u64>>,
+    repeated: BTreeSet<u64>,
 }
 
 impl std::fmt::Debug for FormDocument {
@@ -1280,10 +1328,43 @@ impl FormDocument {
                     self.sketch_curves.entry(sketch).or_default().push(id);
                 }
             }
-            "ExtrusionElem" | "SketchPlane" | "VarSketch" => {}
+            "ExtrusionElem" | "RevolutionElem" | "SketchPlane" | "VarSketch" => {}
             _ => return,
         }
+        if self.graphs.contains_key(&id) {
+            self.repeated.insert(id);
+        }
         self.graphs.insert(id, graph);
+    }
+
+    /// Read a sketch's driven lines/arcs without applying a coordinate transform.
+    /// Auxiliary geometry (including an arc's centre-marker line) is excluded.
+    pub fn sketch_curves(&self, sketch_id: u64) -> Result<Vec<SketchCurve>, String> {
+        let ids = self
+            .sketch_curves
+            .get(&sketch_id)
+            .ok_or("no curve record names the sketch")?;
+        if ids.len() > MAX_CURVES {
+            return Err("too many curves".into());
+        }
+        ids.iter()
+            .map(|id| {
+                let graph = self.graphs.get(id).ok_or("curve record absent")?;
+                let plane_id = graph
+                    .objects
+                    .first()
+                    .and_then(|o| o.fields.get("m_sketchPlaneId"))
+                    .and_then(identifier)
+                    .and_then(|n| u64::try_from(n).ok())
+                    .filter(|n| *n > 0)
+                    .ok_or("curve without a sketch plane")?;
+                Ok(SketchCurve {
+                    id: *id,
+                    plane_id,
+                    curve: element_curve(graph)?,
+                })
+            })
+            .collect()
     }
 
     /// The ElementIds of the document's extrusions.
@@ -1312,7 +1393,7 @@ impl FormDocument {
         let cutting = root
             .fields
             .get("m_cutting")
-            .and_then(Value::as_bool)
+            .and_then(Fv::as_bool)
             .ok_or("no m_cutting")?;
         let (helper_index, helper) = graph
             .objects
@@ -1334,9 +1415,9 @@ impl FormDocument {
             .iter()
             .filter(|object| object.class_name == "ParamValueSetDouble")
         {
-            let entries = object.fields.get("m_paramSet").and_then(Value::as_array);
+            let entries = object.fields.get("m_paramSet").and_then(Fv::as_array);
             for entry in entries.into_iter().flatten() {
-                let value = entry.get("m_value").and_then(Value::as_f64);
+                let value = entry.get("m_value").and_then(Fv::as_f64);
                 match entry.get("m_paramId").and_then(identifier) {
                     Some(START_PARAMETER) => start = value,
                     Some(END_PARAMETER) => end = value,
@@ -1350,46 +1431,30 @@ impl FormDocument {
             .iter()
             .filter(|object| object.class_name == "ParamValueSetInt")
         {
-            let entries = object.fields.get("m_paramSet").and_then(Value::as_array);
+            let entries = object.fields.get("m_paramSet").and_then(Fv::as_array);
             for entry in entries.into_iter().flatten() {
                 if entry.get("m_paramId").and_then(identifier) == Some(VISIBLE_PARAMETER) {
-                    visible = entry.get("m_value").and_then(Value::as_i64);
+                    visible = entry.get("m_value").and_then(Fv::as_i64);
                 }
             }
         }
         let start = start.filter(|v| v.is_finite()).ok_or("no start offset")?;
         let end = end.filter(|v| v.is_finite()).ok_or("no end offset")?;
 
-        let curve_ids = self
-            .sketch_curves
-            .get(&sketch_id)
-            .ok_or("no curve record names the sketch")?
-            .clone();
-        if curve_ids.len() > MAX_CURVES {
-            return Err("too many curves".into());
-        }
-        let mut curves = Vec::new();
-        let mut planes: BTreeSet<i64> = BTreeSet::new();
-        for curve_id in &curve_ids {
-            let curve_graph = self.graphs.get(curve_id).ok_or("curve record absent")?;
-            curves.push(element_curve(curve_graph)?);
-            let plane = curve_graph
-                .objects
-                .first()
-                .and_then(|object| object.fields.get("m_sketchPlaneId"))
-                .and_then(identifier)
-                .ok_or("curve without a sketch plane")?;
-            planes.insert(plane);
-        }
-        let mut planes = planes.into_iter();
-        let plane_id = planes
-            .next()
-            .and_then(|n| u64::try_from(n).ok())
-            .filter(|n| *n > 0)
-            .ok_or("no sketch plane id")?;
-        if planes.next().is_some() {
+        let sketch_curves = self.sketch_curves(sketch_id)?;
+        let curve_ids = sketch_curves.iter().map(|c| c.id).collect::<Vec<_>>();
+        let curves = sketch_curves
+            .iter()
+            .map(|c| c.curve.clone())
+            .collect::<Vec<_>>();
+        let planes = sketch_curves
+            .iter()
+            .map(|c| c.plane_id)
+            .collect::<BTreeSet<_>>();
+        if planes.len() != 1 {
             return Err("curves on several sketch planes".into());
         }
+        let plane_id = *planes.first().ok_or("no sketch plane id")?;
         let stored_loops_agree = stored_curves(graph, helper_index)
             .ok()
             .filter(|stored| {
@@ -1411,7 +1476,7 @@ impl FormDocument {
         let rows = trf
             .fields
             .get("m_3x3")
-            .and_then(Value::as_array)
+            .and_then(Fv::as_array)
             .filter(|rows| rows.len() == 3)
             .ok_or("transform matrix")?;
         let mut matrix = [[0.0; 3]; 3];
@@ -1429,13 +1494,13 @@ impl FormDocument {
             let object = plane.objects.get(target)?;
             Some((
                 object.class_name.clone(),
-                object.fields.get("m_mirror").and_then(Value::as_bool),
+                object.fields.get("m_mirror").and_then(Fv::as_bool),
             ))
         });
         let always_ref_plane_norm = root
             .fields
             .get("m_alwaysRefPlaneNorm")
-            .and_then(Value::as_bool);
+            .and_then(Fv::as_bool);
         let sketch_flips = self
             .graphs
             .get(&sketch_id)
@@ -1465,7 +1530,7 @@ impl FormDocument {
             .objects
             .first()
             .and_then(|object| object.fields.get("m_flipZ"))
-            .and_then(Value::as_bool)
+            .and_then(Fv::as_bool)
             .ok_or("sketch plane flip not read")?;
         Ok(Extrusion {
             id,

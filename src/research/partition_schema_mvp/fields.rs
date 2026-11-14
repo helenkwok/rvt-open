@@ -336,6 +336,22 @@ pub const CUT_SOLID_SIZE_FIELDS: [&str; 3] = [
     "m_cut_solid_height",
 ];
 
+/// Field holding the Revit release (its version, 2024) of the file a furniture
+/// or casework element was read from: the `NOTDEFINED` its predefined
+/// type defaults to is written on the releases of
+/// [`FURNITURE_DEFAULT_REVIT_VERSIONS`] only.
+pub const FURNITURE_RELEASE_FIELD: &str = "m_furniture_release";
+
+/// Releases whose furniture and casework take `NOTDEFINED` where they have no
+/// predefined type of their own or their type's: 2024 (the BIM4LCA
+/// housing and office) and the held-out house and office pairs of 2024, 2025
+/// and 2026 are written it by Revit's export on every such element. The 2022
+/// pair is too, but a 32-bit release does not read the export parameters, so a
+/// 2022 file could not tell an element with an "IFC Predefined Type" from one
+/// without, and none is written there. The two 2027 pairs write none on any
+/// furniture, stair, slab or member.
+pub const FURNITURE_DEFAULT_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026];
+
 /// Releases a door's or window's cut loop is measured on: 2024
 /// (Core Interior) and 2025 (RE1 Architecture, the R2025 models). 2026 and
 /// 2027: Autodesk's samples saved by them cut their walls as their
@@ -413,7 +429,7 @@ pub(super) fn native_door_window_maps(
             .as_ref()
             .and_then(|graph| graph.objects.first())
             .and_then(|root| root.fields.get("m_geomTag2MaterialId"))
-            .and_then(serde_json::Value::as_array);
+            .and_then(crate::graph_value::Fv::as_array);
         let (Some(entries), Ok(type_id)) = (entries, u32::try_from(record.identity.element_id))
         else {
             return Ok(());
@@ -425,7 +441,7 @@ pub(super) fn native_door_window_maps(
         for entry in entries {
             let name = entry
                 .pointer("/second/m_id/m_id64")
-                .and_then(serde_json::Value::as_i64)
+                .and_then(crate::graph_value::Fv::as_i64)
                 .and_then(|id| u32::try_from(id).ok())
                 .and_then(|id| names.get(&id));
             if let Some(name) = name.filter(|name| !list.contains(name)) {
@@ -870,6 +886,24 @@ pub const BEAM_AXIS_END_FIELDS: [&str; 3] = [
     "m_beam_axis_end_z",
 ];
 
+/// Fields holding the first end of a beam's location line for its properties,
+/// model feet: the line of the beam's element data, whenever it
+/// lies inside the beam's record box, whether or not a solid along it is drawn
+/// ([`BEAM_AXIS_START_FIELDS`] is the line of a beam that has one).
+pub const BEAM_LINE_START_FIELDS: [&str; 3] = [
+    "m_beam_line_start_x",
+    "m_beam_line_start_y",
+    "m_beam_line_start_z",
+];
+
+/// Fields holding the second end of a beam's location line for its properties,
+/// model feet.
+pub const BEAM_LINE_END_FIELDS: [&str; 3] = [
+    "m_beam_line_end_x",
+    "m_beam_line_end_y",
+    "m_beam_line_end_z",
+];
+
 /// Fields holding the first end of a pipe's centreline, model feet.
 pub const PIPE_AXIS_START_FIELDS: [&str; 3] = [
     "m_pipe_axis_start_x",
@@ -1066,6 +1100,14 @@ pub const WALL_TOP_JOINED_FIELD: &str = "m_wall_top_joined";
 /// [`crate::native_walls::WallReads::top_joins`] alone.
 pub const WALL_TOP_JOIN_RECORD_REVIT_VERSIONS: &[u32] =
     &[2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023];
+
+/// Releases whose walls' `LoadBearing` is written from the Structural box and
+/// usage of their native record: the box is set on walls of Revit
+/// 2024 files alone among the models Measure holds, so the rule's true is
+/// measured there, and the walls of the 2018 to 2023 and 2025 to 2027 models it
+/// holds are false in Revit's exports with the box unset. The 2015 to 2023
+/// records are not read for it.
+pub const WALL_LOAD_BEARING_REVIT_VERSIONS: &[u32] = &[2024, 2025, 2026, 2027];
 
 /// Field set on a wall whose native record holds no `JoinToRoofGStep`,
 /// `CutPairGStep` or `WallCutoutGStep`

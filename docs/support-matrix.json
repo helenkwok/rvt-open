@@ -50,6 +50,15 @@
   },
   "capabilities": [
     {
+      "id": "standalone-family-revolutions-2020",
+      "area": "geometry",
+      "name": "Standalone Revit 2020 family revolutions as analytic IFC solids",
+      "status": "experimental",
+      "evidence": "src/ifc/family_revolutions.rs; four native-IFC-confirmed exports and two partial-arc refusals; tests/rvt_ifc_diagnostics_cli.rs (fixtures named by RVT_RECTANGULAR_REVOLUTIONS_DIR and RVT_CURVED_REVOLUTIONS_DIR)",
+      "notes": "Drawn only where a family file's own forms draw no body, in the scaffold mode. One visible positive revolution, one convex line/arc profile clear of its axis. REV-A, REV-B, REV-BT and ARC-A are confirmed by native IFC. Profiles containing arcs require a full turn; ARC-B and ARC-BT are refused. No project-instance, void, nested-form or other-release coverage. Partial-arc native IFC discrepancies remain explicit; face captures are research leads, not export confirmation.",
+      "user_impact": "Supported standalone families gain an unclassified analytic IFC body; typed quality modes and other family geometry are unchanged."
+    },
+    {
       "id": "cfb-container-open",
       "area": "container",
       "name": "Open .rvt / .rfa / .rte / .rft CFB containers",

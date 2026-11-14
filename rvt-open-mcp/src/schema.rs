@@ -158,7 +158,7 @@ pub struct ElementProvenance {
     /// The stream the record is in: `Partitions/NN` or `Global/Latest`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<String>,
-    /// Where the record or frame starts in that stream inflated: the frame the exporter selected (on Revit 2024 and later the greatest vertical extent, then the higher-numbered partition and later offset; on 2008 to 2023 the newest). A body reader may take another copy; `value_sources` names it.
+    /// Where the record or frame starts in that stream inflated: the frame the exporter selected (the newest: the highest-numbered partition, then on Revit 2024 and later the greatest vertical extent within it, then the later offset). A body reader may take another copy; `value_sources` names it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<usize>,
     /// Where the ElementId is stored: the partition record header it is the first bytes of.
@@ -367,8 +367,10 @@ pub struct PropertySetOut {
 /// The type object an element is typed by.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct TypeOut {
-    /// The type object's `Tag`: the type's Revit ElementId, or the ElementId
-    /// of the room an `IfcSpaceType` is made for.
+    /// The type's Revit ElementId, or the ElementId of the room an
+    /// `IfcSpaceType` is made for. The export writes it as the type object's
+    /// `Tag`, except on an `IfcPlateType`, which it writes with none: Revit's
+    /// is a plate's ElementId, in an order no record holds.
     pub element_id: String,
     /// The type object's IFC entity, such as `IFCWALLTYPE`.
     pub ifc_type: String,
@@ -450,7 +452,7 @@ pub struct ElementDetail {
 pub struct DecisionOut {
     /// The step that made it: `element_skipped`, `body_not_drawn`, `body_left_as_box`, `opening_not_cut`, `outline_not_read` or `storey_not_bound`.
     pub stage: String,
-    /// The reason code: the `reason` of the `skipped` item in `get_diagnostics`, or `body_is_record_box`, `space_outline_is_record_box`, `area_body_refused`, `slab_shape_refused`, `wall_base_cut_refused`, `wall_end_extension_refused` or `wall_profile_extension_refused`.
+    /// The reason code: the `reason` of the `skipped` item in `get_diagnostics`, or `body_is_record_box`, `space_outline_is_record_box`, `area_body_refused`, `slab_shape_refused`, `wall_base_cut_refused`, `wall_end_extension_refused`, `wall_profile_extension_refused` or `saved_mesh_not_used`.
     pub reason: String,
     /// The class the diagnostics count it under: a Revit class, or an IFC entity such as `IFCDOOR`.
     #[serde(skip_serializing_if = "Option::is_none")]

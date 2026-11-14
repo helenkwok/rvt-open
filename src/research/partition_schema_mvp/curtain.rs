@@ -8,18 +8,21 @@ const MODEL_AXES: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 
 /// The box of a curtain mullion: its record box, along the model's axes and
 /// the axis it runs along ([`CURTAIN_MULLION_ALONG_FIELD`]), or turned or
 /// tilted along its own axes ([`CURTAIN_AXES_FIELDS`]). A mullion
-/// whose axis is not known has no `along`.
-fn mullion_box(element: &DecodedElement) -> Option<MullionBox> {
+/// whose axis is not known has no `along`. `kind` is the mullion's type, 0
+/// where it is not known.
+fn mullion_box(element: &DecodedElement, kind: u64) -> Option<MullionBox> {
     let id = element.id?;
     let [x0, y0, z0, x1, y1, z1] = element_record_bbox(element)?;
     let centre = [(x0 + x1) / 2.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0];
     let size = [x1 - x0, y1 - y0, z1 - z0];
     let model = MullionBox {
         id,
+        kind,
         centre,
         axes: MODEL_AXES,
         half: size.map(|side| side / 2.0),
         along: None,
+        odd: false,
     };
     if let Some(axes) = curtain_axes_from_fields(&element.fields) {
         return Some(match crate::ifc::export_content::oriented_box(axes, size) {
@@ -88,7 +91,7 @@ pub(super) fn attach_curtain_member_is_external(
 /// ([`crate::native_mullion_hosts::mullions_on_plain_hosts`]) with
 /// [`MULLION_PLAIN_HOST_FIELD`], and give it, where the boxes of its curtain
 /// wall's mullions say how many of its end faces Revit's solid keeps
-/// ([`kept_ends`]), [`MULLION_KEPT_ENDS_FIELD`]. The curtain wall is
+/// ([`kept_ends_with_partners`]), [`MULLION_KEPT_ENDS_FIELD`]. The curtain wall is
 /// the one its native record names, as in the record's own grouping.
 pub(super) fn attach_mullion_plain_hosts(rf: &mut RevitFile, products: &mut [DecodedElement]) {
     let mullions: BTreeSet<u64> = products
@@ -96,6 +99,17 @@ pub(super) fn attach_mullion_plain_hosts(rf: &mut RevitFile, products: &mut [Dec
         .filter(|element| element.class == "CurtainWallMullion")
         .filter_map(|element| Some(u64::from(element.id?)))
         .collect();
+    // the pass that draws a mullion from its saved mesh takes its length
+    // along the axis its record runs it along, whatever its host.
+    let axes: BTreeMap<u32, [f64; 3]> = products
+        .iter()
+        .filter(|element| element.class == "CurtainWallMullion")
+        .filter_map(|element| {
+            let mullion = mullion_box(element, 0)?;
+            Some((mullion.id, mullion.axes[mullion.along?]))
+        })
+        .collect();
+    rf.remember_mullion_axes(axes);
     let Ok(found) = crate::native_mullion_hosts::mullion_hosts(rf, &mullions) else {
         return;
     };
@@ -107,14 +121,26 @@ pub(super) fn attach_mullion_plain_hosts(rf: &mut RevitFile, products: &mut [Dec
         let Some(host) = element.id.and_then(|id| found.host.get(&u64::from(id))) else {
             continue;
         };
-        if let Some(mullion) = mullion_box(element) {
+        let kind = element
+            .id
+            .and_then(|id| found.kind.get(&u64::from(id)))
+            .copied()
+            .unwrap_or(0);
+        if let Some(mullion) = mullion_box(element, kind) {
             groups.entry(*host).or_default().push(mullion);
         }
     }
-    let mut kept: BTreeMap<u32, u8> = BTreeMap::new();
-    for group in groups.values() {
-        kept.extend(kept_ends(group));
+    let usual = usual_sections(&groups.values().flatten().collect::<Vec<_>>());
+    for mullion in groups.values_mut().flatten() {
+        mullion.odd = has_unusual_section(mullion, &usual);
     }
+    let mut kept: BTreeMap<u32, KeptEnds> = BTreeMap::new();
+    for group in groups.values() {
+        kept.extend(kept_ends_with_partners(group));
+    }
+    // the pass that draws a mullion from its saved mesh reads the ends of
+    // those that stand on no plain host as well.
+    rf.remember_mullion_kept_ends(kept.clone());
     for element in products.iter_mut() {
         let Some(id) = element.id else {
             continue;
@@ -127,7 +153,7 @@ pub(super) fn attach_mullion_plain_hosts(rf: &mut RevitFile, products: &mut [Dec
                 element.fields.push((
                     MULLION_KEPT_ENDS_FIELD.into(),
                     InstanceField::Integer {
-                        value: i64::from(*ends),
+                        value: i64::from(ends.kept),
                         signed: false,
                         size: 4,
                     },

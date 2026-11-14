@@ -4,15 +4,17 @@ whole Revit's own IFC export of the same file aggregates it under.
 
 A part's whole is the `RelatingObject` of the
 `IfcRelAggregates` that lists it; elements are matched by `Tag`, the Revit
-ElementId. Only curtain-wall parts are counted: `IfcMember`, `IfcPlate` and
-`IfcCurtainWall` (a nested curtain wall is itself a part).
+ElementId. Only the parts of curtain walls and stairs are counted:
+`IfcMember` (a mullion or a stringer), `IfcPlate`, `IfcCurtainWall` (a nested
+curtain wall is itself a part), `IfcStairFlight` and `IfcRailing` (a stair's
+railing is aggregated under it).
 
 Usage:
 
     python3 tools/re/aggregates_vs_ifc.py <rvt-open.ifc> <revit-export.ifc> [-v]
 
-`-v` lists the parts whose whole differs. Needs IfcOpenShell (tested with
-0.8.5).
+A part whose whole differs, or that only rvt-open aggregates, is listed; `-v` also
+lists the parts only Revit aggregates. Needs IfcOpenShell (tested with 0.8.5).
 """
 
 import collections
@@ -20,7 +22,7 @@ import sys
 
 import ifcopenshell
 
-KINDS = ("IfcMember", "IfcPlate", "IfcCurtainWall")
+KINDS = ("IfcMember", "IfcPlate", "IfcCurtainWall", "IfcStairFlight", "IfcRailing")
 
 
 def tag(entity):
@@ -70,13 +72,16 @@ def main():
         else:
             verdict = "different whole"
         counts[(kind, verdict)] += 1
-        if verdict in ("only Revit aggregates", "different whole"):
-            listed.append((key, kind, a, b))
+        if verdict in ("only Revit aggregates", "different whole", "only rvt-open aggregates"):
+            listed.append((verdict, key, kind, a, b))
     for (kind, verdict), count in sorted(counts.items()):
         print(f"  {count:>5}  {kind}: {verdict}")
-    if verbose:
-        for key, kind, a, b in listed:
-            print(f"    {key} {kind}: rvt-open {a}, Revit {b}")
+    # A part rvt-open aggregates where Revit's export does not, or under another whole, is
+    # named whatever the flags; the parts only Revit aggregates, which can be
+    # many, are listed with -v.
+    for verdict, key, kind, a, b in listed:
+        if verbose or verdict != "only Revit aggregates":
+            print(f"    {key} {kind}: {verdict}: rvt-open {a}, Revit {b}")
 
 
 if __name__ == "__main__":

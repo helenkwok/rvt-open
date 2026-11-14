@@ -1,12 +1,12 @@
 //! Typed evaluators for the non-planar surfaces observed in saved graphs.
 
+use crate::graph_value::Fv;
 use crate::native_parameters::ObjectGraph;
 use crate::vector_math::{cross, dot, sub};
 use anyhow::{Context, Result, bail, ensure};
-use serde_json::Value;
 
 pub type Point = [f64; 3];
-fn p(v: &Value, n: &str) -> Result<Point> {
+fn p(v: &Fv, n: &str) -> Result<Point> {
     let a = v
         .as_array()
         .with_context(|| format!("{n} must be an array"))?;
@@ -31,7 +31,7 @@ fn mul(a: Point, s: f64) -> Point {
 fn len(a: Point) -> f64 {
     dot(a, a).sqrt()
 }
-fn range(v: &Value, n: &str) -> Result<[f64; 2]> {
+fn range(v: &Fv, n: &str) -> Result<[f64; 2]> {
     let a = v
         .as_array()
         .with_context(|| format!("{n} must be an array"))?;
@@ -46,7 +46,7 @@ fn range(v: &Value, n: &str) -> Result<[f64; 2]> {
     );
     Ok(r)
 }
-fn corner(v: &Value) -> Result<[f64; 2]> {
+fn corner(v: &Fv) -> Result<[f64; 2]> {
     let a = v.as_array().context("envelope corner")?;
     ensure!(a.len() == 2, "envelope corner must have two coordinates");
     let r = [
@@ -60,11 +60,11 @@ fn corner(v: &Value) -> Result<[f64; 2]> {
     Ok(r)
 }
 
-fn target(g: &ObjectGraph, source: usize, v: &Value) -> Result<usize> {
+fn target(g: &ObjectGraph, source: usize, v: &Fv) -> Result<usize> {
     crate::native_saved_mesh::pointer(g, source, v)?.context("missing surface pointer target")
 }
 
-fn basis(f: &Value) -> Result<(Point, Point, Point)> {
+fn basis(f: &Fv) -> Result<(Point, Point, Point)> {
     let x = p(&f["m_xVec"], "surface x basis")?;
     let y = p(&f["m_yVec"], "surface y basis")?;
     let z = p(&f["m_zVec"], "surface z basis")?;
@@ -117,6 +117,16 @@ pub enum Curve {
     /// turbine blades are revolutions of one).
     Hermite {
         nodes: Vec<(f64, Point, Point)>,
+        range: [f64; 2],
+    },
+    /// `center + x_len cos t x + y_len sin t y`: Revit's `GEllipse`, seen as
+    /// the meridian of a revolved dome (a pendant light's shade).
+    Ellipse {
+        center: Point,
+        x: Point,
+        y: Point,
+        x_len: f64,
+        y_len: f64,
         range: [f64; 2],
     },
 }
@@ -185,9 +195,34 @@ impl Curve {
                 let range = [nodes[0].0, nodes[nodes.len() - 1].0];
                 Ok(Self::Hermite { nodes, range })
             }
+            "GEllipse" => {
+                let x = p(&o.fields["m_xVec"], "ellipse x basis")?;
+                let y = p(&o.fields["m_yVec"], "ellipse y basis")?;
+                let x_len = o.fields["m_xLen"].as_f64().context("ellipse x length")?;
+                let y_len = o.fields["m_yLen"].as_f64().context("ellipse y length")?;
+                ensure!(
+                    x_len.is_finite()
+                        && y_len.is_finite()
+                        && x_len > 0.
+                        && y_len > 0.
+                        && (len(x) - 1.).abs() <= 1e-6
+                        && (len(y) - 1.).abs() <= 1e-6
+                        && dot(x, y).abs() <= 1e-6,
+                    "invalid ellipse basis"
+                );
+                Ok(Self::Ellipse {
+                    center: p(&o.fields["m_center"], "ellipse center")?,
+                    x,
+                    y,
+                    x_len,
+                    y_len,
+                    range: range(&o.fields["m_endParams"], "ellipse range")?,
+                })
+            }
             name => bail!("unsupported parametric profile curve {name}"),
         }
     }
+    /// The point at `t`.
     pub fn eval(&self, t: f64) -> Point {
         match self {
             Self::Line {
@@ -214,6 +249,26 @@ impl Curve {
                     add(mul(b.1, -2. * s3 + 3. * s2), mul(b.2, h * (s3 - s2))),
                 )
             }
+            Self::Ellipse {
+                center,
+                x,
+                y,
+                x_len,
+                y_len,
+                ..
+            } => add(
+                *center,
+                add(mul(*x, x_len * t.cos()), mul(*y, y_len * t.sin())),
+            ),
+        }
+    }
+    /// The parameter range.
+    pub fn range(&self) -> [f64; 2] {
+        match self {
+            Self::Line { range, .. }
+            | Self::Arc { range, .. }
+            | Self::Ellipse { range, .. }
+            | Self::Hermite { range, .. } => *range,
         }
     }
     pub(crate) fn derivative(&self, t: f64) -> Point {
@@ -237,6 +292,9 @@ impl Curve {
                     ),
                 )
             }
+            Self::Ellipse {
+                x, y, x_len, y_len, ..
+            } => add(mul(*x, -x_len * t.sin()), mul(*y, y_len * t.cos())),
         }
     }
 }
@@ -529,9 +587,5 @@ impl ParametricSurface {
 }
 
 fn c_range(c: &Curve) -> [f64; 2] {
-    match c {
-        Curve::Line { range, .. } | Curve::Arc { range, .. } | Curve::Hermite { range, .. } => {
-            *range
-        }
-    }
+    c.range()
 }

@@ -17,7 +17,8 @@
 #     that write the same model hash the same;
 #   - schema.txt: the IFC4 schema's findings on the export, its
 #     attribute counts and IfcOpenShell's validation up to 120 MB, and its
-# standard property sets against IFC4's definitions;
+#     standard property sets against IFC4's definitions; a run whose
+#     scorers leave `schema` out writes none, for a sample as for a model;
 #   - witness-<artifact>.json: the rvt-open observation committed under
 #     research/witness/<artifact>/observations/rvt-open.json;
 #   - <scorer>.txt: each tools/re scorer's output against Revit's export,
@@ -53,7 +54,10 @@
 # When FAMILY_DIR names the Autodesk family corpus, each of its .rfa files gets
 # OUT_DIR/family-<file>/ with the same info.json and info.exit (a family
 # carries its Atom entry in a PartAtom stream) and, when PROBE is built, the
-# same probe.txt. A family has no Revit export, so nothing else is measured on it.
+# same probe.txt, and its default export hashed as a model's is (ifc.sha256,
+# beside the export's diagnostics.json and rvt-ifc.log), so a change that moves
+# what a family writes shows in the comparison of the two sides. A family has no
+# Revit export, so nothing else is measured on it.
 # SAMPLE_DIR does the same for Autodesk's sample projects (.rvt), adding the
 # export's diagnostics.json, rvt-ifc.log and ifc.sha256 (hashed as a model's
 # is) under OUT_DIR/sample-<file>/. When
@@ -96,6 +100,14 @@ nordic-office-as-built|ARK_NordicLCA_Office_Concrete_As-Built.rvt|ARK_NordicLCA_
 nordic-office-permit|ARK_NordicLCA_Office_Concrete_BuildingPermit.rvt|ARK_NordicLCA_Office_Concrete_BuildingPermit_Revit.ifc
 nordic-office-terrain-concrete|ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt|ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit_Revit.ifc
 nordic-office-terrain-timber|ARK_NordicLCA_Office_Terrain_Timber_BuildingPermit.rvt|ARK_NordicLCA_Office_Terrain_Timber_BuildingPermit_Revit.ifc
+nordic-office-timber-as-built|ARK_NordicLCA_Office_Timber_As-Built.rvt|ARK_NordicLCA_Office_Timber_As-Built_Revit.ifc
+nordic-office-timber-permit|ARK_NordicLCA_Office_Timber_BuildingPermit.rvt|ARK_NordicLCA_Office_Timber_BuildingPermit_Revit.ifc
+nordic-housing-concrete-as-built|ARK_NordicLCA_Housing_Concrete_As-Built.rvt|ARK_NordicLCA_Housing_Concrete_As-Built_Revit.ifc
+nordic-housing-concrete-permit|ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt|ARK_NordicLCA_Housing_Concrete_BuildingPermit_Revit.ifc
+nordic-housing-timber-as-built|ARK_NordicLCA_Housing_Timber_As-Built.rvt|ARK_NordicLCA_Housing_Timber_As-Built_Revit.ifc
+nordic-housing-timber-permit|ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt|ARK_NordicLCA_Housing_Timber_BuildingPermit_Revit.ifc
+nordic-housing-terrain-concrete|ARK_NordicLCA_Housing_Terrain-Concrete_BuildingPermit.rvt|ARK_NordicLCA_Housing_Terrain-Concrete_BuildingPermit_Revit.ifc
+nordic-housing-terrain-timber|ARK_NordicLCA_Housing_Terrain-Timber_BuildingPermit.rvt|ARK_NordicLCA_Housing_Terrain-Timber_BuildingPermit_Revit.ifc
 "
 # the R2025 sample models (research/r2025-models.tsv), in MODELS_DIR/r2025
 # only with `-f r2025=true`, each scored against Revit's export beside it.
@@ -456,6 +468,14 @@ measure_family() { # family
   item_started=$(date +%s%N)
   dir=$(family_dir "$1"); mkdir -p "$dir"
   timed "$dir" rvt-info info "$1" "$dir"
+  # The default export of the family (a standalone revolution's body, a family's
+  # type table), hashed as a model's is, so the comparison of the two sides lists
+  # a family whose export moved.
+  timed "$dir" rvt-ifc export_ifc "$1" "$dir"
+  if [ -s "$dir/model.ifc" ]; then
+    grep -v -E '^FILE_NAME\(|IFCOWNERHISTORY' "$dir/model.ifc" | sha256sum | cut -d' ' -f1 > "$dir/ifc.sha256"
+  fi
+  [ -n "${KEEP_IFC:-}" ] || rm -f "$dir/model.ifc"
   finished "$dir" "$(basename "$1")" "$item_started"
 }
 
@@ -484,9 +504,13 @@ measure_sample() { # sample
   # samples reach (I-shape profiles and profile set usages on the
   # structural samples) is checked somewhere. Attribute counts on every
   # export; IfcOpenShell's full validation on exports up to 120 MB, as
-  # for a reference model, the rest marked as skipped.
+  # for a reference model, the rest marked as skipped. A run that names its
+  # scorers without `schema` (a probe run, `scorers=none`) skips it, as a
+  # reference model does: the EXPRESS rules alone took 170 to 220 s of a large
+  # MEP sample and set the length of such a run's longest shard (run
+  # 42987216721).
   if [ -s "$dir/model.ifc" ]; then
-    schema "$dir" 125829120
+    wanted schema && schema "$dir" 125829120
     grep -v -E '^FILE_NAME\(|IFCOWNERHISTORY' "$dir/model.ifc" | sha256sum | cut -d' ' -f1 > "$dir/ifc.sha256"
   fi
   [ -n "${KEEP_IFC:-}" ] || rm -f "$dir/model.ifc"

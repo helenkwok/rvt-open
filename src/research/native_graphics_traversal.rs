@@ -1,9 +1,9 @@
 //! Bounded traversal of saved graphics under the default
 //! 3D context. This selects surface carriers, not regenerated Revit geometry.
 //! Unsupported solid-affecting filters and external instances remain explicit.
+use crate::graph_value::Fv;
 use crate::native_parameters::ObjectGraph;
 use serde::Serialize;
-use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 /// Row-major affine matrix, operating on column vectors in saved length units.
@@ -176,7 +176,7 @@ impl Walker<'_, '_> {
             message: message.into(),
         });
     }
-    fn target(&self, source: usize, p: &Value) -> Result<usize, String> {
+    fn target(&self, source: usize, p: &Fv) -> Result<usize, String> {
         let offset = p["offset"].as_u64().ok_or("missing pointer offset")? as usize;
         let token = p["pointer_token"].as_u64().ok_or("missing pointer token")?;
         let edge_slot = self.edge_indexes[&(self.graph as *const ObjectGraph as usize)]
@@ -245,7 +245,10 @@ impl Walker<'_, '_> {
         // GGroup native child traversal admits visibility0/2;1/3 are skipped
         // outside special draw mode7. The default export uses normal mode.
         if let Some(flags) = obj.fields["m_GInfo"]["m_flags"].as_u64() {
-            if !self.include_hidden && matches!(graphics_visibility(flags), 1 | 3) {
+            if !self.include_hidden
+                && matches!(graphics_visibility(flags), 1 | 3)
+                && !drawn_hidden_instance(&obj.class_name, &obj.fields)
+            {
                 self.result.excluded_visibility_branches += 1;
                 return Ok(());
             }
@@ -518,8 +521,20 @@ fn current_graph_owner_matches(root: &crate::native_parameters::GraphObject, id:
 /// every instance draws its symbol's one representation (the
 /// InstanceInfo of rac_basic 2015-2022 holds `m_Trf`, `m_cda`, `m_symbolId`
 /// only), so a missing field reads as 0.
-fn graphics_rep_id(v: &Value) -> Option<u64> {
+fn graphics_rep_id(v: &Fv) -> Option<u64> {
     if v.is_null() { Some(0) } else { v.as_u64() }
+}
+/// The `m_forbiddenTarget.m_targets` of a hidden `GInstance` Revit's export
+/// draws all the same.
+const DRAWN_HIDDEN_INSTANCE_TARGETS: u64 = 53246;
+/// Whether a hidden `GInstance` is one Revit's export draws: its visibility is 1
+/// and its forbidden targets are [`DRAWN_HIDDEN_INSTANCE_TARGETS`].
+fn drawn_hidden_instance(class_name: &str, fields: &Fv) -> bool {
+    class_name == "GInstance"
+        && fields["m_GInfo"]["m_flags"]
+            .as_u64()
+            .is_some_and(|flags| graphics_visibility(flags) == 1)
+        && fields["m_forbiddenTarget"]["m_targets"].as_u64() == Some(DRAWN_HIDDEN_INSTANCE_TARGETS)
 }
 pub(crate) fn graphics_visibility(flags: u64) -> u8 {
     let bits = flags & 0x1e0;
@@ -535,7 +550,7 @@ pub(crate) fn graphics_visibility(flags: u64) -> u8 {
         2
     }
 }
-pub(crate) fn read_transform(v: &Value) -> Result<GraphicsTransform, String> {
+pub(crate) fn read_transform(v: &Fv) -> Result<GraphicsTransform, String> {
     let rows = v["m_3x3"]
         .as_array()
         .filter(|v| v.len() == 3)
@@ -582,13 +597,13 @@ pub(crate) fn multiply(a: GraphicsTransform, b: GraphicsTransform) -> GraphicsTr
 // false before negation in that context;10/11 use pi/2 +/-1e-10 thresholds.
 /// The default 3D view's direction, toward the viewer.
 pub(crate) const VIEW_3D: [f64; 3] = [-0.577350269189625, -0.577350269189627, 0.577350269189626];
-pub(crate) fn direction_condition(v: &Value, matrix: GraphicsTransform) -> Result<bool, String> {
+pub(crate) fn direction_condition(v: &Fv, matrix: GraphicsTransform) -> Result<bool, String> {
     direction_condition_for(v, matrix, VIEW_3D)
 }
 /// A direction condition evaluated for a view whose direction (toward the
 /// viewer) is `actual`; a plan view's is +Z.
 pub(crate) fn direction_condition_for(
-    v: &Value,
+    v: &Fv,
     matrix: GraphicsTransform,
     actual: [f64; 3],
 ) -> Result<bool, String> {
@@ -646,18 +661,14 @@ pub(crate) fn direction_condition_for(
     };
     Ok(answer != negate)
 }
-pub(crate) fn condition_at_detail(
-    class: &str,
-    v: &Value,
-    detail_level: i64,
-) -> Result<bool, String> {
+pub(crate) fn condition_at_detail(class: &str, v: &Fv, detail_level: i64) -> Result<bool, String> {
     condition_in_view(class, v, detail_level, 4)
 }
 /// An integer condition for a view of Revit view type `view_type` (1 floor
 /// plan, 4 3D) at `detail_level`.
 pub(crate) fn condition_in_view(
     class: &str,
-    v: &Value,
+    v: &Fv,
     detail_level: i64,
     view_type: i64,
 ) -> Result<bool, String> {
