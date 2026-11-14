@@ -161,6 +161,10 @@ mod family_instance_ports;
 mod field_type_coverage;
 #[path = "../fitting_nominal_diameter.rs"]
 mod fitting_nominal_diameter;
+#[path = "../floor_outline_mesh.rs"]
+mod floor_outline_mesh;
+#[path = "../floor_plane_joint.rs"]
+mod floor_plane_joint;
 #[path = "../frag_writer.rs"]
 mod frag_writer;
 #[path = "../fuzz_regressions.rs"]
@@ -297,6 +301,8 @@ mod schema_registry_catalogs;
 mod segment_length;
 #[path = "../serial_number.rs"]
 mod serial_number;
+#[path = "../shaft_sketch_loops.rs"]
+mod shaft_sketch_loops;
 #[path = "../shared_shapes.rs"]
 mod shared_shapes;
 #[path = "../sheet_view.rs"]

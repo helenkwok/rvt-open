@@ -110,6 +110,16 @@ fn point<const N: usize>(v: &Fv) -> Result<[f64; N]> {
 fn close(a: [f64; 2], b: [f64; 2]) -> bool {
     (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7
 }
+/// How far apart, feet, the end of one edge of a plane face's loop and the
+/// start of the next may lie in the plane and still be the loop's one
+/// vertex. The loop's own pointers already say the two edges meet; Revit
+/// stores each edge's ends on its own, and on rme_advanced (Revit 2024) floor
+/// 576122 two edges of its top and bottom faces meet 0.00019 ft apart, which
+/// left the whole floor drawn as its record box.
+const PLANE_JOINT_FEET: f64 = 5e-4;
+fn joined(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) < PLANE_JOINT_FEET
+}
 fn cross(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
@@ -467,6 +477,15 @@ fn ring_impl(
         segments.iter().all(|s: &Vec<_>| !s.is_empty()),
         "empty boundary edge"
     );
+    // A plane's parameters are feet along its unit axes; a curved surface's
+    // are not, and keep the exact joint.
+    let meet = |a: [f64; 2], b: [f64; 2]| {
+        if refine_plane {
+            joined(a, b)
+        } else {
+            close(a, b)
+        }
+    };
     let mut output = None;
     for reverse in [false, true] {
         let mut out = segments[0].clone();
@@ -476,16 +495,16 @@ fn ring_impl(
         let mut valid = true;
         for s in &segments[1..] {
             let last = *out.last().unwrap();
-            if close(last, s[0]) {
+            if meet(last, s[0]) {
                 out.extend_from_slice(&s[1..])
-            } else if close(last, *s.last().unwrap()) {
+            } else if meet(last, *s.last().unwrap()) {
                 out.extend(s.iter().rev().skip(1).copied())
             } else {
                 valid = false;
                 break;
             }
         }
-        if valid && close(out[0], *out.last().unwrap()) {
+        if valid && meet(out[0], *out.last().unwrap()) {
             out.pop();
             output = Some(out);
             break;
