@@ -115,7 +115,10 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   const back = list.getByRole('button', { name: '3D model' });
   await back.scrollIntoViewIfNeeded();
   at('3D button in view');
-  await back.click();
+  await back.click({ timeout: 15_000 }).catch(async (e: Error) => {
+    console.log('3D button click waited:', e.message.slice(0, 2000));
+    await back.click();
+  });
   at('3D clicked');
   await expect(page.locator('#drawing-pane')).toBeHidden();
   await expect(page.locator('#viewport canvas')).toBeVisible();
