@@ -115,7 +115,7 @@ export function initModelDrawings(
         showDrawing();
         const c = msg.drawn.counts;
         host.setStatus(
-          `${shown.label} · ${c.lines} lines · ${c.texts} texts${c.viewports > 1 ? ` · ${c.viewports - 1} viewports` : ''}`,
+          `${shown.label} · ${c.lines} lines · ${c.texts} texts${c.viewports > 0 ? ` · ${c.viewports} viewport${c.viewports === 1 ? '' : 's'}` : ''}`,
         );
         if (msg.drawn.truncated) host.toast('The drawing is larger than the render limit; part of it is not drawn.', 'info');
         for (const note of msg.drawn.notes) host.toast(note, 'info');

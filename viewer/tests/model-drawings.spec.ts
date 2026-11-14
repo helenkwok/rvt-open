@@ -33,7 +33,8 @@ async function drawn(page: Page): Promise<{ lines: number; texts: number; viewpo
 
 test('lists the sheets and views, draws a sheet and a section, and saves them', async ({ page }) => {
   test.skip(!MODEL || !fs.existsSync(MODEL), 'RVT_DRAWINGS_MODEL is not set or absent');
-  test.slow();
+  // The one sheet with a view placed on it shows a site plan of about 768,000 lines.
+  test.setTimeout(600_000);
   await page.goto('/');
   await expect(page.locator('#status')).toHaveText(/Ready/);
   await page.locator('#file-input').setInputFiles(MODEL);
@@ -63,8 +64,8 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   const sheetCounts = await drawn(page);
   console.log('sheet', sheetName, JSON.stringify(sheetCounts));
   expect(sheetCounts.lines).toBeGreaterThan(0);
-  expect(sheetCounts.viewports).toBeGreaterThan(1);
-  await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports - 1);
+  expect(sheetCounts.viewports).toBeGreaterThan(0);
+  await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
   await shot(page, 'sheet');
 
   // The saves are the sheet's, as rvt-sheet writes them.
