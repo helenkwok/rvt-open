@@ -120,8 +120,8 @@ pub(crate) fn split_by_face_material(
 }
 
 /// a translation, and the points stay small for float readers.
-fn shared_points(mesh: &super::body_geometry::Mesh) -> (Vec<Value>, String, [f64; 3]) {
-    let (q, _) = super::body_geometry::mesh_key(mesh, FT);
+fn shared_points(mesh: &super::body_geometry::Mesh) -> (Vec<[f64; 3]>, String, [f64; 3]) {
+    let q = super::body_geometry::grid_points(mesh, FT);
     let mut lo = [i64::MAX; 3];
     for p in &q {
         for k in 0..3 {
@@ -138,11 +138,33 @@ fn shared_points(mesh: &super::body_geometry::Mesh) -> (Vec<Value>, String, [f64
         face_materials: Vec::new(),
     };
     let (_, key) = super::body_geometry::mesh_key(&local, 1e-7);
-    let points = rel
-        .iter()
-        .map(|p| json!(p.map(|c| c as f64 / 1e7)))
-        .collect();
+    let points = rel.iter().map(|p| p.map(|c| c as f64 / 1e7)).collect();
     (points, key, lo.map(|c| c as f64 / 1e7))
+}
+
+/// A node's IFCX `usd::usdgeom::mesh` (metres), kept typed: as JSON values
+/// the meshes were most of the graph's memory.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UsdMesh {
+    pub points: Vec<[f64; 3]>,
+    pub face_vertex_indices: Vec<u32>,
+}
+
+impl UsdMesh {
+    /// The attribute key IFCX writes it under.
+    pub const KEY: &'static str = "usd::usdgeom::mesh";
+
+    /// The mesh as IFCX writes it (a non-finite coordinate is `null`).
+    pub fn to_value(&self) -> Value {
+        json!({"points": self.points, "faceVertexIndices": self.face_vertex_indices})
+    }
+
+    /// The points as read back from that JSON: a non-finite coordinate is 0.
+    pub fn finite_points(&self) -> impl Iterator<Item = [f64; 3]> + '_ {
+        self.points
+            .iter()
+            .map(|p| p.map(|c| if c.is_finite() { c } else { 0.0 }))
+    }
 }
 
 /// One node of the graph.
@@ -157,6 +179,13 @@ pub struct Node {
     /// Part of the IFCX tree. Nodes that exist only for the IFC4 derivation
     /// (relationships, tables) are not written to IFCX.
     pub ifcx: bool,
+    /// The IFC4 `solid_shape` of an element, kept as it is rather than as an
+    /// IFC4 key: as JSON it was most of the graph's memory. IFC4-only, like
+    /// those keys.
+    pub solid_shape: Option<Box<super::entities::SolidShape>>,
+    /// The node's `usd::usdgeom::mesh` ([`UsdMesh::KEY`]), outside
+    /// `attributes`; the IFCX writer puts it back among them.
+    pub mesh: Option<Box<UsdMesh>>,
 }
 
 /// Node paths in the order of the `IfcModel` list each came from.
@@ -311,6 +340,47 @@ fn decode_refs(v: &mut Value, spec: RefSpec, index: &HashMap<String, usize>) {
 fn one_to_index(v: &mut Value, index: &HashMap<String, usize>) {
     if let Some(i) = v.as_str().and_then(|s| index.get(s)) {
         *v = json!(i);
+    }
+}
+
+/// `e`, a building element, with no solid shape (kept on its node instead).
+fn without_solid_shape(e: &IfcEntity) -> IfcEntity {
+    let IfcEntity::BuildingElement {
+        ifc_type,
+        name,
+        type_guid,
+        predefined_type,
+        storey_index,
+        material_index,
+        property_set,
+        location_feet,
+        rotation_radians,
+        extrusion,
+        host_element_index,
+        material_layer_set_index,
+        material_profile_set_index,
+        solid_shape: _,
+        representation_map_index,
+    } = e
+    else {
+        return e.clone();
+    };
+    IfcEntity::BuildingElement {
+        ifc_type: ifc_type.clone(),
+        name: name.clone(),
+        type_guid: type_guid.clone(),
+        predefined_type: predefined_type.clone(),
+        storey_index: *storey_index,
+        material_index: *material_index,
+        property_set: property_set.clone(),
+        location_feet: *location_feet,
+        rotation_radians: *rotation_radians,
+        extrusion: extrusion.clone(),
+        host_element_index: *host_element_index,
+        material_layer_set_index: *material_layer_set_index,
+        material_profile_set_index: *material_profile_set_index,
+        solid_shape: None,
+        representation_map_index: *representation_map_index,
     }
 }
 
@@ -544,7 +614,14 @@ impl IfcxGraph {
                 .unwrap_or("")
                 .to_string();
             decode_refs(&mut obj, entity_refs(&kind), &index);
-            model.entities.push(de(obj));
+            let mut entity: IfcEntity = de(obj);
+            if let (IfcEntity::BuildingElement { solid_shape, .. }, Some(shape)) = (
+                &mut entity,
+                self.nodes.get(p).and_then(|n| n.solid_shape.as_deref()),
+            ) {
+                *solid_shape = Some(shape.clone());
+            }
+            model.entities.push(entity);
             if let Some(g) = string_of(p, "revitGlobalId") {
                 model.global_ids.elements.insert(i, g);
             }
@@ -1316,11 +1393,10 @@ impl Builder {
                 let (points, key, lo) = shared_points(&mesh);
                 let shape = uuid5(&format!("{}/shape/{key}", self.root));
                 if !self.nodes.contains_key(&shape) {
-                    self.attr(
-                        &shape,
-                        "usd::usdgeom::mesh",
-                        json!({"points": points, "faceVertexIndices": indices}),
-                    );
+                    self.node(&shape).mesh = Some(Box::new(UsdMesh {
+                        points,
+                        face_vertex_indices: indices,
+                    }));
                 }
                 self.node(&body_path).inherits.push(shape);
                 let r = |v: f64| (v * 1e7).round() / 1e7;
@@ -1341,19 +1417,18 @@ impl Builder {
                 );
             } else {
                 let r = |v: f64| (v * FT * 1e6).round() / 1e6;
-                let points: Vec<Value> = mesh
+                let points: Vec<[f64; 3]> = mesh
                     .vertices
                     .iter()
                     .map(|v| {
                         let p = placement.apply(*v);
-                        json!([r(p[0]), r(p[1]), r(p[2])])
+                        [r(p[0]), r(p[1]), r(p[2])]
                     })
                     .collect();
-                self.attr(
-                    &body_path,
-                    "usd::usdgeom::mesh",
-                    json!({"points": points, "faceVertexIndices": indices}),
-                );
+                self.node(&body_path).mesh = Some(Box::new(UsdMesh {
+                    points,
+                    face_vertex_indices: indices,
+                }));
             }
         }
         next
@@ -1472,7 +1547,16 @@ impl Builder {
 
         for (i, e) in model.entities.iter().enumerate() {
             let p = paths.entity[i].clone();
-            let mut fields = to_object(e);
+            let mut fields = match e {
+                IfcEntity::BuildingElement {
+                    solid_shape: Some(shape),
+                    ..
+                } => {
+                    self.aux(&p).solid_shape = Some(Box::new(shape.clone()));
+                    to_object(&without_solid_shape(e))
+                }
+                _ => to_object(e),
+            };
             let kind = fields
                 .get("kind")
                 .and_then(Value::as_str)

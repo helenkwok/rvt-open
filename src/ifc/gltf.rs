@@ -1788,13 +1788,13 @@ pub fn write_glb(doc: &GltfDocument, bin: &[u8], out: &mut Vec<u8>) {
     while !json_bytes.len().is_multiple_of(4) {
         json_bytes.push(b' ');
     }
-    let mut bin_padded = bin.to_vec();
-    while !bin_padded.len().is_multiple_of(4) {
-        bin_padded.push(0);
-    }
+    // The binary chunk is padded with zeros where it is copied out, not in a
+    // copy of its own.
+    let bin_pad = (4 - bin.len() % 4) % 4;
+    let bin_len = bin.len() + bin_pad;
 
     // Header: 12 bytes (magic + version + total length).
-    let total_len = 12 + 8 + json_bytes.len() + 8 + bin_padded.len();
+    let total_len = 12 + 8 + json_bytes.len() + 8 + bin_len;
     out.extend_from_slice(&0x4654_6C67_u32.to_le_bytes()); // "glTF"
     out.extend_from_slice(&2_u32.to_le_bytes()); // version
     out.extend_from_slice(&(total_len as u32).to_le_bytes());
@@ -1805,9 +1805,10 @@ pub fn write_glb(doc: &GltfDocument, bin: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(&json_bytes);
 
     // BIN chunk.
-    out.extend_from_slice(&(bin_padded.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(bin_len as u32).to_le_bytes());
     out.extend_from_slice(&0x004E_4942_u32.to_le_bytes()); // "BIN\0"
-    out.extend_from_slice(&bin_padded);
+    out.extend_from_slice(bin);
+    out.extend_from_slice(&[0_u8; 3][..bin_pad]);
 }
 
 /// [`write_glb`] to any writer: the header, the JSON chunk and the binary
