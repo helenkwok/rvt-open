@@ -28,10 +28,12 @@ use std::path::PathBuf;
 const HOUSES: [(&str, usize, usize); 2] = [
     (
         "ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt",
-        1087,
+        1091,
         // 18 more since the walk draws the hidden railing instances Revit's
-        // export draws (forbidden the targets 53246) and reads elliptic profiles.
-        1040,
+        // export draws (forbidden the targets 53246) and reads elliptic profiles;
+        // 4 more since a column whose mesh is a prism of another section than
+        // its type's rectangle is drawn from its mesh.
+        1044,
     ),
     ("ARK_NordicLCA_Housing_Timber_As-Built.rvt", 1088, 1023),
 ];

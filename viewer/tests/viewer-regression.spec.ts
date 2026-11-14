@@ -849,7 +849,7 @@ projectSampleTest('dragging to orbit does not change the selection', async ({ pa
   const walls = page.locator(
     '.tree-node.tree-category[aria-expanded="true"] + .tree-children .tree-node.tree-element',
   );
-  await windows.nth(0).click();
+  await walls.nth(0).click();
   await expect(page.locator('#zoom-to-element')).toBeVisible();
   await page.locator('#zoom-to-element').click();
   await expect(page.locator('#status')).toHaveText(/^Zoomed to /);

@@ -2816,25 +2816,6 @@ impl StepWriter<'_> {
                         "IFCMATERIALDEFINITIONREPRESENTATION($,$,(#{styled_rep_id}),#{mat_id})"
                     ),
                 );
-                // A styled item with no `Item` styles nothing until a material
-                // definition representation hangs it on its material: IFC4's
-                // way to give a material its surface style, which a viewer
-                // then applies to every element associated with the material.
-                // Without it the colour was written and reached no consumer.
-                let styled_rep_id = self.id();
-                self.emit_entity(
-                    styled_rep_id,
-                    format!(
-                        "IFCSTYLEDREPRESENTATION(#{geom_ctx},'Style','Material',(#{styled_item_id}))"
-                    ),
-                );
-                let material_rep_id = self.id();
-                self.emit_entity(
-                    material_rep_id,
-                    format!(
-                        "IFCMATERIALDEFINITIONREPRESENTATION($,$,(#{styled_rep_id}),#{mat_id})"
-                    ),
-                );
             }
             material_ids.push(mat_id);
         }

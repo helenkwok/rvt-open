@@ -63,7 +63,10 @@ fn counts(file: &str) -> Option<(usize, usize, usize)> {
 /// Beams take their Reference Level, and keep the Level the other rules gave them.
 fn beams_take_their_reference_level(k: usize, n: usize) {
     let cases = [
-        ("racadvancedsampleproject.rvt", (37, 16, 2)), // API dump agrees
+        // API dump agrees. Every bound beam keeps a containment Level now:
+        // its storey comes from its record's second reference list, else the
+        // highest Level of its first (16 and 2 before).
+        ("racadvancedsampleproject.rvt", (37, 37, 0)),
         ("ARK_NordicLCA_Office_Timber_As-Built.rvt", (71, 71, 47)), // API dump agrees
     ];
     for (file, expected) in crate::shard(cases, k, n) {
