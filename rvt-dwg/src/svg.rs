@@ -134,10 +134,14 @@ pub fn render(d: &Drawing2d, layout: Option<&str>, limits: &Limits) -> Result<Sv
         {
             // ponytail: twisted and perspective views are drawn as plan views; add the twist angle if a sheet needs it.
             let k = height / view_height;
+            // The view's lines are as wide as the sheet's (one unit after the viewport's scale): a
+            // line inside `<use>` keeps its own stroke width, which `vector-effect` on the page does
+            // not reach, so at 1:200 it was 1/200 of a unit wide and did not show.
             write!(
                 out,
-                "<g clip-path=\"url(#vp{i})\" data-viewport=\"{}\"><use href=\"#model-space\" transform=\"matrix({} 0 0 {} {} {})\"/></g>",
+                "<g clip-path=\"url(#vp{i})\" data-viewport=\"{}\"><use href=\"#model-space\" stroke-width=\"{}\" transform=\"matrix({} 0 0 {} {} {})\"/></g>",
                 esc(&v.handle),
+                f(1.0 / k),
                 f(k),
                 f(k),
                 f(center[0] - k * view_center[0]),

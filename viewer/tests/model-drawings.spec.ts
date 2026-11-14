@@ -110,7 +110,12 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   await page.keyboard.press('+');
   const zoomed = await page.locator('#drawing-sheet > svg').getAttribute('viewBox');
   at('zoomed');
-  await list.getByRole('button', { name: '3D model' }).click();
+  await page.evaluate(() => 0);
+  at('page answers');
+  const back = list.getByRole('button', { name: '3D model' });
+  await back.scrollIntoViewIfNeeded();
+  at('3D button in view');
+  await back.click();
   at('3D clicked');
   await expect(page.locator('#drawing-pane')).toBeHidden();
   await expect(page.locator('#viewport canvas')).toBeVisible();
