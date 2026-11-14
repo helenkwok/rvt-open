@@ -75,8 +75,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
   await shot(page, 'sheet');
 
-  // The saves are the sheet's, as rvt-sheet writes them.
-  await openExportMenu(page);
+  // The saves are the sheet's, as rvt-sheet writes them. The menu closes after each export.
   for (const [format, magic] of [
     ['dxf', /^\s*0\r?\nSECTION/],
     ['dwg', /^AC10/],
@@ -87,13 +86,13 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
       const toasts = await page.locator('#toast-region').textContent();
       throw new Error(`no ${format} download: status ${JSON.stringify(status)}, toasts ${JSON.stringify(toasts)}; ${e.message}`);
     });
+    await openExportMenu(page);
     await page.locator(`#export-view-${format}`).click();
     const download = await saved;
     expect(download.suggestedFilename()).toMatch(new RegExp(`\\.${format}$`));
     const head = fs.readFileSync((await download.path())!).subarray(0, 32).toString('latin1');
     expect(head).toMatch(magic);
   }
-  await page.locator('#export-toggle').click();
 
   // Back to the 3D view and to the sheet again: nothing is drawn again, and the
   // pan and zoom are kept.
