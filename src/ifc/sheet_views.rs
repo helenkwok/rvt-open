@@ -14,6 +14,12 @@ pub const MM_PER_FOOT: f64 = 304.8;
 const LINES: i64 = -2_000_051;
 const GRIDS: i64 = -2_000_220;
 
+/// Whether any part of segment `p`-`q` lies in `crop` (always, with no crop): a line crossing
+/// the crop with both ends outside it still shows its middle, which the drawing clips to.
+fn segment_in_crop(crop: Option<&CropRect>, p: [f64; 2], q: [f64; 2]) -> bool {
+    crop.is_none_or(|c| c.clip((p[0], p[1]), (q[0], q[1])).is_some())
+}
+
 /// A plan view's band (view depth to cut plane), crop and annotation.
 pub fn view_window(
     model: &IfcModel,
@@ -69,7 +75,6 @@ pub fn view_window(
     // Annotation is drawn out to the view's annotation crop when that is on: the crop box grown
     // by its offsets (sheet sizes, left, right, top, bottom). With it off, text, tags and
     // dimensions are kept wherever they are. Grid lines are cut at the model crop when drawn.
-    let in_crop = |p: [f64; 2]| crop.is_none_or(|c| c.contains((p[0], p[1])));
     let annotation_crop = crop.zip(view.crop.as_ref().and_then(|c| c.annotation)).map(
         |(mut c, [left, right, top, bottom])| {
             c.min[0] -= left * scale;
@@ -240,7 +245,7 @@ pub fn view_window(
         };
         for w in c.points.windows(2) {
             let (p, q) = ([w[0][0], w[0][1]], [w[1][0], w[1][1]]);
-            if crop.is_some() && !(in_crop(p) || in_crop(q)) {
+            if !segment_in_crop(crop.as_ref(), p, q) {
                 continue;
             }
             a.lines.push(PlanLine {
@@ -664,4 +669,23 @@ pub fn drawing_bytes(
     };
     let version = parse_version(version, format).map_err(|e| e.to_string())?;
     write_drawing(drawing, format, version).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_segment_crossing_the_crop_is_kept() {
+        let crop = CropRect {
+            origin: [0.0, 0.0],
+            x_axis: [1.0, 0.0],
+            min: [0.0, 0.0],
+            max: [10.0, 10.0],
+        };
+        assert!(segment_in_crop(Some(&crop), [-1.0, 5.0], [11.0, 5.0]));
+        assert!(segment_in_crop(Some(&crop), [2.0, 2.0], [3.0, 3.0]));
+        assert!(!segment_in_crop(Some(&crop), [-5.0, -1.0], [20.0, -1.0]));
+        assert!(segment_in_crop(None, [-5.0, -1.0], [20.0, -1.0]));
+    }
 }
