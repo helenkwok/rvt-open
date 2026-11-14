@@ -216,6 +216,7 @@ fn kept_record(class: &str) -> bool {
         || matches!(
             class,
             "ProjectRevision"
+                | "Viewer"
                 | "BasePoint"
                 | "GeoLocation"
                 | "GeoSite"
@@ -562,6 +563,39 @@ fn record_fields(
             };
             properties.push((parameter.id, parameter.name, value));
         }
+        // A view's crop settings are on its Viewer (`m_viewerId`): the
+        // annotation crop flag and the scope box it saves.
+        if class.starts_with("DBView") {
+            let viewer = fields.get("m_viewerId").and_then(id_of).filter(|&v| v > 0);
+            if let Some((_, viewer_fields)) = viewer.and_then(root).filter(|(c, _)| c == "Viewer") {
+                if let Some(on) = viewer_fields
+                    .get("m_bAnnotationCropActive")
+                    .and_then(Fv::as_bool)
+                {
+                    properties.push((
+                        VIEWER_ANNOTATION_CROP_ACTIVE,
+                        "Annotation Crop",
+                        PropertyValue::Boolean(on),
+                    ));
+                }
+            }
+            let scope_box = viewer
+                .and_then(|v| u64::try_from(v).ok())
+                .and_then(|v| saved.elements.get(&v))
+                .and_then(|parameters| {
+                    parameters
+                        .iter()
+                        .find(|p| p.parameter_id == VIEWER_VOLUME_OF_INTEREST_CROP)
+                })
+                .and_then(|p| p.value.as_i64());
+            if let Some(target) = scope_box {
+                properties.push((
+                    VIEWER_VOLUME_OF_INTEREST_CROP,
+                    "Scope Box",
+                    PropertyValue::Label(name_of(target).unwrap_or_else(|| target.to_string())),
+                ));
+            }
+        }
         let type_id = type_of(class, fields, objects);
         if let Some(type_id) = type_id {
             let type_name = symbol_name(type_id);
@@ -603,7 +637,10 @@ fn record_fields(
             .filter(|n| !n.is_empty())
             .map(str::to_string);
         if properties.is_empty()
-            && !matches!(class.as_str(), "BasePoint" | "CoordinateSystemDisplayElem")
+            && !matches!(
+                class.as_str(),
+                "BasePoint" | "CoordinateSystemDisplayElem" | "GeoSite"
+            )
         {
             continue;
         }
@@ -684,6 +721,10 @@ fn site_elements(
         }
     }
 }
+
+/// `VIEWER_ANNOTATION_CROP_ACTIVE` and `VIEWER_VOLUME_OF_INTEREST_CROP`.
+const VIEWER_ANNOTATION_CROP_ACTIVE: i64 = -1_005_094;
+const VIEWER_VOLUME_OF_INTEREST_CROP: i64 = -1_012_202;
 
 /// `BASEPOINT_*_PARAM`.
 const BASEPOINT_NORTHSOUTH_PARAM: i64 = -1_150_191;
