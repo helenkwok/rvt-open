@@ -347,6 +347,12 @@ pub fn refine_with_control(
         // after every other step that changes the model.
         crate::ifc::recount_exported(diagnostics, model);
     }
+    // The groups of the multistory stairs are read before the saved-graphics
+    // pass, while the handle still holds the partitions' inflated copies,
+    // which that pass lets go: a read after it inflates the whole file again
+    // for these records alone.
+    let multistory = (!opts.placeholder && !opts.diagnostic_proxies)
+        .then(|| crate::ifc::multistory_stairs::read(rf, model));
     let without_before = count_without_material(model);
     // a family file's own forms become its elements, in one
     // storey; the passes below then treat them like any other.
@@ -549,6 +555,29 @@ pub fn refine_with_control(
             }
             Err(e) => notes.push(format!("family extrusions not read: {e:#}")),
         }
+    }
+    // Revit's export writes a multistory stair once per storey. The copies are
+    // written after the passes that draw the bodies, so that a copy is its
+    // original as they left it, and before the quantities, which reach the
+    // copies too.
+    match multistory {
+        Some(Ok(Some(read))) => {
+            let report = crate::ifc::multistory_stairs::attach(model, &read);
+            if report.copies > 0 {
+                crate::ifc::recount_exported(diagnostics, model);
+            }
+            if report.copies > 0 || !report.left_out.is_empty() {
+                notes.push(format!(
+                    "{} multistory stair copies written in {} groups ({} entities; their GlobalIds are derived from their originals', not Revit's; {} spans or stairs left uncopied)",
+                    report.copies,
+                    report.groups,
+                    report.entities,
+                    report.left_out.values().sum::<usize>()
+                ));
+            }
+        }
+        Some(Err(e)) => notes.push(format!("multistory stairs written once: {e:#}")),
+        Some(Ok(None)) | None => {}
     }
     // The model is final, so the bodies the later passes replaced name
     // their own sources.

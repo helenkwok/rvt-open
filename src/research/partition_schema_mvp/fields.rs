@@ -379,13 +379,20 @@ pub const FURNITURE_RELEASE_FIELD: &str = "m_furniture_release";
 ///   The 2027 export leaves the value off roofs, stairs and flights,
 ///   and a 2022 file's export parameters are not read, as for furniture;
 /// - building element proxies: 2024 to 2027, `NOTDEFINED` on every proxy of
-///   every pair, 2027's included.
-pub const NOTDEFINED_DEFAULTS: [(&str, &[u32]); 5] = [
+///   every pair, 2027's included;
+/// - railings: 2024 to 2026, `NOTDEFINED` on every railing of the measured files
+///   that has no value of its own or its type's: the 8 of the BIM4LCA office
+///   files, the 10 of the R2025 models 13 to 17 and the 2 of each held-out pair
+///   of 2024, 2025 and 2026 (18 unset). The 2027 export writes none on
+///   a railing, and a 2022 pair's export parameters are not read, so
+///   neither release takes the default.
+pub const NOTDEFINED_DEFAULTS: [(&str, &[u32]); 6] = [
     ("IFCFURNITURE", FURNITURE_DEFAULT_REVIT_VERSIONS),
     ("IFCROOF", &[2024, 2025, 2026]),
     ("IFCSTAIR", &[2024]),
     ("IFCSTAIRFLIGHT", &[2024]),
     ("IFCBUILDINGELEMENTPROXY", &[2024, 2025, 2026, 2027]),
+    ("IFCRAILING", &[2024, 2025, 2026]),
 ];
 
 /// Releases whose furniture and casework take `NOTDEFINED` where they have no
@@ -418,6 +425,18 @@ pub const INSTANCE_AXIS_TOLERANCE: f64 = 1e-6;
 /// Prefix of the fields carrying an element's type text parameters:
 /// `m_type_parameter:Type Mark` and so on.
 pub const TYPE_PARAMETER_FIELD_PREFIX: &str = "m_type_parameter:";
+
+/// Releases whose walls under a roof drawn from its slopes are cut along the
+/// roof's underside: Revit 2025, where Revit's exports of public 2025
+/// models cut them so and rvt-open's roofs have Revit's underside over the
+/// walls' plans, and 2026 and 2027, whose saves of Autodesk's `rac_basic`
+/// sample hold 13 walls under its sloped roof whose cut bodies match their
+/// 2025 save's. 2024 is not taken: no Revit 2024 export with walls under a
+/// sloped roof is measured, and 2025's walls are not compared with 2024's.
+pub const SLOPED_ROOF_WALL_TOP_REVIT_VERSIONS: &[u32] = &[2025, 2026, 2027];
+
+/// Field marking a roof on one of [`SLOPED_ROOF_WALL_TOP_REVIT_VERSIONS`].
+pub const ROOF_CUTS_WALL_TOPS_FIELD: &str = "m_roof_cuts_wall_tops";
 
 /// The caption of the text parameter a door's or window's `FireRating` is
 /// read from where its type's family type table gives none.

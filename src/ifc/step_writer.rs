@@ -563,6 +563,12 @@ pub(super) fn type_object_pset_values(model: &IfcModel) -> usize {
         let Some((ifc_type, predefined_type)) = typed_as(model, &roof_slabs, entity_idx) else {
             continue;
         };
+        // Revit's export gives the copy of a multistory stair, its
+        // flights and its landing no type object, though they share their
+        // originals' Tag.
+        if super::multistory_stairs::copy_without_type_object(ifc_type, property_set.as_ref()) {
+            continue;
+        }
         let element = type_guid.as_deref().and_then(|tag| tag.parse::<u32>().ok());
         let Some(type_id) = element.and_then(|id| model.element_type_ids.get(&id)) else {
             continue;
@@ -6024,6 +6030,12 @@ pub(super) fn type_object_plan(
         let Some((ifc_type, predefined_type)) = typed_as(model, &roof_slabs, entity_idx) else {
             continue;
         };
+        // Revit's export gives the copy of a multistory stair, its
+        // flights and its landing no type object, though they share their
+        // originals' Tag.
+        if super::multistory_stairs::copy_without_type_object(ifc_type, property_set.as_ref()) {
+            continue;
+        }
         // planting and entourage keep one type object per
         // Revit type whatever meshes its instances draw; the type holds every
         // map its instances use.

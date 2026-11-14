@@ -114,6 +114,15 @@ pub struct Options {
     /// definitions pass, which [`extract`] makes first, sets its own function
     /// whatever this is.
     pub graph_fields: Option<GraphFields>,
+    /// Whether a read that finds no record index for its channel builds one and
+    /// keeps it on the handle for the reads that follow. On by default:
+    /// the saved-graphics pass reads a file in many batches, and each later
+    /// batch inflates only the groups that hold its records. A reader that
+    /// reads a file once turns it off: the index costs 48 bytes for each record
+    /// of the file, held to the end of the export, where the walk that builds
+    /// it is the walk the read makes anyway. A read with it off leaves
+    /// the handle as it found it; one that finds an index uses it either way.
+    pub index_records: bool,
 }
 /// A conventional [`Options::max_group_bytes`] for one reassembled
 /// continuation group's bytes. A caller that asks for exactly this budget
@@ -170,6 +179,7 @@ impl Default for Options {
             keep_body: false,
             value_source: None,
             deferred_history_episodes: false,
+            index_records: true,
             graph_fields: None,
         }
     }
@@ -726,6 +736,7 @@ fn definition_key(options: &Options) -> DefinitionKey {
         value_source: _,
         deferred_history_episodes,
         graph_fields: _,
+        index_records: _,
     } = options;
     (
         *max_group_bytes,
@@ -1205,7 +1216,7 @@ fn extract_records(
     });
     let record_index = channel.and_then(|channel| file.native_record_index_of(channel));
     let mut indexed: Option<Vec<IndexedRecord>> =
-        (channel.is_some() && record_index.is_none()).then(Vec::new);
+        (channel.is_some() && record_index.is_none() && options.index_records).then(Vec::new);
     let walked: Option<BTreeSet<u32>> = record_index.as_ref().map(|record_index| {
         for &(channel, id, partition, tag, _) in &record_index.records {
             if !options.channels.contains(&channel) {
