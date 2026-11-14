@@ -69,6 +69,8 @@ Third-party dependencies (runtime)
   clap          — MIT OR Apache-2.0
   anyhow        — MIT OR Apache-2.0
   thiserror     — MIT OR Apache-2.0
+  mimalloc      — MIT (the command-line tools' memory allocator, with the
+                  C allocator it builds, also MIT)
   acadrust      — MPL-2.0 (rvt-dwg's DWG/DXF engine, https://github.com/hakanaktt/acadrust,
                   used unmodified from crates.io at version 0.6.8; its source is available
                   there. acadrust's DWG code is ported from ACadSharp, MIT, Copyright (c) 2021
