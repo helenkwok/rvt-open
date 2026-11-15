@@ -104,6 +104,17 @@
                 <span class="t">DWG 2018</span><span class="d">Saved in this tab · .dwg</span>
               </button>
             </div>
+            <div class="view-drawing-only" id="export-view-drawing" role="group" aria-label="Sheet or view exports">
+              <button class="export-btn" id="export-view-dxf" type="button" data-format="dxf" aria-label="Export the shown sheet or view as DXF 2018">
+                <span class="t">DXF 2018</span><span class="d">The sheet or view shown · .dxf</span>
+              </button>
+              <button class="export-btn" id="export-view-dwg" type="button" data-format="dwg" aria-label="Export the shown sheet or view as DWG 2018">
+                <span class="t">DWG 2018</span><span class="d">The sheet or view shown · .dwg</span>
+              </button>
+              <button class="export-btn" id="export-view-pdf" type="button" data-format="pdf" aria-label="Export the shown sheet or view as PDF">
+                <span class="t">Drawing PDF</span><span class="d">Vector, a sheet at full size, a view at its scale · .pdf</span>
+              </button>
+            </div>
             <p class="export-foot">Element and room schedules (CSV) are in the Details panel, under Schedule.</p>
           </div>
         </div>
@@ -118,6 +129,8 @@
           </div>
           <div id="drawing-layers" role="group" aria-labelledby="drawing-layers-heading"></div>
         </section>
+        <h2 id="drawings-heading" class="rvt-only">Drawings</h2>
+        <div id="drawings" class="rvt-only" role="group" aria-labelledby="drawings-heading"></div>
         <h2 id="scene-tree-heading" class="rvt-only">Scene tree</h2>
         <div class="tree-filter rvt-only">
           <input
@@ -219,8 +232,10 @@
         </div>
         <div id="drawing-pane" hidden>
           <div class="drawing-toolbar panel" role="toolbar" aria-label="Drawing view">
-            <label for="drawing-layout">Layout</label>
-            <select class="mode-select" id="drawing-layout" aria-label="Layout"></select>
+            <button class="side-btn view-drawing-only" id="drawing-back" type="button" title="Back to the 3D model">3D model</button>
+            <span class="view-drawing-only" id="drawing-title"></span>
+            <label class="drawing-only" for="drawing-layout">Layout</label>
+            <select class="mode-select drawing-only" id="drawing-layout" aria-label="Layout"></select>
             <button class="side-btn" id="drawing-fit" type="button" aria-label="Fit the drawing to the view" title="Fit (0)">Fit</button>
           </div>
           <div id="drawing-sheet" tabindex="0" role="region" aria-label="2D drawing. Drag to pan; wheel, + or - to zoom; 0 to fit."></div>
