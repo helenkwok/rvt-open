@@ -160,7 +160,12 @@ pub fn write_frag_graph_with(
     };
     // (item, mesh, colour, Some((shared shape path, Body xformop))).
     #[allow(clippy::type_complexity)]
-    let mut geometry: Vec<(usize, &Value, [u8; 4], Option<(&str, Option<&Value>)>)> = Vec::new();
+    let mut geometry: Vec<(
+        usize,
+        &super::graph::UsdMesh,
+        [u8; 4],
+        Option<(&str, Option<&Value>)>,
+    )> = Vec::new();
     // bodies that are a circle swept along a straight axis (a
     // pipe), written as fragments' own CIRCLE_EXTRUSION: (item, axis start
     // and end in metres Y-up, radius in metres, colour).
@@ -288,10 +293,10 @@ pub fn write_frag_graph_with(
                     if !circles.iter().any(|c| c.0 == index) {
                         circles.push((index, p1, p2, r, colour));
                     }
-                } else if let Some(mesh) = body.attributes.get("usd::usdgeom::mesh") {
+                } else if let Some(mesh) = body.mesh.as_deref() {
                     geometry.push((index, mesh, colour, None));
                 } else if let Some((shape, mesh)) = body.inherits.iter().find_map(|t| {
-                    let m = graph.nodes.get(t)?.attributes.get("usd::usdgeom::mesh")?;
+                    let m = graph.nodes.get(t)?.mesh.as_deref()?;
                     Some((t.as_str(), m))
                 }) {
                     // a shared shape, placed by the Body's xformop.
@@ -350,21 +355,8 @@ pub fn write_frag_graph_with(
                 shared_transform(shared.and_then(|(_, xf)| xf), shell_lo[i as usize]),
             )
         } else {
-            let pts: Vec<[f64; 3]> = mesh["points"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|p| {
-                    let c = |i: usize| p[i].as_f64().unwrap_or(0.0);
-                    [c(0), c(2), -c(1)]
-                })
-                .collect();
-            let idx: Vec<u32> = mesh["faceVertexIndices"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|v| v.as_u64().map(|v| v as u32))
-                .collect();
+            let pts: Vec<[f64; 3]> = mesh.finite_points().map(|c| [c[0], c[2], -c[1]]).collect();
+            let idx: Vec<u32> = mesh.face_vertex_indices.clone();
             if pts.is_empty() || idx.len() < 3 {
                 continue;
             }
@@ -838,17 +830,18 @@ fn circle_axis(node: &super::graph::Node) -> Option<([f64; 3], [f64; 3], f64)> {
     if field("representation_map_index").is_some() {
         return None;
     }
-    let shape: SolidShape = serde_json::from_value(field("solid_shape")?.clone()).ok()?;
     let SolidShape::PlacedExtrusion {
         profile: ProfileDef::Circle { radius_feet },
         origin_feet,
         axis,
         depth_feet,
         ..
-    } = shape
+    } = node.solid_shape.as_deref()?
     else {
         return None;
     };
+    let (radius_feet, origin_feet, axis, depth_feet) =
+        (*radius_feet, *origin_feet, *axis, *depth_feet);
     let length = axis.iter().map(|v| v * v).sum::<f64>().sqrt();
     if !(length > 1e-12 && radius_feet > 0.0 && depth_feet > 0.0) {
         return None;

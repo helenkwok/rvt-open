@@ -17,6 +17,11 @@ use rvt::{
 };
 use std::path::PathBuf;
 
+// The process's allocator (see `mimalloc` in Cargo.toml).
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 enum CliExportQualityMode {

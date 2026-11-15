@@ -252,10 +252,7 @@ fn write_split_to(
         // One inherited node: the type (PCERT's `TypeProduct`), or for a
         // `Body` the shared shape it draws (`Shape`).
         if let [ty] = node.inherits.as_slice() {
-            let shape = graph
-                .nodes
-                .get(ty)
-                .is_some_and(|t| t.attributes.contains_key("usd::usdgeom::mesh"));
+            let shape = graph.nodes.get(ty).is_some_and(|t| t.mesh.is_some());
             let name = if shape { "Shape" } else { "TypeProduct" };
             n.insert("inherits".into(), json!({ name: ty }));
         }
@@ -264,6 +261,11 @@ fn write_split_to(
             .iter()
             .filter(|(k, _)| !k.starts_with(IFC4_PREFIX))
             .map(|(k, v)| (k.clone(), v.clone()))
+            .chain(
+                node.mesh
+                    .as_deref()
+                    .map(|m| (super::graph::UsdMesh::KEY.to_string(), m.to_value())),
+            )
             .partition(|(k, _)| diagnostic(k));
         if !attributes.is_empty() {
             n.insert("attributes".into(), Value::Object(attributes));

@@ -21,9 +21,14 @@
 
 use clap::Parser;
 use rvt::RevitFile;
-use rvt::ifc::gltf::{DisplayOptions, GltfOptions, model_to_glb_with};
+use rvt::ifc::gltf::{DisplayOptions, GltfOptions, build_gltf_with, write_glb_to};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+// The process's allocator (see `mimalloc` in Cargo.toml).
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -319,31 +324,37 @@ fn run(cli: &Cli) -> Result<(), Failure> {
         }
         return Ok(());
     }
-    let glb = if cli.format == Format::Pdf3d {
-        rvt::ifc::pdf3d::model_to_pdf3d(&model)
+    let elements = model
+        .entities
+        .iter()
+        .filter(|e| matches!(e, rvt::ifc::entities::IfcEntity::BuildingElement { .. }))
+        .count();
+    let written = if cli.format == Format::Pdf3d {
+        let pdf = rvt::ifc::pdf3d::model_to_pdf3d(&model);
+        rvt::cli::write_output(&output, &pdf)
+            .map_err(|e| format!("write {}: {e}", output.display()))?;
+        pdf.len() as u64
     } else {
-        model_to_glb_with(
-            &model,
-            &GltfOptions::new(!cli.no_instancing, cli.omit_flat_normals, cli.meshopt).with_display(
-                DisplayOptions {
-                    rooms: cli.rooms,
-                    edges: !cli.no_edges,
-                },
-            ),
-        )
+        let opts = GltfOptions::new(!cli.no_instancing, cli.omit_flat_normals, cli.meshopt)
+            .with_display(DisplayOptions {
+                rooms: cli.rooms,
+                edges: !cli.no_edges,
+            });
+        let (mut doc, mut bin) = build_gltf_with(&model, &opts);
+        drop(model);
+        if opts.meshopt {
+            bin = rvt::ifc::meshopt::compress_document(&mut doc, &bin);
+        }
+        // Written as it is made: the binary chunk is not copied into a
+        // whole GLB in memory first.
+        rvt::cli::write_output_with(&output, |mut out| write_glb_to(&doc, &bin, &mut out))
+            .map_err(|e| format!("write {}: {e}", output.display()))?
+            .0
     };
-    rvt::cli::write_output(&output, &glb)
-        .map_err(|e| format!("write {}: {e}", output.display()))?;
     rvt::control::stage("done");
     if cli.verbose {
         println!(
-            "rvt-gltf: wrote {} bytes ({} building elements) to {}",
-            glb.len(),
-            model
-                .entities
-                .iter()
-                .filter(|e| matches!(e, rvt::ifc::entities::IfcEntity::BuildingElement { .. }))
-                .count(),
+            "rvt-gltf: wrote {written} bytes ({elements} building elements) to {}",
             output.display()
         );
     }

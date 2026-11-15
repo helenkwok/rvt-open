@@ -85,23 +85,45 @@ impl Mesh {
             let p = self.vertices[v as usize];
             std::array::from_fn(|k| (p[k] * 10_000.0).round() as i64)
         };
-        let mut edges: std::collections::BTreeMap<([i64; 3], [i64; 3]), u32> = Default::default();
-        for &[a, b, c] in &self.triangles {
-            let (a, b, c) = (weld(a), weld(b), weld(c));
-            for (s, t) in [(a, b), (b, c), (c, a)] {
-                if s == t {
+        // The welded points numbered in their sorted order, and each edge a
+        // pair of those numbers in a sorted list: maps keyed by point pairs
+        // were most of this pass's time.
+        let mut points: Vec<[i64; 3]> = self.triangles.iter().flatten().map(|&v| weld(v)).collect();
+        points.sort_unstable();
+        points.dedup();
+        let number = |v: u32| -> u64 { points.binary_search(&weld(v)).map_or(0, |n| n as u64) };
+        let tris: Vec<[u64; 3]> = self
+            .triangles
+            .iter()
+            .map(|&[a, b, c]| [number(a), number(b), number(c)])
+            .collect();
+        drop(points);
+        let edge = |s: u64, e: u64| (s << 32) | e;
+        let mut directed: Vec<u64> = Vec::with_capacity(tris.len() * 3);
+        let mut users: Vec<(u64, usize)> = Vec::with_capacity(tris.len() * 3);
+        for (i, t) in tris.iter().enumerate() {
+            for (s, e) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                if s == e {
                     continue;
                 }
-                *edges.entry((s, t)).or_default() += 1;
+                directed.push(edge(s, e));
+                users.push((edge(s.min(e), s.max(e)), i));
             }
         }
+        drop(tris);
         // Closed: every directed edge is traversed as often as its reverse.
         // A door's frame and panel are closed shells that touch along an
         // found every saved door and window mesh of rac_basic 2024 balanced
         // but failing the old "each edge once each way" test, so drawn twice.
-        let closed = edges
-            .iter()
-            .all(|(&(s, t), &n)| edges.get(&(t, s)) == Some(&n));
+        directed.sort_unstable();
+        let count = |key: u64| {
+            let from = directed.partition_point(|&k| k < key);
+            directed[from..].partition_point(|&k| k == key)
+        };
+        let closed = !directed
+            .chunk_by(|a, b| a == b)
+            .any(|run| count(edge(run[0] & u64::from(u32::MAX), run[0] >> 32)) != run.len());
+        drop(directed);
         if !closed {
             return self.two_sided();
         }
@@ -117,26 +139,16 @@ impl Mesh {
         }
         // Shells are joined across manifold edges only (two triangles): an
         // edge where two shells touch carries four.
-        let mut users: std::collections::BTreeMap<([i64; 3], [i64; 3]), Vec<usize>> =
-            Default::default();
-        for (i, &[a, b, c]) in self.triangles.iter().enumerate() {
-            let (a, b, c) = (weld(a), weld(b), weld(c));
-            for (s, t) in [(a, b), (b, c), (c, a)] {
-                if s != t {
-                    users
-                        .entry(if s <= t { (s, t) } else { (t, s) })
-                        .or_default()
-                        .push(i);
-                }
-            }
-        }
-        for pair in users.values() {
-            if let [i, j] = pair[..] {
+        users.sort_unstable();
+        for list in users.chunk_by(|a, b| a.0 == b.0) {
+            if let [(_, i), (_, j)] = *list {
                 let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
                 parent[ri] = rj;
             }
         }
-        let mut volume: std::collections::BTreeMap<usize, f64> = Default::default();
+        drop(users);
+        // Each shell's volume summed in triangle order.
+        let mut volume = vec![0.0_f64; n];
         for i in 0..n {
             let [a, b, c] = self.triangles[i];
             let (a, b, c) = (
@@ -144,13 +156,13 @@ impl Mesh {
                 self.vertices[b as usize],
                 self.vertices[c as usize],
             );
-            *volume.entry(find(&mut parent, i)).or_default() +=
-                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
-                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
-                    / 6.0;
+            volume[find(&mut parent, i)] += (a[0] * (b[1] * c[2] - b[2] * c[1])
+                - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                / 6.0;
         }
         for i in 0..n {
-            if volume[&find(&mut parent, i)] < 0.0 {
+            if volume[find(&mut parent, i)] < 0.0 {
                 self.triangles[i].swap(1, 2);
             }
         }
@@ -1802,11 +1814,7 @@ pub fn plan_outline(body: Body<'_>, placement: &Placement) -> Option<(Ring, Vec<
 /// points and their triangles are equal.
 pub fn mesh_key(mesh: &Mesh, feet_to_m: f64) -> (Vec<[i64; 3]>, String) {
     use std::fmt::Write;
-    let q: Vec<[i64; 3]> = mesh
-        .vertices
-        .iter()
-        .map(|v| v.map(|c| (c * feet_to_m * 1e7).round() as i64))
-        .collect();
+    let q = grid_points(mesh, feet_to_m);
     let mut key = String::with_capacity(q.len() * 24 + mesh.triangles.len() * 12);
     for p in &q {
         let _ = write!(key, "{},{},{};", p[0], p[1], p[2]);
@@ -1816,6 +1824,14 @@ pub fn mesh_key(mesh: &Mesh, feet_to_m: f64) -> (Vec<[i64; 3]>, String) {
         let _ = write!(key, "{},{},{};", t[0], t[1], t[2]);
     }
     (q, key)
+}
+
+/// The points of [`mesh_key`] without its key.
+pub(crate) fn grid_points(mesh: &Mesh, feet_to_m: f64) -> Vec<[i64; 3]> {
+    mesh.vertices
+        .iter()
+        .map(|v| v.map(|c| (c * feet_to_m * 1e7).round() as i64))
+        .collect()
 }
 
 /// The exact body definition of a building element that can share a map:

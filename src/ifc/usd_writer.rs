@@ -160,21 +160,17 @@ struct Writer<'a> {
 
 impl Writer<'_> {
     fn shaped_node(&self, path: &str) -> bool {
-        self.graph.nodes[path]
-            .attributes
-            .contains_key("usd::usdgeom::mesh")
+        self.graph.nodes[path].mesh.is_some()
     }
 
     /// A node without a mesh of its own that inherits a shared shape.
     fn shaped(&self, path: &str) -> bool {
         let node = &self.graph.nodes[path];
-        !node.attributes.contains_key("usd::usdgeom::mesh")
-            && node.inherits.iter().any(|t| {
-                self.graph
-                    .nodes
-                    .get(t)
-                    .is_some_and(|n| n.attributes.contains_key("usd::usdgeom::mesh"))
-            })
+        node.mesh.is_none()
+            && node
+                .inherits
+                .iter()
+                .any(|t| self.graph.nodes.get(t).is_some_and(|n| n.mesh.is_some()))
     }
 
     fn prim(
@@ -194,7 +190,7 @@ impl Writer<'_> {
         sink.prim(head, &prim_name(path), Some(display), &inherits);
         let mut names = BTreeSet::new();
         for (key, value) in &node.attributes {
-            if key == "usd::usdgeom::mesh" || key.starts_with(super::graph::IFC4_PREFIX) {
+            if key.starts_with(super::graph::IFC4_PREFIX) {
                 continue;
             }
             if key == "usd::xformop" {
@@ -206,18 +202,14 @@ impl Writer<'_> {
         // a Body of one face material carries its own colour.
         let own = colour_of(node);
         let colour = own.as_ref().or(colour);
-        if let Some(mesh) = node.attributes.get("usd::usdgeom::mesh") {
+        if let Some(mesh) = node.mesh.as_deref() {
             mesh_body(sink, mesh, colour);
         } else if self.shaped(path) {
             // the points come from the inherited shape class.
             colour_attrs(sink, colour);
         }
         for (name, child) in &node.children {
-            let head = if self.graph.nodes[child]
-                .attributes
-                .contains_key("usd::usdgeom::mesh")
-                || self.shaped(child)
-            {
+            let head = if self.graph.nodes[child].mesh.is_some() || self.shaped(child) {
                 Head::Def("Mesh")
             } else {
                 Head::Def("Xform")
@@ -299,21 +291,12 @@ fn colour_of(node: &super::graph::Node) -> Option<Colour> {
 }
 
 /// `points`, triangles, extent, and the element colour.
-fn mesh_body(sink: &mut dyn Sink, mesh: &Value, colour: Option<&Colour>) {
-    let points: Vec<[f64; 3]> = mesh["points"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|p| {
-            let c = |i: usize| p[i].as_f64().unwrap_or(0.0);
-            [c(0), c(1), c(2)]
-        })
-        .collect();
-    let indices: Vec<i64> = mesh["faceVertexIndices"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_i64)
+fn mesh_body(sink: &mut dyn Sink, mesh: &super::graph::UsdMesh, colour: Option<&Colour>) {
+    let points: Vec<[f64; 3]> = mesh.finite_points().collect();
+    let indices: Vec<i64> = mesh
+        .face_vertex_indices
+        .iter()
+        .map(|&i| i64::from(i))
         .collect();
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
