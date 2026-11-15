@@ -1148,7 +1148,7 @@ fn element_id(v: &Fv, name: &str) -> Option<u64> {
 ///   `StairsRunType` whose `m_hasMonolithicSupport` names the family
 ///   `Monolithic Run` or `Non-Monolithic Run`;
 /// - a `StairsLanding`'s stair and type are the ones `landings` gives (its
-/// element record's, as Revit 2024 reads them), a `StairsLandingType`
+///   element record's, as Revit 2024 reads them), a `StairsLandingType`
 ///   whose `m_hasMonolithicSupport` is false: `Non-Monolithic Landing`, as the
 ///   type byte of Revit 2024's landings gives. A monolithic landing
 ///   type's family is not measured on any release;
