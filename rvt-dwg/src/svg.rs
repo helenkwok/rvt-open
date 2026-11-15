@@ -47,6 +47,8 @@ pub fn render(d: &Drawing2d, layout: Option<&str>, limits: &Limits) -> Result<Sv
     let mut r = Renderer::new(d, limits);
     let paper = Space::of(&block) == Space::Paper;
     let main = r.block(&block);
+    // The view box is the layout's own: model space drawn for the viewports is not its extent.
+    let mut pts: Vec<[f64; 2]> = r.points.clone();
     let viewports: Vec<&Entity2d> = if paper {
         d.entities
             .iter()
@@ -62,7 +64,6 @@ pub fn render(d: &Drawing2d, layout: Option<&str>, limits: &Limits) -> Result<Sv
     };
 
     // The view box: the layout's own geometry, and the viewports' frames on a sheet.
-    let mut pts: Vec<[f64; 2]> = r.points.clone();
     for v in &viewports {
         pts.extend(v.geom.samples(f64::MAX));
     }
@@ -188,7 +189,11 @@ fn f(v: f64) -> String {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
+    // Control characters other than tab and line breaks are not allowed in XML: dropped.
+    s.chars()
+        .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+        .collect::<String>()
+        .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")

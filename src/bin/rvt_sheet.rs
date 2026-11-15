@@ -19,13 +19,16 @@
 //! rvt-sheet model.rvt --level "Level 2" --cut-height 1200
 //! rvt-sheet model.rvt --view "Level 1" --format pdf    # vector PDF at the view's scale
 //! rvt-sheet model.rvt --list-sheets                    # the sheets and the views on them, as JSON
-//! rvt-sheet model.rvt --sheet A102 --format dxf        # a sheet: its plan views in viewports, title block, notes
+//! rvt-sheet model.rvt --sheet A102 --format dxf        # a sheet: its views in viewports, title block, notes
+//! rvt-sheet model.rvt --sheet A2 --format svg          # the same sheet's paper space as SVG
 //! ```
 //!
-//! `--sheet` draws a sheet as the authoring tool's DWG export lays one out: each plan view on it
-//! drawn in model space (side by side, millimetres) and shown through a viewport placed where the
-//! view sits on the sheet, at the view's scale; the title block's lines, the sheet's own text
-//! notes and detail lines, and each view's title in paper space (layout `Layout1`, millimetres).
+//! `--sheet` draws a sheet as the authoring tool's DWG export lays one out: each plan, section,
+//! elevation, detail and drafting view on it drawn in model space (side by side, millimetres) and
+//! shown through a viewport placed where the view sits on the sheet, at the view's scale; the
+//! title block's lines, texts and labels (filled from the sheet and the project information), the
+//! sheet's own text notes and detail lines, and each view's title in paper space (layout
+//! `Layout1`, millimetres).
 //!
 //! `--view` draws what a plan view shows: the elements between its view depth and its cut plane,
 //! clipped to its crop region when the crop is on, with its room tags, grid heads, text notes and
@@ -120,7 +123,7 @@ struct Cli {
     #[arg(long, conflicts_with = "level")]
     view: Option<String>,
 
-    /// Draw this sheet (its number or name; see `--list-sheets`) as DXF, DWG or PDF.
+    /// Draw this sheet (its number or name; see `--list-sheets`) as DXF, DWG, PDF or SVG.
     #[arg(long, conflicts_with_all = ["view", "level"])]
     sheet: Option<String>,
 
@@ -227,9 +230,6 @@ fn run(cli: &Cli) -> Result<(), String> {
         );
         return Ok(());
     }
-    if cli.sheet.is_some() && cli.format == "svg" {
-        return Err("--sheet writes dxf, dwg or pdf: pass --format".into());
-    }
     let facts = if cli.view.is_some() || cli.sheet.is_some() {
         Some(rvt::plan_views::read(&mut rf).map_err(|e| e.to_string())?)
     } else {
@@ -239,7 +239,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         .export(&mut rf)
         .map_err(|e| format!("export {}: {e}", input.display()))?;
     // A plan view draws each family instance's plan symbol (door swings, window lines).
-    let symbols = if (cli.view.is_some() || cli.sheet.is_some()) && cli.format != "svg" {
+    let symbols = if cli.sheet.is_some() || (cli.view.is_some() && cli.format != "svg") {
         rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model).unwrap_or_else(|e| {
             eprintln!("rvt-sheet: plan symbols not read: {e}");
             Default::default()
@@ -277,14 +277,9 @@ fn run(cli: &Cli) -> Result<(), String> {
                     facts.sections.iter().find(|v| !v.template && v.id == id)
                 })
             {
-                if cli.format == "svg" {
-                    return Err(format!(
-                        "{name:?} is a section or elevation: pass --format dxf, dwg or pdf"
-                    ));
-                }
                 let window = section_window(facts, view)
                     .ok_or_else(|| format!("{name:?} has no crop box decoded"))?;
-                let drawing = projected_drawing_of(&model, &window)?;
+                let drawing = projected_drawing_of(&model, &window, view.scale.unwrap_or(100.0))?;
                 let bytes = drawing_bytes(
                     &drawing,
                     None,
@@ -414,8 +409,9 @@ fn plan_drawing_of(
 fn projected_drawing_of(
     model: &rvt::ifc::IfcModel,
     window: &rvt::ifc::sheet::ProjectedWindow,
+    scale: f64,
 ) -> Result<rvt_dwg::Drawing2d, String> {
-    Ok(rvt::ifc::sheet::projected_drawing(model, window))
+    Ok(rvt::ifc::sheet::projected_drawing(model, window, scale))
 }
 
 /// A drawing as DXF, DWG or PDF (`layout` drawn by the PDF: a sheet; `None` for model space at
@@ -471,6 +467,7 @@ fn section_window(
 fn projected_drawing_of(
     _: &rvt::ifc::IfcModel,
     _: &rvt::ifc::sheet::ProjectedWindow,
+    _: f64,
 ) -> Result<(), String> {
     Err("this build has no DWG/DXF support (feature `dwg`)".into())
 }

@@ -406,9 +406,10 @@ fn collect_footprints(model: &IfcModel, window: Option<&ViewWindow>) -> Vec<Foot
             if id.is_some_and(|id| w.hidden_elements.contains(&id)) {
                 continue;
             }
-            let category = sets
-                .get(&index)
-                .and_then(|s| super::element_table::category_in(s));
+            let category = drawn_category(
+                sets.get(&index).map(Vec::as_slice).unwrap_or_default(),
+                ifc_type,
+            );
             roof |= category.as_deref() == Some("Roofs");
             if category.is_some_and(|c| w.hidden_categories.contains(&c)) {
                 continue;
@@ -678,13 +679,19 @@ pub struct ProjectedWindow {
     pub hidden_elements: Vec<i64>,
 }
 
-/// A section or elevation as DXF/DWG entities, millimetres: every element's sharp body edges
-/// inside the view's crop box (its depth too), projected onto the view's plane and drawn on the
-/// element's layer. No hidden-line removal and no cut patterns yet.
+/// A section or elevation as DXF/DWG entities, millimetres, as the view shows it: each element's
+/// outline where the view's near crop face (the section plane) cuts it, drawn heavier, and its
+/// sharp body edges inside the crop box that no nearer face hides, projected onto the view's
+/// plane and drawn on the element's layer. What is hidden is found with a depth buffer of the
+/// elements' faces at 0.2 mm on the sheet at 1:`scale` (coarser for a very large view). No cut
+/// patterns yet.
 #[cfg(feature = "dwg")]
-pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow) -> rvt_dwg::Drawing2d {
+pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow, scale: f64) -> rvt_dwg::Drawing2d {
     use rvt_dwg::{Drawing2d, Entity2d, Geom, Layer2d, Layout2d, MODEL_SPACE};
     const MM_PER_FOOT: f64 = 304.8;
+    /// Lineweights (1/100 mm) of cut and seen lines, the authoring tool's defaults for walls.
+    const CUT_WEIGHT: i16 = 50;
+    const SEEN_WEIGHT: i16 = 18;
     let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let mut d = Drawing2d {
         version: "AC1032".into(),
@@ -701,18 +708,33 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow) -> rvt_dwg::Draw
         ..Default::default()
     };
     let sets = super::element_table::element_sets(model);
-    // A point in crop-box coordinates.
+    // A point in crop-box coordinates, its z made the depth from the near face (the section
+    // plane: the face toward the viewer), so the box is 0..far deep.
+    let toward = if dot(w.crop_axes[2], w.toward_viewer) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let (near, far) = if toward > 0.0 {
+        (w.crop_max[2], w.crop_max[2] - w.crop_min[2])
+    } else {
+        (w.crop_min[2], w.crop_max[2] - w.crop_min[2])
+    };
     let local = |p: [f64; 3]| {
         let r = [0, 1, 2].map(|i| p[i] - w.crop_origin[i]);
-        [0, 1, 2].map(|k| dot(r, w.crop_axes[k]))
+        let [x, y, z] = [0, 1, 2].map(|k| dot(r, w.crop_axes[k]));
+        [x, y, toward * (near - z)]
     };
-    // The part of segment a-b inside the crop box (Liang-Barsky in 3D).
-    let clip = |a: [f64; 3], b: [f64; 3]| -> Option<([f64; 3], [f64; 3])> {
-        let (p, q) = (local(a), local(b));
+    let (lo, hi) = (
+        [w.crop_min[0], w.crop_min[1], 0.0],
+        [w.crop_max[0], w.crop_max[1], far],
+    );
+    // The part of segment p-q (local) inside the box (Liang-Barsky in 3D).
+    let clip = |p: [f64; 3], q: [f64; 3]| -> Option<([f64; 3], [f64; 3])> {
         let (mut t0, mut t1) = (0.0f64, 1.0f64);
         for k in 0..3 {
             let dk = q[k] - p[k];
-            for (num, den) in [(p[k] - w.crop_min[k], -dk), (w.crop_max[k] - p[k], dk)] {
+            for (num, den) in [(p[k] - lo[k], -dk), (hi[k] - p[k], dk)] {
                 if den.abs() < 1e-15 {
                     if num < 0.0 {
                         return None;
@@ -728,10 +750,24 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow) -> rvt_dwg::Draw
             }
         }
         (t0 < t1).then(|| {
-            let at = |t: f64| [0, 1, 2].map(|i| a[i] + t * (b[i] - a[i]));
+            let at = |t: f64| [0, 1, 2].map(|i| p[i] + t * (q[i] - p[i]));
             (at(t0), at(t1))
         })
     };
+    // Back from local x, y to the drawing (the view's axes about the internal origin), mm.
+    let origin_on_view = [dot(w.crop_origin, w.right), dot(w.crop_origin, w.up)];
+    let axes_on_view = [0, 1].map(|k| [dot(w.crop_axes[k], w.right), dot(w.crop_axes[k], w.up)]);
+    let to_view = |p: [f64; 3]| {
+        [
+            (origin_on_view[0] + p[0] * axes_on_view[0][0] + p[1] * axes_on_view[1][0])
+                * MM_PER_FOOT,
+            (origin_on_view[1] + p[0] * axes_on_view[0][1] + p[1] * axes_on_view[1][1])
+                * MM_PER_FOOT,
+            0.0,
+        ]
+    };
+    // What is drawn of each element: its layer, its faces and its sharp edges, local.
+    let mut drawn: Vec<Drawn> = Vec::new();
     for (index, ent) in model.entities.iter().enumerate() {
         let IfcEntity::BuildingElement {
             ifc_type,
@@ -743,7 +779,7 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow) -> rvt_dwg::Draw
         else {
             continue;
         };
-        if ifc_type == "IFCOPENINGELEMENT" || is_underlay(ifc_type) {
+        if ifc_type == "IFCOPENINGELEMENT" || ifc_type == "IFCSPACE" {
             continue;
         }
         let id = type_guid.as_deref().and_then(|t| t.parse::<i64>().ok());
@@ -751,8 +787,7 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow) -> rvt_dwg::Draw
             continue;
         }
         let own = sets.get(&index).map(Vec::as_slice).unwrap_or_default();
-        if super::element_table::category_in(own).is_some_and(|c| w.hidden_categories.contains(&c))
-        {
+        if drawn_category(own, ifc_type).is_some_and(|c| w.hidden_categories.contains(&c)) {
             continue;
         }
         let (Some(location), Some(body)) =
@@ -761,41 +796,245 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow) -> rvt_dwg::Draw
             continue;
         };
         let placement = Placement::new(Some(*location), *rotation_radians);
+        let Some(mesh) = super::body_geometry::body_mesh(body) else {
+            continue;
+        };
+        let vertices: Vec<[f64; 3]> = mesh
+            .vertices
+            .iter()
+            .map(|v| local(placement.apply(*v)))
+            .collect();
+        // Nothing of an element wholly outside the box is drawn.
+        let outside = (0..3).any(|k| {
+            vertices.iter().all(|v| v[k] < lo[k]) || vertices.iter().all(|v| v[k] > hi[k])
+        });
+        if outside {
+            continue;
+        }
+        let faces: Vec<[[f64; 3]; 3]> = mesh
+            .triangles
+            .iter()
+            .filter_map(|t| {
+                let [a, b, c] = t.map(|i| vertices.get(i as usize).copied());
+                Some([a?, b?, c?])
+            })
+            .collect();
+        let edges = sharp_edges(body, &placement)
+            .into_iter()
+            .map(|(a, b)| (local(a), local(b)))
+            .collect();
         let (layer, aci) = layer_for(own, ifc_type);
-        let mut seen = std::collections::HashSet::new();
-        for (a, b) in sharp_edges(body, &placement) {
-            let Some((a, b)) = clip(a, b) else { continue };
-            let pa = [
-                dot(a, w.right) * MM_PER_FOOT,
-                dot(a, w.up) * MM_PER_FOOT,
-                0.0,
-            ];
-            let pb = [
-                dot(b, w.right) * MM_PER_FOOT,
-                dot(b, w.up) * MM_PER_FOOT,
-                0.0,
-            ];
-            // Edges seen end on, and an edge drawn twice (front and back), once.
-            if (pa[0] - pb[0]).hypot(pa[1] - pb[1]) < 0.5 {
-                continue;
+        drawn.push((layer, aci, faces, edges));
+    }
+    // The depth buffer, over the crop rectangle, at 0.2 mm on the sheet.
+    const MAX_CELLS: f64 = 2048.0;
+    let (wx, wy) = (hi[0] - lo[0], hi[1] - lo[1]);
+    let cell = (0.2 * scale / MM_PER_FOOT)
+        .max(wx / MAX_CELLS)
+        .max(wy / MAX_CELLS)
+        .max(1e-6);
+    let (nx, ny) = (
+        ((wx / cell).ceil() as usize).clamp(1, MAX_CELLS as usize),
+        ((wy / cell).ceil() as usize).clamp(1, MAX_CELLS as usize),
+    );
+    let mut depth = vec![f32::INFINITY; nx * ny];
+    for (_, _, faces, _) in &drawn {
+        for f in faces {
+            for t in clip_to_box_depth(f, far) {
+                rasterize(&t, lo, cell, nx, ny, &mut depth);
             }
-            let k = |p: [f64; 3]| ((p[0] * 10.0).round() as i64, (p[1] * 10.0).round() as i64);
-            let key = if k(pa) <= k(pb) {
-                (k(pa), k(pb))
-            } else {
-                (k(pb), k(pa))
+        }
+    }
+    // A point is seen when nothing nearer covers its cell (within two cells of depth, so a face's
+    // own edges stay seen).
+    let tolerance = 2.0 * cell + 1e-3;
+    let seen = |p: [f64; 3]| {
+        let (i, j) = (
+            ((p[0] - lo[0]) / cell) as isize,
+            ((p[1] - lo[1]) / cell) as isize,
+        );
+        if i < 0 || j < 0 || i as usize >= nx || j as usize >= ny {
+            return true;
+        }
+        p[2] <= depth[j as usize * nx + i as usize] as f64 + tolerance
+    };
+    let push = |d: &mut Drawing2d,
+                seen_keys: &mut std::collections::HashSet<(i64, i64, i64, i64)>,
+                layer: &'static str,
+                aci: i16,
+                weight: i16,
+                a: [f64; 3],
+                b: [f64; 3]| {
+        let (pa, pb) = (to_view(a), to_view(b));
+        // Edges seen end on, and an edge drawn twice, once.
+        if (pa[0] - pb[0]).hypot(pa[1] - pb[1]) < 0.5 {
+            return;
+        }
+        let k = |p: [f64; 3]| ((p[0] * 10.0).round() as i64, (p[1] * 10.0).round() as i64);
+        let (ka, kb) = (k(pa), k(pb));
+        let key = if ka <= kb {
+            (ka.0, ka.1, kb.0, kb.1)
+        } else {
+            (kb.0, kb.1, ka.0, ka.1)
+        };
+        if !seen_keys.insert(key) {
+            return;
+        }
+        if !d.layers.iter().any(|l| l.name == layer) {
+            d.layers.push(Layer2d::new(layer, aci));
+        }
+        let mut e = Entity2d::new("LINE", layer, Geom::Line { a: pa, b: pb });
+        e.lineweight = weight;
+        d.entities.push(e);
+    };
+    let mut keys = std::collections::HashSet::new();
+    for (layer, aci, faces, edges) in &drawn {
+        // The cut: where the section plane (depth 0) crosses each face, inside the crop.
+        for f in faces {
+            let Some((a, b)) = plane_crossing(f) else {
+                continue;
             };
-            if !seen.insert(key) {
-                continue;
+            if let Some((a, b)) = clip(a, b) {
+                push(&mut d, &mut keys, layer, *aci, CUT_WEIGHT, a, b);
             }
-            if !d.layers.iter().any(|l| l.name == layer) {
-                d.layers.push(Layer2d::new(layer, aci));
+        }
+        // The seen edges: their runs that no nearer face hides.
+        for (a, b) in edges {
+            let Some((a, b)) = clip(*a, *b) else { continue };
+            let n =
+                (((b[0] - a[0]).hypot(b[1] - a[1]) / cell * 2.0).ceil() as usize).clamp(1, 100_000);
+            let at = |t: f64| [0, 1, 2].map(|i| a[i] + t * (b[i] - a[i]));
+            let mut run: Option<f64> = None;
+            for s in 0..=n {
+                let t = s as f64 / n as f64;
+                match (seen(at(t)), run) {
+                    (true, None) => run = Some(t),
+                    (false, Some(t0)) => {
+                        push(&mut d, &mut keys, layer, *aci, SEEN_WEIGHT, at(t0), at(t));
+                        run = None;
+                    }
+                    _ => {}
+                }
             }
-            d.entities
-                .push(Entity2d::new("LINE", layer, Geom::Line { a: pa, b: pb }));
+            if let Some(t0) = run {
+                push(&mut d, &mut keys, layer, *aci, SEEN_WEIGHT, at(t0), b);
+            }
         }
     }
     d
+}
+
+/// What a section draws of one element: its layer and colour, its faces and its sharp edges, in
+/// the crop box's coordinates.
+#[cfg(feature = "dwg")]
+type Drawn = (
+    &'static str,
+    i16,
+    Vec<[[f64; 3]; 3]>,
+    Vec<([f64; 3], [f64; 3])>,
+);
+
+/// The part of triangle `t` (local, z the depth) between depth 0 and `far`, as triangles.
+#[cfg(feature = "dwg")]
+fn clip_to_box_depth(t: &[[f64; 3]; 3], far: f64) -> Vec<[[f64; 3]; 3]> {
+    let mut poly: Vec<[f64; 3]> = t.to_vec();
+    for (sign, at) in [(1.0, 0.0), (-1.0, far)] {
+        let side = |p: &[f64; 3]| sign * (p[2] - at);
+        let mut out = Vec::with_capacity(poly.len() + 2);
+        for i in 0..poly.len() {
+            let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
+            let (sp, sq) = (side(&p), side(&q));
+            if sp >= 0.0 {
+                out.push(p);
+            }
+            if (sp >= 0.0) != (sq >= 0.0) {
+                let k = sp / (sp - sq);
+                out.push([0, 1, 2].map(|i| p[i] + k * (q[i] - p[i])));
+            }
+        }
+        poly = out;
+        if poly.len() < 3 {
+            return Vec::new();
+        }
+    }
+    (1..poly.len() - 1)
+        .map(|i| [poly[0], poly[i], poly[i + 1]])
+        .collect()
+}
+
+/// Where triangle `t` (local, z the depth) crosses depth 0, as a segment.
+#[cfg(feature = "dwg")]
+fn plane_crossing(t: &[[f64; 3]; 3]) -> Option<([f64; 3], [f64; 3])> {
+    let mut hits = Vec::with_capacity(2);
+    for i in 0..3 {
+        let (p, q) = (t[i], t[(i + 1) % 3]);
+        if (p[2] < 0.0) != (q[2] < 0.0) {
+            let k = p[2] / (p[2] - q[2]);
+            hits.push([0, 1, 2].map(|j| p[j] + k * (q[j] - p[j])));
+        }
+    }
+    (hits.len() == 2).then(|| (hits[0], hits[1]))
+}
+
+/// Write triangle `t` (local x, y and depth) into `depth`, the nearest depth per cell of side
+/// `cell` from `lo`, sampled at the cells' centres.
+#[cfg(feature = "dwg")]
+fn rasterize(t: &[[f64; 3]; 3], lo: [f64; 3], cell: f64, nx: usize, ny: usize, depth: &mut [f32]) {
+    let g = t.map(|p| {
+        [
+            (p[0] - lo[0]) / cell - 0.5,
+            (p[1] - lo[1]) / cell - 0.5,
+            p[2],
+        ]
+    });
+    let area =
+        (g[1][0] - g[0][0]) * (g[2][1] - g[0][1]) - (g[2][0] - g[0][0]) * (g[1][1] - g[0][1]);
+    if area.abs() < 1e-12 {
+        return;
+    }
+    let (x0, x1) = (
+        g.iter()
+            .map(|p| p[0])
+            .fold(f64::INFINITY, f64::min)
+            .ceil()
+            .max(0.0) as usize,
+        (g.iter()
+            .map(|p| p[0])
+            .fold(f64::NEG_INFINITY, f64::max)
+            .floor())
+        .min(nx as f64 - 1.0),
+    );
+    let (y0, y1) = (
+        g.iter()
+            .map(|p| p[1])
+            .fold(f64::INFINITY, f64::min)
+            .ceil()
+            .max(0.0) as usize,
+        (g.iter()
+            .map(|p| p[1])
+            .fold(f64::NEG_INFINITY, f64::max)
+            .floor())
+        .min(ny as f64 - 1.0),
+    );
+    if x1 < 0.0 || y1 < 0.0 {
+        return;
+    }
+    for j in y0..=y1 as usize {
+        for i in x0..=x1 as usize {
+            let (x, y) = (i as f64, j as f64);
+            let w0 = ((g[1][0] - x) * (g[2][1] - y) - (g[2][0] - x) * (g[1][1] - y)) / area;
+            let w1 = ((g[2][0] - x) * (g[0][1] - y) - (g[0][0] - x) * (g[2][1] - y)) / area;
+            let w2 = 1.0 - w0 - w1;
+            if w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9 {
+                continue;
+            }
+            let z = (w0 * g[0][2] + w1 * g[1][2] + w2 * g[2][2]) as f32;
+            let c = &mut depth[j * nx + i];
+            if z < *c {
+                *c = z;
+            }
+        }
+    }
 }
 
 fn projected_edges(body: Body<'_>, placement: &Placement, cut: f64) -> (Segments, Segments) {
@@ -982,6 +1221,14 @@ fn clip_half(ring: &Ring, origin: (f64, f64), axis: (f64, f64), at: f64, sign: f
         }
     }
     out
+}
+
+/// The category a view hides an element by: its own, or Topography for a topography surface
+/// (exported as `IfcGeographicElement` with no category of its own; the Technical School
+/// sample's floor plan hides it, and drew its 319 m surface across the sheet).
+fn drawn_category(sets: &[&super::entities::PropertySet], ifc_type: &str) -> Option<String> {
+    super::element_table::category_in(sets)
+        .or_else(|| (ifc_type == "IFCGEOGRAPHICELEMENT").then(|| "Topography".to_string()))
 }
 
 /// Types drawn beneath the rest of the plan.

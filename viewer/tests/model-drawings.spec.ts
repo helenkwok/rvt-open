@@ -74,9 +74,10 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
       return JSON.stringify({ viewBox: svg.getAttribute('viewBox'), bbox: [b.x, b.y, b.width, b.height] });
     }),
   );
-  // As rvt-sheet draws sheet AR01: its site plan in one viewport, its title block and notes.
+  // As rvt-sheet draws sheet AR01: its site plan in one viewport, its title block and notes, and
+  // the title block's 13 labels filled from the sheet and the project information.
   expect(sheetName).toBe('AR01 · ASEMAPIIRUSTUS');
-  expect(sheetCounts).toEqual({ lines: 880, texts: 17, viewports: 1 });
+  expect(sheetCounts).toEqual({ lines: 880, texts: 30, viewports: 1 });
   await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
   await shot(page, 'sheet');
   fs.writeFileSync(path.join(SHOTS, 'sheet.svg'), await page.locator('#drawing-sheet > svg').evaluate((el) => el.outerHTML));
@@ -129,7 +130,8 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   await expect(page.locator('#drawing-sheet > svg')).toHaveAttribute('viewBox', zoomed!);
 
   at('back to the 3D view and the sheet');
-  // A section: its elements' edges in its crop box.
+  // A section: its elements' cut outlines and the edges no nearer face hides, in its crop box,
+  // and the levels it crosses (two lines and four texts: their names and heights).
   const section = sections.first();
   const sectionName = (await section.textContent()) ?? '';
   await section.click();
@@ -138,7 +140,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   const sectionCounts = await drawn(page);
   console.log('section', sectionName, JSON.stringify(sectionCounts));
   expect(sectionName).toBe('A');
-  expect(sectionCounts).toEqual({ lines: 88, texts: 0, viewports: 0 });
+  expect(sectionCounts).toEqual({ lines: 123, texts: 4, viewports: 0 });
   at('section drawn');
   await shot(page, 'section');
 

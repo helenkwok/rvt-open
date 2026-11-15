@@ -10,9 +10,10 @@ use crate::plan_views::{LineKind, PlanView, ViewFacts};
 
 /// Millimetres in a foot.
 pub const MM_PER_FOOT: f64 = 304.8;
-/// BuiltInCategory ids: Lines, Grids.
+/// BuiltInCategory ids: Lines, Grids, Property Lines.
 const LINES: i64 = -2_000_051;
 const GRIDS: i64 = -2_000_220;
+const PROPERTY_LINES: i64 = -2_001_265;
 
 /// Whether any part of segment `p`-`q` lies in `crop` (always, with no crop): a line crossing
 /// the crop with both ends outside it still shows its middle, which the drawing clips to.
@@ -226,8 +227,11 @@ pub fn view_window(
             None if c.kind == LineKind::PropertyLine => true,
             None => lo <= cut + 1e-3 && hi >= bottom - 1e-3,
         };
-        // Most are stored with no category (-1); a hidden Lines category hides them all.
+        // Most are stored with no category (-1); a hidden Lines category hides them all, and a
+        // hidden Property Lines category a property's (the Technical School sample's floor plan
+        // hides it, and its sheet A1 in the authoring tool's PDF shows none).
         let hidden = hidden_ids.contains(&LINES)
+            || (c.kind == LineKind::PropertyLine && hidden_ids.contains(&PROPERTY_LINES))
             || c.category
                 .is_some_and(|k| k < -1 && hidden_ids.contains(&k));
         if !shown || hidden {
@@ -327,6 +331,8 @@ pub fn sheet_drawing(
     };
     let mut next_x = 0.0;
     let mut viewport_id = 2;
+    // The scales of the views drawn on the sheet, for its Scale label.
+    let mut scales: Vec<f64> = Vec::new();
     // The sheet's own viewport (a view of itself) is not a view placed on it.
     if !facts
         .viewports
@@ -344,7 +350,10 @@ pub fn sheet_drawing(
             .sections
             .iter()
             .find(|v| v.id == vp.view && !v.template);
-        let (d, scale, name) = match (plan, section) {
+        // `origin`: where the view's own origin lies in what it draws (millimetres), which the
+        // viewport's offset places on the sheet; `frame`: the crop region (with the annotation
+        // crop when on) the viewport shows, `[x0, y0, x1, y1]` in the same millimetres.
+        let (d, scale, name, origin, frame) = match (plan, section) {
             (Some(view), _) => {
                 let (window, annotation) = view_window(model, facts, view)?;
                 let options = SheetOptions {
@@ -357,6 +366,8 @@ pub fn sheet_drawing(
                     super::sheet::plan_drawing(model, &options),
                     view.scale.unwrap_or(100.0),
                     view.name.clone(),
+                    [0.0, 0.0],
+                    None,
                 )
             }
             (None, Some(view)) => {
@@ -367,27 +378,95 @@ pub fn sheet_drawing(
                     ));
                     continue;
                 };
-                (
-                    super::sheet::projected_drawing(model, &window),
-                    view.scale.unwrap_or(100.0),
-                    view.name.clone(),
-                )
+                let scale = view.scale.unwrap_or(100.0);
+                let mut d = super::sheet::projected_drawing(model, &window, scale);
+                section_annotation(&mut d, model, facts, view, &window, scale);
+                let (origin, mut frame, annotation_crop) = section_frame(view, &window, scale);
+                // The viewport frames the crop and what the view draws beyond it (level and grid
+                // heads, notes), cut at the annotation crop when that is on: the outlines the
+                // authoring tool reports for sheet A2's viewports frame what they show, not
+                // their whole annotation crops.
+                if let Some(f) = frame.as_mut() {
+                    // A text reaches its end (its width at its em, 1.4 capital heights).
+                    let ends = d.entities.iter().filter_map(|e| match &e.geom {
+                        Geom::Text {
+                            at,
+                            height,
+                            rotation,
+                            value,
+                        } => {
+                            let w = value
+                                .lines()
+                                .map(|l| crate::plan_views::text_width(l, 1.4 * height))
+                                .fold(0.0, f64::max);
+                            Some([at[0] + w * rotation.cos(), at[1] + w * rotation.sin()])
+                        }
+                        _ => None,
+                    });
+                    if let Some(b) = rvt_dwg::bounds(
+                        d.entities
+                            .iter()
+                            .flat_map(|e| e.geom.samples(f64::MAX))
+                            .chain(ends),
+                    ) {
+                        *f = [
+                            f[0].min(b[0]),
+                            f[1].min(b[1]),
+                            f[2].max(b[2]),
+                            f[3].max(b[3]),
+                        ];
+                    }
+                    if let Some(a) = annotation_crop {
+                        *f = [
+                            f[0].max(a[0]),
+                            f[1].max(a[1]),
+                            f[2].min(a[2]),
+                            f[3].min(a[3]),
+                        ];
+                    }
+                }
+                (d, scale, view.name.clone(), origin, frame)
             }
-            _ => {
-                notes.push(format!(
-                    "sheet {}: view {} is not a plan, section or elevation view; not drawn yet",
-                    sheet.number, vp.view
-                ));
-                continue;
-            }
+            _ => match facts.other_views.iter().find(|v| v.id == vp.view) {
+                Some(v) if v.schedule => {
+                    notes.push(format!(
+                        "sheet {}: {:?} is a schedule; schedules are not drawn yet",
+                        sheet.number, v.name
+                    ));
+                    continue;
+                }
+                Some(v) => {
+                    let scale = v.scale.unwrap_or(1.0);
+                    let d = drafting_drawing(rf, facts, v.id, scale, notes);
+                    if d.entities.is_empty() {
+                        notes.push(format!(
+                            "sheet {}: drafting view {:?} drew nothing",
+                            sheet.number, v.name
+                        ));
+                    }
+                    (d, scale, v.name.clone(), [0.0, 0.0], None)
+                }
+                None => {
+                    notes.push(format!(
+                        "sheet {}: view {} is not a plan, section, elevation or drafting view; not drawn yet",
+                        sheet.number, vp.view
+                    ));
+                    continue;
+                }
+            },
         };
-        let Some(b) = rvt_dwg::bounds(d.entities.iter().flat_map(|e| e.geom.samples(f64::MAX)))
-        else {
+        if !scales.iter().any(|s| (s - scale).abs() < 1e-9) {
+            scales.push(scale);
+        }
+        let drawn = rvt_dwg::bounds(d.entities.iter().flat_map(|e| e.geom.samples(f64::MAX)));
+        // The viewport shows the view's crop region when it crops, else what the view draws.
+        let Some(b) = frame.or(drawn) else {
             continue;
         };
         // Model space holds the views side by side, each moved along x clear of the last.
-        let shift = next_x - b[0];
-        next_x += b[2] - b[0] + (20.0 * scale).max(10_000.0);
+        let room = drawn.map_or(b, |d| [d[0].min(b[0]), d[1], d[2].max(b[2]), d[3]]);
+        let shift = next_x - room[0];
+        next_x += room[2] - room[0] + (20.0 * scale).max(10_000.0);
         let t = Affine {
             a: 1.0,
             b: 0.0,
@@ -405,17 +484,23 @@ pub fn sheet_drawing(
             e.geom = e.geom.transformed(&t);
             out.entities.push(e);
         }
-        // Paper = offset + view coordinates / scale.
+        // Paper = offset + view coordinates (from the view's origin) / scale.
         let c = [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0];
         let o = mm(vp.offset);
-        // The frame holds what the view draws with 2 mm to spare, so nothing lies on its edge.
-        let (w, h) = ((b[2] - b[0]) / scale + 4.0, (b[3] - b[1]) / scale + 4.0);
+        // A crop frame is the crop itself; one around what the view draws has 2 mm to spare, so
+        // nothing lies on its edge.
+        let spare = if frame.is_some() { 0.0 } else { 4.0 };
+        let (w, h) = ((b[2] - b[0]) / scale + spare, (b[3] - b[1]) / scale + spare);
         ensure(&mut out, "G-ANNO-NPLT", 7);
         out.entities.push(paper(
             "VIEWPORT",
             "G-ANNO-NPLT",
             Geom::Viewport {
-                center: [o[0] + c[0] / scale, o[1] + c[1] / scale, 0.0],
+                center: [
+                    o[0] + (c[0] - origin[0]) / scale,
+                    o[1] + (c[1] - origin[1]) / scale,
+                    0.0,
+                ],
                 width: w,
                 height: h,
                 view_center: [c[0] + shift, c[1]],
@@ -463,6 +548,53 @@ pub fn sheet_drawing(
             Default::default()
         })
     };
+    // SHEET_SCALE: the views' one scale, or "As indicated" when they differ.
+    let scale_text = match scales.as_slice() {
+        [] => None,
+        [s] => Some(format!("1 : {}", (s * 1000.0).round() / 1000.0)),
+        _ => Some("As indicated".to_string()),
+    };
+    for t in &blocks {
+        let [c, s] = t.x_dir;
+        for l in facts.labels.iter().filter(|l| l.symbol == t.symbol) {
+            let value: String = l
+                .parts
+                .iter()
+                .filter_map(|(param, prefix, suffix)| {
+                    let v = match *param {
+                        -1_007_402 => scale_text.clone(),
+                        p => sheet
+                            .params
+                            .get(&p)
+                            .or_else(|| facts.project_info.get(&p))
+                            .cloned(),
+                    }?;
+                    Some(format!("{prefix}{v}{suffix}"))
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            if value.trim().is_empty() {
+                continue;
+            }
+            ensure(&mut out, "G-ANNO-TTLB", 7);
+            let (text, at) = label_text(l, &value);
+            // In the sheet: placed and turned by the title block.
+            let at = [
+                t.origin[0] + at[0] * c - at[1] * s,
+                t.origin[1] + at[0] * s + at[1] * c,
+            ];
+            out.entities.push(paper(
+                "TEXT",
+                "G-ANNO-TTLB",
+                Geom::Text {
+                    at: mm(at),
+                    height: text.0 * MM_PER_FOOT,
+                    rotation: text.1 + s.atan2(c),
+                    value,
+                },
+            ));
+        }
+    }
     for t in blocks {
         let Some((cs, texts)) = u32::try_from(t.symbol).ok().and_then(|s| graphics.get(&s)) else {
             notes.push(format!(
@@ -566,6 +698,344 @@ pub fn section_window(
     })
 }
 
+#[cfg(feature = "dwg")]
+/// Where a label's `value` starts (its baseline's left end) and its height and angle, in the
+/// symbol's frame: the label's point is the text's left, centre or right and its top, middle or
+/// bottom.
+fn label_text(l: &crate::plan_views::SymbolLabel, value: &str) -> ((f64, f64), [f64; 2]) {
+    let n = l.base[0].hypot(l.base[1]);
+    let (bx, by) = if n > 1e-9 {
+        (l.base[0] / n, l.base[1] / n)
+    } else {
+        (1.0, 0.0)
+    };
+    // The label's height is its text's box.
+    let h = crate::plan_views::text_em(l.height);
+    let along = match l.align.0 {
+        1 => -crate::plan_views::text_width(value, h),
+        0 => -crate::plan_views::text_width(value, h) / 2.0,
+        _ => 0.0,
+    };
+    // The baseline: an ascent below a top, a descent above a bottom, between for a middle.
+    let up = match l.align.1 {
+        1 => -0.905 * h,
+        0 => -0.3465 * h,
+        _ => 0.212 * h,
+    };
+    (
+        (crate::plan_views::cap_height(h), by.atan2(bx)),
+        [
+            l.at[0] + along * bx - up * by,
+            l.at[1] + along * by + up * bx,
+        ],
+    )
+}
+
+#[cfg(feature = "dwg")]
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+#[cfg(feature = "dwg")]
+/// Where a section's own origin lies in what [`super::sheet::projected_drawing`] draws (its crop
+/// box's origin, millimetres; a viewport's offset places that point on the sheet, measured on the
+/// samples' sheets against the authoring tool's viewport outlines), its crop rectangle and its
+/// annotation crop when that is on (the crop grown by sheet sizes, left, right, top, bottom).
+/// `None` when the view does not crop.
+fn section_frame(
+    view: &crate::plan_views::SectionView,
+    w: &super::sheet::ProjectedWindow,
+    scale: f64,
+) -> ([f64; 2], Option<[f64; 4]>, Option<[f64; 4]>) {
+    let on_view = |p: [f64; 3]| [dot3(p, w.right) * MM_PER_FOOT, dot3(p, w.up) * MM_PER_FOOT];
+    let origin = on_view(w.crop_origin);
+    let Some(c) = view
+        .crop
+        .as_ref()
+        .filter(|c| c.on && c.active[..2].iter().flatten().any(|a| *a))
+    else {
+        return (origin, None, None);
+    };
+    let corner = |x: f64, y: f64| {
+        on_view([0, 1, 2].map(|i| w.crop_origin[i] + x * c.axes[0][i] + y * c.axes[1][i]))
+    };
+    let frame = rvt_dwg::bounds(
+        [
+            corner(c.min[0], c.min[1]),
+            corner(c.max[0], c.min[1]),
+            corner(c.min[0], c.max[1]),
+            corner(c.max[0], c.max[1]),
+        ]
+        .into_iter(),
+    );
+    let annotation = frame
+        .zip(c.annotation)
+        .map(|(f, [left, right, top, bottom])| {
+            let k = scale * MM_PER_FOOT;
+            [
+                f[0] - left * k,
+                f[1] - bottom * k,
+                f[2] + right * k,
+                f[3] + top * k,
+            ]
+        });
+    (origin, frame, annotation)
+}
+
+#[cfg(feature = "dwg")]
+/// A section's own annotation, drawn into `d` in the view's axes like its elements: the text
+/// notes and detail lines it owns (model feet; text heights are sheet sizes).
+fn section_annotation(
+    d: &mut rvt_dwg::Drawing2d,
+    model: &IfcModel,
+    facts: &ViewFacts,
+    view: &crate::plan_views::SectionView,
+    w: &super::sheet::ProjectedWindow,
+    scale: f64,
+) {
+    use rvt_dwg::{Entity2d, Geom, Layer2d};
+    let on_view = |p: [f64; 3]| {
+        [
+            dot3(p, w.right) * MM_PER_FOOT,
+            dot3(p, w.up) * MM_PER_FOOT,
+            0.0,
+        ]
+    };
+    let layer = |d: &mut rvt_dwg::Drawing2d, name: &str| {
+        if !d.layers.iter().any(|l| l.name == name) {
+            d.layers.push(Layer2d::new(name, 7));
+        }
+    };
+    for t in facts.texts.iter().filter(|t| t.view == view.id) {
+        layer(d, "G-ANNO-TEXT");
+        d.entities.push(Entity2d::new(
+            "TEXT",
+            "G-ANNO-TEXT",
+            Geom::Text {
+                at: on_view(t.at),
+                height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale * MM_PER_FOOT,
+                rotation: dot3(t.base, w.up).atan2(dot3(t.base, w.right)),
+                value: t.value.clone(),
+            },
+        ));
+    }
+    // Levels (the model's storeys) and grids, across the crop: a level where its height meets the
+    // view (its name above and its height below the line's right end), a grid where it crosses
+    // the section plane (its head above the crop). Drawn in a view whose up is the model's.
+    let crop = view.crop.as_ref().filter(|_| w.up[2].abs() > 0.99);
+    let hidden = facts.section_hidden_categories(view);
+    if let Some(c) = crop {
+        let at =
+            |x: f64, y: f64, z: f64| {
+                on_view([0, 1, 2].map(|i| {
+                    w.crop_origin[i] + x * c.axes[0][i] + y * c.axes[1][i] + z * c.axes[2][i]
+                }))
+            };
+        let near = if dot3(c.axes[2], w.toward_viewer) >= 0.0 {
+            c.max[2]
+        } else {
+            c.min[2]
+        };
+        let k = scale * MM_PER_FOOT;
+        let text = |d: &mut rvt_dwg::Drawing2d, at: [f64; 3], value: String, layer: &str| {
+            d.entities.push(Entity2d::new(
+                "TEXT",
+                layer,
+                Geom::Text {
+                    at,
+                    height: 2.5 / MM_PER_FOOT * k,
+                    rotation: 0.0,
+                    value,
+                },
+            ));
+        };
+        let line = |d: &mut rvt_dwg::Drawing2d, a: [f64; 3], b: [f64; 3], layer: &str| {
+            d.entities
+                .push(Entity2d::new("LINE", layer, Geom::Line { a, b }));
+        };
+        // BuiltInCategory Levels.
+        if !hidden.contains(&-2_000_240) {
+            for l in &model.building_storeys {
+                let z = l.elevation_feet;
+                // The level's height in the crop's y (the view's up is the model's z).
+                let y = (z - w.crop_origin[2]) * c.axes[1][2];
+                if y < c.min[1] || y > c.max[1] {
+                    continue;
+                }
+                layer(d, "S-GRID");
+                layer(d, "S-GRID-IDEN");
+                let (a, b) = (at(c.min[0], y, near), at(c.max[0], y, near));
+                line(d, a, b, "S-GRID");
+                let right = if a[0] > b[0] { a } else { b };
+                let gap = 1.5 / MM_PER_FOOT * k;
+                text(
+                    d,
+                    [right[0] + gap, right[1] + gap, 0.0],
+                    l.name.clone(),
+                    "S-GRID-IDEN",
+                );
+                text(
+                    d,
+                    [
+                        right[0] + gap,
+                        right[1] - 2.0 * gap - 2.5 / MM_PER_FOOT * k,
+                        0.0,
+                    ],
+                    format!("{}", (z * MM_PER_FOOT).round()),
+                    "S-GRID-IDEN",
+                );
+            }
+        }
+        if !hidden.contains(&GRIDS) {
+            let plane = [0, 1, 2].map(|i| w.crop_origin[i] + near * c.axes[2][i]);
+            let radius = 6.5 / MM_PER_FOOT * k;
+            for g in facts
+                .grids
+                .iter()
+                .filter(|g| !view.hidden_elements.contains(&g.id))
+            {
+                let Some((o, dir)) = g.axis else { continue };
+                let along = dot3(dir, c.axes[2]);
+                if along.abs() < 0.2 {
+                    continue;
+                }
+                let t = dot3([0, 1, 2].map(|i| plane[i] - o[i]), c.axes[2]) / along;
+                let p = [0, 1, 2].map(|i| o[i] + t * dir[i] - w.crop_origin[i]);
+                let x = dot3(p, c.axes[0]);
+                if x < c.min[0] || x > c.max[0] {
+                    continue;
+                }
+                layer(d, "S-GRID");
+                layer(d, "S-GRID-IDEN");
+                let (a, top) = (at(x, c.min[1], near), at(x, c.max[1], near));
+                line(d, a, top, "S-GRID");
+                let centre = [top[0], top[1] + radius];
+                for i in 0..32 {
+                    let p = |i: usize| {
+                        let t = std::f64::consts::TAU * i as f64 / 32.0;
+                        [
+                            centre[0] + radius * t.cos(),
+                            centre[1] + radius * t.sin(),
+                            0.0,
+                        ]
+                    };
+                    line(d, p(i), p(i + 1), "S-GRID-IDEN");
+                }
+                let tw = crate::plan_views::text_width(&g.name, 1.4 * 2.5 / MM_PER_FOOT * k);
+                text(
+                    d,
+                    [
+                        centre[0] - tw / 2.0,
+                        centre[1] - 0.36 * 2.5 / MM_PER_FOOT * k,
+                        0.0,
+                    ],
+                    g.name.clone(),
+                    "S-GRID-IDEN",
+                );
+            }
+        }
+    }
+    for c in facts.curves.iter().filter(|c| c.view == Some(view.id)) {
+        layer(d, "A-DETL");
+        for s in c.points.windows(2) {
+            d.entities.push(Entity2d::new(
+                "LINE",
+                "A-DETL",
+                Geom::Line {
+                    a: on_view(s[0]),
+                    b: on_view(s[1]),
+                },
+            ));
+        }
+    }
+}
+
+#[cfg(feature = "dwg")]
+/// A drafting view: the text notes and detail lines it owns and the lines of the drawings
+/// imported into it, in its own 2D coordinates (model feet at its scale; text heights are sheet
+/// sizes), millimetres. An imported drawing's texts are not read yet.
+fn drafting_drawing(
+    rf: &mut crate::RevitFile,
+    facts: &ViewFacts,
+    id: i64,
+    scale: f64,
+    notes: &mut Vec<String>,
+) -> rvt_dwg::Drawing2d {
+    use rvt_dwg::{Drawing2d, Entity2d, Geom, Layer2d, Layout2d, MODEL_SPACE};
+    let mm = |p: [f64; 3]| [p[0] * MM_PER_FOOT, p[1] * MM_PER_FOOT, 0.0];
+    let mut d = Drawing2d {
+        version: "AC1032".into(),
+        units: 4,
+        code_page: "ANSI_1252".into(),
+        layers: vec![Layer2d::new("0", 7)],
+        layouts: vec![Layout2d {
+            name: "Model".into(),
+            block: MODEL_SPACE.into(),
+            tab_order: 0,
+            is_model: true,
+            limits: None,
+        }],
+        ..Default::default()
+    };
+    for t in facts.texts.iter().filter(|t| t.view == id) {
+        d.entities.push(Entity2d::new(
+            "TEXT",
+            "G-ANNO-TEXT",
+            Geom::Text {
+                at: mm(t.at),
+                height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale * MM_PER_FOOT,
+                rotation: t.rotation,
+                value: t.value.clone(),
+            },
+        ));
+    }
+    for c in facts.curves.iter().filter(|c| c.view == Some(id)) {
+        for s in c.points.windows(2) {
+            d.entities.push(Entity2d::new(
+                "LINE",
+                "A-DETL",
+                Geom::Line {
+                    a: mm(s[0]),
+                    b: mm(s[1]),
+                },
+            ));
+        }
+    }
+    let imports: Vec<_> = facts.imports.iter().filter(|i| i.0 == id).collect();
+    if !imports.is_empty() {
+        let wanted = imports.iter().map(|i| i.1 as u64).collect();
+        let graphics = super::plan_maps::symbol_sheet_graphics(rf, &wanted).unwrap_or_else(|e| {
+            notes.push(format!("imported drawing not read: {e}"));
+            Default::default()
+        });
+        for (_, symbol, [x, y, o]) in imports {
+            let Some((curves, _)) = u32::try_from(*symbol).ok().and_then(|s| graphics.get(&s))
+            else {
+                continue;
+            };
+            let place = |p: (f64, f64)| mm([0, 1, 2].map(|i| o[i] + p.0 * x[i] + p.1 * y[i]));
+            for c in curves {
+                for s in super::sheet::symbol_points(c).windows(2) {
+                    d.entities.push(Entity2d::new(
+                        "LINE",
+                        "G-ANNO-IMPT",
+                        Geom::Line {
+                            a: place(s[0]),
+                            b: place(s[1]),
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    for name in ["G-ANNO-TEXT", "A-DETL", "G-ANNO-IMPT"] {
+        if d.entities.iter().any(|e| e.layer == name) {
+            d.layers.push(Layer2d::new(name, 7));
+        }
+    }
+    d
+}
+
 /// Which sheet or view to draw: a sheet, a plan view, or a section or elevation, by ElementId.
 #[cfg(feature = "dwg")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -637,17 +1107,20 @@ pub fn view_drawing(
                 .ok_or_else(|| format!("no section or elevation {id}"))?;
             let window = section_window(facts, view)
                 .ok_or_else(|| format!("{:?} has no crop box decoded", view.name))?;
+            let scale = view.scale.unwrap_or(100.0);
+            let mut drawing = super::sheet::projected_drawing(model, &window, scale);
+            section_annotation(&mut drawing, model, facts, view, &window, scale);
             Ok(ViewDrawing {
-                drawing: super::sheet::projected_drawing(model, &window),
+                drawing,
                 layout: None,
-                scale: view.scale.unwrap_or(100.0),
+                scale,
             })
         }
     }
 }
 
-/// A drawing as `dxf`, `dwg` (in `version`: 2018, 2013, ...) or `pdf` (`layout` drawn: a sheet;
-/// `None` for model space at 1:`scale`), with the writer's notes.
+/// A drawing as `dxf`, `dwg` (in `version`: 2018, 2013, ...), `pdf` or `svg` (`layout` drawn: a
+/// sheet; `None` for model space, a PDF's at 1:`scale`), with the writer's notes.
 #[cfg(feature = "dwg")]
 pub fn drawing_bytes(
     drawing: &rvt_dwg::Drawing2d,
@@ -663,9 +1136,14 @@ pub fn drawing_bytes(
                 .map(|p| (p.bytes, Vec::new()))
                 .map_err(|e| e.to_string());
         }
+        "svg" => {
+            return rvt_dwg::svg::render(drawing, layout, &rvt_dwg::Limits::DEFAULT)
+                .map(|s| (s.svg.into_bytes(), Vec::new()))
+                .map_err(|e| e.to_string());
+        }
         "dwg" => CadFormat::Dwg,
         "dxf" => CadFormat::Dxf,
-        other => return Err(format!("unknown format {other:?}: dxf, dwg or pdf")),
+        other => return Err(format!("unknown format {other:?}: dxf, dwg, pdf or svg")),
     };
     let version = parse_version(version, format).map_err(|e| e.to_string())?;
     write_drawing(drawing, format, version).map_err(|e| e.to_string())

@@ -117,6 +117,9 @@ pub struct ViewText {
     pub height: Option<f64>,
     /// Angle of the text's base direction, radians.
     pub rotation: f64,
+    /// The text's base direction, model axes (a section's text runs along the section's right).
+    #[serde(skip)]
+    pub base: [f64; 3],
 }
 
 /// A dimension a view owns: its reference points, model feet.
@@ -205,6 +208,39 @@ pub struct Sheet {
     pub id: i64,
     pub number: String,
     pub name: String,
+    /// The sheet's own text parameters a title block label can show, by BuiltInParameter id
+    /// (sheet name and number, drawn and checked by, dates).
+    #[serde(skip)]
+    pub params: BTreeMap<i64, String>,
+}
+
+/// A view that is neither a plan, section nor sheet: a drafting view (its content drawn in its
+/// own 2D coordinates at its scale) or a schedule.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct OtherView {
+    pub id: i64,
+    pub name: String,
+    pub scale: Option<f64>,
+    pub schedule: bool,
+}
+
+/// A label in an annotation family symbol (a title block's sheet number, project name, ...): a
+/// text drawn from parameter values, `m_tagNoteData` of the `FamilySymbol`. Its point, along its
+/// base direction, is the left, centre or right of the text and its top, middle or bottom
+/// (`align`), measured on the Technical School sample's title block against the authoring tool's
+/// own PDF of its sheets. Paper feet in the symbol's frame.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct SymbolLabel {
+    pub symbol: i64,
+    pub at: [f64; 2],
+    pub base: [f64; 2],
+    /// Text height (`m_height`) and the label box's width (`m_lineWidth`).
+    pub height: f64,
+    pub width: f64,
+    /// Horizontal: -1 left, 0 centre, 1 right; vertical: 1 top, 0 middle, -1 bottom.
+    pub align: (i8, i8),
+    /// The parameters shown, in order: BuiltInParameter id, prefix, suffix.
+    pub parts: Vec<(i64, String, String)>,
 }
 
 /// A view placed on a sheet.
@@ -248,6 +284,18 @@ pub struct ViewFacts {
     pub sheets: Vec<Sheet>,
     pub viewports: Vec<SheetViewport>,
     pub title_blocks: Vec<TitleBlock>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub other_views: Vec<OtherView>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<SymbolLabel>,
+    /// Imported drawings placed in a view (`ImportInstance`): the view, the import's symbol, and
+    /// its placement (x axis, y axis, origin; model feet).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<(i64, i64, [[f64; 3]; 3])>,
+    /// The project information's text parameters (project name and number, client, issue date),
+    /// by BuiltInParameter id.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub project_info: BTreeMap<i64, String>,
 }
 
 fn id(f: &Fields, name: &str) -> Option<i64> {
@@ -305,6 +353,122 @@ fn pointee<'a>(o: &'a SchemaObject, f: &Fields, name: &str) -> Option<&'a Fields
         Value::New { index, .. } => o.objects.get(*index),
         _ => None,
     }
+}
+
+/// Helvetica's advance widths of the printable ASCII characters, thousandths of the text height
+/// (the font the PDF and SVG output draw text in, as wide as the authoring tool's sans-serif);
+/// other characters take a digit's width.
+const HELVETICA: [u16; 95] = [
+    278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556,
+    556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667,
+    611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667,
+    667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500,
+    222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
+];
+
+/// The width of `value` drawn `height` high, in the units of `height`.
+pub fn text_width(value: &str, height: f64) -> f64 {
+    let w: u32 = value
+        .chars()
+        .map(|ch| {
+            (ch as u32)
+                .checked_sub(32)
+                .and_then(|i| HELVETICA.get(i as usize))
+                .copied()
+                .unwrap_or(556) as u32
+        })
+        .sum();
+    w as f64 / 1000.0 * height
+}
+
+/// The em of the text whose box (ascent to descent, `m_height` of a text note or label) is
+/// `box_height`: 0.905 + 0.212 of the em in the sans-serif fonts' metrics. Measured on the
+/// Technical School sample's sheet A2 against the authoring tool's own PDF of it: a note's text
+/// and the title block's labels are as wide as Helvetica at this em, to within 1%.
+pub fn text_em(box_height: f64) -> f64 {
+    box_height / 1.117
+}
+
+/// A drawn text's height, the height of its capitals, from its em (the drawings take a capital
+/// as 1/1.4 of the em, as DXF text heights are written).
+pub fn cap_height(em: f64) -> f64 {
+    em / 1.4
+}
+
+/// A text note's text and height as drawn (the height of its capitals). A note's `m_height` is its
+/// box's, all its lines: a note that wraps in its box (`width` wide) has the fewest lines whose
+/// text, at the box's em shared among them, fits their width, and the text is broken into them at
+/// spaces.
+fn wrapped(value: String, height: Option<f64>, width: Option<f64>) -> (String, Option<f64>) {
+    let Some(em) = height.map(text_em) else {
+        return (value, height);
+    };
+    let lines = width
+        .filter(|w| *w > 0.0)
+        .map_or(1.0, |w| (text_width(&value, em) / w).sqrt().ceil().max(1.0));
+    if lines <= 1.0 || value.contains('\n') {
+        return (value, Some(cap_height(em)));
+    }
+    let (em, w) = (em / lines, width.unwrap_or(0.0));
+    let mut out: Vec<String> = Vec::new();
+    for word in value.split(' ') {
+        match out.last_mut() {
+            Some(line) if text_width(&format!("{line} {word}"), em) <= w * 1.05 => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => out.push(word.to_string()),
+        }
+    }
+    (out.join("\n"), Some(cap_height(em)))
+}
+
+/// A `TagNoteData` as a [`SymbolLabel`] of `symbol`.
+fn symbol_label(symbol: i64, f: &Fields) -> Option<SymbolLabel> {
+    let at = point(f, "m_orig")?;
+    let base = point(f, "m_baseVec").unwrap_or([1.0, 0.0, 0.0]);
+    let flags = match f.get("m_flags") {
+        Some(Value::Int(i)) => *i,
+        _ => 0,
+    };
+    // `m_flags`: 0x40 left, 0x1 centre, 0x2 right; 0x200 top, 0x400 middle, 0x800 bottom.
+    let h = if flags & 2 != 0 {
+        1
+    } else if flags & 1 != 0 {
+        0
+    } else {
+        -1
+    };
+    let v = if flags & 0x800 != 0 {
+        -1
+    } else if flags & 0x400 != 0 {
+        0
+    } else {
+        1
+    };
+    let mut parts = Vec::new();
+    if let Some(Value::List(items)) = f.get("m_paramDataFormattingArr") {
+        for item in items {
+            let Value::Object(p) = item else { continue };
+            let Some(Value::Id(param)) = p.get("m_paramId") else {
+                continue;
+            };
+            parts.push((
+                *param,
+                text(p, "m_prefix").unwrap_or_default(),
+                text(p, "m_suffix").unwrap_or_default(),
+            ));
+        }
+    }
+    (!parts.is_empty()).then(|| SymbolLabel {
+        symbol,
+        at: [at[0], at[1]],
+        base: [base[0], base[1]],
+        height: float(f, "m_height").unwrap_or(2.5 / 304.8),
+        width: float(f, "m_lineWidth").unwrap_or(0.0),
+        align: (h, v),
+        parts,
+    })
 }
 
 fn crop_box(f: &Fields) -> Option<CropBox> {
@@ -409,6 +573,9 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
             "DBViewSection",
             "Viewport",
             "FamilyInstance",
+            "FamilySymbol",
+            "ProjectInfo",
+            "ImportInstance",
         ],
     );
     // Partition sections are the loaded families' own documents: a curve after a section start
@@ -508,12 +675,80 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                     });
                 }
                 Some("DBView") => {
+                    let name = text(root, "m_viewName").unwrap_or_default();
                     if let Some(number) = text(root, "m_sheetNumber").filter(|n| !n.is_empty()) {
+                        // BuiltInParameter SHEET_NAME, SHEET_NUMBER, SHEET_DATE, SHEET_DRAWN_BY,
+                        // SHEET_CHECKED_BY, SHEET_DESIGNED_BY, SHEET_APPROVED_BY, SHEET_ISSUE_DATE.
+                        let mut params = BTreeMap::from([
+                            (-1_007_400, name.clone()),
+                            (-1_007_401, number.clone()),
+                        ]);
+                        for (p, field) in [
+                            (-1_007_403, "m_date"),
+                            (-1_007_404, "m_drawnBy"),
+                            (-1_007_405, "m_checkedBy"),
+                            (-1_007_407, "m_designedBy"),
+                            (-1_007_408, "m_approvedBy"),
+                            (-1_006_322, "m_issueDate"),
+                        ] {
+                            if let Some(v) = text(root, field) {
+                                params.insert(p, v);
+                            }
+                        }
                         out.sheets.push(Sheet {
                             id: element,
                             number,
-                            name: text(root, "m_viewName").unwrap_or_default(),
+                            name,
+                            params,
                         });
+                    } else if !in_family(o) {
+                        let class = layouts
+                            .classes
+                            .get(&o.frame.header.tag)
+                            .map(|c| c.name.as_str())
+                            .unwrap_or_default();
+                        out.other_views.push(OtherView {
+                            id: element,
+                            name,
+                            scale: float(root, "m_scale").filter(|s| *s > 0.0).map(|s| 1.0 / s),
+                            schedule: class.contains("Schedule"),
+                        });
+                    }
+                }
+                Some("ImportInstance") if !in_family(o) => {
+                    let info = pointee(o, root, "m_pInstanceInfo");
+                    let symbol = info.and_then(|i| id(i, "m_symbolId"));
+                    let t = info
+                        .and_then(|i| i.get("m_Trf"))
+                        .map(floats)
+                        .unwrap_or_default();
+                    if let (Some(view), Some(symbol), true) = (owner, symbol, t.len() == 12) {
+                        out.imports.push((
+                            view,
+                            symbol,
+                            [[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[9], t[10], t[11]]],
+                        ));
+                    }
+                }
+                Some("ProjectInfo") if !in_family(o) => {
+                    for (p, v) in o.stored_parameters() {
+                        if let ParamValue::String(s) = v {
+                            out.project_info.insert(p, s);
+                        }
+                    }
+                }
+                Some("FamilySymbol") if !in_family(o) => {
+                    if let Some(Value::List(items)) = root.get("m_tagNoteData") {
+                        for item in items {
+                            let Value::New { index, .. } = item else {
+                                continue;
+                            };
+                            if let Some(label) =
+                                o.objects.get(*index).and_then(|f| symbol_label(element, f))
+                            {
+                                out.labels.push(label);
+                            }
+                        }
                     }
                 }
                 Some("Viewport") => {
@@ -684,12 +919,18 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                         let value = rtf_text(o, root);
                         if !value.trim().is_empty() {
                             let base = point(root, "m_baseVec").unwrap_or([1.0, 0.0, 0.0]);
+                            let (value, height) = wrapped(
+                                value,
+                                float(root, "m_height"),
+                                float(root, "m_lineWidth").filter(|_| !flag(root, "m_bNoWrapping")),
+                            );
                             out.texts.push(ViewText {
                                 view,
                                 at,
                                 value,
-                                height: float(root, "m_height"),
+                                height,
                                 rotation: base[1].atan2(base[0]),
+                                base,
                             });
                         }
                     }
@@ -894,6 +1135,9 @@ fn rtf_text(o: &SchemaObject, root: &Fields) -> String {
                         Value::Int(i) => u8::try_from(*i & 0xff).ok(),
                         _ => None,
                     })
+                    // The stream ends at its terminating zero (a section's notes keep bytes after
+                    // it, which wrote a NUL into the SVG, where XML forbids it).
+                    .take_while(|b| *b != 0)
                     .collect(),
             ),
             _ => None,

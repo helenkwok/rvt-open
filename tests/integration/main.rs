@@ -305,6 +305,8 @@ mod serial_number;
 mod shaft_sketch_loops;
 #[path = "../shared_shapes.rs"]
 mod shared_shapes;
+#[path = "../sheet_drawings.rs"]
+mod sheet_drawings;
 #[path = "../sheet_listing.rs"]
 mod sheet_listing;
 #[path = "../sheet_view.rs"]
