@@ -443,6 +443,47 @@ impl IfcxGraph {
                     }
                 }
             }
+            // Revit's Volume and Area of a wall, which it computes and does
+            // not save: the net volume and net side area the IFC4 model gives
+            // it (the same values on 451 of the 470 measured walls; not on
+            // structural columns and framing, which are left out).
+            let wall = self.nodes.get(&path).is_some_and(|n| {
+                n.attributes
+                    .get("bsi::ifc::class")
+                    .and_then(|c| c.get("code"))
+                    .and_then(Value::as_str)
+                    == Some("IfcWall")
+            });
+            for (quantity, label, unit) in [
+                ("bsi::ifc::prop::NetVolume", "Volume", "Volume"),
+                ("bsi::ifc::prop::NetSideArea", "Area", "Area"),
+            ] {
+                if !wall {
+                    break;
+                }
+                let key = property_key("Dimensions", label);
+                let Some(n) = self.nodes.get(&path) else {
+                    continue;
+                };
+                let Some(value) = n
+                    .attributes
+                    .get(quantity)
+                    .filter(|v| v.is_number())
+                    .cloned()
+                else {
+                    continue;
+                };
+                if inherited.contains(&key) || n.attributes.contains_key(&key) {
+                    continue;
+                }
+                let ty = Ty::Real(Some(unit));
+                if *self.schemas.entry(key.clone()).or_insert(ty.clone()) != ty {
+                    continue;
+                }
+                if let Some(n) = self.nodes.get_mut(&path) {
+                    n.attributes.insert(key, value);
+                }
+            }
         }
         if self.nodes.contains_key(&parent) {
             let project = self.project.clone();

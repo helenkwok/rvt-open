@@ -51,6 +51,15 @@ pub fn parameter(id: i64) -> Option<BuiltInParameter> {
     })
 }
 
+/// The built-in parameter whose `BuiltInParameter` enum name is
+/// `enum_name`, `None` for one not known.
+pub fn parameter_by_enum(enum_name: &str) -> Option<BuiltInParameter> {
+    table::PARAMETERS
+        .iter()
+        .find(|row| row.2 == enum_name)
+        .and_then(|row| parameter(row.0))
+}
+
 /// The text Revit shows for the integer `value` of the enumeration
 /// parameter `id`, `None` where not known.
 pub fn enum_text(id: i64, value: i64) -> Option<&'static str> {
@@ -126,6 +135,10 @@ mod tests {
         assert_eq!(height.group, "Constraints");
         assert_eq!(parameter(-1_140_422).map(|p| p.name), Some("Keynote"));
         assert_eq!(parameter(1), None);
+        assert_eq!(
+            parameter_by_enum("WALL_USER_HEIGHT_PARAM").map(|p| p.id),
+            Some(-1_001_105)
+        );
         assert_eq!(category(-2_000_011), Some(("OST_Walls", "Walls")));
         assert_eq!(category_name(-2_000_080), Some("Furniture"));
         assert_eq!(

@@ -147,9 +147,12 @@ pub fn property(parameter: &ElementParameter) -> Option<Property> {
     revit_property(parameter, false)
 }
 
-/// With `raw_enums`, an enumeration whose text is not known is written as
-/// its integer instead of being left out (IFCX).
-fn revit_property(parameter: &ElementParameter, raw_enums: bool) -> Option<Property> {
+/// With `all` (IFCX), what Revit's exporter leaves out is written as saved:
+/// an enumeration whose text is not known as its integer, a real of another
+/// spec as its number in Revit's internal units, an ElementId that names
+/// nothing with a name (no option, no phase, an unbound level) as its id, and
+/// the main model's Design Option as `-1`, as the API shows them.
+fn revit_property(parameter: &ElementParameter, all: bool) -> Option<Property> {
     let name = parameter.name.clone()?;
     let spec = parameter.spec_type_id.as_deref().unwrap_or("");
     let spec_kind = |prefix: &str| spec.starts_with(prefix);
@@ -165,7 +168,7 @@ fn revit_property(parameter: &ElementParameter, raw_enums: bool) -> Option<Prope
                 let n = value.as_i64()?;
                 match crate::builtin_parameters::enum_text(parameter.parameter_id, n) {
                     Some(text) => PropertyValue::Label(text.to_string()),
-                    None if raw_enums => PropertyValue::Integer(n),
+                    None if all => PropertyValue::Integer(n),
                     None => return None,
                 }
             }
@@ -196,6 +199,8 @@ fn revit_property(parameter: &ElementParameter, raw_enums: bool) -> Option<Prope
             } else if spec_kind("autodesk.spec.aec.electrical:current-") {
                 // Revit's internal unit of current is the ampere.
                 PropertyValue::ElectricCurrent(v)
+            } else if all {
+                PropertyValue::Real(v)
             } else {
                 return None;
             }
@@ -205,7 +210,7 @@ fn revit_property(parameter: &ElementParameter, raw_enums: bool) -> Option<Prope
         // Architectural (2024) writes it in Identity Data.
         "ElementId" if parameter.parameter_id == crate::native_metadata::DESIGN_OPTION_ID => {
             match parameter.value.as_i64() {
-                Some(option) if option > 0 => PropertyValue::Label(option.to_string()),
+                Some(option) if option > 0 || all => PropertyValue::Label(option.to_string()),
                 _ => return None,
             }
         }
@@ -214,7 +219,15 @@ fn revit_property(parameter: &ElementParameter, raw_enums: bool) -> Option<Prope
         // the same name (as measured on Snowdon Towers Architectural; Revit
         // writes `Parameter.AsValueString`).
         "ElementId" => {
-            let name = parameter.target_name.clone()?;
+            let Some(name) = parameter.target_name.clone() else {
+                return all
+                    .then(|| parameter.value.as_i64())
+                    .flatten()
+                    .map(|id| Property {
+                        name,
+                        value: PropertyValue::Label(id.to_string()),
+                    });
+            };
             PropertyValue::Label(match &parameter.target_family {
                 Some(family) if *family != name => format!("{family} : {name}"),
                 _ => name,
@@ -228,10 +241,12 @@ fn revit_property(parameter: &ElementParameter, raw_enums: bool) -> Option<Prope
 /// `parameters` grouped into Revit's sets. In each group one parameter is
 /// kept per name with its spaces removed, the one of the lowest parameter id,
 /// whether or not it is written. Returns the sets and how many parameters
-/// were left out. `raw_enums`: see [`revit_property`].
+/// were left out. `all` (IFCX): see [`revit_property`]; the IFC group's
+/// built-ins are kept too, and a parameter of a group not known is in
+/// `Other`.
 pub(crate) fn grouped<'a>(
     parameters: impl Iterator<Item = &'a ElementParameter>,
-    raw_enums: bool,
+    all: bool,
 ) -> (BTreeMap<&'static str, Vec<Property>>, usize) {
     let mut parameters: Vec<&ElementParameter> = parameters.collect();
     parameters.sort_by_key(|p| p.parameter_id);
@@ -241,9 +256,10 @@ pub(crate) fn grouped<'a>(
     for parameter in parameters {
         let label = match parameter.kind {
             ParameterKind::BuiltIn
-                if parameter
-                    .builtin
-                    .is_some_and(|name| name.starts_with("IFC_")) =>
+                if !all
+                    && parameter
+                        .builtin
+                        .is_some_and(|name| name.starts_with("IFC_")) =>
             {
                 None
             }
@@ -256,7 +272,7 @@ pub(crate) fn grouped<'a>(
                     .filter(|group| !group.is_empty())
                     .unwrap_or("Other"),
             ),
-            _ => group_label(parameter.group_type_id.as_deref()),
+            _ => group_label(parameter.group_type_id.as_deref()).or(all.then_some("Other")),
         };
         let Some(label) = label else {
             left_out += 1;
@@ -267,7 +283,7 @@ pub(crate) fn grouped<'a>(
             left_out += 1;
             continue;
         }
-        match revit_property(parameter, raw_enums) {
+        match revit_property(parameter, all) {
             Some(property) => sets.entry(label).or_default().push(property),
             None => left_out += 1,
         }

@@ -624,10 +624,11 @@ fn run(args: Args) -> anyhow::Result<()> {
             .values()
             .map(|&t| u64::from(t))
             .collect();
-        rvt::ifc::ifcx_revit_elements::read(&mut rf, &named_types).unwrap_or_else(|e| {
-            eprintln!("rvt-ifc: warning: IFCX written without the file's other elements: {e}");
-            Vec::new()
-        })
+        rvt::ifc::ifcx_revit_elements::read(&mut rf, &named_types, model.georeference.as_ref())
+            .unwrap_or_else(|e| {
+                eprintln!("rvt-ifc: warning: IFCX written without the file's other elements: {e}");
+                Vec::new()
+            })
     } else {
         Vec::new()
     };

@@ -1,42 +1,42 @@
 # rvt-open's IFCX totals over every release of the tiny models: tools/ifcx-coverage/coverage.py fails when one drops. Raise them when a change carries more.
 set	kind	what	ifcx
 1	element instances	objects	240
-1	element instances	parameters	2706
+1	element instances	parameters	4264
 1	type objects	objects	90
-1	type objects	parameters	524
-1	unused type objects	objects	26205
+1	type objects	parameters	633
+1	unused type objects	objects	31045
 1	levels and grids	objects	100
-1	levels and grids	parameters	250
-1	site and location	objects	0
-1	site and location	parameters	0
+1	levels and grids	parameters	1150
+1	site and location	objects	345
+1	site and location	parameters	1390
 1	project info	objects	50
-1	project info	parameters	350
+1	project info	parameters	450
 1	materials	objects	4745
-1	materials	parameters	32655
+1	materials	parameters	42145
 1	phases	objects	100
-1	phases	parameters	200
-1	views	objects	1100
-1	views	parameters	2200
-1	revisions	objects	0
-1	revisions	parameters	0
+1	phases	parameters	400
+1	views	objects	1200
+1	views	parameters	19700
+1	revisions	objects	50
+1	revisions	parameters	370
 2	element instances	objects	1327
-2	element instances	parameters	7250
-2	type objects	objects	310
-2	type objects	parameters	1633
-2	unused type objects	objects	89354
-2	levels and grids	objects	350
-2	levels and grids	parameters	875
-2	site and location	objects	0
-2	site and location	parameters	0
+2	element instances	parameters	13689
+2	type objects	objects	312
+2	type objects	parameters	2016
+2	unused type objects	objects	105810
+2	levels and grids	objects	400
+2	levels and grids	parameters	4450
+2	site and location	objects	1173
+2	site and location	parameters	4726
 2	project info	objects	170
-2	project info	parameters	1190
+2	project info	parameters	1530
 2	materials	objects	16133
-2	materials	parameters	111027
+2	materials	parameters	143293
 2	phases	objects	340
-2	phases	parameters	680
+2	phases	parameters	1360
 2	design options	objects	14
-2	design options	parameters	28
-2	views	objects	3765
-2	views	parameters	7530
-2	revisions	objects	0
-2	revisions	parameters	0
+2	design options	parameters	56
+2	views	objects	4105
+2	views	parameters	67685
+2	revisions	objects	170
+2	revisions	parameters	1258
