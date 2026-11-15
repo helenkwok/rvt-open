@@ -532,7 +532,9 @@ pub(super) fn attach_wall_cut_openings(
         cabinets.remove(id);
         doors.remove(id);
     }
-    if hosts.is_empty() {
+    // With no framed wall the steps are still read: an unframed wall counts
+    // each one a framed wall would write.
+    if walls.is_empty() {
         return left_out;
     }
     let Ok(mut steps) = native_wall_cuts::wall_cut_steps(rf, &walls) else {

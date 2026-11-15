@@ -414,6 +414,8 @@ def outline_of(points):
     """(orientation in degrees from 0 up to 90 of the smallest rectangle around the plan outline of a mesh,
     the share of that rectangle the convex hull fills), or None where the hull has no area. `points` is (n, 2)."""
     hull = numpy.array(convex_hull(points))
+    # Local coordinates: products of site-offset coordinates lose a small hull's area.
+    hull = hull - hull[0] if len(hull) else hull
     if len(hull) < 3:
         return None
     x, y = hull[:, 0], hull[:, 1]

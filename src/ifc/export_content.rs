@@ -9124,8 +9124,13 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
     // 1229815 and 4233698 stood as level blocks of 16.92 and 14.41 m³ where
     // Revit's export holds 1.19 and 0.56 m³, and on 2018 to 2023, where roof
     // slopes are newly read, they would have.
+    // A roof of several loops is not sloped by design: each loop is its
+    // plan's prism, so it keeps its outline and its further pieces.
     let undrawn_slopes = class == "Roof"
         && roof_slope.is_none()
+        && profile
+            .as_ref()
+            .is_none_or(|profile| profile.pieces.is_empty())
         && !crate::partition_schema_mvp::roof_slopes_from_fields(&decoded.fields).is_empty();
     let profile = profile.filter(|_| !undrawn_slopes);
     // A floor whose corner vertices are shape-edited rises along the

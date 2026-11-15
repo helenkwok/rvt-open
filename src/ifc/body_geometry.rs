@@ -527,6 +527,18 @@ fn build_section(outer: &[Point2], holes: &[Ring], exact: bool) -> Option<Sectio
     if signed_area(&outer) < 0.0 {
         outer.reverse();
     }
+    // A hole `clean` refuses is dropped only where it encloses nothing (a
+    // sliver): in exact mode one that crosses itself (a bow tie whose signed
+    // area cancels) or holds a non-finite point refuses the section.
+    if exact
+        && holes.iter().any(|hole| {
+            clean(hole).is_none()
+                && (crosses_itself(hole)
+                    || hole.iter().any(|p| !(p.0.is_finite() && p.1.is_finite())))
+        })
+    {
+        return None;
+    }
     let holes: Vec<Ring> = holes
         .iter()
         .filter_map(|hole| clean(hole))
@@ -2254,6 +2266,12 @@ mod tests {
     fn degenerate_profiles_have_no_section() {
         assert!(section(&[(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)], &[]).is_none());
         assert!(section(&[(0.0, 0.0), (1.0, 0.0)], &[]).is_none());
+        // A bow-tie hole cancels its own signed area: exact refuses the
+        // section rather than fill the hole, drawing keeps the square.
+        let square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let bow_tie = vec![(1.0, 1.0), (3.0, 3.0), (1.0, 3.0), (3.0, 1.0)];
+        assert!(exact_section(&square, std::slice::from_ref(&bow_tie)).is_none());
+        assert!(section(&square, &[bow_tie]).is_some());
         assert!(section(&[(0.0, 0.0), (f64::NAN, 0.0), (1.0, 1.0)], &[]).is_none());
         assert!(
             profile_rings(&ProfileDef::Rectangle {
