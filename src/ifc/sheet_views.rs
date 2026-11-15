@@ -962,20 +962,43 @@ fn section_annotation(
     }) {
         layer(d, "A-DETL");
         for s in c.points.windows(2) {
-            let (a, b) = (on_view(s[0]), on_view(s[1]));
-            if !shown([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 0.0]) {
+            // The part inside the annotation crop.
+            let Some((a, b)) = clip_to_rect(on_view(s[0]), on_view(s[1]), annotation_crop) else {
                 continue;
-            }
-            d.entities.push(Entity2d::new(
-                "LINE",
-                "A-DETL",
-                Geom::Line {
-                    a: on_view(s[0]),
-                    b: on_view(s[1]),
-                },
-            ));
+            };
+            d.entities
+                .push(Entity2d::new("LINE", "A-DETL", Geom::Line { a, b }));
         }
     }
+}
+
+#[cfg(feature = "dwg")]
+/// The part of segment `a`-`b` inside `rect` (`[x0, y0, x1, y1]`; all of it with no rect), by
+/// Liang-Barsky.
+fn clip_to_rect(a: [f64; 3], b: [f64; 3], rect: Option<[f64; 4]>) -> Option<([f64; 3], [f64; 3])> {
+    let Some(r) = rect else {
+        return Some((a, b));
+    };
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (num, den) in [
+        (a[0] - r[0], -dx),
+        (r[2] - a[0], dx),
+        (a[1] - r[1], -dy),
+        (r[3] - a[1], dy),
+    ] {
+        if den == 0.0 {
+            if num < 0.0 {
+                return None;
+            }
+        } else if den < 0.0 {
+            t0 = t0.max(num / den);
+        } else {
+            t1 = t1.min(num / den);
+        }
+    }
+    let at = |t: f64| [a[0] + t * dx, a[1] + t * dy, 0.0];
+    (t0 < t1).then(|| (at(t0), at(t1)))
 }
 
 #[cfg(feature = "dwg")]
