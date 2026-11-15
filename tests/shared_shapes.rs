@@ -186,11 +186,14 @@ fn nordic_office_concrete_draws_shared_shapes_in_place() {
             // their stored origin, as Revit's export places them, and no
             // longer share one map. 1,631 -> 1,634 shapes: the columns whose
             // mesh is a prism of another section than their type's rectangle
-            // are drawn from it.
+            // are drawn from it. 10,835 -> 10,834 mapped items and 1,634 ->
+            // 1,631 shapes: the 8 tube beams drawn as their tube (3 sections
+            // where 2 boxes were) and the doors set in curtain walls placed on
+            // Revit's axes.
             maps: 744,
-            mapped_items: 10_835,
+            mapped_items: 10_834,
             bodies: 12_803,
-            shapes: 1_634,
+            shapes: 1_631,
         },
     );
 }
