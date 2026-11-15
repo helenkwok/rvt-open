@@ -9,6 +9,8 @@
   through another tool) has 167 of its 390 angled walls' ends within 0.001 ft
   of Revit's, where it had 124. A wall's step ids are still read as before,
   because the wall top cover and the areas they start are not measured before
-  Revit 2024. An ordinary wall's `Length`, the side areas, footprint and
-  volumes of 2015 to 2023 walls, and the curtain walls of the sample saves
-  before 2023 stay out, as does everything that needs the steps.
+  Revit 2024. An ordinary wall of any release takes its `Length` only where
+  its curve cut back at the reaches its joins give is as long as the curve;
+  the side areas, footprint and volumes of 2015 to 2023 walls, and the
+  curtain walls of the sample saves before 2023, stay out, as does
+  everything that needs the steps.

@@ -168,7 +168,7 @@ pub(super) fn attach_opening_placement_axes(
             })
         })
         .collect();
-    if directions.is_empty() {
+    if directions.is_empty() && curtain_directions.is_empty() {
         return;
     }
     let host_of = |element: &DecodedElement| {

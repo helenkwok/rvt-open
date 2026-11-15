@@ -2225,7 +2225,9 @@ fn unread_walls(entities: &[IfcEntity], followed: &HashMap<u32, Followed>) -> Ve
                 None
             } else {
                 let body = element_body(entity, &[])?;
-                let placement = Placement::new(*location_feet, *rotation_radians);
+                // The writer turns an element only where it has a location.
+                let placement =
+                    Placement::new(*location_feet, location_feet.and(*rotation_radians));
                 let heights = body_mesh(body).map(|mesh| {
                     mesh.vertices
                         .iter()
@@ -2432,7 +2434,9 @@ struct Refusal {
 fn refusal(reason: &'static str, bands: &[Band]) -> Refusal {
     Refusal {
         reason,
-        off: bands.iter().any(|band| band.gap > 0.0),
+        off: bands
+            .iter()
+            .any(|band| band.gap > 0.0 || band.gap < -END_TOLERANCE_FEET),
     }
 }
 
@@ -3140,6 +3144,21 @@ fn decide_ends(
             continue;
         };
         if move_ends(&mut trial, wall.turned, &ends).is_none() {
+            continue;
+        }
+        // Ends pulled in past each other leave no wall: it keeps its body.
+        let core = high - low + ends.iter().map(|end| end.cut_back).sum::<f64>();
+        let left = match &trial {
+            IfcEntity::BuildingElement {
+                extrusion: Some(body),
+                ..
+            } => body.width_feet.min(body.depth_feet),
+            _ => 0.0,
+        };
+        if core <= END_TOLERANCE_FEET || left <= END_TOLERANCE_FEET {
+            refused
+                .entry(wall.index)
+                .or_insert(WALL_END_REFUSAL_FACE_INSIDE);
             continue;
         }
         // Every piece of the stepped body must have a height above the base:

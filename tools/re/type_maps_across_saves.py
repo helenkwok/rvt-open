@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Whether a Revit 2015 to 2023 family type's geometry-material map names the
+"""
+
+from __future__ import annotationsWhether a Revit 2015 to 2023 family type's geometry-material map names the
 materials the same project's 2024 save names.
 
 No Revit export of a 2015 to 2023 sample save is local, so the witness is the
@@ -40,9 +42,15 @@ def project(model: str) -> tuple[int, str]:
     return int(year), name.replace("_", "")
 
 
-def load(path: Path) -> dict[int, tuple[frozenset[int], frozenset[str], bool]]:
+def load(path: Path) -> dict[int, tuple[frozenset[int], frozenset[str], bool]] | None:
+    """The save's types, or None where the probe did not end with exit 0 (a
+    timeout or failure leaves its output partial)."""
     types = {}
-    for line in path.read_text(errors="replace").splitlines():
+    lines = path.read_text(errors="replace").splitlines()
+    status = next((line for line in reversed(lines) if line.strip()), "")
+    if status.strip() != "exit 0":
+        return None
+    for line in lines:
         found = LINE.match(line)
         if found:
             type_id, classes, _, unset, named = found.groups()
@@ -58,12 +66,17 @@ def main(directory: Path) -> None:
     saves = defaultdict(dict)
     for sub in sorted(directory.glob("sample-*/probe.txt")):
         year, name = project(sub.parent.name)
-        if "snowdon" not in name:
-            saves[name][year] = load(sub)
+        if "snowdon" in name:
+            continue
+        types = load(sub)
+        if types is None:
+            print(f"{sub.parent.name}: probe did not end with exit 0, left out")
+            continue
+        saves[name][year] = types
     total = defaultdict(lambda: [0, 0, 0])
     for name, years in sorted(saves.items()):
         later_year = 2024 if 2024 in years else max(years)
-        for year in sorted(y for y in years if y < later_year):
+        for year in sorted(y for y in years if y < min(later_year, 2024)):
             a, b = years[year], years[later_year]
             common = sorted(set(a) & set(b))
             same = sum(1 for t in common if a[t][0] == b[t][0])
