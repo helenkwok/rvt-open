@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-
-from __future__ import annotationsWhether a Revit 2015 to 2023 wall record holds the control joins the same
+"""Whether a Revit 2015 to 2023 wall record holds the control joins the same
 project's later save holds.
 
 No Revit export of a 2015 to 2023 sample save is local, so the witness is the
@@ -30,6 +28,8 @@ Usage: wall_control_joins_across_saves.py DIR
   DIR holds the `sample-<year>-<project>/probe.txt` directories of a Measure
   run with `-f samples=true -f probe=probe_1584_wall_control_joins`.
 """
+
+from __future__ import annotations
 
 import re
 import sys

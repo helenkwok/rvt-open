@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-
-from __future__ import annotationsWhether a Revit 2015 to 2023 family type's geometry-material map names the
+"""Whether a Revit 2015 to 2023 family type's geometry-material map names the
 materials the same project's 2024 save names.
 
 No Revit export of a 2015 to 2023 sample save is local, so the witness is the
@@ -25,6 +23,8 @@ Usage: type_maps_across_saves.py DIR
   DIR holds the `sample-<year>-<project>/probe.txt` directories of a Measure
   run with `-f samples=true -f probe=probe_1603_type_maps_pre2024`.
 """
+
+from __future__ import annotations
 
 import re
 import sys
