@@ -672,6 +672,28 @@ pub fn scan_first_bounded_lines(
     )
 }
 
+/// A beam's location line in the element data of each id in `ids`:
+/// [`scan_first_bounded_lines`]'s, and, for a beam whose copies in several
+/// partitions disagree (an edit left its earlier state in an earlier partition,
+/// or the copies hold one segment with different parameters), the line of the
+/// copy in its current partition. The ids of the second kind come
+/// with it: their line is the newest state's and is kept for the beam's
+/// properties, not for its body.
+pub fn scan_beam_lines(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    ids: &BTreeSet<u32>,
+) -> Result<(BTreeMap<u32, BoundedLine>, BTreeSet<u32>)> {
+    scan_records_noting_current(
+        rf,
+        revit_version,
+        ids,
+        first_bounded_line,
+        Copies::Current,
+        "bounded_line",
+    )
+}
+
 /// The arc in the element data of each id in `ids` whose first curve record
 /// is one ([`first_bounded_arc`]), read as [`scan_first_bounded_lines`]
 /// reads lines.
@@ -697,7 +719,8 @@ enum Copies {
     /// None: the element is dropped.
     Agreeing,
     /// Its current partition's ([`crate::native_document`]): a
-    /// sketch line's. Walls and beams keep [`Copies::Agreeing`]: on
+    /// sketch line's, and a beam's line for its properties
+    /// ([`scan_beam_lines`]). Walls keep [`Copies::Agreeing`]: on
     /// Core Interior 7 of the 41 walls whose copies disagree are drawn
     /// 0.333 ft off Revit's ends from their current copy's line, where
     /// their record box draws them exactly.
@@ -837,6 +860,19 @@ fn scan_first_records<T: PartialEq>(
     copies: Copies,
     reader: &'static str,
 ) -> Result<BTreeMap<u32, T>> {
+    Ok(scan_records_noting_current(rf, revit_version, ids, read, copies, reader)?.0)
+}
+
+/// [`scan_first_records`], also giving the ids whose copies disagreed and for
+/// which the current partition's copy was taken.
+fn scan_records_noting_current<T: PartialEq>(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    ids: &BTreeSet<u32>,
+    read: fn(&[u8]) -> Option<T>,
+    copies: Copies,
+    reader: &'static str,
+) -> Result<(BTreeMap<u32, T>, BTreeSet<u32>)> {
     let recording = rf.recording_value_sources();
     let (found, holders, offsets) = collect_copies(rf, revit_version, ids, read, recording)?;
     // Where an element's copies in different partitions disagree,
@@ -851,6 +887,7 @@ fn scan_first_records<T: PartialEq>(
         Copies::Agreeing => BTreeMap::new(),
     };
     let mut noted: Vec<(u32, ValueSource)> = Vec::new();
+    let mut from_current: BTreeSet<u32> = BTreeSet::new();
     let picked: BTreeMap<u32, T> = found
         .into_iter()
         .filter_map(|(id, copies)| {
@@ -895,13 +932,14 @@ fn scan_first_records<T: PartialEq>(
                 );
                 noted.push((id, source));
             }
+            from_current.insert(id);
             Some((id, pick))
         })
         .collect();
     for (id, source) in noted {
         rf.note_value_source(id, source);
     }
-    Ok(picked)
+    Ok((picked, from_current))
 }
 
 /// A beam's solid: a box along its location line.

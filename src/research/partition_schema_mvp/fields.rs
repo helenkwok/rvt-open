@@ -165,6 +165,18 @@ pub const OPENING_PLACEMENT_X_AXIS_FIELDS: [&str; 2] = [
     "m_opening_placement_x_axis_y",
 ];
 
+/// Field holding a straight wall's or curtain wall's native flip
+/// (`m_isFlipped`), beside [`WALL_NATIVE_DIRECTION_FIELDS`] on every wall that
+/// has them.
+pub const WALL_NATIVE_FLIPPED_FIELD: &str = "m_wall_native_flipped";
+
+/// Field set (true) on a door or window whose
+/// [`OPENING_PLACEMENT_X_AXIS_FIELDS`] come from the curtain wall its own
+/// native record names (`m_hostId`), where rvt-open binds it to no plain wall
+///: the stored X axis, reversed where its two flips differ or that
+/// curtain wall is flipped, but not both.
+pub const OPENING_PLACEMENT_FROM_STORED_HOST_FIELD: &str = "m_opening_placement_from_stored_host";
+
 /// Field carrying a family instance's original symbol: the
 /// FamilySymbol `ExporterIFCUtils.GetOriginalSymbol` returns, whose GlobalId
 /// Revit's export gives the instance's type object while its `Tag` stays the
@@ -285,6 +297,13 @@ pub const COLUMN_RELEASE_FIELD: &str = "m_column_release";
 
 /// Classes whose type's hollow section is read (W6).
 pub const HOLLOW_SECTION_CLASSES: [&str; 2] = ["StructuralColumn", "Column"];
+
+/// The releases whose rectangular tube beams are drawn as their type's tube
+/// and given the six base quantities of a profile: Revit 2024, the
+/// BIM4LCA office's 8 beams of the `Putkipalkki - suorakaide` family, the only
+/// file they are measured on against Revit's export. A release's reader is a
+/// decision, so a later one is not taken until a file of it is measured
+pub const TUBE_BEAM_REVIT_VERSIONS: &[u32] = &[2024];
 
 /// The releases whose hollow-section columns get the four base quantities of
 /// section 8 (`CrossSectionArea`, `OuterSurfaceArea`, `GrossVolume` and
