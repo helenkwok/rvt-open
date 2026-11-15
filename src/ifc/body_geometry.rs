@@ -379,7 +379,10 @@ fn collinear(ring: &[Point2]) -> bool {
         })
         .unwrap_or(first);
     let length = (far.0 - first.0).hypot(far.1 - first.1);
-    length <= 1e-9 || ring.iter().all(|&p| cross(first, far, p).abs() <= 1e-9 * length)
+    length <= 1e-9
+        || ring
+            .iter()
+            .all(|&p| cross(first, far, p).abs() <= 1e-9 * length)
 }
 
 fn ring_bounds(ring: &[Point2]) -> (f64, f64, f64, f64) {
