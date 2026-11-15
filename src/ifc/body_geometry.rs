@@ -282,6 +282,13 @@ fn cross(a: Point2, b: Point2, c: Point2) -> f64 {
 /// `ring` without repeated points and its closing point, or `None` when
 /// that leaves no area or a value is not finite.
 fn clean(ring: &[Point2]) -> Option<Ring> {
+    let out = dedupe(ring)?;
+    (out.len() >= 3 && signed_area(&out).abs() > 1e-12).then_some(out)
+}
+
+/// `ring` without repeated points and its closing point, or `None` when a
+/// value is not finite.
+fn dedupe(ring: &[Point2]) -> Option<Ring> {
     let mut out: Ring = Vec::with_capacity(ring.len());
     for &p in ring {
         if !(p.0.is_finite() && p.1.is_finite()) {
@@ -295,7 +302,7 @@ fn clean(ring: &[Point2]) -> Option<Ring> {
     while out.len() > 1 && same(out[0], out[out.len() - 1]) {
         out.pop();
     }
-    (out.len() >= 3 && signed_area(&out).abs() > 1e-12).then_some(out)
+    Some(out)
 }
 
 /// Whether two edges of `ring` that share no end cross each other.
@@ -311,6 +318,68 @@ fn crosses_itself(ring: &[Point2]) -> bool {
             .filter(|&j| (j + 1) % n != i)
             .any(|j| strictly_apart(ring[i], ring[(i + 1) % n], ring[j], ring[(j + 1) % n]))
     })
+}
+
+/// Whether `p` lies on the segment `a`-`b`, within 1e-9 feet.
+fn on_segment(p: Point2, a: Point2, b: Point2) -> bool {
+    let (ux, uy) = (b.0 - a.0, b.1 - a.1);
+    let length = ux.hypot(uy);
+    if length <= 1e-9 {
+        return (p.0 - a.0).hypot(p.1 - a.1) <= 1e-9;
+    }
+    let along = (p.0 - a.0) * ux + (p.1 - a.1) * uy;
+    cross(a, b, p).abs() <= 1e-9 * length
+        && along >= -1e-9 * length
+        && along <= length * length + 1e-9 * length
+}
+
+/// Whether `ring` (no repeated neighbours) meets itself anywhere but where
+/// neighbouring edges share their end: two other edges crossing, a vertex
+/// on an edge that is not its own (a crossing at a vertex), overlapping
+/// collinear edges, or an edge folding back along the one before it.
+fn meets_itself(ring: &[Point2]) -> bool {
+    let n = ring.len();
+    if n < 3 {
+        return false;
+    }
+    let edge = |i: usize| (ring[i], ring[(i + 1) % n]);
+    let meet = |(a, b): (Point2, Point2), (c, d): (Point2, Point2)| {
+        let (d1, d2) = (cross(a, b, c), cross(a, b, d));
+        let (d3, d4) = (cross(c, d, a), cross(c, d, b));
+        (d1 * d2 < 0.0 && d3 * d4 < 0.0)
+            || on_segment(c, a, b)
+            || on_segment(d, a, b)
+            || on_segment(a, c, d)
+            || on_segment(b, c, d)
+    };
+    (0..n).any(|i| {
+        // The next edge folds back where its far end lies on this edge, or
+        // this edge's start lies on the next one.
+        let (a, v, c) = (ring[i], ring[(i + 1) % n], ring[(i + 2) % n]);
+        on_segment(c, a, v)
+            || on_segment(a, v, c)
+            || ((i + 2)..n)
+                .filter(|&j| (j + 1) % n != i)
+                .any(|j| meet(edge(i), edge(j)))
+    })
+}
+
+/// Whether every point of `ring` lies within 1e-9 feet of one line, so the
+/// ring encloses nothing.
+fn collinear(ring: &[Point2]) -> bool {
+    let Some(&first) = ring.first() else {
+        return true;
+    };
+    let far = ring
+        .iter()
+        .copied()
+        .max_by(|p, q| {
+            let d = |r: &Point2| (r.0 - first.0).hypot(r.1 - first.1);
+            d(p).total_cmp(&d(q))
+        })
+        .unwrap_or(first);
+    let length = (far.0 - first.0).hypot(far.1 - first.1);
+    length <= 1e-9 || ring.iter().all(|&p| cross(first, far, p).abs() <= 1e-9 * length)
 }
 
 fn ring_bounds(ring: &[Point2]) -> (f64, f64, f64, f64) {
@@ -527,14 +596,15 @@ fn build_section(outer: &[Point2], holes: &[Ring], exact: bool) -> Option<Sectio
     if signed_area(&outer) < 0.0 {
         outer.reverse();
     }
-    // A hole `clean` refuses is dropped only where it encloses nothing (a
-    // sliver): in exact mode one that crosses itself (a bow tie whose signed
-    // area cancels) or holds a non-finite point refuses the section.
+    // A hole `clean` refuses is dropped only where it encloses nothing: a
+    // ring that does not meet itself bounds its signed area, and one along a
+    // line bounds none. In exact mode any other (a bow tie whose signed area
+    // cancels, crossing at an edge or at a vertex, or with overlapping
+    // edges) or one holding a non-finite point refuses the section.
     if exact
         && holes.iter().any(|hole| {
             clean(hole).is_none()
-                && (crosses_itself(hole)
-                    || hole.iter().any(|p| !(p.0.is_finite() && p.1.is_finite())))
+                && dedupe(hole).is_none_or(|ring| meets_itself(&ring) && !collinear(&ring))
         })
     {
         return None;
@@ -551,7 +621,7 @@ fn build_section(outer: &[Point2], holes: &[Ring], exact: bool) -> Option<Sectio
         .collect();
     let points = outer.len() + holes.iter().map(|h| h.len() + 2).sum::<usize>();
     if points <= MAX_TRIANGULATED_POINTS && !crosses_itself(&outer) {
-        if exact && holes.iter().any(|h| crosses_itself(h)) {
+        if exact && holes.iter().any(|h| meets_itself(h)) {
             return None;
         }
         let holes: Vec<Ring> = holes.into_iter().filter(|h| !crosses_itself(h)).collect();
@@ -2272,6 +2342,30 @@ mod tests {
         let bow_tie = vec![(1.0, 1.0), (3.0, 3.0), (1.0, 3.0), (3.0, 1.0)];
         assert!(exact_section(&square, std::slice::from_ref(&bow_tie)).is_none());
         assert!(section(&square, &[bow_tie]).is_some());
+        // The same bow tie with a point where it crosses, a hole whose two
+        // lobes meet at a vertex with unequal areas, and one whose lobes
+        // share collinear edges: exact refuses each rather than fill it.
+        for hole in [
+            vec![(1.0, 1.0), (2.0, 2.0), (3.0, 3.0), (1.0, 3.0), (3.0, 1.0)],
+            vec![(2.0, 2.0), (4.0, 4.0), (7.0, 7.0), (1.0, 7.0), (6.0, 2.0)],
+            vec![
+                (1.0, 1.0),
+                (4.0, 1.0),
+                (4.0, 1.5),
+                (3.0, 1.5),
+                (3.0, 1.0),
+                (2.0, 1.0),
+                (2.0, 0.5),
+                (1.0, 0.5),
+            ],
+        ] {
+            assert!(exact_section(&square, std::slice::from_ref(&hole)).is_none());
+            assert!(section(&square, &[hole]).is_some());
+        }
+        // A sliver along a line encloses nothing and is still dropped.
+        let sliver = vec![(2.0, 2.0), (4.0, 2.0), (6.0, 2.0), (4.0, 2.0)];
+        let s = exact_section(&square, &[sliver]).expect("sliver dropped");
+        assert!((area(&s) - 100.0).abs() < 1e-9);
         assert!(section(&[(0.0, 0.0), (f64::NAN, 0.0), (1.0, 1.0)], &[]).is_none());
         assert!(
             profile_rings(&ProfileDef::Rectangle {

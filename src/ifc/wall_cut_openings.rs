@@ -518,7 +518,13 @@ pub(super) fn attach_wall_cut_openings(
         } else {
             if ifc_type.eq_ignore_ascii_case("IFCWALL") {
                 walls.insert(id);
-                wall_entities.entry(id).or_default().push(index);
+                // A wall id more than one entity holds is not framed, even
+                // where only one of them passes `host_of`.
+                let holders = wall_entities.entry(id).or_default();
+                holders.push(index);
+                if holders.len() > 1 {
+                    repeated.insert(id);
+                }
             }
             continue;
         };
