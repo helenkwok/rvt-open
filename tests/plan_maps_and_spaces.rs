@@ -88,9 +88,9 @@ fn nordic_office_concrete_plan_maps_and_spaces() {
 // base, are no longer the plain prisms that shared those maps. 243 -> 254
 // footprints and 14 -> 12 maps whose users differ: the 9 doors set in no wall
 // are placed at their stored origin, as Revit's export places them, and their
-// maps split by placement. 2 -> 3 beam axes: a beam whose copies in several
-// partitions disagree now takes its current copy's location line, so the map
-// it draws gains its Axis.
+// maps split by placement. 2 -> 3 beam axes: the office's 8 beams of a
+// rectangular tube type are now drawn as that tube, which adds one beam map
+// with an Axis.
 const PINNED_PLAN: (usize, usize, usize, usize) = (254, 137, 3, 12);
 /// 306 spaces: 234 rooms, 30 areas and 42 family instances (`USERDEFINED`);
 /// 74 `NOTDEFINED`: the 30 areas and the 44 rooms whose "IFC Predefined
