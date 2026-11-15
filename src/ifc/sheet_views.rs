@@ -388,7 +388,7 @@ pub fn sheet_drawing(
                 // their whole annotation crops.
                 if let Some(f) = frame.as_mut() {
                     // A text reaches its end (its width at its em, 1.4 capital heights).
-                    let ends = d.entities.iter().filter_map(|e| match &e.geom {
+                    let ends = d.entities.iter().flat_map(|e| match &e.geom {
                         Geom::Text {
                             at,
                             height,
@@ -399,9 +399,16 @@ pub fn sheet_drawing(
                                 .lines()
                                 .map(|l| crate::plan_views::text_width(l, 1.4 * height))
                                 .fold(0.0, f64::max);
-                            Some([at[0] + w * rotation.cos(), at[1] + w * rotation.sin()])
+                            // Its box: the baseline's ends and the top of its first line.
+                            let (c, s) = (rotation.cos(), rotation.sin());
+                            let up = 1.4 * height;
+                            vec![
+                                [at[0] + w * c, at[1] + w * s],
+                                [at[0] - up * s, at[1] + up * c],
+                                [at[0] + w * c - up * s, at[1] + w * s + up * c],
+                            ]
                         }
-                        _ => None,
+                        _ => Vec::new(),
                     });
                     if let Some(b) = rvt_dwg::bounds(
                         d.entities
@@ -806,7 +813,17 @@ fn section_annotation(
             d.layers.push(Layer2d::new(name, 7));
         }
     };
-    for t in facts.texts.iter().filter(|t| t.view == view.id) {
+    // Notes and detail lines outside the annotation crop, when that is on, are not shown.
+    let annotation_crop = section_frame(view, w, scale).2;
+    let shown = |p: [f64; 3]| {
+        annotation_crop.is_none_or(|a| p[0] >= a[0] && p[0] <= a[2] && p[1] >= a[1] && p[1] <= a[3])
+    };
+    let hidden_ids = facts.section_hidden_categories(view);
+    for t in facts
+        .texts
+        .iter()
+        .filter(|t| t.view == view.id && shown(on_view(t.at)))
+    {
         layer(d, "G-ANNO-TEXT");
         d.entities.push(Entity2d::new(
             "TEXT",
@@ -823,7 +840,6 @@ fn section_annotation(
     // view (its name above and its height below the line's right end), a grid where it crosses
     // the section plane (its head above the crop). Drawn in a view whose up is the model's.
     let crop = view.crop.as_ref().filter(|_| w.up[2].abs() > 0.99);
-    let hidden = facts.section_hidden_categories(view);
     if let Some(c) = crop {
         let at =
             |x: f64, y: f64, z: f64| {
@@ -854,7 +870,7 @@ fn section_annotation(
                 .push(Entity2d::new("LINE", layer, Geom::Line { a, b }));
         };
         // BuiltInCategory Levels.
-        if !hidden.contains(&-2_000_240) {
+        if !hidden_ids.contains(&-2_000_240) {
             for l in &model.building_storeys {
                 let z = l.elevation_feet;
                 // The level's height in the crop's y (the view's up is the model's z).
@@ -886,7 +902,7 @@ fn section_annotation(
                 );
             }
         }
-        if !hidden.contains(&GRIDS) {
+        if !hidden_ids.contains(&GRIDS) {
             let plane = [0, 1, 2].map(|i| w.crop_origin[i] + near * c.axes[2][i]);
             let radius = 6.5 / MM_PER_FOOT * k;
             for g in facts
@@ -935,9 +951,21 @@ fn section_annotation(
             }
         }
     }
-    for c in facts.curves.iter().filter(|c| c.view == Some(view.id)) {
+    // As in a plan: a hidden Lines category hides them all, a hidden category its own.
+    let lines_hidden = hidden_ids.contains(&LINES);
+    for c in facts.curves.iter().filter(|c| {
+        c.view == Some(view.id)
+            && !lines_hidden
+            && !c
+                .category
+                .is_some_and(|k| k < -1 && hidden_ids.contains(&k))
+    }) {
         layer(d, "A-DETL");
         for s in c.points.windows(2) {
+            let (a, b) = (on_view(s[0]), on_view(s[1]));
+            if !shown([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, 0.0]) {
+                continue;
+            }
             d.entities.push(Entity2d::new(
                 "LINE",
                 "A-DETL",

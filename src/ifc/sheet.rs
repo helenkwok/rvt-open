@@ -790,9 +790,11 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow, scale: f64) -> r
         if drawn_category(own, ifc_type).is_some_and(|c| w.hidden_categories.contains(&c)) {
             continue;
         }
-        let (Some(location), Some(body)) =
-            (location_feet, element_body(ent, &model.representation_maps))
-        else {
+        // A host's body with its openings cut, so a wall's faces do not hide its door.
+        let (Some(location), Some(body)) = (
+            location_feet,
+            super::body_geometry::drawn_body(model, index, ent),
+        ) else {
             continue;
         };
         let placement = Placement::new(Some(*location), *rotation_radians);

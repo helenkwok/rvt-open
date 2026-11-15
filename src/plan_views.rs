@@ -406,8 +406,10 @@ fn wrapped(value: String, height: Option<f64>, width: Option<f64>) -> (String, O
     let lines = width
         .filter(|w| *w > 0.0)
         .map_or(1.0, |w| (text_width(&value, em) / w).sqrt().ceil().max(1.0));
-    if lines <= 1.0 || value.contains('\n') {
-        return (value, Some(cap_height(em)));
+    // A note broken into lines by its own text shares its box among them.
+    let own_lines = value.lines().count().max(1) as f64;
+    if lines <= 1.0 || own_lines > 1.0 {
+        return (value, Some(cap_height(em / own_lines)));
     }
     let (em, w) = (em / lines, width.unwrap_or(0.0));
     let mut out: Vec<String> = Vec::new();
