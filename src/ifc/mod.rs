@@ -8434,3 +8434,67 @@ mod wall_mitre_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod missing_level_tests {
+    use super::entities::{Extrusion, IfcEntity};
+    use super::{IfcModel, Storey};
+
+    fn element(ifc_type: &str, name: &str, storey_index: Option<usize>) -> IfcEntity {
+        IfcEntity::BuildingElement {
+            ifc_type: ifc_type.into(),
+            name: name.into(),
+            type_guid: None,
+            predefined_type: None,
+            storey_index,
+            material_index: None,
+            property_set: None,
+            location_feet: Some([0.0, 0.0, 0.0]),
+            rotation_radians: None,
+            extrusion: Some(Extrusion::rectangle(1.0, 1.0, 1.0)),
+            host_element_index: None,
+            material_layer_set_index: None,
+            material_profile_set_index: None,
+            solid_shape: None,
+            representation_map_index: None,
+        }
+    }
+
+    /// A part of an aggregate is in no storey of its own only where its
+    /// whole is in none: a flight of a stair on a level is not counted, a
+    /// flight of a stair on no level is, as its stair is.
+    #[test]
+    fn a_part_lacks_a_level_only_where_its_whole_does() {
+        let model = IfcModel {
+            building_storeys: vec![Storey {
+                name: "Level 1".into(),
+                elevation_feet: 0.0,
+            }],
+            entities: vec![
+                element("IFCSTAIR", "stair on a level", Some(0)),
+                element("IFCSTAIRFLIGHT", "flight of the stair on a level", None),
+                element("IFCSTAIR", "stair on no level", None),
+                element("IFCSTAIRFLIGHT", "flight of the stair on no level", None),
+                IfcEntity::Aggregate {
+                    whole: 0,
+                    parts: vec![1],
+                },
+                IfcEntity::Aggregate {
+                    whole: 2,
+                    parts: vec![3],
+                },
+            ],
+            ..IfcModel::default()
+        };
+        let (items, _) = super::geometry_gap_skipped_items(&model);
+        let missing = items
+            .iter()
+            .find(|item| item.reason == "unsupported_geometry_missing_level")
+            .expect("the stair on no level and its flight lack a level");
+        assert_eq!(missing.count, 2);
+        assert_eq!(
+            missing.sample_names,
+            vec!["stair on no level", "flight of the stair on no level"]
+        );
+    }
+}
