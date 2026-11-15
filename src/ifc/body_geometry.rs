@@ -15,7 +15,9 @@
 //!   overlap at their joins;
 //! - a circle is a 24-gon around it, and a revolution turns in 24 steps per
 //!   full turn;
-//! - a profile that does not triangulate draws its bounding rectangle.
+//! - a profile that does not triangulate draws its bounding rectangle (a
+//!   solid the export writes from a plan takes no such shape: see
+//!   [`exact_section`]).
 
 use super::entities::{
     Extrusion, IfcBooleanOp, IfcEntity, ProfileDef, RepresentationMap, SolidShape,
@@ -32,7 +34,8 @@ pub type Ring = Vec<Point2>;
 pub const CIRCLE_SEGMENTS: usize = 24;
 
 /// Points a profile may have, holes included, and still be triangulated.
-/// Past it the profile draws its bounding rectangle.
+/// Past it [`section`] draws the profile's bounding rectangle and
+/// [`exact_section`] returns `None`.
 pub const MAX_TRIANGULATED_POINTS: usize = 2048;
 
 /// A triangle mesh. Triangles wind counter-clockwise seen from outside.
@@ -279,6 +282,13 @@ fn cross(a: Point2, b: Point2, c: Point2) -> f64 {
 /// `ring` without repeated points and its closing point, or `None` when
 /// that leaves no area or a value is not finite.
 fn clean(ring: &[Point2]) -> Option<Ring> {
+    let out = dedupe(ring)?;
+    (out.len() >= 3 && signed_area(&out).abs() > 1e-12).then_some(out)
+}
+
+/// `ring` without repeated points and its closing point, or `None` when a
+/// value is not finite.
+fn dedupe(ring: &[Point2]) -> Option<Ring> {
     let mut out: Ring = Vec::with_capacity(ring.len());
     for &p in ring {
         if !(p.0.is_finite() && p.1.is_finite()) {
@@ -292,7 +302,7 @@ fn clean(ring: &[Point2]) -> Option<Ring> {
     while out.len() > 1 && same(out[0], out[out.len() - 1]) {
         out.pop();
     }
-    (out.len() >= 3 && signed_area(&out).abs() > 1e-12).then_some(out)
+    Some(out)
 }
 
 /// Whether two edges of `ring` that share no end cross each other.
@@ -308,6 +318,71 @@ fn crosses_itself(ring: &[Point2]) -> bool {
             .filter(|&j| (j + 1) % n != i)
             .any(|j| strictly_apart(ring[i], ring[(i + 1) % n], ring[j], ring[(j + 1) % n]))
     })
+}
+
+/// Whether `p` lies on the segment `a`-`b`, within 1e-9 feet.
+fn on_segment(p: Point2, a: Point2, b: Point2) -> bool {
+    let (ux, uy) = (b.0 - a.0, b.1 - a.1);
+    let length = ux.hypot(uy);
+    if length <= 1e-9 {
+        return (p.0 - a.0).hypot(p.1 - a.1) <= 1e-9;
+    }
+    let along = (p.0 - a.0) * ux + (p.1 - a.1) * uy;
+    cross(a, b, p).abs() <= 1e-9 * length
+        && along >= -1e-9 * length
+        && along <= length * length + 1e-9 * length
+}
+
+/// Whether `ring` (no repeated neighbours) meets itself anywhere but where
+/// neighbouring edges share their end: two other edges crossing, a vertex
+/// on an edge that is not its own (a crossing at a vertex), overlapping
+/// collinear edges, or an edge folding back along the one before it.
+fn meets_itself(ring: &[Point2]) -> bool {
+    let n = ring.len();
+    if n < 3 {
+        return false;
+    }
+    let edge = |i: usize| (ring[i], ring[(i + 1) % n]);
+    let meet = |(a, b): (Point2, Point2), (c, d): (Point2, Point2)| {
+        let (d1, d2) = (cross(a, b, c), cross(a, b, d));
+        let (d3, d4) = (cross(c, d, a), cross(c, d, b));
+        (d1 * d2 < 0.0 && d3 * d4 < 0.0)
+            || on_segment(c, a, b)
+            || on_segment(d, a, b)
+            || on_segment(a, c, d)
+            || on_segment(b, c, d)
+    };
+    (0..n).any(|i| {
+        // The next edge folds back where its far end lies on this edge, or
+        // this edge's start lies on the next one.
+        let (a, v, c) = (ring[i], ring[(i + 1) % n], ring[(i + 2) % n]);
+        on_segment(c, a, v)
+            || on_segment(a, v, c)
+            || ((i + 2)..n)
+                .filter(|&j| (j + 1) % n != i)
+                .any(|j| meet(edge(i), edge(j)))
+    })
+}
+
+/// Whether every point of `ring` lies within 1e-9 feet of one line, so the
+/// ring encloses nothing.
+fn collinear(ring: &[Point2]) -> bool {
+    let Some(&first) = ring.first() else {
+        return true;
+    };
+    let far = ring
+        .iter()
+        .copied()
+        .max_by(|p, q| {
+            let d = |r: &Point2| (r.0 - first.0).hypot(r.1 - first.1);
+            d(p).total_cmp(&d(q))
+        })
+        .unwrap_or(first);
+    let length = (far.0 - first.0).hypot(far.1 - first.1);
+    length <= 1e-9
+        || ring
+            .iter()
+            .all(|&p| cross(first, far, p).abs() <= 1e-9 * length)
 }
 
 fn ring_bounds(ring: &[Point2]) -> (f64, f64, f64, f64) {
@@ -470,10 +545,72 @@ pub struct Section {
 /// cannot be joined drops out, and a profile that still does not
 /// triangulate (or has more than [`MAX_TRIANGULATED_POINTS`]) becomes its
 /// bounding rectangle, so the section is never smaller than the profile.
+/// That is a drawing rule for the viewer and the plan; a solid written into
+/// the IFC takes [`exact_section`].
 pub fn section(outer: &[Point2], holes: &[Ring]) -> Option<Section> {
+    build_section(outer, holes, false)
+}
+
+/// [`section`] only where it is the profile itself: `None` where a hole
+/// would drop out or the profile would become its bounding rectangle. The
+/// solids the export writes from a plan (a sloped slab, a roof drawn along
+/// its planes, a wall's base along a footing's top) take this, so where the
+/// plan does not triangulate the element keeps the body its caller falls
+/// back to, rather than a box or a slab with its holes filled.
+pub fn exact_section(outer: &[Point2], holes: &[Ring]) -> Option<Section> {
+    build_section(outer, holes, true)
+}
+
+/// Absolute slack on [`covers_plan`]'s area test, square feet; the relative
+/// slack is 1e-9 of the plan's area.
+const COVERED_AREA_TOLERANCE_SQUARE_FEET: f64 = 1e-6;
+
+/// Whether `triangles` over `points` cover the area inside `outer` less
+/// `holes`: a bridge that crosses an edge, or a hole outside the outer ring,
+/// can still ear-clip, and gives another area. The same test the wall-top
+/// pass makes of its rings.
+fn covers_plan(
+    points: &[Point2],
+    triangles: &[[u32; 3]],
+    outer: &[Point2],
+    holes: &[Ring],
+) -> bool {
+    let expected = signed_area(outer).abs()
+        - holes
+            .iter()
+            .map(|hole| signed_area(hole).abs())
+            .sum::<f64>();
+    let drawn: f64 = triangles
+        .iter()
+        .map(|&[a, b, c]| {
+            let corner = |i: u32| points.get(i as usize).copied();
+            match (corner(a), corner(b), corner(c)) {
+                (Some(a), Some(b), Some(c)) => signed_area(&[a, b, c]).abs(),
+                _ => f64::INFINITY,
+            }
+        })
+        .sum();
+    expected > 0.0
+        && (drawn - expected).abs() <= COVERED_AREA_TOLERANCE_SQUARE_FEET + 1e-9 * expected
+}
+
+fn build_section(outer: &[Point2], holes: &[Ring], exact: bool) -> Option<Section> {
     let mut outer = clean(outer)?;
     if signed_area(&outer) < 0.0 {
         outer.reverse();
+    }
+    // A hole `clean` refuses is dropped only where it encloses nothing: a
+    // ring that does not meet itself bounds its signed area, and one along a
+    // line bounds none. In exact mode any other (a bow tie whose signed area
+    // cancels, crossing at an edge or at a vertex, or with overlapping
+    // edges) or one holding a non-finite point refuses the section.
+    if exact
+        && holes.iter().any(|hole| {
+            clean(hole).is_none()
+                && dedupe(hole).is_none_or(|ring| meets_itself(&ring) && !collinear(&ring))
+        })
+    {
+        return None;
     }
     let holes: Vec<Ring> = holes
         .iter()
@@ -487,9 +624,14 @@ pub fn section(outer: &[Point2], holes: &[Ring]) -> Option<Section> {
         .collect();
     let points = outer.len() + holes.iter().map(|h| h.len() + 2).sum::<usize>();
     if points <= MAX_TRIANGULATED_POINTS && !crosses_itself(&outer) {
+        if exact && holes.iter().any(|h| meets_itself(h)) {
+            return None;
+        }
         let holes: Vec<Ring> = holes.into_iter().filter(|h| !crosses_itself(h)).collect();
         if let Some(poly) = bridge_holes(outer.clone(), holes.clone()) {
-            if let Some(triangles) = ear_clip(&poly) {
+            if let Some(triangles) = ear_clip(&poly)
+                .filter(|triangles| !exact || covers_plan(&poly, triangles, &outer, &holes))
+            {
                 let mut rings = vec![outer];
                 rings.extend(holes);
                 return Some(Section {
@@ -499,13 +641,21 @@ pub fn section(outer: &[Point2], holes: &[Ring]) -> Option<Section> {
                 });
             }
         }
-        if let Some(triangles) = ear_clip(&outer) {
+        if exact && !holes.is_empty() {
+            return None;
+        }
+        if let Some(triangles) = ear_clip(&outer)
+            .filter(|triangles| !exact || covers_plan(&outer, triangles, &outer, &[]))
+        {
             return Some(Section {
                 rings: vec![outer.clone()],
                 cap_points: outer,
                 cap_triangles: triangles,
             });
         }
+    }
+    if exact {
+        return None;
     }
     let rectangle = bounding_rectangle(&outer);
     Some(Section {
@@ -782,7 +932,7 @@ pub fn sloped_slab_mesh(
     if !(thickness.is_finite() && thickness > 0.0) {
         return None;
     }
-    let section = section(outer, holes)?;
+    let section = exact_section(outer, holes)?;
     let mesh = prism(&section, |p, t| [p.0, p.1, bottom(p) + t * thickness]);
     mesh.vertices
         .iter()
@@ -801,7 +951,7 @@ pub fn between_surfaces_mesh(
     bottom: impl Fn(Point2) -> f64,
     top: impl Fn(Point2) -> f64,
 ) -> Option<Mesh> {
-    let section = section(outer, holes)?;
+    let section = exact_section(outer, holes)?;
     let rises = section
         .cap_points
         .iter()
@@ -892,7 +1042,7 @@ fn envelope_pieces(
     domains: &[Vec<PlanPlane>],
     bottom_domains: &[Vec<PlanPlane>],
 ) -> Option<(Section, Vec<PlanPlane>, Vec<Vec<Point2>>)> {
-    let section = section(outer, holes)?;
+    let section = exact_section(outer, holes)?;
     let difference = |p: PlanPlane, q: PlanPlane| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
     let mut lines: Vec<PlanPlane> = Vec::new();
     for (i, &p) in tops.iter().enumerate() {
@@ -2189,6 +2339,36 @@ mod tests {
     fn degenerate_profiles_have_no_section() {
         assert!(section(&[(0.0, 0.0), (1.0, 1.0), (2.0, 2.0)], &[]).is_none());
         assert!(section(&[(0.0, 0.0), (1.0, 0.0)], &[]).is_none());
+        // A bow-tie hole cancels its own signed area: exact refuses the
+        // section rather than fill the hole, drawing keeps the square.
+        let square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let bow_tie = vec![(1.0, 1.0), (3.0, 3.0), (1.0, 3.0), (3.0, 1.0)];
+        assert!(exact_section(&square, std::slice::from_ref(&bow_tie)).is_none());
+        assert!(section(&square, &[bow_tie]).is_some());
+        // The same bow tie with a point where it crosses, a hole whose two
+        // lobes meet at a vertex with unequal areas, and one whose lobes
+        // share collinear edges: exact refuses each rather than fill it.
+        for hole in [
+            vec![(1.0, 1.0), (2.0, 2.0), (3.0, 3.0), (1.0, 3.0), (3.0, 1.0)],
+            vec![(2.0, 2.0), (4.0, 4.0), (7.0, 7.0), (1.0, 7.0), (6.0, 2.0)],
+            vec![
+                (1.0, 1.0),
+                (4.0, 1.0),
+                (4.0, 1.5),
+                (3.0, 1.5),
+                (3.0, 1.0),
+                (2.0, 1.0),
+                (2.0, 0.5),
+                (1.0, 0.5),
+            ],
+        ] {
+            assert!(exact_section(&square, std::slice::from_ref(&hole)).is_none());
+            assert!(section(&square, &[hole]).is_some());
+        }
+        // A sliver along a line encloses nothing and is still dropped.
+        let sliver = vec![(2.0, 2.0), (4.0, 2.0), (6.0, 2.0), (4.0, 2.0)];
+        let s = exact_section(&square, &[sliver]).expect("sliver dropped");
+        assert!((area(&s) - 100.0).abs() < 1e-9);
         assert!(section(&[(0.0, 0.0), (f64::NAN, 0.0), (1.0, 1.0)], &[]).is_none());
         assert!(
             profile_rings(&ProfileDef::Rectangle {

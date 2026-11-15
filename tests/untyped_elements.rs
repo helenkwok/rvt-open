@@ -95,16 +95,15 @@ fn a_renamed_railing_type_takes_the_newest_name() {
 #[test]
 fn a_layered_type_with_disagreeing_copies_keeps_its_system_family() {
     // 69 before: two more roofing coverings Revit's export has are written,
-    // and typed. Two gutters, recovered from their element records,
-    // are written as IfcCovering too, as Revit 2027's export writes them
-    // through their "Export to IFC As", but no gutter type is read yet, so
-    // they are the two untyped ones.
+    // and typed. The two gutters whose "Export to IFC As" says IfcCovering
+    // are IfcFlowSegment, as Revit's IFC4 export of this file writes all three
+    // of its gutters, so its 71 IfcCovering are the 71 written here.
     if let Some(got) = typed(
         NORDIC,
         "ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt",
         "IfcCovering",
     ) {
-        assert_eq!(got, (71, 73), "IfcCovering (typed, total)");
+        assert_eq!(got, (71, 71), "IfcCovering (typed, total)");
     }
 }
 

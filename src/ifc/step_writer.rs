@@ -319,7 +319,9 @@ enum ElementTail {
 /// subtype in IFC4.
 fn element_tail_for(ifc_upper: &str) -> ElementTail {
     match ifc_upper {
-        "IFCFURNISHINGELEMENT" | "IFCFLOWCONTROLLER" | "IFCFLOWTERMINAL" => ElementTail::Tag,
+        "IFCFURNISHINGELEMENT" | "IFCFLOWCONTROLLER" | "IFCFLOWTERMINAL" | "IFCFLOWSEGMENT" => {
+            ElementTail::Tag
+        }
         "IFCDOOR" | "IFCWINDOW" => ElementTail::Opening,
         "IFCSPACE" => ElementTail::Space,
         "IFCREINFORCINGBAR" => ElementTail::ReinforcingBar,
@@ -423,6 +425,11 @@ fn category_occurrence(builtin_category: i64) -> Option<(&'static str, Option<&'
 /// the occurrence's `PredefinedType`. An occurrence and its type
 /// share one enumeration. `None` for entities rvt-open does not type.
 fn type_entity_for(ifc_upper: &str, predefined: Option<&str>) -> Option<(String, String)> {
+    // the one `IfcFlowSegment` rvt-open writes is a gutter, which Revit's
+    // export types by an `IfcPipeSegmentType` `GUTTER`.
+    if ifc_upper == "IFCFLOWSEGMENT" {
+        return Some(("IFCPIPESEGMENTTYPE".to_string(), ".GUTTER.".to_string()));
+    }
     let pt = format!(
         ".{}.",
         predefined

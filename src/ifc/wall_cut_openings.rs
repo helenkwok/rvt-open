@@ -86,6 +86,17 @@ pub(super) mod reason {
     pub const OUTSIDE_HEIGHT: &str = "opening_outside_wall_height";
     pub const CURTAIN_COPIES: &str = "curtain_wall_record_copies_disagree";
     pub const DOOR_CUT_ELSEWHERE: &str = "door_cuts_a_wall_it_is_not_hosted_in_as_its_own";
+    pub const CUTTER_NAMED_AGAIN: &str = "cutter_named_again_in_wall";
+}
+
+/// The entity a door is hosted in, by index.
+fn hosted_in(entity: &IfcEntity) -> Option<usize> {
+    match entity {
+        IfcEntity::BuildingElement {
+            host_element_index, ..
+        } => *host_element_index,
+        _ => None,
+    }
 }
 
 /// A wall the openings are cut in: its entity, name and frame, as the
@@ -476,6 +487,10 @@ pub(super) fn attach_wall_cut_openings(
     let mut cabinets: BTreeMap<u64, usize> = BTreeMap::new();
     let mut doors: BTreeMap<u64, usize> = BTreeMap::new();
     let mut walls: BTreeSet<u64> = BTreeSet::new();
+    // Every entity holding each wall's ElementId, so a door's step in a wall
+    // that is not framed (one whose id two entities hold included) can be
+    // told from its own opening, as it is in a framed one.
+    let mut wall_entities: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     let mut repeated: BTreeSet<u64> = BTreeSet::new();
     for (index, entity) in entities.iter().enumerate() {
         if let Some((id, host)) = host_of(index, entity) {
@@ -503,6 +518,13 @@ pub(super) fn attach_wall_cut_openings(
         } else {
             if ifc_type.eq_ignore_ascii_case("IFCWALL") {
                 walls.insert(id);
+                // A wall id more than one entity holds is not framed, even
+                // where only one of them passes `host_of`.
+                let holders = wall_entities.entry(id).or_default();
+                holders.push(index);
+                if holders.len() > 1 {
+                    repeated.insert(id);
+                }
             }
             continue;
         };
@@ -516,7 +538,9 @@ pub(super) fn attach_wall_cut_openings(
         cabinets.remove(id);
         doors.remove(id);
     }
-    if hosts.is_empty() {
+    // With no framed wall the steps are still read: an unframed wall counts
+    // each one a framed wall would write.
+    if walls.is_empty() {
         return left_out;
     }
     let Ok(mut steps) = native_wall_cuts::wall_cut_steps(rf, &walls) else {
@@ -587,17 +611,28 @@ pub(super) fn attach_wall_cut_openings(
             // A wall rvt-open does not frame as an axis-aligned prism (curved,
             // turned off the axes, stepped otherwise than the stepped top, a body
             // of several pieces, or an ElementId held twice) has no opening
-            // written, and each step of its record that would is counted.
+            // written, and each step of its record that a framed wall would
+            // write or count is counted: every step the loop below
+            // does not pass over, a door's included unless it is the door's
+            // own opening, and a shadow step of a cutter it reads.
+            let holders: &[usize] = wall_entities.get(wall).map_or(&[], Vec::as_slice);
             for step in list {
                 let named = match step.kind {
                     WallCutKind::Embed => curtains.contains_key(&step.cutter),
                     WallCutKind::Cutout => {
                         cabinets.contains_key(&step.cutter)
-                            || (doors.contains_key(&step.cutter)
-                                && step.cuts_something == Some(false))
+                            || doors.get(&step.cutter).is_some_and(|door| {
+                                !(step.cuts_something == Some(true)
+                                    && hosted_in(&entities[*door])
+                                        .is_some_and(|own| holders.contains(&own)))
+                            })
                     }
                     WallCutKind::RectOpening => true,
-                    WallCutKind::ShadowCutout => false,
+                    WallCutKind::ShadowCutout => {
+                        curtains.contains_key(&step.cutter)
+                            || cabinets.contains_key(&step.cutter)
+                            || doors.contains_key(&step.cutter)
+                    }
                 };
                 if named {
                     *left_out
@@ -635,13 +670,7 @@ pub(super) fn attach_wall_cut_openings(
                     } else if let Some(door) = doors.get(&step.cutter) {
                         match step.cuts_something {
                             Some(true) => {
-                                let own = match &entities[*door] {
-                                    IfcEntity::BuildingElement {
-                                        host_element_index, ..
-                                    } => *host_element_index,
-                                    _ => None,
-                                };
-                                if own == Some(host.index) {
+                                if hosted_in(&entities[*door]) == Some(host.index) {
                                     continue;
                                 }
                                 Err(reason::DOOR_CUT_ELSEWHERE)
@@ -704,7 +733,13 @@ pub(super) fn attach_wall_cut_openings(
                 *left_out.entry(reason::DEGENERATE.to_string()).or_insert(0) += 1;
                 continue;
             }
+            // A cutter a wall's record names twice gets one opening, at its
+            // first place; the other step is counted rather than dropped
+            // unseen.
             if !seen.insert(step.cutter) {
+                *left_out
+                    .entry(reason::CUTTER_NAMED_AGAIN.to_string())
+                    .or_insert(0) += 1;
                 continue;
             }
             openings.push(IfcEntity::WallCutOpening {

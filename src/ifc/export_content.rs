@@ -1238,25 +1238,29 @@ pub fn append_typed_production_elements(
                 // A value that is no enumerator is left unset: what Revit writes
                 // for one is not measured.
                 // roofs, stairs, stair flights and proxies the same way, each
-                // on the releases `NOTDEFINED_DEFAULTS` gives it.
-                (decoded.fields.iter().any(|(name, value)| match value {
-                    InstanceField::Integer { value, .. }
-                        if name == crate::partition_schema_mvp::FURNITURE_RELEASE_FIELD =>
-                    {
-                        u32::try_from(*value).is_ok_and(|release| {
-                            crate::partition_schema_mvp::NOTDEFINED_DEFAULTS.iter().any(
-                                |(entity, releases)| {
-                                    *entity == effective.ifc_type && releases.contains(&release)
-                                },
-                            )
-                        })
-                    }
-                    _ => false,
-                }) && !decoded.fields.iter().any(|(name, value)| {
-                    matches!(value, InstanceField::String(text)
+                // on the releases `NOTDEFINED_DEFAULTS` gives it. A class whose
+                // mapping names a predefined type keeps it (planting and
+                // entourage `USERDEFINED`, a toposolid `TERRAIN`).
+                (effective.predefined_type.is_none()
+                    && decoded.fields.iter().any(|(name, value)| match value {
+                        InstanceField::Integer { value, .. }
+                            if name == crate::partition_schema_mvp::FURNITURE_RELEASE_FIELD =>
+                        {
+                            u32::try_from(*value).is_ok_and(|release| {
+                                crate::partition_schema_mvp::NOTDEFINED_DEFAULTS.iter().any(
+                                    |(entity, releases)| {
+                                        *entity == effective.ifc_type && releases.contains(&release)
+                                    },
+                                )
+                            })
+                        }
+                        _ => false,
+                    })
+                    && !decoded.fields.iter().any(|(name, value)| {
+                        matches!(value, InstanceField::String(text)
                             if name == crate::partition_schema_mvp::IFC_PREDEFINED_TYPE_FIELD
                                 && !text.trim().is_empty())
-                }))
+                    }))
                 .then_some("NOTDEFINED")
             })
             .or(
@@ -9011,105 +9015,101 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
         None
     };
     // A shed roof whose slope reproduces its record box rises along
-    // it. a gable or hip roof, its planes' lowest envelope, and
-    // either cut level at its base when that is what its box records.
+    // it; a gable or hip roof, its planes' lowest envelope, and
+    // either cut level at its base when that is what its box records. A roof
+    // whose sketch is several loops is not sloped: each further loop is
+    // written as its own flat piece below, so sloping the first loop alone
+    // would draw one roof two ways, and no measured model has such a roof
+    // to say which loops its edges slope.
     let roof_slope = if class == "Roof" {
-        profile.as_ref().and_then(|profile| {
-            let slopes = crate::partition_schema_mvp::roof_slopes_from_fields(&decoded.fields);
-            let fascia =
-                crate::partition_schema_mvp::roof_fascia_depth_from_fields(&decoded.fields)
-                    .unwrap_or(0.0);
-            let outer: Vec<(f64, f64)> = profile
-                .outer_xy
-                .iter()
-                .map(|(px, py)| (px - x, py - y))
-                .collect();
-            let inner: Vec<Vec<(f64, f64)>> = profile
-                .inner_xy
-                .iter()
-                .map(|ring| ring.iter().map(|(px, py)| (px - x, py - y)).collect())
-                .collect();
-            use crate::partition_roof_slopes::RafterCut;
-            // Several slope arrows. Measured on one loop, a plumb cut
-            // and a fascia depth read as 0 only.
-            if crate::partition_schema_mvp::roof_arrow_planes_from_fields(&decoded.fields) {
-                let plumb =
-                    crate::partition_schema_mvp::roof_rafter_cut_from_fields(&decoded.fields)
-                        == Some(RafterCut::Plumb);
-                let no_fascia =
+        profile
+            .as_ref()
+            .filter(|profile| profile.pieces.is_empty())
+            .and_then(|profile| {
+                let slopes = crate::partition_schema_mvp::roof_slopes_from_fields(&decoded.fields);
+                let fascia =
                     crate::partition_schema_mvp::roof_fascia_depth_from_fields(&decoded.fields)
-                        == Some(0.0);
-                return if plumb && no_fascia && profile.pieces.is_empty() {
-                    roof_arrow_planes_solid(&slopes, [x, y], &outer, &inner, height)
-                        .map(|solid| (solid, Vec::new()))
-                } else {
-                    None
-                };
-            }
-            // A plain roof of one loop is written as its slabs, one per
-            // defining edge; a two-cut one as one body, as Revit's export
-            // writes them.
-            let one_loop = profile.pieces.is_empty();
-            // Every edge sloping down into the roof: the same roof upside
-            // down, its record box's top at the eaves.
-            if let Some(upright) = roof_slopes_turned_over(&slopes) {
-                let plumb = matches!(
-                    crate::partition_schema_mvp::roof_rafter_cut_from_fields(&decoded.fields),
-                    None | Some(RafterCut::Plumb)
-                );
-                if !plumb || fascia != 0.0 {
-                    return None;
-                }
-                let turn = |solid| turn_roof_over(solid, height);
-                let solid = match upright.as_slice() {
-                    [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height)?,
-                    _ => roof_planes_solid(&upright, [x, y], &outer, &inner, height, None)?,
-                };
-                let parts = match upright.as_slice() {
-                    _ if !one_loop => Vec::new(),
-                    [_] => vec![solid.clone()],
-                    _ => roof_plane_parts(&upright, [x, y], &outer, &inner).unwrap_or_default(),
-                };
-                return Some((turn(solid), parts.into_iter().map(turn).collect()));
-            }
-            let plain = || match slopes.as_slice() {
-                [] => None,
-                [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height).map(|solid| {
-                    let parts = if one_loop {
-                        vec![solid.clone()]
+                        .unwrap_or(0.0);
+                let outer: Vec<(f64, f64)> = profile
+                    .outer_xy
+                    .iter()
+                    .map(|(px, py)| (px - x, py - y))
+                    .collect();
+                let inner: Vec<Vec<(f64, f64)>> = profile
+                    .inner_xy
+                    .iter()
+                    .map(|ring| ring.iter().map(|(px, py)| (px - x, py - y)).collect())
+                    .collect();
+                use crate::partition_roof_slopes::RafterCut;
+                // Several slope arrows. Measured on one loop, a plumb cut
+                // and a fascia depth read as 0 only.
+                if crate::partition_schema_mvp::roof_arrow_planes_from_fields(&decoded.fields) {
+                    let plumb =
+                        crate::partition_schema_mvp::roof_rafter_cut_from_fields(&decoded.fields)
+                            == Some(RafterCut::Plumb);
+                    let no_fascia =
+                        crate::partition_schema_mvp::roof_fascia_depth_from_fields(&decoded.fields)
+                            == Some(0.0);
+                    return if plumb && no_fascia {
+                        roof_arrow_planes_solid(&slopes, [x, y], &outer, &inner, height)
+                            .map(|solid| (solid, Vec::new()))
                     } else {
-                        Vec::new()
+                        None
                     };
-                    (solid, parts)
-                }),
-                _ => {
-                    roof_planes_solid(&slopes, [x, y], &outer, &inner, height, None).map(|solid| {
-                        let parts = one_loop
-                            .then(|| roof_plane_parts(&slopes, [x, y], &outer, &inner))
-                            .flatten()
-                            .unwrap_or_default();
-                        (solid, parts)
-                    })
                 }
-            };
-            let two_cut = || {
-                (!slopes.is_empty())
-                    .then(|| {
-                        roof_planes_solid(&slopes, [x, y], &outer, &inner, height, Some(fascia))
-                    })
-                    .flatten()
-                    .map(|solid| (solid, Vec::new()))
-            };
-            // The roof's own rafter cut where it is read; elsewhere
-            // the plain body, else the two-cut one its record box singles out.
-            match crate::partition_schema_mvp::roof_rafter_cut_from_fields(&decoded.fields) {
-                Some(RafterCut::Plumb) => plain(),
-                Some(RafterCut::TwoCutPlumb) => two_cut(),
-                // A square two-cut with a fascia is not measured.
-                Some(RafterCut::TwoCutSquare) => (fascia == 0.0).then(two_cut).flatten(),
-                None => plain().or_else(two_cut),
-            }
-        })
+                // A plain roof is written as its slabs, one per defining edge; a
+                // two-cut one as one body, as Revit's export writes them.
+                // Every edge sloping down into the roof: the same roof upside
+                // down, its record box's top at the eaves.
+                if let Some(upright) = roof_slopes_turned_over(&slopes) {
+                    let plumb = matches!(
+                        crate::partition_schema_mvp::roof_rafter_cut_from_fields(&decoded.fields),
+                        None | Some(RafterCut::Plumb)
+                    );
+                    if !plumb || fascia != 0.0 {
+                        return None;
+                    }
+                    let turn = |solid| turn_roof_over(solid, height);
+                    let solid = match upright.as_slice() {
+                        [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height)?,
+                        _ => roof_planes_solid(&upright, [x, y], &outer, &inner, height, None)?,
+                    };
+                    let parts = match upright.as_slice() {
+                        [_] => vec![solid.clone()],
+                        _ => roof_plane_parts(&upright, [x, y], &outer, &inner).unwrap_or_default(),
+                    };
+                    return Some((turn(solid), parts.into_iter().map(turn).collect()));
+                }
+                let plain = || match slopes.as_slice() {
+                    [] => None,
+                    [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height)
+                        .map(|solid| (solid.clone(), vec![solid])),
+                    _ => roof_planes_solid(&slopes, [x, y], &outer, &inner, height, None).map(
+                        |solid| {
+                            let parts = roof_plane_parts(&slopes, [x, y], &outer, &inner)
+                                .unwrap_or_default();
+                            (solid, parts)
+                        },
+                    ),
+                };
+                let two_cut = || {
+                    (!slopes.is_empty())
+                        .then(|| {
+                            roof_planes_solid(&slopes, [x, y], &outer, &inner, height, Some(fascia))
+                        })
+                        .flatten()
+                        .map(|solid| (solid, Vec::new()))
+                };
+                // The roof's own rafter cut where it is read; elsewhere
+                // the plain body, else the two-cut one its record box singles out.
+                match crate::partition_schema_mvp::roof_rafter_cut_from_fields(&decoded.fields) {
+                    Some(RafterCut::Plumb) => plain(),
+                    Some(RafterCut::TwoCutPlumb) => two_cut(),
+                    // A square two-cut with a fascia is not measured.
+                    Some(RafterCut::TwoCutSquare) => (fascia == 0.0).then(two_cut).flatten(),
+                    None => plain().or_else(two_cut),
+                }
+            })
     } else {
         None
     };
@@ -9124,8 +9124,13 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
     // 1229815 and 4233698 stood as level blocks of 16.92 and 14.41 m³ where
     // Revit's export holds 1.19 and 0.56 m³, and on 2018 to 2023, where roof
     // slopes are newly read, they would have.
+    // A roof of several loops is not sloped by design: each loop is its
+    // plan's prism, so it keeps its outline and its further pieces.
     let undrawn_slopes = class == "Roof"
         && roof_slope.is_none()
+        && profile
+            .as_ref()
+            .is_none_or(|profile| profile.pieces.is_empty())
         && !crate::partition_schema_mvp::roof_slopes_from_fields(&decoded.fields).is_empty();
     let profile = profile.filter(|_| !undrawn_slopes);
     // A floor whose corner vertices are shape-edited rises along the
