@@ -394,17 +394,21 @@ pub const MAPPINGS: &[Mapping] = &[
         ifc_type: "IFCCABLECARRIERFITTING",
         predefined_type: None,
     },
-    // Gutters, as the `IfcPipeSegment` Revit's IFC2X3 export of
-    // BIM-Speed Vitoria `ALD26 Before` types both of its gutters by
-    // (`IfcPipeSegmentType` with `PredefinedType` `GUTTER`, written as
-    // `IfcFlowSegment`). Revit 2027's own IFC4 export of the BIM4LCA housing
-    // models writes a gutter as `IfcPipeSegment` with `PredefinedType`
-    // `GUTTER` (1629154 in the concrete as-built and timber permit exports),
-    // so the occurrence takes it too.
+    // Revit's IFC4 export writes a gutter whose own "Export to IFC As"
+    // names no pipe segment as an `IfcFlowSegment`, typed by an
+    // `IfcPipeSegmentType` `GUTTER` (the BIM4LCA housing's 3 gutters, in each of
+    // its six files; BIM-Speed's Vitoria export of 2018 writes its 2 the same
+    // way in IFC2X3). An `IfcPipeSegment` value is acted on
+    // ([`EXPORT_OVERRIDE_TARGETS`]): the office's 24 gutters carry it with
+    // `GUTTER`, and Revit writes them as that. `type_entity_for`
+    // (`step_writer.rs`) types every `IFCFLOWSEGMENT` as that gutter type,
+    // which holds only while this mapping is the one way to an
+    // `IfcFlowSegment` (no override value names it): a class written as one
+    // by another path needs its type keyed on its own class first.
     Mapping {
         revit_class: "Gutter",
-        ifc_type: "IFCPIPESEGMENT",
-        predefined_type: Some("GUTTER"),
+        ifc_type: "IFCFLOWSEGMENT",
+        predefined_type: None,
     },
     Mapping {
         revit_class: "FlexDuct",
@@ -807,6 +811,14 @@ pub const EXPORT_OVERRIDE_TARGETS: &[Mapping] = &[
         ifc_type: "IFCGEOGRAPHICELEMENT",
         predefined_type: None,
     },
+    // a gutter's own value, the only class it is acted on for (a pipe
+    // is an `IfcPipeSegment` already). Its `PredefinedType` is the element's
+    // own or its type's where it is an enumerator ([`predefined_type_for`]).
+    Mapping {
+        revit_class: "IfcPipeSegment",
+        ifc_type: "IFCPIPESEGMENT",
+        predefined_type: None,
+    },
 ];
 
 /// The Revit classes an [`EXPORT_OVERRIDE_TARGETS`] value is acted on for,
@@ -823,12 +835,28 @@ const OVERRIDE_CLASS_LIMITS: &[(&str, &[&str])] = &[
         "IfcGeographicElement",
         &["Floor", "Furniture", "Planting", "SpecialtyEquipment"],
     ),
+    ("IfcPipeSegment", &["Gutter"]),
 ];
 
+/// The Revit classes an [`EXPORT_OVERRIDE_TARGETS`] value is not acted on for,
+/// where Revit's export is measured to ignore it. Two of the BIM4LCA housing's
+/// three gutters carry `IfcCovering` with `ROOFING`, as do the roofing elements
+/// around them, and Revit's IFC4 export of each of its six files writes both
+/// as `IfcFlowSegment`, as it does the third, which carries no value.
+/// As for a wall sweep's, a curtain wall's ([`export_override_applies`]).
+const OVERRIDE_CLASS_EXCLUSIONS: &[(&str, &[&str])] = &[("IfcCovering", &["Gutter"])];
+
 /// [`lookup_export_override`] for an element of `revit_class`: `None` where
-/// the value is limited to other classes (`OVERRIDE_CLASS_LIMITS`).
+/// the value is limited to other classes (`OVERRIDE_CLASS_LIMITS`) or
+/// ignored for this one (`OVERRIDE_CLASS_EXCLUSIONS`).
 pub fn lookup_export_override_for(value: &str, revit_class: &str) -> Option<&'static Mapping> {
     let target = lookup_export_override(value)?;
+    let excluded = OVERRIDE_CLASS_EXCLUSIONS.iter().any(|(name, classes)| {
+        name.eq_ignore_ascii_case(value.trim()) && classes.contains(&revit_class)
+    });
+    if excluded {
+        return None;
+    }
     let limited = OVERRIDE_CLASS_LIMITS
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case(value.trim()));
@@ -882,6 +910,12 @@ pub fn space_predefined_type_for(value: &str) -> Option<&'static str> {
 /// `TRAPDOOR` on 52 doors (3 on each of the four housing files, 10 on each of
 /// the four office files) and `DOOR` on every other door of every model
 /// measured, where rvt-open wrote `DOOR` on all.
+/// `IfcBuildingElementProxy` is listed: in each of the twelve
+/// BIM4LCA files (six housing, six office) one proxy carries `USERDEFINED` as
+/// its own "IFC Predefined Type" under an "Export to IFC As" of
+/// `IfcBuildingElementProxy`, and Revit's export writes `USERDEFINED` on it,
+/// where rvt-open left it unset because the value was not read for a proxy. A
+/// proxy with no value keeps the `NOTDEFINED` of `NOTDEFINED_DEFAULTS`.
 ///
 /// adds four more, each measured on the BIM4LCA office (Revit 2024)
 /// against Revit's export of it: `IfcWall`, whose 607 walls Revit writes
@@ -1451,6 +1485,18 @@ const PREDEFINED_TYPE_ENUMERATORS: &[(&str, &[&str])] = &[
     (
         "IFCDOOR",
         &["DOOR", "GATE", "TRAPDOOR", "USERDEFINED", "NOTDEFINED"],
+    ),
+    (
+        "IFCBUILDINGELEMENTPROXY",
+        &[
+            "COMPLEX",
+            "ELEMENT",
+            "PARTIAL",
+            "PROVISIONFORVOID",
+            "PROVISIONFORSPACE",
+            "USERDEFINED",
+            "NOTDEFINED",
+        ],
     ),
 ];
 

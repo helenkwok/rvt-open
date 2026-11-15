@@ -7370,6 +7370,10 @@ fn geometry_gap_skipped_items(
     // stair and a curtain wall, lacks no body of its own: it is
     // counted in `building_elements_carried_by_parts`.
     let wholes = wholes_carried_by_parts(model);
+    // A part of an aggregate reaches the spatial structure through its whole,
+    // so it is in no storey of its own only where its whole is none:
+    // the stair flights and landings of a model are in the storey of their stair
+    let aggregate_parts = step_writer::aggregate_parts_of_elements(model);
     for (index, entity) in model.entities.iter().enumerate() {
         let entities::IfcEntity::BuildingElement {
             ifc_type,
@@ -7408,7 +7412,7 @@ fn geometry_gap_skipped_items(
             continue;
         }
 
-        if storey_index.is_none() {
+        if storey_index.is_none() && !aggregate_parts.contains(&index) {
             missing_level.add(ifc_type, name, id);
         }
         if location_feet.is_none() {

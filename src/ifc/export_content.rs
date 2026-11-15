@@ -9011,10 +9011,14 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
         None
     };
     // A shed roof whose slope reproduces its record box rises along
-    // it. a gable or hip roof, its planes' lowest envelope, and
-    // either cut level at its base when that is what its box records.
+    // it; a gable or hip roof, its planes' lowest envelope, and
+    // either cut level at its base when that is what its box records. A roof
+    // whose sketch is several loops is not sloped: each further loop is
+    // written as its own flat piece below, so sloping the first loop alone
+    // would draw one roof two ways, and no measured model has such a roof
+    // to say which loops its edges slope.
     let roof_slope = if class == "Roof" {
-        profile.as_ref().and_then(|profile| {
+        profile.as_ref().filter(|profile| profile.pieces.is_empty()).and_then(|profile| {
             let slopes = crate::partition_schema_mvp::roof_slopes_from_fields(&decoded.fields);
             let fascia =
                 crate::partition_schema_mvp::roof_fascia_depth_from_fields(&decoded.fields)
@@ -9039,17 +9043,15 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                 let no_fascia =
                     crate::partition_schema_mvp::roof_fascia_depth_from_fields(&decoded.fields)
                         == Some(0.0);
-                return if plumb && no_fascia && profile.pieces.is_empty() {
+                return if plumb && no_fascia {
                     roof_arrow_planes_solid(&slopes, [x, y], &outer, &inner, height)
                         .map(|solid| (solid, Vec::new()))
                 } else {
                     None
                 };
             }
-            // A plain roof of one loop is written as its slabs, one per
-            // defining edge; a two-cut one as one body, as Revit's export
-            // writes them.
-            let one_loop = profile.pieces.is_empty();
+            // A plain roof is written as its slabs, one per defining edge; a
+            // two-cut one as one body, as Revit's export writes them.
             // Every edge sloping down into the roof: the same roof upside
             // down, its record box's top at the eaves.
             if let Some(upright) = roof_slopes_turned_over(&slopes) {
@@ -9066,7 +9068,6 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                     _ => roof_planes_solid(&upright, [x, y], &outer, &inner, height, None)?,
                 };
                 let parts = match upright.as_slice() {
-                    _ if !one_loop => Vec::new(),
                     [_] => vec![solid.clone()],
                     _ => roof_plane_parts(&upright, [x, y], &outer, &inner).unwrap_or_default(),
                 };
@@ -9074,20 +9075,12 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
             }
             let plain = || match slopes.as_slice() {
                 [] => None,
-                [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height).map(|solid| {
-                    let parts = if one_loop {
-                        vec![solid.clone()]
-                    } else {
-                        Vec::new()
-                    };
-                    (solid, parts)
-                }),
+                [slope] => roof_slope_solid(*slope, [x, y], &outer, &inner, height)
+                    .map(|solid| (solid.clone(), vec![solid])),
                 _ => {
                     roof_planes_solid(&slopes, [x, y], &outer, &inner, height, None).map(|solid| {
-                        let parts = one_loop
-                            .then(|| roof_plane_parts(&slopes, [x, y], &outer, &inner))
-                            .flatten()
-                            .unwrap_or_default();
+                        let parts =
+                            roof_plane_parts(&slopes, [x, y], &outer, &inner).unwrap_or_default();
                         (solid, parts)
                     })
                 }

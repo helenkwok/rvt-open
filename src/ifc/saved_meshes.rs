@@ -201,6 +201,19 @@ fn leaves_partial(diagnostic: &str) -> bool {
         && !diagnostic.ends_with(crate::native_graphics_traversal::VIEW_COMPONENT_DIAGNOSTIC)
 }
 
+/// Whether a wall's saved mesh failed to decode in a way that can leave out part
+/// of the wall, so its quantities are not read from it: any diagnostic
+/// [`leaves_partial`] counts but a view-resolved instance, which on every
+/// measured wall leaves the wall's own solid whole. Bodies, beams and
+/// columns keep [`partial_refusal`]'s wider test.
+fn wall_mesh_partial(meshes: &GraphicsMeshes) -> bool {
+    meshes.diagnostics.iter().any(|diagnostic| {
+        leaves_partial(diagnostic)
+            && !diagnostic
+                .ends_with(crate::native_graphics_traversal::VIEW_RESOLVED_INSTANCE_DIAGNOSTIC)
+    })
+}
+
 /// A decoder diagnostic as [`SAVED_MESH_REFUSAL_PROPERTY`] says it: without the
 /// object it names (the text before its first `: `) and with its digits written
 /// as `#`, so that two elements with the same fault say it alike.
@@ -488,13 +501,20 @@ pub fn attach_scoped_in_batches(
     let mut volumes: Vec<(usize, f64)> = Vec::new();
     let mut by_id: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     // A stair or curtain wall is drawn by its parts; its own saved graphics
-    // would draw it twice.
+    // would draw it twice. A ramp is not: its railings are parts beside its
+    // own body, which Revit's export draws from the same saved mesh.
     let wholes: BTreeSet<usize> = model
         .entities
         .iter()
         .filter_map(|entity| match entity {
             IfcEntity::Aggregate { whole, .. } => Some(*whole),
             _ => None,
+        })
+        .filter(|&whole| {
+            !matches!(
+                model.entities.get(whole),
+                Some(IfcEntity::BuildingElement { ifc_type, .. }) if ifc_type == "IFCRAMP"
+            )
         })
         .collect();
     // why each box that keeps its box does; a box the pass does not take
@@ -694,6 +714,8 @@ pub fn attach_scoped_in_batches(
     let mut columns: Vec<(usize, ColumnQuantities)> = Vec::new();
     // the volume of each column's mesh, whatever its faces.
     let mut column_volumes: Vec<(usize, f64)> = Vec::new();
+    // the height of each column's mesh, whatever its faces.
+    let mut column_heights: Vec<(usize, f64)> = Vec::new();
     // what the mesh of each wall gives of its quantities.
     let mut wall_quantities: Vec<(usize, WallMeshQuantities)> = Vec::new();
     // what a wall's mesh needs besides itself to be read as a vertical
@@ -797,12 +819,21 @@ pub fn attach_scoped_in_batches(
                     let held = wall_openings.get(index);
                     let frame = held.map_or(WallFrame { turn: 0.0 }, |held| held.frame);
                     let boxes: &[[f64; 6]] = held.map_or(&[], |held| held.boxes.as_slice());
-                    let found = wall_mesh_quantities(
-                        &world.primitives,
-                        &frame,
-                        boxes,
-                        !no_base_join.contains(&element_id),
-                    );
+                    // A mesh that decoded only in part can still hold one closed
+                    // solid (another of its solids is what failed), and its
+                    // quantities would be that solid's alone: refused, as a
+                    // beam's and a column's are, unless all that failed is
+                    // a view-resolved instance.
+                    let found = (!wall_mesh_partial(&element.meshes))
+                        .then(|| {
+                            wall_mesh_quantities(
+                                &world.primitives,
+                                &frame,
+                                boxes,
+                                !no_base_join.contains(&element_id),
+                            )
+                        })
+                        .flatten();
                     if let Some(mut found) = found {
                         // The frames a batch composes can move a sum over the
                         // faces in its last bit; to 1e-9 (far below the saved
@@ -1208,12 +1239,14 @@ pub fn attach_scoped_in_batches(
                     beam,
                     column,
                     column_volume,
+                    column_height,
                     plate_width,
                 } = quantities;
                 members.extend(member);
                 beams.extend(beam.map(|beam| (*index, beam)));
                 columns.extend(column.map(|column| (*index, column)));
                 column_volumes.extend(column_volume.map(|volume| (*index, volume)));
+                column_heights.extend(column_height.map(|height| (*index, height)));
                 plate_widths.extend(plate_width.map(|width| (*index, width)));
             } else {
                 refusals.push((*index, SAVED_MESH_NO_TRIANGLES.to_string()));
@@ -1232,10 +1265,12 @@ pub fn attach_scoped_in_batches(
     volumes.sort_by_key(|(index, _)| *index);
     members.sort_by_key(|member| member.index);
     column_volumes.sort_by_key(|(index, _)| *index);
+    column_heights.sort_by_key(|(index, _)| *index);
     wall_quantities.sort_by_key(|(index, _)| *index);
     plate_widths.sort_by_key(|(index, _)| *index);
     refusals.sort_by_key(|(index, _)| *index);
     drop_column_box_quantities(model, &column_volumes);
+    shorten_column_box_lengths(model, &column_heights);
     let moved = add_mesh_volumes(model, &volumes, &members);
     follow_mesh_span(model, &moved);
     add_mullion_surface_areas(model, &members);
@@ -1393,6 +1428,7 @@ struct MeshQuantities {
     beam: Option<BeamQuantities>,
     column: Option<ColumnQuantities>,
     column_volume: Option<f64>,
+    column_height: Option<f64>,
     plate_width: Option<f64>,
 }
 
@@ -1439,6 +1475,17 @@ fn element_quantities(
     let column_volume = (kind == "IFCCOLUMN")
         .then(|| oriented_mesh_volume(primitives, *origin))
         .flatten();
+    // the height of a column's mesh, whatever its faces.
+    let column_height = (kind == "IFCCOLUMN")
+        .then(|| {
+            let (low, high) = vertices
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), v| {
+                    (low.min(v[2]), high.max(v[2]))
+                });
+            high - low
+        })
+        .filter(|height| height.is_finite() && *height > 0.0);
     // the mullion's own axis, from its record, turned into the element's
     // frame as its mesh is.
     let member = volume.filter(|_| kind == "IFCMEMBER").and_then(|_| {
@@ -1490,6 +1537,7 @@ fn element_quantities(
         beam,
         column,
         column_volume,
+        column_height,
         plate_width,
     }
 }
@@ -1624,6 +1672,67 @@ fn drop_column_box_quantities(model: &mut IfcModel, found: &[(usize, f64)]) {
                     "CrossSectionArea" | "OuterSurfaceArea" | "GrossVolume" | "NetVolume"
                 )
             });
+        }
+    }
+}
+
+/// How much shorter than its box's height a column's mesh must be for the
+/// box's height not to be its `Length`, feet (about 0.3 mm).
+const COLUMN_LENGTH_TOLERANCE_FEET: f64 = 0.001;
+
+/// Give each column of `found` (an index into the entities and the height of
+/// the mesh its body was drawn from) its mesh's height as its `Length` where
+/// the `Length` it holds is its record box's height and the mesh is shorter.
+/// Revit's IFC exporter takes a column's `Length` from the extrusion it
+/// finds, which is the column's solid. Over the measured exports, no written
+/// `Length` is shorter than its column's mesh
+/// by 2 mm, and one is longer only on 786 columns of the Revit 2025 to 2027
+/// saves of Autodesk's rme samples (and 5 BIM4LCA elements an earlier fix
+/// fixed). Those saves record boxes up to 7.3 m taller than the meshes, which
+/// are the same as in each project's 2024 save, whose box is the mesh's height.
+/// It applies to any column drawn from its mesh, on the releases whose meshes
+/// are drawn (Revit 2023 to 2027), with flat faces or curved: a round column's
+/// mesh is left out of the quantities read from a mesh of flat faces,
+/// and a flat-faced one's `Length` from that reading is never written over a
+/// held value, so either kept the box's height. A `Length` from anything but
+/// the box (a clean pair's) is left as it is.
+fn shorten_column_box_lengths(model: &mut IfcModel, found: &[(usize, f64)]) {
+    if found.is_empty() {
+        return;
+    }
+    let mut held: BTreeMap<usize, usize> = BTreeMap::new();
+    for (position, entity) in model.entities.iter().enumerate() {
+        if let IfcEntity::ElementPropertySet { element, set } = entity {
+            if set.name == "Qto_ColumnBaseQuantities" {
+                held.entry(*element).or_insert(position);
+            }
+        }
+    }
+    for &(index, mesh_height) in found {
+        let Some(IfcEntity::BuildingElement {
+            extrusion: Some(body),
+            ..
+        }) = model.entities.get(index)
+        else {
+            continue;
+        };
+        let box_height = body.height_feet;
+        let Some(&position) = held.get(&index) else {
+            continue;
+        };
+        let Some(IfcEntity::ElementPropertySet { set, .. }) = model.entities.get_mut(position)
+        else {
+            continue;
+        };
+        for property in &mut set.properties {
+            if let PropertyValue::PositiveLengthFeet(length) = &mut property.value {
+                if property.name == "Length"
+                    && (*length - box_height).abs() <= 1e-9 * box_height.max(1.0)
+                    && mesh_height < *length - COLUMN_LENGTH_TOLERANCE_FEET
+                {
+                    *length = mesh_height;
+                }
+            }
         }
     }
 }
