@@ -28,7 +28,9 @@ use std::path::PathBuf;
 const HOUSES: [(&str, usize, usize); 2] = [
     (
         "ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt",
-        1091,
+        // 4 more candidates since a roof its "Export to IFC As" writes as
+        // another entity is still a roof for the choice of its body.
+        1095,
         // 18 more since the walk draws the hidden railing instances Revit's
         // export draws (forbidden the targets 53246) and reads elliptic profiles;
         // 4 more since a column whose mesh is a prism of another section than

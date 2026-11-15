@@ -373,6 +373,19 @@ pub fn find_export_parameters(
     header: &[u8; 10],
     declared: &BTreeSet<u32>,
 ) -> BTreeMap<u32, ExportParameters> {
+    parameters_by_header(buf, header, declared).0
+}
+
+/// What one partition holds: the parameters by owner, and the `(owner, key)`
+/// pairs it sets to two different values, which the map leaves out.
+type PartitionParameters = (BTreeMap<u32, ExportParameters>, BTreeSet<(u32, i64)>);
+
+/// [`find_export_parameters`], with the keys it dropped.
+fn parameters_by_header(
+    buf: &[u8],
+    header: &[u8; 10],
+    declared: &BTreeSet<u32>,
+) -> PartitionParameters {
     collect_export_parameters(buf, declared, |hit| {
         let from = hit.saturating_sub(EXPORT_PARAMETER_WINDOW);
         let start = memchr::memmem::rfind(&buf[from..hit], header)?;
@@ -397,6 +410,15 @@ pub fn find_export_parameters_in_objects(
     objects: &[(usize, crate::partition_room_parameters::DataObject)],
     declared: &BTreeSet<u32>,
 ) -> BTreeMap<u32, ExportParameters> {
+    parameters_in_objects(buf, objects, declared).0
+}
+
+/// [`find_export_parameters_in_objects`], with the keys it dropped.
+fn parameters_in_objects(
+    buf: &[u8],
+    objects: &[(usize, crate::partition_room_parameters::DataObject)],
+    declared: &BTreeSet<u32>,
+) -> PartitionParameters {
     use crate::partition_room_parameters::DATA_OBJECT_HEADER;
     collect_export_parameters(buf, declared, |hit| {
         let index = objects.partition_point(|(p, _)| *p <= hit).checked_sub(1)?;
@@ -407,12 +429,12 @@ pub fn find_export_parameters_in_objects(
 
 /// Every export parameter entry in `buf` whose owner `owner_of` finds and
 /// `declared` holds, by owner. A key an owner sets to two different values
-/// is dropped.
+/// is dropped, and named in the second part of the answer.
 fn collect_export_parameters(
     buf: &[u8],
     declared: &BTreeSet<u32>,
     owner_of: impl Fn(usize) -> Option<u32>,
-) -> BTreeMap<u32, ExportParameters> {
+) -> PartitionParameters {
     let mut found: BTreeMap<(u32, i64), Option<String>> = BTreeMap::new();
     for key in [
         IFC_EXPORT_ELEMENT_AS,
@@ -440,16 +462,26 @@ fn collect_export_parameters(
         }
     }
     let mut out: BTreeMap<u32, ExportParameters> = BTreeMap::new();
+    let mut dropped: BTreeSet<(u32, i64)> = BTreeSet::new();
     for ((owner, key), value) in found {
         let Some(value) = value else {
+            dropped.insert((owner, key));
             continue;
         };
         if let Some(slot) = out.entry(owner).or_default().slot(key) {
             *slot = Some(value);
         }
     }
-    out
+    (out, dropped)
 }
+
+/// What each partition holds of one `(owner, key)`: its value, or `None` where
+/// the partition sets the key to two different values.
+type KeyCopies = BTreeMap<u32, Option<String>>;
+
+/// The partitions that hold an element's data at all, whatever keys they
+/// carry, by the element.
+type Holders = BTreeMap<u32, BTreeSet<u32>>;
 
 /// Every element's IFC export parameters, read as the element's stored
 /// parameters through the file's own schema ([`crate::schema_objects`],
@@ -461,11 +493,10 @@ fn collect_export_parameters(
 /// `IfcSpace` on 87 elements that do not set it (mullions, plumbing
 /// fixtures, sketch lines, openings).
 ///
-/// An element read twice keeps the copy of the highest-numbered partition,
-/// the newest: a Revit 2024 project rewrites an edited element into a later
-/// partition and leaves the earlier copy in place. Where the file's schema
-/// cannot be read, the header search ([`find_export_parameters`], 2024
-/// to 2026) is used instead.
+/// An element read in several partitions is resolved by [`choose_copies`]:
+/// on Revit 2024 and later a key the copies disagree about takes the current
+/// copy's value. Where the file's schema cannot be read, the header search
+/// ([`find_export_parameters`], 2024 to 2026) is used instead.
 pub fn scan_export_parameters(
     rf: &mut RevitFile,
     revit_version: u32,
@@ -477,7 +508,7 @@ pub fn scan_export_parameters(
         IFC_EXPORT_ELEMENT_TYPE_AS,
         IFC_EXPORT_PREDEFINEDTYPE_TYPE,
     ];
-    let mut newest: BTreeMap<(u32, i64), (u64, String)> = BTreeMap::new();
+    let mut copies: BTreeMap<(u32, i64), KeyCopies> = BTreeMap::new();
     // Only objects holding one of the keys' bytes are read.
     let width = crate::schema_objects::IdWidth::of_release(revit_version);
     let patterns: Vec<Vec<u8>> = KEYS
@@ -500,7 +531,7 @@ pub fn scan_export_parameters(
         if !declared.contains(&owner) {
             return;
         }
-        let number = crate::partition_names::partition_number(&object.stream);
+        let partition = crate::partition_room_parameters::partition_number(&object.stream);
         for (key, value) in object.stored_parameters() {
             let crate::schema_objects::ParamValue::String(value) = value else {
                 continue;
@@ -511,28 +542,22 @@ pub fn scan_export_parameters(
             let Some(value) = valid_export_value(key, value) else {
                 continue;
             };
-            if newest
-                .get(&(owner, key))
-                .is_none_or(|(held, _)| number > *held)
-            {
-                newest.insert((owner, key), (number, value));
-            }
+            copies
+                .entry((owner, key))
+                .or_default()
+                .entry(partition)
+                .or_insert(Some(value));
         }
     });
     if read.is_err() {
         return scan_export_parameters_by_header(rf, revit_version, declared);
     }
-    let mut merged: BTreeMap<u32, ExportParameters> = BTreeMap::new();
-    for ((owner, key), (_, value)) in newest {
-        if let Some(slot) = merged.entry(owner).or_default().slot(key) {
-            *slot = Some(value);
-        }
-    }
-    Ok(merged)
+    Ok(choose_copies(rf, revit_version, &copies))
 }
 
 /// The element-data read: [`find_export_parameters`] over every `Partitions/*`
-/// stream, newest partition first. Empty for a release with no measured
+/// stream, or on Revit 2024 and later [`find_export_parameters_in_objects`],
+/// resolved by [`choose_copies`]. Empty for a release with no measured
 /// element-data header.
 fn scan_export_parameters_by_header(
     rf: &mut RevitFile,
@@ -542,19 +567,20 @@ fn scan_export_parameters_by_header(
     let Some(header) = crate::partition_names::element_data_header(revit_version) else {
         return Ok(BTreeMap::new());
     };
-    let mut newest: BTreeMap<(u32, i64), (u64, String)> = BTreeMap::new();
+    let by_current_copy = revit_version >= 2024;
+    let mut copies: BTreeMap<(u32, i64), KeyCopies> = BTreeMap::new();
     for stream in rf.partition_stream_names() {
         let Ok(inflated) = rf.inflated_partition(&stream) else {
             continue;
         };
-        let number = crate::partition_names::partition_number(&stream);
-        let found = if revit_version >= 2024 {
+        let partition = crate::partition_room_parameters::partition_number(&stream);
+        let (found, dropped) = if by_current_copy {
             let Ok(objects) = rf.memoised_partition_data_objects(&stream) else {
                 continue;
             };
-            find_export_parameters_in_objects(inflated.bytes(), &objects, declared)
+            parameters_in_objects(inflated.bytes(), &objects, declared)
         } else {
-            find_export_parameters(inflated.bytes(), &header, declared)
+            parameters_by_header(inflated.bytes(), &header, declared)
         };
         for (owner, parameters) in found {
             for (key, value) in [
@@ -566,25 +592,140 @@ fn scan_export_parameters_by_header(
                     parameters.type_predefined_type,
                 ),
             ] {
-                let Some(value) = value else {
-                    continue;
-                };
-                if newest
-                    .get(&(owner, key))
-                    .is_none_or(|(held, _)| number > *held)
-                {
-                    newest.insert((owner, key), (number, value));
+                if let Some(value) = value {
+                    copies
+                        .entry((owner, key))
+                        .or_default()
+                        .insert(partition, Some(value));
                 }
             }
         }
+        // A partition that sets a key to two values is a copy in doubt, which
+        // only the current-copy rule reads.
+        if by_current_copy {
+            for pair in dropped {
+                copies.entry(pair).or_default().insert(partition, None);
+            }
+        }
+    }
+    Ok(choose_copies(rf, revit_version, &copies))
+}
+
+/// The value each `(owner, key)` takes from its partitions' copies.
+///
+/// Copies that agree give their value. Before Revit 2024 a key the copies
+/// disagree about keeps the highest-numbered partition's value, the newest.
+/// On Revit 2024 and later it takes the value of the element's current copy,
+/// found among the partitions that hold the element's data at all
+/// ([`crate::native_document::current_partitions`]), as
+/// [`crate::partition_compound_structure::scan_type_layers`] reads a type's
+/// layers: the BIM4LCA permit files edit a wall's or a wall type's value in a
+/// later increment, and 40 walls, 42 spaces and 8 roofs of three of them read
+/// no value or the wrong class while Revit's export writes the current one.
+/// An element it has no current copy for, one whose current partition carries
+/// no entry for the key, and one whose current copy disagrees with itself,
+/// leave the key out. Copies that agree are checked against the current copy
+/// too when the element's data also sits in a partition without the key, so
+/// a key the current copy cleared is left out however many older copies
+/// agree on it.
+fn choose_copies(
+    rf: &mut RevitFile,
+    revit_version: u32,
+    copies: &BTreeMap<(u32, i64), KeyCopies>,
+) -> BTreeMap<u32, ExportParameters> {
+    let by_current_copy = revit_version >= 2024;
+    let mut holders = Holders::new();
+    let mut current: BTreeMap<u32, u32> = BTreeMap::new();
+    if by_current_copy && !copies.is_empty() {
+        // A parameter cleared in the current partition is no entry there, so
+        // the partitions to choose among are those where the element's data
+        // object appears at all, not only those that hold the key: a current
+        // partition without the key leaves it out and does not give way to an
+        // older partition's value.
+        let owners: BTreeSet<u32> = copies.keys().map(|&(owner, _)| owner).collect();
+        for stream in rf.partition_stream_names() {
+            let Ok(objects) = rf.memoised_partition_data_objects(&stream) else {
+                continue;
+            };
+            let partition = crate::partition_room_parameters::partition_number(&stream);
+            for (_, object) in objects.iter() {
+                if owners.contains(&object.element_id) {
+                    holders
+                        .entry(object.element_id)
+                        .or_default()
+                        .insert(partition);
+                }
+            }
+        }
+        let needing: Holders = copies
+            .iter()
+            .filter(|&(&(owner, _), held)| needs_current_copy(held, holders.get(&owner)))
+            .filter_map(|(&(owner, _), _)| Some((owner, holders.get(&owner)?.clone())))
+            .collect();
+        // The elements it leaves out are the ones whose current copy cannot
+        // be told: an element the index does not route, or one whose current
+        // copy sits in a stream too large to read. The native record read
+        // leaves those elements out too, and a latest-copy guess here would
+        // read a stale value.
+        current = crate::native_document::current_partitions(rf, &needing);
     }
     let mut merged: BTreeMap<u32, ExportParameters> = BTreeMap::new();
-    for ((owner, key), (_, value)) in newest {
+    for (&(owner, key), held) in copies {
+        let Some(value) = resolve_copies(
+            by_current_copy,
+            held,
+            holders.get(&owner),
+            current.get(&owner).copied(),
+        ) else {
+            continue;
+        };
         if let Some(slot) = merged.entry(owner).or_default().slot(key) {
             *slot = Some(value);
         }
     }
-    Ok(merged)
+    merged
+}
+
+/// Whether, on Revit 2024 and later, a key's value must come from the
+/// element's current copy: its copies disagree, or the element's data also
+/// sits in a partition that carries no entry for the key, which may be the
+/// current copy that cleared it.
+fn needs_current_copy(held: &KeyCopies, holders: Option<&BTreeSet<u32>>) -> bool {
+    let mut values = held.values();
+    let Some(first) = values.next() else {
+        return false;
+    };
+    !values.all(|value| value == first)
+        || holders.is_some_and(|holders| holders.iter().any(|p| !held.contains_key(p)))
+}
+
+/// The value one `(owner, key)` takes from its copies, given the partitions
+/// holding the element's data and its current partition where known (see
+/// [`choose_copies`]).
+fn resolve_copies(
+    by_current_copy: bool,
+    held: &KeyCopies,
+    holders: Option<&BTreeSet<u32>>,
+    current: Option<u32>,
+) -> Option<String> {
+    let first = held.values().next()?;
+    let agree = held.values().all(|value| value == first);
+    if !by_current_copy {
+        return if agree {
+            first.clone()
+        } else {
+            held.values().rev().flatten().next().cloned()
+        };
+    }
+    if !needs_current_copy(held, holders) {
+        return first.clone();
+    }
+    match current {
+        Some(partition) => held.get(&partition).cloned().flatten(),
+        // Copies that agree with no sign of which is current keep their value.
+        None if agree => first.clone(),
+        None => None,
+    }
 }
 
 /// Names of the shared parameters Revit's IFC exporter reads as "Export to
@@ -776,4 +917,82 @@ pub fn scan_export_parameters_schema(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn copies(entries: &[(u32, Option<&str>)]) -> KeyCopies {
+        entries
+            .iter()
+            .map(|&(partition, value)| (partition, value.map(str::to_owned)))
+            .collect()
+    }
+
+    #[test]
+    fn current_copy_without_the_key_leaves_one_older_value_out() {
+        let held = copies(&[(10, Some("IfcSlab"))]);
+        let holders = BTreeSet::from([10, 20]);
+        assert_eq!(resolve_copies(true, &held, Some(&holders), Some(20)), None);
+    }
+
+    #[test]
+    fn current_copy_without_the_key_leaves_identical_older_values_out() {
+        let held = copies(&[(10, Some("IfcSlab")), (15, Some("IfcSlab"))]);
+        let holders = BTreeSet::from([10, 15, 20]);
+        assert_eq!(resolve_copies(true, &held, Some(&holders), Some(20)), None);
+    }
+
+    #[test]
+    fn current_copy_with_the_key_gives_its_value() {
+        let held = copies(&[(10, Some("IfcSlab")), (20, Some("IfcRoof"))]);
+        let holders = BTreeSet::from([10, 20, 30]);
+        assert_eq!(
+            resolve_copies(true, &held, Some(&holders), Some(20)).as_deref(),
+            Some("IfcRoof")
+        );
+        let held = copies(&[(10, Some("IfcSlab"))]);
+        assert_eq!(
+            resolve_copies(true, &held, Some(&BTreeSet::from([10, 5])), Some(10)).as_deref(),
+            Some("IfcSlab")
+        );
+    }
+
+    #[test]
+    fn copies_held_everywhere_need_no_current_copy() {
+        let held = copies(&[(10, Some("IfcSlab")), (20, Some("IfcSlab"))]);
+        let holders = BTreeSet::from([10, 20]);
+        assert!(!needs_current_copy(&held, Some(&holders)));
+        assert_eq!(
+            resolve_copies(true, &held, Some(&holders), None).as_deref(),
+            Some("IfcSlab")
+        );
+    }
+
+    #[test]
+    fn unknown_current_copy_keeps_agreement_and_drops_disagreement() {
+        let holders = BTreeSet::from([10, 20]);
+        let agree = copies(&[(10, Some("IfcSlab"))]);
+        assert_eq!(
+            resolve_copies(true, &agree, Some(&holders), None).as_deref(),
+            Some("IfcSlab")
+        );
+        let disagree = copies(&[(10, Some("IfcSlab")), (20, Some("IfcRoof"))]);
+        assert_eq!(resolve_copies(true, &disagree, Some(&holders), None), None);
+    }
+
+    #[test]
+    fn before_2024_the_newest_value_wins() {
+        let held = copies(&[(10, Some("IfcSlab")), (20, Some("IfcRoof")), (30, None)]);
+        assert_eq!(
+            resolve_copies(false, &held, None, None).as_deref(),
+            Some("IfcRoof")
+        );
+        let single = copies(&[(10, Some("IfcSlab"))]);
+        assert_eq!(
+            resolve_copies(false, &single, Some(&BTreeSet::from([10, 20])), Some(20)).as_deref(),
+            Some("IfcSlab")
+        );
+    }
 }
