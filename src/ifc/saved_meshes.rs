@@ -885,7 +885,9 @@ pub fn attach_scoped_in_batches(
             }
             // a covering's `GrossArea` from its saved mesh's horizontal faces,
             // read in the model's frame, as the quantities above are.
-            let ceiling = ceilings.get(&element_id).and_then(|indices| indices.first());
+            let ceiling = ceilings
+                .get(&element_id)
+                .and_then(|indices| indices.first());
             let instance = match instances.get(&element_id).map(Vec::as_slice) {
                 Some([index]) => Some(index),
                 _ => None,
@@ -898,8 +900,8 @@ pub fn attach_scoped_in_batches(
                 // as for walls, to 1e-9 every batch size agrees.
                 let tidy = |x: f64| (x * 1e9).round() / 1e9;
                 if let Some(&index) = ceiling
-                    && let Some(area) =
-                        one_piece_face_area(primitives).or_else(|| first_piece_face_area(primitives))
+                    && let Some(area) = one_piece_face_area(primitives)
+                        .or_else(|| first_piece_face_area(primitives))
                 {
                     covering_areas.push((index, tidy(area)));
                 }
@@ -4014,7 +4016,6 @@ fn add_covering_areas(model: &mut IfcModel, found: &[(usize, f64)]) {
         }
     }
 }
-
 
 /// Whether `set` has a property called `name`.
 fn has_property(set: &PropertySet, name: &str) -> bool {
