@@ -57,21 +57,22 @@ class Timeline {
     f.maxMs = 0;
     f.maxGapMs = 0;
     try {
-      this.observer = new PerformanceObserver((list) => {
-        for (const e of list.getEntries() as unknown as LongFrame[]) {
-          this.long.push({
-            ms: e.duration,
-            blocking: e.blockingDuration ?? 0,
-            scripts: (e.scripts ?? []).map((x) => ({
-              what: `${x.invoker ?? ''} ${x.sourceFunctionName ?? ''} ${(x.sourceURL ?? '').split('/').pop() ?? ''}:${x.sourceCharPosition ?? ''}`.trim(),
-              ms: x.duration,
-            })),
-          });
-        }
-      });
+      this.observer = new PerformanceObserver((list) => this.collect(list.getEntries()));
       this.observer.observe({ type: 'long-animation-frame', buffered: false });
     } catch {
       this.observer = null;
+    }
+  }
+  private collect(entries: PerformanceEntryList): void {
+    for (const e of entries as unknown as LongFrame[]) {
+      this.long.push({
+        ms: e.duration,
+        blocking: e.blockingDuration ?? 0,
+        scripts: (e.scripts ?? []).map((x) => ({
+          what: `${x.invoker ?? ''} ${x.sourceFunctionName ?? ''} ${(x.sourceURL ?? '').split('/').pop() ?? ''}:${x.sourceCharPosition ?? ''}`.trim(),
+          ms: x.duration,
+        })),
+      });
     }
   }
   mark(stage: string, at: number = clock()): void {
@@ -81,15 +82,18 @@ class Timeline {
   worker(at: Record<string, number> | undefined): void {
     for (const [k, v] of Object.entries(at ?? {})) this.mark(`worker.${k}`, v);
   }
-  frames(): void {
+  private frames(): void {
     const f = this.stats();
     this.marks.frames = f.frames - this.frames0.frames;
     this.marks.frameMs = Math.round(f.ms - this.frames0.ms);
     this.marks.maxFrameMs = Math.round(f.maxMs);
     this.marks.maxGapMs = Math.round(f.maxGapMs);
   }
-  /** The marks, and `epoch`: when the request was made, ms since the epoch. */
+  /** The marks so far, and `epoch`: when the request was made, ms since the epoch. */
   json(): string {
+    // Long frames the observer has queued but not yet handed over count too.
+    if (this.observer) this.collect(this.observer.takeRecords());
+    this.frames();
     const scripts = new Map<string, number>();
     for (const f of this.long) for (const x of f.scripts) scripts.set(x.what, (scripts.get(x.what) ?? 0) + x.ms);
     const top = [...scripts].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([what, ms]) => `${Math.round(ms)} ${what}`);
@@ -178,6 +182,7 @@ export function initModelDrawings(
   /** A request still waiting is not shown when it comes. */
   const cancelPending = (): void => {
     if (!pending) return;
+    pending.timeline.stop();
     pending = null;
     listEl.removeAttribute('aria-busy');
   };
@@ -213,7 +218,6 @@ export function initModelDrawings(
         renderList(msg.list);
         if (t) {
           t.mark('listed');
-          t.frames();
           listEl.dataset.timeline = t.json();
         }
         return;
@@ -231,6 +235,7 @@ export function initModelDrawings(
         titleEl.textContent = shown.label;
         showDrawing();
         if (!view.show(msg.drawn.svg, true)) {
+          timeline.stop();
           host.toast('The drawing could not be shown: the renderer returned no SVG.', 'bad');
           return;
         }
@@ -241,7 +246,6 @@ export function initModelDrawings(
           svg.dataset.viewports = String(msg.drawn.counts.viewports);
           svg.dataset.times = JSON.stringify(msg.drawn.times ?? {});
           timeline.mark('inserted');
-          timeline.frames();
           svg.dataset.timeline = timeline.json();
           // Painted: the frame after the one that lays the drawing out.
           requestAnimationFrame(() =>
@@ -273,6 +277,7 @@ export function initModelDrawings(
           held = null;
           // A request replaced by another fails silently: the one that replaced it reports itself.
           if (!pending || pending.req !== msg.req) return;
+          pending.timeline.stop();
           pending = null;
         }
         listEl.removeAttribute('aria-busy');
@@ -401,6 +406,8 @@ export function initModelDrawings(
       req: ++nextReq,
       timeline: new Timeline(host.frameStats),
     };
+    // A request still waiting is replaced: its reply is not shown, and its timeline ends here.
+    pending?.timeline.stop();
     pending = request;
     listEl.setAttribute('aria-busy', 'true');
     host.setStatus(`Drawing ${request.label}…`);
