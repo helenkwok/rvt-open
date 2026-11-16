@@ -33,7 +33,8 @@ for f; do
 done
 chmod -R a+rX "$stage"
 
-# Generous limits, and anything over them is reported (alert-exceeds-max) rather than silently skipped.
+# Generous limits (10 minutes a file: the debug rvt-sheet binary passed the default 2), and anything over
+# them is reported (alert-exceeds-max) rather than silently skipped.
 db=()
 if [ -n "${CLAMAV_DB:-}" ]; then
   mkdir -p "$CLAMAV_DB" && chmod 777 "$CLAMAV_DB"
@@ -57,7 +58,7 @@ pids=""
 for l in /tmp/list*; do
   [ -e "$l" ] || continue
   clamscan --recursive --infected --scan-archive=yes --alert-exceeds-max=yes \
-    --max-filesize=2000M --max-scansize=4000M --max-files=100000 --file-list="$l" > "$l.log" 2>&1 &
+    --max-filesize=2000M --max-scansize=4000M --max-files=100000 --max-scantime=600000 --file-list="$l" > "$l.log" 2>&1 &
   pids="$pids $!:$l"
 done
 rc=0 scanned=0 infected=0
