@@ -23,7 +23,9 @@
 //!   (paths with a field name naming the parameter, or values that vary)
 //!   added 39 rules there and 39 [`LINKED_RULES`] through another element,
 //!   1,533 more values on 1-hip-roof (Revit 2024), 1,457 on 2021, 1,532 on 2027,
-//!   none differing. Other releases and files: not measured; a class without
+//!   none differing; 11 more linked rules (a style's line weight and colour
+//!   from its category element's first graphics style) give 560 more on 2024,
+//!   553 on 2021 and 560 on 2027, none differing. Other releases and files: not measured; a class without
 //!   the field gives nothing.
 
 use crate::builtin_parameters;
@@ -1784,7 +1786,8 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
 /// after it a field path in the element that id names (a text type's font
 /// element, a family type's family, a viewer's view); a path may hop more
 /// than once, and `name[0]` takes a list's first item (a style's line pen and
-/// colour: its category element's first graphics style).
+/// colour: its category element's first graphics style, which held them for
+/// 563 of 563 values on 1-hip-roof 2024 and none differ on 2021 or 2027).
 pub const LINKED_RULES: &[(&str, &str, &str)] = &[
     (
         "ColorFillSymbol",
@@ -2167,7 +2170,49 @@ mod tests {
                 path.contains("->"),
                 LINKED_RULES.iter().any(|r| r.2 == *path)
             );
+            // Every hop and step names a field; `[` only as a first-item `[0]`.
+            for step in path.split("->").flat_map(|hop| hop.split('.')) {
+                let field = step.strip_suffix("[0]").unwrap_or(step);
+                assert!(!field.is_empty() && !field.contains('['), "{path}");
+            }
         }
+    }
+
+    #[test]
+    fn line_pen_through_two_hops_and_a_list() {
+        let attr = fields(vec![("m_categoryId", Value::Id(362))]);
+        let root = fields(vec![("m_lineAndTextAttr", Value::Object(attr))]);
+        let category = [fields(vec![(
+            "m_gstyleIds",
+            Value::List(vec![Value::Id(363), Value::Id(999)]),
+        )])];
+        let style = [
+            fields(vec![(
+                "m_pGStyle",
+                Value::New {
+                    tag: 1,
+                    index: 1,
+                    marker: 0,
+                },
+            )]),
+            fields(vec![
+                ("m_penNumber", Value::Int(3)),
+                ("m_color", Value::Int(255)),
+            ]),
+        ];
+        let got = linked_parameters("TextNoteAttributes", &[root], |id| match id {
+            362 => Some(&category[..]),
+            363 => Some(&style[..]),
+            _ => None,
+        });
+        let pen = builtin_parameters::parameter_by_enum("LINE_PEN")
+            .unwrap()
+            .id;
+        let color = builtin_parameters::parameter_by_enum("LINE_COLOR")
+            .unwrap()
+            .id;
+        assert!(got.contains(&(pen, ParamValue::Integer(3))));
+        assert!(got.contains(&(color, ParamValue::Integer(255))));
     }
 
     #[test]
