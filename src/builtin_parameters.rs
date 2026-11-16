@@ -96,8 +96,8 @@ pub const ALIASES: &[(&str, i64)] = &[
     ("DOOR_HEIGHT", -1001300),       // 2027 page: -1,001,300 Height
     ("GENERIC_WIDTH", -1001301),     // 2027 page: -1,001,301 Width
     ("WINDOW_THICKNESS", -1001302),  // 2027 page: -1,001,302 Thickness
-    ("BENDING_DETAIL_SEGMENET_REPESENTATION", -1155310), // 2024 reference, label Representation
-    ("BENDING_DETAIL_REPESENTATION_FOR_3D_BARS", -1155308), // 2024 reference, label View for 3D Shape
+    ("BENDING_DETAIL_SEGMENET_REPESENTATION", -1155310), // 2025 page: BENDING_DETAIL_SEGMENT_REPRESENTATION
+    ("BENDING_DETAIL_REPESENTATION_FOR_3D_BARS", -1155308), // 2025 page: BENDING_DETAIL_REPRESENTATION_FOR_3D_BARS
 ];
 
 /// The text Revit shows for the integer `value` of the enumeration
@@ -116,7 +116,8 @@ pub fn is_enumeration(id: i64) -> bool {
 }
 
 /// The `BuiltInCategory` `id`'s enum name (`OST_Walls`) and the name Revit
-/// shows (`Walls`; empty where the dump never saw the category).
+/// shows (`Walls`; empty where the API dump of the public sample models
+/// never saw the category).
 pub fn category(id: i64) -> Option<(&'static str, &'static str)> {
     table::CATEGORIES
         .binary_search_by_key(&id, |row| row.0)
@@ -150,7 +151,8 @@ pub fn category_name_and_parent(id: i64) -> Option<(&'static str, Option<&'stati
 /// the category's graphics styles; `None` for a category whose display name
 /// the catalog does not hold. Revit does not store a built-in category's
 /// name in the file, so a subcategory the catalog's public sources never
-/// showed has no name here.
+/// showed has no name here (the enum name, `OST_DoorsGlassProjection`, is
+/// not the name Revit shows, so it is not offered as one).
 pub fn category_own_name(id: i64) -> Option<&'static str> {
     let (_, full) = category(id)?;
     (!full.is_empty()).then(|| full.rsplit_once(": ").map_or(full, |(_, name)| name))
@@ -199,6 +201,10 @@ mod tests {
             Some(-1_001_105)
         );
         assert_eq!(category(-2_000_011), Some(("OST_Walls", "Walls")));
+        assert_eq!(category_own_name(-2_000_011), Some("Walls"));
+        assert_eq!(category_own_name(-2_000_919), Some("Runs"));
+        // No public name: not the enum name, and not a name from a model's API dump.
+        assert_eq!(category_own_name(-2_000_031), None);
         assert_eq!(category_name(-2_000_080), Some("Furniture"));
         assert_eq!(
             category_name_and_parent(-2_000_919),
