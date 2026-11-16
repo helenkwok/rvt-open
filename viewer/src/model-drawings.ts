@@ -14,12 +14,58 @@ export interface ModelDrawingsHost {
   /** The file it opened: read again for each request, so no copy is kept. */
   file(): File | null;
   stem(): string;
+  /** The 3D frames drawn so far (main.ts): their count and time, the longest, the longest gap between two. */
+  frameStats(): FrameStats;
   setStatus(text: string): void;
   toast(message: string, kind?: 'ok' | 'bad' | 'info'): void;
   download(filename: string, blob: Blob): void;
 }
 
 type Kind = 'sheet' | 'plan' | 'section';
+
+interface FrameStats {
+  frames: number;
+  ms: number;
+  maxMs: number;
+  maxGapMs: number;
+}
+
+/** Milliseconds since the epoch, on the clock the worker also reads. */
+const clock = (): number => performance.timeOrigin + performance.now();
+
+/**
+ * Where a request's time went, from the moment it was made: each stage's time (ms since the
+ * request), as the page and the worker marked them, and the 3D frames drawn meanwhile.
+ */
+class Timeline {
+  private readonly start = clock();
+  private readonly frames0: FrameStats;
+  readonly marks: Record<string, number> = {};
+  constructor(private readonly stats: () => FrameStats) {
+    const f = stats();
+    this.frames0 = { ...f };
+    f.maxMs = 0;
+    f.maxGapMs = 0;
+  }
+  mark(stage: string, at: number = clock()): void {
+    this.marks[stage] = Math.round(at - this.start);
+  }
+  /** The worker's marks (`received`, `wasmStart`, `wasmEnd`, `posted`), on the shared clock. */
+  worker(at: Record<string, number> | undefined): void {
+    for (const [k, v] of Object.entries(at ?? {})) this.mark(`worker.${k}`, v);
+  }
+  frames(): void {
+    const f = this.stats();
+    this.marks.frames = f.frames - this.frames0.frames;
+    this.marks.frameMs = Math.round(f.ms - this.frames0.ms);
+    this.marks.maxFrameMs = Math.round(f.maxMs);
+    this.marks.maxGapMs = Math.round(f.maxGapMs);
+  }
+  /** The marks, and `epoch`: when the request was made, ms since the epoch. */
+  json(): string {
+    return JSON.stringify({ epoch: Math.round(this.start), ...this.marks });
+  }
+}
 
 interface DrawingList {
   sheets: { id: number; number: string; name: string; views: number[] }[];
@@ -42,8 +88,8 @@ interface Drawn {
 }
 
 type Reply =
-  | { type: 'drawing-list'; list: DrawingList }
-  | { type: 'drawing-open'; kind: Kind; id: number; req: number; drawn: Drawn }
+  | { type: 'drawing-list'; list: DrawingList; at?: Record<string, number> }
+  | { type: 'drawing-open'; kind: Kind; id: number; req: number; drawn: Drawn; at?: Record<string, number> }
   | { type: 'drawing-save'; format: string; bytes: Uint8Array }
   | { type: 'drawing-error'; request: string; req?: number; message: string };
 
@@ -53,6 +99,7 @@ interface Request {
   id: number;
   label: string;
   req: number;
+  timeline: Timeline;
 }
 
 const $ = (id: string): HTMLElement => {
@@ -82,6 +129,7 @@ export function initModelDrawings(
   let posted: number | null = null;
   let held: number | null = null;
   let listening: Worker | null = null;
+  let listTimeline: Timeline | null = null;
 
   /** Whether the worker keeps the drawing shown, with no other drawing asked for after it. */
   const holdsShown = (): boolean => shown !== null && posted === shown.req && held === shown.req;
@@ -117,12 +165,24 @@ export function initModelDrawings(
   const onMessage = (ev: MessageEvent<Reply>): void => {
     const msg = ev.data;
     switch (msg.type) {
-      case 'drawing-list':
+      case 'drawing-list': {
+        const t = listTimeline;
+        t?.mark('received');
+        t?.worker(msg.at);
         renderList(msg.list);
+        if (t) {
+          t.mark('listed');
+          t.frames();
+          listEl.dataset.timeline = t.json();
+        }
         return;
+      }
       case 'drawing-open': {
         held = msg.req;
         if (!pending || pending.req !== msg.req) return;
+        const timeline = pending.timeline;
+        timeline.mark('received');
+        timeline.worker(msg.at);
         shown = pending;
         pending = null;
         listEl.removeAttribute('aria-busy');
@@ -139,6 +199,16 @@ export function initModelDrawings(
           svg.dataset.texts = String(msg.drawn.counts.texts);
           svg.dataset.viewports = String(msg.drawn.counts.viewports);
           svg.dataset.times = JSON.stringify(msg.drawn.times ?? {});
+          timeline.mark('inserted');
+          timeline.frames();
+          svg.dataset.timeline = timeline.json();
+          // Painted: the frame after the one that lays the drawing out.
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              timeline.mark('painted');
+              svg.dataset.timeline = timeline.json();
+            }),
+          );
         }
         const c = msg.drawn.counts;
         host.setStatus(
@@ -186,13 +256,20 @@ export function initModelDrawings(
    * Reads the open file and posts what `make` builds from it, unless the file or the worker
    * changed, or `current()` turned false, while it was read.
    */
-  const postWithBytes = async (make: (data: Uint8Array) => unknown, current: () => boolean): Promise<boolean> => {
+  const postWithBytes = async (
+    make: (data: Uint8Array) => unknown,
+    current: () => boolean,
+    timeline?: Timeline,
+  ): Promise<boolean> => {
     const file = host.file();
     const worker = host.worker();
     if (!file || !worker) return false;
     const data = new Uint8Array(await file.arrayBuffer());
+    timeline?.mark('bytes');
     if (host.file() !== file || host.worker() !== worker || !current()) return false;
-    return post(make(data), [data.buffer as ArrayBuffer]);
+    const sent = post(make(data), [data.buffer as ArrayBuffer]);
+    timeline?.mark('posted');
+    return sent;
   };
 
   const item = (key: string, label: string, title?: string): HTMLButtonElement => {
@@ -268,7 +345,13 @@ export function initModelDrawings(
       showDrawing();
       return;
     }
-    const request: Request = { kind, id: Number(id), label: b.textContent ?? key, req: ++nextReq };
+    const request: Request = {
+      kind,
+      id: Number(id),
+      label: b.textContent ?? key,
+      req: ++nextReq,
+      timeline: new Timeline(host.frameStats),
+    };
     pending = request;
     listEl.setAttribute('aria-busy', 'true');
     host.setStatus(`Drawing ${request.label}…`);
@@ -276,6 +359,7 @@ export function initModelDrawings(
       const sent = await postWithBytes(
         (data) => ({ type: 'drawing-open', bytes: data, kind, id: request.id, req: request.req }),
         () => pending === request,
+        request.timeline,
       );
       if (sent) posted = request.req;
       else if (pending === request) cancelPending();
@@ -297,7 +381,8 @@ export function initModelDrawings(
   return {
     /** Lists the open model's sheets and views. */
     async load(): Promise<void> {
-      await postWithBytes((data) => ({ type: 'drawing-list', bytes: data }), () => true);
+      listTimeline = new Timeline(host.frameStats);
+      await postWithBytes((data) => ({ type: 'drawing-list', bytes: data }), () => true, listTimeline);
     },
     /** A new file: no list, no drawing, the 3D view. */
     reset(): void {
@@ -309,6 +394,8 @@ export function initModelDrawings(
       listEl.removeAttribute('aria-busy');
       delete listEl.dataset.count;
       delete listEl.dataset.times;
+      delete listEl.dataset.timeline;
+      listTimeline = null;
       titleEl.textContent = '';
       if (app.dataset.mode !== 'drawing') view.clear();
       listening?.removeEventListener('message', onMessage as EventListener);

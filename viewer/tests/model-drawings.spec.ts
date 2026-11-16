@@ -54,6 +54,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   };
   console.log('drawings listed', JSON.stringify(counts));
   console.log('list steps ms', await list.getAttribute('data-times'));
+  console.log('list timeline ms', await list.getAttribute('data-timeline'));
   // Templates and loaded families' own plan views are not listed (51 plan views read before).
   expect(counts).toEqual({ sheets: 40, plans: 12, sections: 2 });
   await expect(list.getByRole('button', { name: '3D model' })).toHaveAttribute('aria-pressed', 'true');
@@ -61,6 +62,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   // A sheet with a view placed on it: its paper space, title block and viewports.
   const sheet = list.locator('button[data-key^="sheet:"]:not([title^="0 views"])').first();
   const sheetName = (await sheet.textContent()) ?? '';
+  const tClick = Date.now();
   await sheet.click();
   await expect(page.locator('#drawing-pane')).toBeVisible();
   await expect(sheet).toHaveAttribute('aria-pressed', 'true');
@@ -68,6 +70,11 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   const sheetCounts = await drawn(page);
   console.log('sheet', sheetName, JSON.stringify(sheetCounts));
   console.log('sheet steps ms', await page.locator('#drawing-sheet > svg').getAttribute('data-times'));
+  await expect(page.locator('#drawing-sheet > svg')).toHaveAttribute('data-timeline', /painted/);
+  {
+    const t = JSON.parse((await page.locator('#drawing-sheet > svg').getAttribute('data-timeline')) ?? '{}') as Record<string, number>;
+    console.log('sheet timeline ms', JSON.stringify({ clickHandled: t.epoch - tClick, ...t, epoch: undefined }));
+  }
   console.log(
     'sheet extents',
     await page.locator('#drawing-sheet > svg').evaluate((el) => {

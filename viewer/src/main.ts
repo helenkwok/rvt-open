@@ -197,13 +197,27 @@ function advanceCameraTween(now: number): void {
   }
 }
 
+/**
+ * The 3D frames drawn, the milliseconds spent drawing them, the longest one and the longest wait
+ * between two frames: model-drawings.ts reports them for the time a drawing took.
+ */
+const frameStats = { frames: 0, ms: 0, maxMs: 0, maxGapMs: 0 };
+let lastTick: number | null = null;
+
 function tick(now: number = performance.now()): void {
+  if (lastTick !== null) frameStats.maxGapMs = Math.max(frameStats.maxGapMs, now - lastTick);
+  lastTick = now;
   // While a sheet or view covers the 3D view (model-drawings.ts) it is not drawn; its camera
   // and scene are kept as they are.
   if (appEl.dataset.view !== 'drawing') {
+    const t = performance.now();
     advanceCameraTween(now);
     controls.update();
     renderer.render(scene, camera);
+    const ms = performance.now() - t;
+    frameStats.frames += 1;
+    frameStats.ms += ms;
+    frameStats.maxMs = Math.max(frameStats.maxMs, ms);
   }
   requestAnimationFrame(tick);
 }
@@ -4481,6 +4495,7 @@ const modelDrawings = initModelDrawings(
   {
     worker: () => worker,
     file: () => currentFile,
+    frameStats: () => frameStats,
     stem: () => lastFileStem,
     setStatus,
     toast,
