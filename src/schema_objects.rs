@@ -56,6 +56,12 @@ use crate::{Result, RevitFile};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+/// `PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY` and `PHY_MATERIAL_PARAM_UNIT_WEIGHT`.
+const PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY: i64 = -1_152_313;
+const PHY_MATERIAL_PARAM_UNIT_WEIGHT: i64 = -1_140_309;
+/// Standard gravity, 9.80665 m/s^2, in ft/s^2 (Revit's internal length unit).
+const STANDARD_GRAVITY_FT_S2: f64 = 9.80665 / 0.3048;
+
 /// First release whose object ids are 64-bit on the wire.
 pub const FIRST_WIDE_ID_RELEASE: u32 = 2024;
 
@@ -415,6 +421,20 @@ impl SchemaObject {
                 };
                 out.push((param, value));
             }
+        }
+        // Revit shows a structural asset's unit weight as its density times
+        // standard gravity, not the unit-weight entry the set stores (T: 43
+        // of 45 property sets on 1-hip-roof, Revit 2024).
+        let density = out.iter().find_map(|(p, v)| match v {
+            ParamValue::Double(d) if *p == PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY => Some(*d),
+            _ => None,
+        });
+        if let Some(d) = density {
+            out.retain(|(p, _)| *p != PHY_MATERIAL_PARAM_UNIT_WEIGHT);
+            out.push((
+                PHY_MATERIAL_PARAM_UNIT_WEIGHT,
+                ParamValue::Double(d * STANDARD_GRAVITY_FT_S2),
+            ));
         }
         out
     }
