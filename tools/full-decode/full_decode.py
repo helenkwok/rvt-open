@@ -349,6 +349,9 @@ def inflated_bytes(led, inflated, facts):
     objs = collections.defaultdict(list)
     for o in facts["objects"]:
         objs[o["stream"]].append(o)
+    heads = collections.defaultdict(list)
+    for o in facts.get("headers", []):
+        heads[o["stream"]].append(o)
     for p in facts["partitions"]:
         name = p["stream"]
         if len(inflated.get(name) or b"") != p["inflated"]:
@@ -365,8 +368,25 @@ def inflated_bytes(led, inflated, facts):
             else:
                 led.add("inflated", name, ps, pe, "decoded", "object fields read by the schema")
             led.add("inflated", name, pe, e, "decoded", "object trailing size")
-        for s, e in p["gaps"]:
-            led.add("inflated", name, s, e, "unknown", "between objects")
+        if "header_markers" not in p:
+            for s, e in p["gaps"]:
+                led.add("inflated", name, s, e, "unknown", "between objects")
+            continue
+        for o in heads[name]:
+            s, e = o["span"]
+            ps, pe = o["payload"]
+            led.add("inflated", name, s, ps, "decoded", "element-header record head (id, size)")
+            un = o["unparsed"]
+            if un:
+                led.add("inflated", name, ps, un[0], "decoded", "element-header fields read by the schema")
+                led.add("inflated", name, un[0], un[1], "known", "element-header bytes not read: " + (o["stopped"] or ""))
+            else:
+                led.add("inflated", name, ps, pe, "decoded", "element-header fields read by the schema")
+            led.add("inflated", name, pe, e, "decoded", "element-header record trailing size")
+        for s, e in p["header_markers"]:
+            led.add("inflated", name, s, e, "decoded", "element-header run marker")
+        for s, e in p["header_rest"]:
+            led.add("inflated", name, s, e, "unknown", "between objects, not a header record")
     et = inflated.get("Global/ElemTable")
     if et:
         rows = facts["elem_table"]
@@ -410,6 +430,12 @@ def section_of(facts, parts):
     return out
 
 
+# The schema class element types derive from: all 901 elements the API dump marks as types do,
+# and 169 more whose API class is ElementType although the dump marks them as no type.
+TYPE_BASES = {"Symbol"}
+
+HOST_FIELDS = ("m_hostId",)
+
 ATTRS = ("class", "category", "is_type", "name", "level", "host", "workset", "phase_created",
          "phase_demolished", "design_option", "unique_id")
 
@@ -418,6 +444,10 @@ def compare_elements(api, facts, sections, cls):
     by_id = {}
     for e in facts["elements"]:
         by_id.setdefault(e["id"], e)
+    header = {h["id"]: h["root"] for h in facts.get("headers", []) if h.get("root")}
+    # ElemRec.m_partitionId: u32 at +36 of a 40-byte element table row (Revit 2024 and later).
+    partition = {r[1]: int.from_bytes(bytes.fromhex(r[5])[36:40], "little")
+                 for r in facts["elem_table"] if len(r) > 5 and r[4] == 40}
     rows_et = {r[1] for r in facts["elem_table"]} | {r[2] for r in facts["elem_table"]}
     # Class: the file's class decodes the API's when the pairs seen form a function.
     pairs = collections.defaultdict(set)
@@ -425,6 +455,17 @@ def compare_elements(api, facts, sections, cls):
         e = by_id.get(a["id"])
         if e:
             pairs[cls[e["tag"]]].add(a["class"].split(".")[-1])
+    bases = {int(k): v for k, v in facts.get("bases", {}).items()}
+
+    def is_type(tag):
+        # An element type's class derives from one of TYPE_BASES in the file's own schema.
+        seen = 0
+        while tag is not None and seen < 64:
+            if cls.get(tag) in TYPE_BASES:
+                return True
+            tag, seen = bases.get(tag), seen + 1
+        return False
+
     rows, status = [], collections.Counter()
     for a in api:
         e = by_id.get(a["id"])
@@ -442,17 +483,22 @@ def compare_elements(api, facts, sections, cls):
         def cmp(k, got, want, norm=lambda x: x):
             r[k] = "not decoded" if got is None else ("match" if norm(got) == norm(want) else "differ")
 
-        cmp("category", fid(root, "m_categoryId"), a.get("category_id"), lambda x: -1 if x is None else x)
-        cmp("is_type", None, a.get("is_type"))
+        h = header.get(a["id"])
+        # The element header's category (the schema spells it m_categroryId).
+        cmp("category", fid(h, "m_categroryId") if h else None, a.get("category_id"), lambda x: -1 if x is None else x)
+        cmp("is_type", is_type(e["tag"]) if bases else None, a.get("is_type"))
         cmp("name", field(root, "m_name"), a.get("name"))
         cmp("level", fid(root, "m_assocLevelId"), a.get("level_id"), lambda x: -1 if x is None else x)
-        cmp("host", None, a.get("host_id"))
-        cmp("workset", None, a.get("workset_id"))
+        # The host is the element's own host-id field; a class with none has no host. Not tested
+        # on a hosted element: none of this file's 5,601 elements has a host in the API dump.
+        host = next((fid(root, n) for n in HOST_FIELDS if field(root, n) is not None), -1)
+        cmp("host", host, a.get("host_id"), lambda x: -1 if x is None else x)
+        cmp("workset", partition.get(a["id"]), a.get("workset_id"))
         cmp("phase_created", fid(root, "m_createdPhaseId"), a.get("phase_created"))
         cmp("phase_demolished", fid(root, "m_demolishedPhaseId"), a.get("phase_demolished"))
         # -1 and -4 both read as no design option in the API (-4 on 2,232 of 2,232 here).
         cmp("design_option", fid(root, "m_designOptionId"), a.get("design_option"), lambda x: -1 if x in (None, -4) else x)
-        cmp("unique_id", None, a.get("unique_id"))
+        cmp("unique_id", facts.get("unique_ids", {}).get(str(a["id"])), a.get("unique_id"))
         rows.append(r)
     api_ids = {a["id"] for a in api}
     extra = collections.Counter()

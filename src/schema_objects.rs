@@ -26,7 +26,7 @@
 //! | schema type | wire |
 //! |---|---|
 //! | bool, kind 2 | 1 byte |
-//! | kind 3 | 2 bytes |
+//! | kind 3; class reference (0x0a), a schema class tag | 2 bytes |
 //! | u32 / i32 (kinds 4, 5), f32 (6) | 4 bytes |
 //! | f64 (7), u64 / i64 (0x0b) | 8 bytes |
 //! | GUID (9) | 16 bytes |
@@ -437,6 +437,10 @@ impl Reader<'_> {
                 Value::Text(String::from_utf16_lossy(&units))
             }
             9 => Value::Guid(self.take(16)?.try_into().expect("16 bytes")),
+            // `ClassDefinitionRef.m_ref`: the schema tag of a class. In every
+            // element header of 1-hip-roof (Revit 2024) it is the class tag
+            // of the element's own data object.
+            0x0a => Value::Int(i64::from(self.u16()?)),
             0x0b => Value::Int(self.i64()?),
             k => return Err(format!("scalar kind {k:#04x}")),
         })
@@ -646,6 +650,119 @@ pub fn read_frame(layouts: &SchemaLayouts, stream: &str, buf: &[u8], frame: Fram
         }
     }
     out
+}
+
+/// The element-header records between a partition's data objects, read by
+/// the schema.
+///
+/// The bytes between data objects ([`PartitionRead::gaps`]) hold runs of
+/// element-header records, one per element:
+///
+/// ```text
+/// id · u32 size · body (size bytes) · u32 size
+/// ```
+///
+/// with `id` as wide or narrow as the data objects' and the body an object
+/// (an `ElementHeader` on every record measured) whose class tag comes first,
+/// with no Adler-32. A run starts with `FF × id width · u64 1 · u32 0` and
+/// ends with `FF × id width · u64 0`. Measured on a Revit 2024 file
+/// (1-hip-roof): the 189 ranges between objects, 6,145,721 bytes, are
+/// 36,123 records (one per element object of the file) and these markers,
+/// with no byte left over. Narrow files: the same grammar is tried, not
+/// measured.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeaderRecords {
+    /// Each record read by the schema; its frame's `adler` is 0 (none on the
+    /// wire), `span` the whole record and `payload` the body.
+    pub records: Vec<SchemaObject>,
+    /// Run start and end markers.
+    pub markers: Vec<Range<usize>>,
+    /// Bytes neither a record nor a marker.
+    pub rest: Vec<Range<usize>>,
+}
+
+/// The element-header records and run markers in `gap` of the inflated
+/// partition `buf` ([`HeaderRecords`]).
+pub fn header_records(
+    layouts: &SchemaLayouts,
+    stream: &str,
+    buf: &[u8],
+    gap: Range<usize>,
+    width: IdWidth,
+) -> HeaderRecords {
+    let w = width.bytes();
+    let mut out = HeaderRecords {
+        records: Vec::new(),
+        markers: Vec::new(),
+        rest: Vec::new(),
+    };
+    let end = gap.end.min(buf.len());
+    let mut p = gap.start;
+    let mut rest_start = None;
+    let u64_at = |at: usize| {
+        buf.get(at..at + 8)
+            .map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")))
+    };
+    while p < end {
+        let marker = buf[p..end.min(p + w)].iter().all(|&b| b == 0xff) && p + w + 8 <= end;
+        let taken = if marker {
+            match u64_at(p + w) {
+                Some(1) if p + w + 12 <= end && u32_at(buf, p + w + 8) == Some(0) => Some(w + 12),
+                Some(0) => Some(w + 8),
+                _ => None,
+            }
+            .inspect(|&n| out.markers.push(p..p + n))
+        } else {
+            record_at(buf, p, end, width).map(|frame| {
+                let n = frame.span.len();
+                out.records.push(read_frame(layouts, stream, buf, frame));
+                n
+            })
+        };
+        match taken {
+            Some(n) => {
+                if let Some(s) = rest_start.take() {
+                    out.rest.push(s..p);
+                }
+                p += n;
+            }
+            None => {
+                rest_start.get_or_insert(p);
+                p += 1;
+            }
+        }
+    }
+    if let Some(s) = rest_start {
+        out.rest.push(s..end);
+    }
+    out
+}
+
+/// The element-header record at `p` (before `end`), if its trailing size
+/// repeats its size.
+fn record_at(buf: &[u8], p: usize, end: usize, width: IdWidth) -> Option<Frame> {
+    let w = width.bytes();
+    let id_lo = u32_at(buf, p)?;
+    if width == IdWidth::Wide && u32_at(buf, p + 4)? != 0 {
+        return None;
+    }
+    let size = u32_at(buf, p + w)?;
+    let start = p + w + 4;
+    let stop = start.checked_add(size as usize)?;
+    if size < 2 || stop + 4 > end || u32_at(buf, stop)? != size {
+        return None;
+    }
+    Some(Frame {
+        header: ObjectHeader {
+            id: u64::from(id_lo),
+            width,
+            adler: 0,
+            size,
+            tag: u16::from_le_bytes([buf[start], buf[start + 1]]),
+        },
+        span: p..stop + 4,
+        payload: start..stop,
+    })
 }
 
 /// A partition's objects and the bytes between them.
@@ -1036,4 +1153,90 @@ pub fn read_elements(rf: &mut RevitFile) -> Result<BTreeMap<i64, SchemaElement>>
         out.remove(&id);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::formats::{SchemaField, SchemaFieldType, SchemaLayout};
+
+    /// A schema with one class, tag 7, holding one u32.
+    fn layouts() -> SchemaLayouts {
+        let mut classes = BTreeMap::new();
+        classes.insert(
+            7,
+            SchemaLayout {
+                tag: 7,
+                name: "ElementHeader".into(),
+                base: None,
+                fields: vec![SchemaField {
+                    name: "m_x".into(),
+                    ty: SchemaFieldType::Scalar {
+                        kind: 4,
+                        modifier: 0,
+                        count: None,
+                    },
+                    flags: 0,
+                }],
+            },
+        );
+        SchemaLayouts { classes }
+    }
+
+    #[test]
+    fn header_runs_are_records_and_markers() {
+        let mut buf = Vec::new();
+        buf.extend([0xff; 8]);
+        buf.extend(1u64.to_le_bytes());
+        buf.extend(0u32.to_le_bytes());
+        for (id, x) in [(5u64, 9u32), (6, 10)] {
+            buf.extend(id.to_le_bytes());
+            buf.extend(6u32.to_le_bytes());
+            buf.extend(7u16.to_le_bytes());
+            buf.extend(x.to_le_bytes());
+            buf.extend(6u32.to_le_bytes());
+        }
+        buf.extend([0xff; 8]);
+        buf.extend(0u64.to_le_bytes());
+        let got = header_records(&layouts(), "P", &buf, 0..buf.len(), IdWidth::Wide);
+        assert!(got.rest.is_empty(), "{:?}", got.rest);
+        assert_eq!(got.markers, vec![0..20, buf.len() - 16..buf.len()]);
+        assert_eq!(got.records.len(), 2);
+        assert!(got.records.iter().all(|r| r.exact));
+        assert_eq!(got.records[1].frame.header.id, 6);
+        assert_eq!(
+            got.records[1].root().unwrap().get("m_x"),
+            Some(&Value::Int(10))
+        );
+
+        // A byte that fits neither is kept, and reading resumes after it.
+        let mut odd = vec![0x42];
+        odd.extend(&buf);
+        let got = header_records(&layouts(), "P", &odd, 0..odd.len(), IdWidth::Wide);
+        assert_eq!(got.rest, vec![0..1]);
+        assert_eq!(got.records.len(), 2);
+    }
+
+    #[test]
+    fn a_class_reference_is_two_bytes() {
+        let mut l = layouts();
+        let class = l.classes.get_mut(&7).unwrap();
+        class.fields[0].ty = SchemaFieldType::Scalar {
+            kind: 0x0a,
+            modifier: 0,
+            count: None,
+        };
+        let mut buf = Vec::new();
+        buf.extend(5u64.to_le_bytes());
+        buf.extend(4u32.to_le_bytes());
+        buf.extend(7u16.to_le_bytes());
+        buf.extend(0x0c77u16.to_le_bytes());
+        buf.extend(4u32.to_le_bytes());
+        let got = header_records(&l, "P", &buf, 0..buf.len(), IdWidth::Wide);
+        assert!(got.records[0].exact);
+        assert_eq!(
+            got.records[0].root().unwrap().get("m_x"),
+            Some(&Value::Int(0x0c77))
+        );
+    }
 }
