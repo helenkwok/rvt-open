@@ -412,13 +412,23 @@ export function initModelDrawings(
     listEl.setAttribute('aria-busy', 'true');
     host.setStatus(`Drawing ${request.label}…`);
     void (async () => {
-      const sent = await postWithBytes(
-        (data) => ({ type: 'drawing-open', bytes: data, kind, id: request.id, req: request.req }),
-        () => pending === request,
-        request.timeline,
-      );
-      if (sent) posted = request.req;
-      else if (pending === request) cancelPending();
+      try {
+        const sent = await postWithBytes(
+          (data) => ({ type: 'drawing-open', bytes: data, kind, id: request.id, req: request.req }),
+          () => pending === request,
+          request.timeline,
+        );
+        if (sent) posted = request.req;
+        else if (pending === request) cancelPending();
+      } catch (err) {
+        // The file could not be read again (moved, or no longer readable): the request ends here.
+        request.timeline.stop();
+        if (pending !== request) return;
+        cancelPending();
+        const message = `The file could not be read: ${err instanceof Error ? err.message : String(err)}`;
+        host.setStatus(`Drawing: ${message}`);
+        host.toast(message, 'bad');
+      }
     })();
   });
 
