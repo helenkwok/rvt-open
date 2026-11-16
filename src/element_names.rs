@@ -177,5 +177,12 @@ mod tests {
             graphics_style_name(&walls, |_| None, |_| None).as_deref(),
             Some("Walls")
         );
+        // A built-in subcategory with no public name has none: the element
+        // and owner lookups are not tried for a built-in category.
+        let glass = fields(vec![("m_categoryId", Value::Id(-2000031))]);
+        assert_eq!(
+            graphics_style_name(&glass, |_| Some("x".into()), |_| Some(1)),
+            None
+        );
     }
 }
