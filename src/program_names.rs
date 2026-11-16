@@ -75,7 +75,10 @@ mod tests {
         assert_eq!(category_name(-2_000_936, "ENU"), Some("Riser Lines"));
         assert_eq!(category_name(-2_000_936, "XYZ"), Some("Riser Lines"));
         assert_ne!(category_name(-2_000_936, "DEU"), Some("Riser Lines"));
-        assert_eq!(system_family_name("TextNoteAttributes", "ENU"), Some("Text"));
+        assert_eq!(
+            system_family_name("TextNoteAttributes", "ENU"),
+            Some("Text")
+        );
         assert_eq!(system_family_name("DBViewType", "ENU"), None);
     }
 }
