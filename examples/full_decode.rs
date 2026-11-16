@@ -56,6 +56,48 @@ fn fields(f: &Fields) -> J {
     })
 }
 
+/// Every text an element's objects hold, by its path of field names from the
+/// element object (pointers followed, lists as `[]`), at most `MAX_TEXTS`.
+fn texts(objects: &[Fields]) -> Vec<J> {
+    const MAX_TEXTS: usize = 64;
+    fn walk(objects: &[Fields], v: &Value, path: &str, seen: &mut Vec<bool>, out: &mut Vec<J>) {
+        if out.len() >= MAX_TEXTS {
+            return;
+        }
+        match v {
+            Value::Text(t) => out.push(json!([path, t])),
+            Value::Object(f) => obj(objects, f, path, seen, out),
+            Value::List(l) => {
+                for x in l {
+                    walk(objects, x, &format!("{path}[]"), seen, out);
+                }
+            }
+            Value::New { index, .. } if *index < objects.len() && !seen[*index] => {
+                seen[*index] = true;
+                obj(objects, &objects[*index], path, seen, out);
+            }
+            _ => {}
+        }
+    }
+    fn obj(objects: &[Fields], f: &Fields, path: &str, seen: &mut Vec<bool>, out: &mut Vec<J>) {
+        for (n, v) in &f.values {
+            let p = if path.is_empty() {
+                n.clone()
+            } else {
+                format!("{path}/{n}")
+            };
+            walk(objects, v, &p, seen, out);
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = vec![false; objects.len()];
+    if let Some(root) = objects.first() {
+        seen[0] = true;
+        obj(objects, root, "", &mut seen, &mut out);
+    }
+    out
+}
+
 fn param(v: &ParamValue) -> J {
     match v {
         ParamValue::Double(f) if f.is_finite() => json!(["Double", f]),
@@ -85,6 +127,10 @@ fn main() -> anyhow::Result<()> {
         .filter_map(|(t, c)| Some((t.to_string(), json!(c.base?))))
         .collect();
 
+    let mut names: std::collections::HashMap<i64, (Option<String>, Option<i64>)> =
+        std::collections::HashMap::new();
+    let mut styles: Vec<(i64, Fields)> = Vec::new();
+    let mut owner_named = std::collections::HashSet::new();
     let mut objects: Vec<J> = Vec::new();
     let mut elements: Vec<J> = Vec::new();
     let gaps = for_each_object(&mut rf, |o| {
@@ -101,6 +147,23 @@ fn main() -> anyhow::Result<()> {
             "element": element.is_some(),
         }));
         if let (Some(id), Some(root)) = (element, o.root()) {
+            let owner = match root.get("m_ownerId") {
+                Some(Value::Id(i)) => Some(*i),
+                _ => None,
+            };
+            names
+                .entry(id)
+                .or_insert((rvt::element_names::own_name(&o.objects), owner));
+            let class = layouts
+                .classes
+                .get(&root.tag)
+                .map_or("", |c| c.name.as_str());
+            if rvt::element_names::OWNER_NAMED.contains(&class) {
+                owner_named.insert(id);
+            }
+            if class == "GStyleElem" {
+                styles.push((id, root.clone()));
+            }
             elements.push(json!({
                 "id": id,
                 "tag": root.tag,
@@ -108,6 +171,7 @@ fn main() -> anyhow::Result<()> {
                 "offset": o.frame.span.start,
                 "exact": o.exact,
                 "root": fields(root),
+                "texts": texts(&o.objects),
                 "params": o.stored_parameters().iter().map(|(p, v)| json!([p, param(v)])).collect::<Vec<_>>(),
                 "field_params": field_parameters(
                     layouts.classes.get(&root.tag).map_or("", |c| c.name.as_str()),
@@ -119,6 +183,28 @@ fn main() -> anyhow::Result<()> {
             }));
         }
     })?;
+    let mut style_names = std::collections::HashMap::new();
+    for (id, root) in &styles {
+        let n = rvt::element_names::graphics_style_name(
+            root,
+            |c| names.get(&c).and_then(|n| n.0.clone()),
+            |c| names.get(&c).and_then(|n| n.1),
+        );
+        style_names.insert(*id, n);
+    }
+    for e in &mut elements {
+        let id = e["id"].as_i64().unwrap_or(0);
+        let own = names.get(&id);
+        let n = match style_names.get(&id) {
+            Some(n) => n.clone(),
+            None if owner_named.contains(&id) => own
+                .and_then(|n| n.1)
+                .and_then(|o| names.get(&o))
+                .and_then(|n| n.0.clone()),
+            None => own.and_then(|n| n.0.clone()),
+        };
+        e["name"] = json!(n);
+    }
     let width = IdWidth::of_release(release);
     let mut partitions = Vec::new();
     let mut headers = Vec::new();
@@ -176,6 +262,14 @@ fn main() -> anyhow::Result<()> {
         .map(|p| (p.enum_name.to_string(), json!(p.id)))
         .collect();
     // The single-object streams, each read as one object graph from its first byte.
+    let category_names: serde_json::Map<String, J> = rvt::builtin_parameters::category_ids()
+        .filter_map(|id| {
+            Some((
+                id.to_string(),
+                json!(rvt::builtin_parameters::category_name(id)?),
+            ))
+        })
+        .collect();
     let mut graphs = Vec::new();
     for name in rf.stream_names() {
         if !name.starts_with("Global/") {
@@ -237,6 +331,7 @@ fn main() -> anyhow::Result<()> {
         "unique_ids": unique_ids,
         "release": release,
         "builtin_ids": builtin_ids,
+        "category_names": category_names,
         "classes": classes,
         "bases": bases,
         "partitions": partitions,

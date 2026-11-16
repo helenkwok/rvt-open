@@ -515,7 +515,8 @@ def compare_elements(api, facts, sections, cls):
         # The element header's category (the schema spells it m_categroryId).
         cmp("category", fid(h, "m_categroryId") if h else None, a.get("category_id"), lambda x: -1 if x is None else x)
         cmp("is_type", is_type(e["tag"]) if bases else None, a.get("is_type"))
-        cmp("name", field(root, "m_name"), a.get("name"))
+        # The name rvt-open reads (`rvt::element_names`): own objects, a graphics style's category.
+        cmp("name", e.get("name"), a.get("name"))
         cmp("level", fid(root, "m_assocLevelId"), a.get("level_id"), lambda x: -1 if x is None else x)
         # The host is the element's own host-id field; a class with none has no host. Not tested
         # on a hosted element: none of this file's 5,601 elements has a host in the API dump.

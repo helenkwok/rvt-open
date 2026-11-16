@@ -173,6 +173,7 @@ pub mod convert;
 pub mod corpus;
 pub mod elem_table;
 pub mod element_id;
+pub mod element_names;
 pub mod elements;
 pub mod error;
 pub mod family_documents;

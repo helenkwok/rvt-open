@@ -10,6 +10,7 @@
 //! Revit 2027 API reference's `BuiltInParameter` page; enum names from the
 //! same reference. Labels are English, as Revit 2018-2027 shows them.
 
+mod subcategory_names;
 mod table;
 
 /// What is known of one built-in parameter.
@@ -105,6 +106,17 @@ pub fn category_name_and_parent(id: i64) -> Option<(&'static str, Option<&'stati
     })
 }
 
+/// The name Revit shows for category `id` without its parent: a
+/// subcategory's own name (`Glass` for the windows' glass), as Revit names
+/// the category's graphics styles; `None` for a category not known.
+pub fn category_own_name(id: i64) -> Option<&'static str> {
+    if let Ok(at) = subcategory_names::SUBCATEGORY_NAMES.binary_search_by_key(&id, |row| row.0) {
+        return Some(subcategory_names::SUBCATEGORY_NAMES[at].1);
+    }
+    let full = category_name(id)?;
+    Some(full.rsplit_once(": ").map_or(full, |(_, name)| name))
+}
+
 /// Every known built-in parameter id, in ascending order.
 pub fn parameter_ids() -> impl Iterator<Item = i64> {
     table::PARAMETERS.iter().map(|row| row.0)
@@ -128,6 +140,11 @@ mod tests {
                 .all(|w| (w[0].0, w[0].1) < (w[1].0, w[1].1))
         );
         assert!(table::CATEGORIES.windows(2).all(|w| w[0].0 < w[1].0));
+        assert!(
+            subcategory_names::SUBCATEGORY_NAMES
+                .windows(2)
+                .all(|w| w[0].0 < w[1].0)
+        );
     }
 
     #[test]
