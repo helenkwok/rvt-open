@@ -30,6 +30,13 @@ interface FrameStats {
   maxGapMs: number;
 }
 
+/** A long-animation-frame entry, where the browser reports them. */
+interface LongFrame {
+  duration: number;
+  blockingDuration?: number;
+  scripts?: { duration: number; invoker?: string; sourceFunctionName?: string; sourceURL?: string; sourceCharPosition?: number }[];
+}
+
 /** Milliseconds since the epoch, on the clock the worker also reads. */
 const clock = (): number => performance.timeOrigin + performance.now();
 
@@ -41,11 +48,31 @@ class Timeline {
   private readonly start = clock();
   private readonly frames0: FrameStats;
   readonly marks: Record<string, number> = {};
+  /** The page's long frames meanwhile (Chromium's long-animation-frame entries), and what ran in them. */
+  private readonly long: { ms: number; blocking: number; scripts: { what: string; ms: number }[] }[] = [];
+  private observer: PerformanceObserver | null = null;
   constructor(private readonly stats: () => FrameStats) {
     const f = stats();
     this.frames0 = { ...f };
     f.maxMs = 0;
     f.maxGapMs = 0;
+    try {
+      this.observer = new PerformanceObserver((list) => {
+        for (const e of list.getEntries() as unknown as LongFrame[]) {
+          this.long.push({
+            ms: e.duration,
+            blocking: e.blockingDuration ?? 0,
+            scripts: (e.scripts ?? []).map((x) => ({
+              what: `${x.invoker ?? ''} ${x.sourceFunctionName ?? ''} ${(x.sourceURL ?? '').split('/').pop() ?? ''}:${x.sourceCharPosition ?? ''}`.trim(),
+              ms: x.duration,
+            })),
+          });
+        }
+      });
+      this.observer.observe({ type: 'long-animation-frame', buffered: false });
+    } catch {
+      this.observer = null;
+    }
   }
   mark(stage: string, at: number = clock()): void {
     this.marks[stage] = Math.round(at - this.start);
@@ -63,7 +90,21 @@ class Timeline {
   }
   /** The marks, and `epoch`: when the request was made, ms since the epoch. */
   json(): string {
-    return JSON.stringify({ epoch: Math.round(this.start), ...this.marks });
+    const scripts = new Map<string, number>();
+    for (const f of this.long) for (const x of f.scripts) scripts.set(x.what, (scripts.get(x.what) ?? 0) + x.ms);
+    const top = [...scripts].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([what, ms]) => `${Math.round(ms)} ${what}`);
+    return JSON.stringify({
+      epoch: Math.round(this.start),
+      ...this.marks,
+      longFrames: this.long.length,
+      longFrameMs: Math.round(this.long.reduce((a, f) => a + f.ms, 0)),
+      maxLongFrameMs: Math.round(Math.max(0, ...this.long.map((f) => f.ms))),
+      longScripts: top,
+    });
+  }
+  stop(): void {
+    this.observer?.disconnect();
+    this.observer = null;
   }
 }
 
@@ -207,6 +248,7 @@ export function initModelDrawings(
             requestAnimationFrame(() => {
               timeline.mark('painted');
               svg.dataset.timeline = timeline.json();
+              timeline.stop();
             }),
           );
         }
@@ -345,6 +387,13 @@ export function initModelDrawings(
       showDrawing();
       return;
     }
+    // The list's timeline runs on to the first drawing asked for: what the page did meanwhile.
+    if (listTimeline) {
+      listTimeline.mark('firstClick');
+      listEl.dataset.untilClick = listTimeline.json();
+      listTimeline.stop();
+      listTimeline = null;
+    }
     const request: Request = {
       kind,
       id: Number(id),
@@ -381,6 +430,7 @@ export function initModelDrawings(
   return {
     /** Lists the open model's sheets and views. */
     async load(): Promise<void> {
+      listTimeline?.stop();
       listTimeline = new Timeline(host.frameStats);
       await postWithBytes((data) => ({ type: 'drawing-list', bytes: data }), () => true, listTimeline);
     },
@@ -395,6 +445,8 @@ export function initModelDrawings(
       delete listEl.dataset.count;
       delete listEl.dataset.times;
       delete listEl.dataset.timeline;
+      delete listEl.dataset.untilClick;
+      listTimeline?.stop();
       listTimeline = null;
       titleEl.textContent = '';
       if (app.dataset.mode !== 'drawing') view.clear();

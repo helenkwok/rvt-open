@@ -64,6 +64,7 @@ async function openSheet(page: Page, name: RegExp): Promise<{ ms: number; label:
   const ms = Date.now() - t0;
   await expect(svg).toHaveAttribute('data-timeline', /painted/);
   const timeline = JSON.parse((await svg.getAttribute('data-timeline')) ?? '{}') as Record<string, number>;
+  console.log('from the list to the click', await page.locator('#drawings').getAttribute('data-until-click'));
   console.log(`${label} timeline ms ${JSON.stringify({ clickHandled: timeline.epoch - t0, ...timeline, epoch: undefined })}`);
   return { ms, label, times: (await svg.getAttribute('data-times')) ?? '' };
 }

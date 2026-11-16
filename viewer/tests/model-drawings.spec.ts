@@ -73,6 +73,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   await expect(page.locator('#drawing-sheet > svg')).toHaveAttribute('data-timeline', /painted/);
   {
     const t = JSON.parse((await page.locator('#drawing-sheet > svg').getAttribute('data-timeline')) ?? '{}') as Record<string, number>;
+  console.log('from the list to the click', await page.locator('#drawings').getAttribute('data-until-click'));
     console.log('sheet timeline ms', JSON.stringify({ clickHandled: t.epoch - tClick, ...t, epoch: undefined }));
   }
   console.log(
