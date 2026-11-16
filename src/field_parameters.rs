@@ -1782,7 +1782,9 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
 /// for values Revit shows from another element: the path's part before `->`
 /// is an ElementId field of the element (as in [`FIELD_RULES`]), the part
 /// after it a field path in the element that id names (a text type's font
-/// element, a family type's family, a viewer's view).
+/// element, a family type's family, a viewer's view); a path may hop more
+/// than once, and `name[0]` takes a list's first item (a style's line pen and
+/// colour: its category element's first graphics style).
 pub const LINKED_RULES: &[(&str, &str, &str)] = &[
     (
         "ColorFillSymbol",
@@ -1793,6 +1795,11 @@ pub const LINKED_RULES: &[(&str, &str, &str)] = &[
         "ColorFillSymbol",
         "TEXT_STYLE_SIZE",
         "m_oLineAndTextAttr.m_fontId->m_pFont.m_size",
+    ),
+    (
+        "ContourLabelingAttributes",
+        "LINE_COLOR",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
     ),
     (
         "ContourLabelingAttributes",
@@ -1816,6 +1823,16 @@ pub const LINKED_RULES: &[(&str, &str, &str)] = &[
     ),
     (
         "DimensionStyle",
+        "LINE_COLOR",
+        "m_pLineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "DimensionStyle",
+        "LINE_PEN",
+        "m_pLineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
+    (
+        "DimensionStyle",
         "TEXT_FONT",
         "m_pLineAndTextAttr.m_fontId->m_pFont.m_name",
     ),
@@ -1833,6 +1850,11 @@ pub const LINKED_RULES: &[(&str, &str, &str)] = &[
         "FamilySymbol",
         "STRUCTURAL_FAMILY_CODE_NAME",
         "m_familyId->m_structuralCodeName",
+    ),
+    (
+        "FilledRegionAttributes",
+        "LINE_PEN",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
     ),
     (
         "InteriorElevArrow",
@@ -1866,9 +1888,24 @@ pub const LINKED_RULES: &[(&str, &str, &str)] = &[
         "m_dbViewId->m_viewTemplateId",
     ),
     (
+        "LevelAttributes",
+        "LINE_COLOR",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "LevelAttributes",
+        "LINE_PEN",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
+    (
         "LinearDimString",
         "DIM_LEADER",
         "m_styleSymbolId->m_leaderType",
+    ),
+    (
+        "SpotElevationStyle",
+        "LINE_COLOR",
+        "m_pLineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
     ),
     (
         "SpotElevationStyle",
@@ -1902,6 +1939,16 @@ pub const LINKED_RULES: &[(&str, &str, &str)] = &[
     ),
     (
         "TagNoteAttributes",
+        "LINE_COLOR",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "TagNoteAttributes",
+        "LINE_PEN",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
+    (
+        "TagNoteAttributes",
         "TEXT_FONT",
         "m_lineAndTextAttr.m_fontId->m_pFont.m_name",
     ),
@@ -1916,6 +1963,16 @@ pub const LINKED_RULES: &[(&str, &str, &str)] = &[
         "m_fontId->m_pFont.m_size",
     ),
     ("Text3dAttrSymbol", "TEXT_FONT", "m_fontId->m_pFont.m_name"),
+    (
+        "TextNoteAttributes",
+        "LINE_COLOR",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "TextNoteAttributes",
+        "LINE_PEN",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
     (
         "TextNoteAttributes",
         "TEXT_FONT",
@@ -2001,7 +2058,14 @@ fn at<'a>(objects: &'a [Fields], path: &str) -> Option<&'a Value> {
     let mut cur = objects.first()?;
     let mut parts = path.split('.').peekable();
     while let Some(name) = parts.next() {
-        let v = cur.get(name)?;
+        // `name[0]`: the first item of a list field.
+        let v = match name.strip_suffix("[0]") {
+            Some(list) => match cur.get(list)? {
+                Value::List(items) => items.first()?,
+                _ => return None,
+            },
+            None => cur.get(name)?,
+        };
         if parts.peek().is_none() {
             return Some(v);
         }
@@ -2055,14 +2119,15 @@ pub fn linked_parameters<'a>(
         .take_while(|r| r.0 == class)
         .filter_map(|&(_, name, path)| {
             let p = builtin_parameters::parameter_by_enum(name)?;
-            let (from, to) = path.split_once("->")?;
-            let Value::Id(target) = at(objects, from)? else {
-                return None;
-            };
-            Some((
-                p.id,
-                as_parameter(at(element(*target)?, to)?, p.storage_type)?,
-            ))
+            let mut hops = path.split("->");
+            let mut v = at(objects, hops.next()?)?;
+            for hop in hops {
+                let Value::Id(target) = v else {
+                    return None;
+                };
+                v = at(element(*target)?, hop)?;
+            }
+            Some((p.id, as_parameter(v, p.storage_type)?))
         })
         .collect()
 }
@@ -2099,8 +2164,8 @@ mod tests {
             let p = builtin_parameters::parameter_by_enum(name).expect(name);
             assert!(!p.storage_type.is_empty(), "{name} has no storage type");
             assert_eq!(
-                path.matches("->").count(),
-                usize::from(LINKED_RULES.iter().any(|r| r.2 == *path))
+                path.contains("->"),
+                LINKED_RULES.iter().any(|r| r.2 == *path)
             );
         }
     }
