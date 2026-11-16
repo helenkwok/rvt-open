@@ -19,9 +19,9 @@ attr category not decoded	0	lower
 attr is_type match	5601	higher
 attr is_type differ	0	lower
 attr is_type not decoded	0	lower
-attr name match	5210	higher
+attr name match	4246	higher
 attr name differ	52	lower
-attr name not decoded	339	lower
+attr name not decoded	1303	lower
 attr level match	5601	higher
 attr level differ	0	lower
 attr level not decoded	0	lower
