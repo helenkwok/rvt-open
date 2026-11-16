@@ -108,6 +108,11 @@ fn param(v: &ParamValue) -> J {
     }
 }
 
+/// `SYMBOL_NAME_PARAM` (Type Name) and `SYMBOL_FAMILY_NAME_PARAM` (Family
+/// Name).
+const SYMBOL_NAME_PARAM: i64 = -1002001;
+const SYMBOL_FAMILY_NAME_PARAM: i64 = -1002002;
+
 fn main() -> anyhow::Result<()> {
     let path: PathBuf = std::env::args_os()
         .nth(1)
@@ -172,10 +177,12 @@ fn main() -> anyhow::Result<()> {
                 "exact": o.exact,
                 "root": fields(root),
                 "texts": texts(&o.objects),
+                "nested_params": o.nested_parameters().iter().map(|(p, v)| json!([p, param(v)])).collect::<Vec<_>>(),
+                "family_id": match root.get("m_familyId") { Some(Value::Id(i)) => json!(i), _ => J::Null },
                 "params": o.stored_parameters().iter().map(|(p, v)| json!([p, param(v)])).collect::<Vec<_>>(),
                 "field_params": field_parameters(
                     layouts.classes.get(&root.tag).map_or("", |c| c.name.as_str()),
-                    root,
+                    &o.objects,
                 )
                 .iter()
                 .map(|(p, v)| json!([p, param(v)]))
@@ -183,6 +190,19 @@ fn main() -> anyhow::Result<()> {
             }));
         }
     })?;
+    let derives = |mut tag: u16, base: &str| {
+        for _ in 0..64 {
+            let Some(c) = layouts.classes.get(&tag) else {
+                return false;
+            };
+            if c.name == base {
+                return true;
+            }
+            let Some(b) = c.base else { return false };
+            tag = b;
+        }
+        false
+    };
     let mut style_names = std::collections::HashMap::new();
     for (id, root) in &styles {
         let n = rvt::element_names::graphics_style_name(
@@ -203,7 +223,20 @@ fn main() -> anyhow::Result<()> {
                 .and_then(|n| n.0.clone()),
             None => own.and_then(|n| n.0.clone()),
         };
+        // Revit shows a type's name as SYMBOL_NAME_PARAM and its family's
+        // name (`m_familyId`) as SYMBOL_FAMILY_NAME_PARAM.
+        let tag = e["tag"].as_u64().unwrap_or(0) as u16;
+        let mut name_params = Vec::new();
+        if let Some(n) = n.as_ref().filter(|_| derives(tag, "Symbol")) {
+            name_params.push(json!([SYMBOL_NAME_PARAM, ["String", n]]));
+        }
+        if let Some(family) = e["family_id"].as_i64() {
+            if let Some(f) = names.get(&family).and_then(|n| n.0.as_ref()) {
+                name_params.push(json!([SYMBOL_FAMILY_NAME_PARAM, ["String", f]]));
+            }
+        }
         e["name"] = json!(n);
+        e["name_params"] = json!(name_params);
     }
     let width = IdWidth::of_release(release);
     let mut partitions = Vec::new();

@@ -371,6 +371,53 @@ impl SchemaObject {
         }
         out
     }
+
+    /// Parameters kept in parameter sets the element's other objects own
+    /// (a property set element's `m_oParamSet`, ...): every `m_paramSet`
+    /// entry with a parameter id and a value, outside the root's own
+    /// `m_pParamValueSet*` objects ([`Self::stored_parameters`]). Empty
+    /// unless [`Self::element`].
+    pub fn nested_parameters(&self) -> Vec<(i64, ParamValue)> {
+        let mut out = Vec::new();
+        let Some(root) = self.root().filter(|_| self.element().is_some()) else {
+            return out;
+        };
+        let own: Vec<usize> = [
+            "m_pParamValueSetDouble",
+            "m_pParamValueSetInt",
+            "m_pParamValueSetAString",
+            "m_pParamValueSetElementId",
+        ]
+        .iter()
+        .filter_map(|f| match root.get(f) {
+            Some(Value::New { index, .. }) => Some(*index),
+            _ => None,
+        })
+        .collect();
+        for (k, o) in self.objects.iter().enumerate().skip(1) {
+            if own.contains(&k) {
+                continue;
+            }
+            let Some(Value::List(entries)) = o.get("m_paramSet") else {
+                continue;
+            };
+            for entry in entries {
+                let Value::Object(e) = entry else { continue };
+                let (Some(param), Some(value)) = (e.id("m_paramId"), e.get("m_value")) else {
+                    continue;
+                };
+                let value = match value {
+                    Value::Float(v) => ParamValue::Double(*v),
+                    Value::Int(v) => ParamValue::Integer(*v),
+                    Value::Text(v) => ParamValue::String(v.clone()),
+                    Value::Id(v) => ParamValue::ElementId(*v),
+                    _ => continue,
+                };
+                out.push((param, value));
+            }
+        }
+        out
+    }
 }
 
 struct Reader<'a> {
