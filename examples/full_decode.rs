@@ -17,7 +17,10 @@
 
 use rvt::RevitFile;
 use rvt::field_parameters::{field_parameters, header_parameters};
-use rvt::schema_objects::{Fields, IdWidth, ParamValue, Value, for_each_object, header_records};
+use rvt::schema_objects::{
+    Fields, IdWidth, ParamValue, Value, content_documents, for_each_object, header_records,
+    read_graph,
+};
 use serde_json::{Value as J, json};
 use std::path::PathBuf;
 
@@ -172,6 +175,59 @@ fn main() -> anyhow::Result<()> {
         .filter(|p| !p.enum_name.is_empty())
         .map(|p| (p.enum_name.to_string(), json!(p.id)))
         .collect();
+    // The single-object streams, each read as one object graph from its first byte.
+    let mut graphs = Vec::new();
+    for name in rf.stream_names() {
+        if !name.starts_with("Global/") {
+            continue;
+        }
+        let stored = rf.read_stream(&name)?;
+        let Ok((_, buf)) = rvt::compression::inflate_stream_auto(&name, &stored) else {
+            continue;
+        };
+        if name == "Global/ContentDocuments" {
+            let (docs, end) = content_documents(&layouts, &buf);
+            graphs.push(json!({
+                "stream": name,
+                "inflated": buf.len(),
+                "documents": docs.iter().map(|d| json!({
+                    "span": [d.span.start, d.span.end],
+                    "key_read_to": d.key.objects.last().map(|o| o.span.end),
+                    "graph": [d.graph.frame.payload.start, d.graph.frame.payload.end],
+                    "graph_read_to": d.graph.unparsed.as_ref().map_or(d.graph.frame.payload.end, |r| r.start),
+                    "graph_stopped": d.graph.stopped,
+                })).collect::<Vec<_>>(),
+                "records_end": end,
+                "rest": hex(&buf[end..buf.len().min(end + 64)]),
+            }));
+            continue;
+        }
+        let g = read_graph(&layouts, &name, &buf, 0);
+        let read_to = g.unparsed.as_ref().map_or(buf.len(), |r| r.start);
+        graphs.push(json!({
+            "stream": name,
+            "inflated": buf.len(),
+            "read_to": read_to,
+            "objects": g.objects.len(),
+            "stopped": g.stopped,
+            "rest": hex(&buf[read_to..buf.len().min(read_to + 64)]),
+        }));
+    }
+    // The schema stream, read by the schema grammar.
+    let schema = rf
+        .read_stream("Formats/Latest")
+        .ok()
+        .and_then(|stored| rvt::compression::inflate_stream_auto("Formats/Latest", &stored).ok())
+        .map(|(_, buf)| {
+            let c = rvt::formats::schema_classes(&buf);
+            json!({
+                "inflated": buf.len(),
+                "parsed": c.parsed_bytes,
+                "stopped": c.stopped,
+                "guid_list_bytes": c.guid_list_bytes,
+                "classes": c.classes.len(),
+            })
+        });
     let unique_ids: serde_json::Map<String, J> =
         rvt::research::revit_global_ids::revit_unique_ids(&mut rf)?
             .into_iter()
@@ -187,6 +243,8 @@ fn main() -> anyhow::Result<()> {
         "objects": objects,
         "elements": elements,
         "headers": headers,
+        "graphs": graphs,
+        "schema": schema,
         "elem_table": rows,
     });
     println!("{out}");

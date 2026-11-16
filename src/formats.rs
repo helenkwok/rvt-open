@@ -915,6 +915,10 @@ pub struct SchemaClasses {
     pub parsed_bytes: usize,
     /// Why reading stopped early, `None` when it reached the end.
     pub stopped: Option<String>,
+    /// Bytes of the classes' GUID lists (each a `u32` count and its 16-byte
+    /// GUIDs), which the reader steps over without reading the GUIDs.
+    #[serde(default)]
+    pub guid_list_bytes: usize,
 }
 
 impl SchemaClasses {
@@ -1079,6 +1083,7 @@ fn read_schema_with(data: &[u8], guid_list: bool) -> (SchemaClasses, SchemaLayou
         next_tag: FIRST_SCHEMA_TAG,
         classes: Vec::new(),
         layouts: Vec::new(),
+        guid_list_bytes: 0,
     };
     let mut at = 0;
     let stopped = loop {
@@ -1114,6 +1119,7 @@ fn read_schema_with(data: &[u8], guid_list: bool) -> (SchemaClasses, SchemaLayou
             classes: reader.classes,
             parsed_bytes: at,
             stopped,
+            guid_list_bytes: reader.guid_list_bytes,
         },
         layouts,
     )
@@ -1130,6 +1136,8 @@ struct GrammarReader<'a> {
     layouts: Vec<SchemaLayout>,
     /// Whether a class ends with a u32-counted GUID list (2014 and later).
     guid_list: bool,
+    /// Bytes of the GUID lists read so far.
+    guid_list_bytes: usize,
 }
 
 impl GrammarReader<'_> {
@@ -1300,12 +1308,14 @@ impl GrammarReader<'_> {
         }
         if self.guid_list {
             let guids = Self::need(self.u32(p), "GUID count", p)? as usize;
+            let list_start = p;
             p += 4;
             p = guids
                 .checked_mul(16)
                 .and_then(|len| p.checked_add(len))
                 .filter(|end| *end <= self.data.len() && guids <= 60_000)
                 .ok_or_else(|| format!("GUID count {guids} at {:#x}", p - 4))?;
+            self.guid_list_bytes += p - list_start;
         }
         self.layouts.push(SchemaLayout {
             tag,
