@@ -895,15 +895,19 @@ fn largest_side_sqft(entity: &IfcEntity) -> Option<f64> {
     else {
         return None;
     };
+    let area = longest_edge_feet(points) * body.height_feet;
+    (area.is_finite() && area > 0.0).then_some(area)
+}
+
+/// The longest edge of the closed outline `points`, feet.
+fn longest_edge_feet(points: &[(f64, f64)]) -> f64 {
     let n = points.len();
-    let longest = (0..n)
+    (0..n)
         .map(|i| {
             let (a, b) = (points[i], points[(i + 1) % n]);
             (b.0 - a.0).hypot(b.1 - a.1)
         })
-        .fold(0.0, f64::max);
-    let area = longest * body.height_feet;
-    (area.is_finite() && area > 0.0).then_some(area)
+        .fold(0.0, f64::max)
 }
 
 /// The IFC4 quantities `q` gives its class's set: (name, value).
@@ -1230,6 +1234,25 @@ mod tests {
         };
         let shells = mesh_shells(&m).expect("balanced");
         assert!(shells.iter().all(|s| s.volume.abs() < 1e-12));
+    }
+
+    #[test]
+    fn longest_edge_is_the_longer_side_of_a_stepped_outline() {
+        // A layered wall flat at one end and stepped at the other: the
+        // exterior side runs 4.88 long, the interior side 4.49.
+        let outline = [
+            (0.27, -2.44),
+            (0.27, 2.44),
+            (0.135, 2.44),
+            (0.135, 2.305),
+            (-0.12, 2.305),
+            (-0.12, 2.05),
+            (-0.27, 2.05),
+            (-0.27, -2.44),
+        ];
+        assert!((longest_edge_feet(&outline) - 4.88).abs() < 1e-12);
+        let rectangle = [(0.0, 0.0), (10.0, 0.0), (10.0, 0.5), (0.0, 0.5)];
+        assert_eq!(longest_edge_feet(&rectangle), 10.0);
     }
 
     #[test]
