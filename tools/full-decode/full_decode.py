@@ -536,13 +536,18 @@ def compare_values(api, facts, enum_ids):
     for a in api:
         if a["class"].endswith(("ParameterElement", "SharedParameterElement", "GlobalParameter")):
             pe_ids[a["name"]].add(a["id"])
+    header_params = {h["id"]: h.get("header_params") or [] for h in facts.get("headers", [])}
     rows, c = [], collections.Counter()
     for a in api:
         e = by_id.get(a["id"])
-        stored = {}
+        stored, derived = {}, {}
         if e:
             for pid, (kind, v) in e["params"]:
                 stored.setdefault(pid, (kind, v))
+            # Values Revit shows from a field: the element header's, then the element object's.
+            for src, plist in (("the element header", header_params.get(a["id"], [])), ("an element field", e.get("field_params", []))):
+                for pid, (kind, v) in plist:
+                    derived.setdefault(pid, (src, kind, v))
         for p in a["parameters"]:
             if not p.get("has_value"):
                 c["parameter without a value (nothing to decode)"] += 1
@@ -554,6 +559,9 @@ def compare_values(api, facts, enum_ids):
                 pid = next((i for i in sorted(ids) if i in stored), min(ids) if ids else None)
             if pid is None:
                 st = "parameter id not known"
+            elif pid not in stored and pid in derived:
+                src, kind, v = derived[pid]
+                st = ("match from " if kind == p["storage"] and same(kind, v, p["value"]) else "differ from ") + src
             elif pid not in stored:
                 st = "not stored (computed?)" if p.get("read_only") else "not stored, writable"
             else:
@@ -637,7 +645,7 @@ def main():
     for k, n in sorted(extra.items()):
         tot.append((f"file elements not in api: {k}", n, "info"))
     for k, n in sorted(vcount.items()):
-        better = "higher" if k.endswith(": match") else ("info" if "without a value" in k else "lower")
+        better = "higher" if (k.endswith(": match") or ": match from" in k) else ("info" if "without a value" in k else "lower")
         tot.append((f"values {k}", n, better))
     with open(os.path.join(a.out, "full-decode.tsv"), "w", newline="") as f:
         w = csv.writer(f, delimiter="\t", lineterminator="\n")
