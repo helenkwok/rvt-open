@@ -10,14 +10,14 @@ bytes inflated decoded	36808260	higher
 bytes inflated known	24686	lower
 bytes inflated unknown	0	lower
 elements located	5601	higher
-attr class match	5423	higher
+attr class match	5601	higher
 attr class differ	0	lower
 attr class not decoded	0	lower
 attr category match	5601	higher
 attr category differ	0	lower
 attr category not decoded	0	lower
-attr is_type match	5432	higher
-attr is_type differ	169	lower
+attr is_type match	5601	higher
+attr is_type differ	0	lower
 attr is_type not decoded	0	lower
 attr name match	5210	higher
 attr name differ	52	lower
