@@ -6,15 +6,16 @@
 //! cargo run --example full_decode -- model.rvt > facts.json
 //! ```
 //!
-//! Written: the release; every class by schema tag; per partition its
+//! Written: the release; every class by schema tag, with its base class; per partition its
 //! inflated length, every data object (id, class, span, the bytes the schema
 //! read, the unread rest and why it stopped) and the byte ranges between
-//! objects; every element object's root fields and stored parameters; the
+//! objects, with the element-header records and run markers read from them;
+//! every element object's root fields and stored parameters; the
 //! element table's rows; the built-in parameter ids by enum name. Nothing is interpreted here: the script decides what
 //! matches the API.
 
 use rvt::RevitFile;
-use rvt::schema_objects::{Fields, ParamValue, Value, for_each_object};
+use rvt::schema_objects::{Fields, IdWidth, ParamValue, Value, for_each_object, header_records};
 use serde_json::{Value as J, json};
 use std::path::PathBuf;
 
@@ -73,6 +74,11 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .map(|(t, c)| (t.to_string(), json!(c.name)))
         .collect();
+    let bases: serde_json::Map<String, J> = layouts
+        .classes
+        .iter()
+        .filter_map(|(t, c)| Some((t.to_string(), json!(c.base?))))
+        .collect();
 
     let mut objects: Vec<J> = Vec::new();
     let mut elements: Vec<J> = Vec::new();
@@ -101,13 +107,36 @@ fn main() -> anyhow::Result<()> {
             }));
         }
     })?;
+    let width = IdWidth::of_release(release);
     let mut partitions = Vec::new();
+    let mut headers = Vec::new();
     for (stream, g) in gaps {
-        let len = rf.inflated_partition(&stream)?.bytes().len();
+        let inflated = rf.inflated_partition(&stream)?;
+        let buf = inflated.bytes();
+        let (mut markers, mut rest) = (Vec::new(), Vec::new());
+        for gap in &g {
+            let h = header_records(&layouts, &stream, buf, gap.clone(), width);
+            markers.extend(h.markers.iter().map(|r| [r.start, r.end]));
+            rest.extend(h.rest.iter().map(|r| [r.start, r.end]));
+            for o in &h.records {
+                headers.push(json!({
+                    "stream": stream,
+                    "id": o.frame.header.id,
+                    "tag": o.frame.header.tag,
+                    "span": [o.frame.span.start, o.frame.span.end],
+                    "payload": [o.frame.payload.start, o.frame.payload.end],
+                    "unparsed": o.unparsed.as_ref().map(|r| [r.start, r.end]),
+                    "stopped": o.stopped,
+                    "root": o.root().map(fields),
+                }));
+            }
+        }
         partitions.push(json!({
             "stream": stream,
-            "inflated": len,
+            "inflated": buf.len(),
             "gaps": g.iter().map(|r| [r.start, r.end]).collect::<Vec<_>>(),
+            "header_markers": markers,
+            "header_rest": rest,
         }));
     }
     let rows: Vec<J> = rvt::elem_table::parse_records(&mut rf)?
@@ -118,7 +147,8 @@ fn main() -> anyhow::Result<()> {
                 r.id_primary,
                 r.id_secondary,
                 r.owner_id,
-                r.raw.len()
+                r.raw.len(),
+                hex(&r.raw)
             ])
         })
         .collect();
@@ -127,13 +157,21 @@ fn main() -> anyhow::Result<()> {
         .filter(|p| !p.enum_name.is_empty())
         .map(|p| (p.enum_name.to_string(), json!(p.id)))
         .collect();
+    let unique_ids: serde_json::Map<String, J> =
+        rvt::research::revit_global_ids::revit_unique_ids(&mut rf)?
+            .into_iter()
+            .map(|(id, u)| (id.to_string(), json!(u)))
+            .collect();
     let out = json!({
+        "unique_ids": unique_ids,
         "release": release,
         "builtin_ids": builtin_ids,
         "classes": classes,
+        "bases": bases,
         "partitions": partitions,
         "objects": objects,
         "elements": elements,
+        "headers": headers,
         "elem_table": rows,
     });
     println!("{out}");
