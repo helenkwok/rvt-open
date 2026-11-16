@@ -569,8 +569,12 @@ pub fn butt_joins(
                         .any(|reach| (reach + half).abs() <= JOIN_EPS_FEET)
                 })
             {
+                // Marked only where an end moves: one whose layers already
+                // all stop at the near face keeps the area it had.
+                flat_stop = reaches
+                    .iter()
+                    .any(|reach| (reach + half).abs() > JOIN_EPS_FEET);
                 reaches.fill(-half);
-                flat_stop = true;
             }
             joins[slot] = Some(ButtJoin {
                 partner: other.element_id,
