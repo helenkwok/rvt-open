@@ -446,6 +446,7 @@ pub(super) fn attach_wall_corner_reaches(
                 WALL_JOIN_LAYER_REACH_FIELDS[slot],
                 WALL_JOIN_LAYER_EDGE_REACH_FIELDS[slot],
                 WALL_JOIN_AXIS_REACH_FIELDS[slot],
+                WALL_JOIN_FLAT_STOP_FIELDS[slot],
             ];
             wall.fields
                 .retain(|(name, _)| !replaced.contains(&name.as_str()));
@@ -568,6 +569,12 @@ pub(super) fn attach_wall_butt_joins(
                 WALL_JOIN_THROUGH_FIELDS[slot].into(),
                 InstanceField::Bool(join.runs_through),
             ));
+            if join.flat_stop {
+                wall.fields.push((
+                    WALL_JOIN_FLAT_STOP_FIELDS[slot].into(),
+                    InstanceField::Bool(true),
+                ));
+            }
             if let Some(reach) = join.reach_feet {
                 wall.fields.push((
                     WALL_JOIN_REACH_FIELDS[slot].into(),
@@ -702,6 +709,7 @@ pub fn attach_wall_end_records(
                     WALL_JOIN_LAYER_REACH_FIELDS[slot],
                     WALL_JOIN_LAYER_EDGE_REACH_FIELDS[slot],
                     WALL_JOIN_AXIS_REACH_FIELDS[slot],
+                    WALL_JOIN_FLAT_STOP_FIELDS[slot],
                 ];
                 wall.fields
                     .retain(|(name, _)| !dropped.contains(&name.as_str()));

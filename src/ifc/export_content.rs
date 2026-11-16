@@ -9731,6 +9731,16 @@ fn element_record_geometry_from_decoded(decoded: &DecodedElement) -> Option<Reco
                 });
             }
         }
+        // Kept where the partner was dropped: the stop still shapes the body.
+        if decoded.fields.iter().any(|(name, value)| {
+            name == crate::partition_schema_mvp::WALL_JOIN_FLAT_STOP_FIELDS[slot]
+                && matches!(value, InstanceField::Bool(true))
+        }) {
+            properties.push(Property {
+                name: format!("Join{end}FlatStop"),
+                value: PropertyValue::Boolean(true),
+            });
+        }
         // Every wall in a join of three or more walls at this end.
         if let Some(walls) = decoded.fields.iter().find_map(|(name, value)| match value {
             InstanceField::Vector(items)
