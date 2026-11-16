@@ -84,6 +84,9 @@
  *   leaves the open model as it is (a failed open has dropped the last drawing).
  *   Every drawing reply also carries `wasmMemoryBytes`, the wasm linear memory
  *   after it: drawing grows it and it never shrinks.
+ *   It also carries `at`: when the worker received the request, started and
+ *   ended the wasm call and posted the reply, in ms since the epoch (the page's
+ *   clock), so the page can time a request end to end.
  */
 
 import init, {
@@ -242,6 +245,9 @@ async function compileWasm(url: string): Promise<WebAssembly.Module> {
   }
 }
 
+/** Milliseconds since the epoch, on the clock the page also reads. */
+const clock = (): number => performance.timeOrigin + performance.now();
+
 // DedicatedWorkerGlobalScope.postMessage has a slightly shifty
 // TS signature across lib.dom.d.ts versions — strictly-typed
 // `self` narrows it to zero-arg. Wrap once in a helper so every
@@ -267,16 +273,29 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
   if (msg.type.startsWith('drawing-')) {
     const m = msg as DrawingMsg;
     lastPanic = null;
+    // When the request arrived and the wasm call ran, on the clock the page shares (ms since the
+    // epoch), so the page can say where a drawing's time went.
+    const at: Record<string, number> = { received: clock() };
     const reply = (r: Record<string, unknown>, transfer?: Transferable[]): void =>
-      send({ ...r, wasmMemoryBytes: instanceMemory?.buffer.byteLength ?? 0 }, transfer);
+      send({ ...r, wasmMemoryBytes: instanceMemory?.buffer.byteLength ?? 0, at: { ...at, posted: clock() } }, transfer);
     try {
       if (parsedModel === null) throw new Error('no model is open');
       switch (m.type) {
         case 'drawing-list':
-          reply({ type: 'drawing-list', list: plain(drawingList(m.bytes, parsedModel)) });
+          at.wasmStart = clock();
+          {
+            const list = drawingList(m.bytes, parsedModel);
+            at.wasmEnd = clock();
+            reply({ type: 'drawing-list', list: plain(list) });
+          }
           return;
         case 'drawing-open':
-          reply({ type: 'drawing-open', kind: m.kind, id: m.id, req: m.req, drawn: plain(drawingOpen(m.bytes, m.kind, m.id)) });
+          at.wasmStart = clock();
+          {
+            const drawn = drawingOpen(m.bytes, m.kind, m.id);
+            at.wasmEnd = clock();
+            reply({ type: 'drawing-open', kind: m.kind, id: m.id, req: m.req, drawn: plain(drawn) });
+          }
           return;
         case 'drawing-save': {
           const bytes = drawingSave(m.format);

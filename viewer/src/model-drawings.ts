@@ -14,12 +14,103 @@ export interface ModelDrawingsHost {
   /** The file it opened: read again for each request, so no copy is kept. */
   file(): File | null;
   stem(): string;
+  /** The 3D frames drawn so far (main.ts): their count and time, the longest, the longest gap between two. */
+  frameStats(): FrameStats;
   setStatus(text: string): void;
   toast(message: string, kind?: 'ok' | 'bad' | 'info'): void;
   download(filename: string, blob: Blob): void;
 }
 
 type Kind = 'sheet' | 'plan' | 'section';
+
+interface FrameStats {
+  frames: number;
+  ms: number;
+  maxMs: number;
+  maxGapMs: number;
+}
+
+/** A long-animation-frame entry, where the browser reports them. */
+interface LongFrame {
+  duration: number;
+  blockingDuration?: number;
+  scripts?: { duration: number; invoker?: string; sourceFunctionName?: string; sourceURL?: string; sourceCharPosition?: number }[];
+}
+
+/** Milliseconds since the epoch, on the clock the worker also reads. */
+const clock = (): number => performance.timeOrigin + performance.now();
+
+/**
+ * Where a request's time went, from the moment it was made: each stage's time (ms since the
+ * request), as the page and the worker marked them, and the 3D frames drawn meanwhile.
+ */
+class Timeline {
+  private readonly start = clock();
+  private readonly frames0: FrameStats;
+  readonly marks: Record<string, number> = {};
+  /** The page's long frames meanwhile (Chromium's long-animation-frame entries), and what ran in them. */
+  private readonly long: { ms: number; blocking: number; scripts: { what: string; ms: number }[] }[] = [];
+  private observer: PerformanceObserver | null = null;
+  constructor(private readonly stats: () => FrameStats) {
+    const f = stats();
+    this.frames0 = { ...f };
+    f.maxMs = 0;
+    f.maxGapMs = 0;
+    try {
+      this.observer = new PerformanceObserver((list) => this.collect(list.getEntries()));
+      this.observer.observe({ type: 'long-animation-frame', buffered: false });
+    } catch {
+      this.observer = null;
+    }
+  }
+  private collect(entries: PerformanceEntryList): void {
+    for (const e of entries as unknown as LongFrame[]) {
+      this.long.push({
+        ms: e.duration,
+        blocking: e.blockingDuration ?? 0,
+        scripts: (e.scripts ?? []).map((x) => ({
+          what: `${x.invoker ?? ''} ${x.sourceFunctionName ?? ''} ${(x.sourceURL ?? '').split('/').pop() ?? ''}:${x.sourceCharPosition ?? ''}`.trim(),
+          ms: x.duration,
+        })),
+      });
+    }
+  }
+  mark(stage: string, at: number = clock()): void {
+    this.marks[stage] = Math.round(at - this.start);
+  }
+  /** The worker's marks (`received`, `wasmStart`, `wasmEnd`, `posted`), on the shared clock. */
+  worker(at: Record<string, number> | undefined): void {
+    for (const [k, v] of Object.entries(at ?? {})) this.mark(`worker.${k}`, v);
+  }
+  private frames(): void {
+    const f = this.stats();
+    this.marks.frames = f.frames - this.frames0.frames;
+    this.marks.frameMs = Math.round(f.ms - this.frames0.ms);
+    this.marks.maxFrameMs = Math.round(f.maxMs);
+    this.marks.maxGapMs = Math.round(f.maxGapMs);
+  }
+  /** The marks so far, and `epoch`: when the request was made, ms since the epoch. */
+  json(): string {
+    // Long frames the observer has queued but not yet handed over count too.
+    if (this.observer) this.collect(this.observer.takeRecords());
+    this.frames();
+    const scripts = new Map<string, number>();
+    for (const f of this.long) for (const x of f.scripts) scripts.set(x.what, (scripts.get(x.what) ?? 0) + x.ms);
+    const top = [...scripts].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([what, ms]) => `${Math.round(ms)} ${what}`);
+    return JSON.stringify({
+      epoch: Math.round(this.start),
+      ...this.marks,
+      longFrames: this.long.length,
+      longFrameMs: Math.round(this.long.reduce((a, f) => a + f.ms, 0)),
+      maxLongFrameMs: Math.round(Math.max(0, ...this.long.map((f) => f.ms))),
+      longScripts: top,
+    });
+  }
+  stop(): void {
+    this.observer?.disconnect();
+    this.observer = null;
+  }
+}
 
 interface DrawingList {
   sheets: { id: number; number: string; name: string; views: number[] }[];
@@ -42,8 +133,8 @@ interface Drawn {
 }
 
 type Reply =
-  | { type: 'drawing-list'; list: DrawingList }
-  | { type: 'drawing-open'; kind: Kind; id: number; req: number; drawn: Drawn }
+  | { type: 'drawing-list'; list: DrawingList; at?: Record<string, number> }
+  | { type: 'drawing-open'; kind: Kind; id: number; req: number; drawn: Drawn; at?: Record<string, number> }
   | { type: 'drawing-save'; format: string; bytes: Uint8Array }
   | { type: 'drawing-error'; request: string; req?: number; message: string };
 
@@ -53,6 +144,7 @@ interface Request {
   id: number;
   label: string;
   req: number;
+  timeline: Timeline;
 }
 
 const $ = (id: string): HTMLElement => {
@@ -82,6 +174,7 @@ export function initModelDrawings(
   let posted: number | null = null;
   let held: number | null = null;
   let listening: Worker | null = null;
+  let listTimeline: Timeline | null = null;
 
   /** Whether the worker keeps the drawing shown, with no other drawing asked for after it. */
   const holdsShown = (): boolean => shown !== null && posted === shown.req && held === shown.req;
@@ -89,6 +182,7 @@ export function initModelDrawings(
   /** A request still waiting is not shown when it comes. */
   const cancelPending = (): void => {
     if (!pending) return;
+    pending.timeline.stop();
     pending = null;
     listEl.removeAttribute('aria-busy');
   };
@@ -117,12 +211,23 @@ export function initModelDrawings(
   const onMessage = (ev: MessageEvent<Reply>): void => {
     const msg = ev.data;
     switch (msg.type) {
-      case 'drawing-list':
+      case 'drawing-list': {
+        const t = listTimeline;
+        t?.mark('received');
+        t?.worker(msg.at);
         renderList(msg.list);
+        if (t) {
+          t.mark('listed');
+          listEl.dataset.timeline = t.json();
+        }
         return;
+      }
       case 'drawing-open': {
         held = msg.req;
         if (!pending || pending.req !== msg.req) return;
+        const timeline = pending.timeline;
+        timeline.mark('received');
+        timeline.worker(msg.at);
         shown = pending;
         pending = null;
         listEl.removeAttribute('aria-busy');
@@ -130,6 +235,7 @@ export function initModelDrawings(
         titleEl.textContent = shown.label;
         showDrawing();
         if (!view.show(msg.drawn.svg, true)) {
+          timeline.stop();
           host.toast('The drawing could not be shown: the renderer returned no SVG.', 'bad');
           return;
         }
@@ -139,6 +245,16 @@ export function initModelDrawings(
           svg.dataset.texts = String(msg.drawn.counts.texts);
           svg.dataset.viewports = String(msg.drawn.counts.viewports);
           svg.dataset.times = JSON.stringify(msg.drawn.times ?? {});
+          timeline.mark('inserted');
+          svg.dataset.timeline = timeline.json();
+          // Painted: the frame after the one that lays the drawing out.
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              timeline.mark('painted');
+              svg.dataset.timeline = timeline.json();
+              timeline.stop();
+            }),
+          );
         }
         const c = msg.drawn.counts;
         host.setStatus(
@@ -161,6 +277,7 @@ export function initModelDrawings(
           held = null;
           // A request replaced by another fails silently: the one that replaced it reports itself.
           if (!pending || pending.req !== msg.req) return;
+          pending.timeline.stop();
           pending = null;
         }
         listEl.removeAttribute('aria-busy');
@@ -186,13 +303,20 @@ export function initModelDrawings(
    * Reads the open file and posts what `make` builds from it, unless the file or the worker
    * changed, or `current()` turned false, while it was read.
    */
-  const postWithBytes = async (make: (data: Uint8Array) => unknown, current: () => boolean): Promise<boolean> => {
+  const postWithBytes = async (
+    make: (data: Uint8Array) => unknown,
+    current: () => boolean,
+    timeline?: Timeline,
+  ): Promise<boolean> => {
     const file = host.file();
     const worker = host.worker();
     if (!file || !worker) return false;
     const data = new Uint8Array(await file.arrayBuffer());
+    timeline?.mark('bytes');
     if (host.file() !== file || host.worker() !== worker || !current()) return false;
-    return post(make(data), [data.buffer as ArrayBuffer]);
+    const sent = post(make(data), [data.buffer as ArrayBuffer]);
+    timeline?.mark('posted');
+    return sent;
   };
 
   const item = (key: string, label: string, title?: string): HTMLButtonElement => {
@@ -268,17 +392,43 @@ export function initModelDrawings(
       showDrawing();
       return;
     }
-    const request: Request = { kind, id: Number(id), label: b.textContent ?? key, req: ++nextReq };
+    // The list's timeline runs on to the first drawing asked for: what the page did meanwhile.
+    if (listTimeline) {
+      listTimeline.mark('firstClick');
+      listEl.dataset.untilClick = listTimeline.json();
+      listTimeline.stop();
+      listTimeline = null;
+    }
+    const request: Request = {
+      kind,
+      id: Number(id),
+      label: b.textContent ?? key,
+      req: ++nextReq,
+      timeline: new Timeline(host.frameStats),
+    };
+    // A request still waiting is replaced: its reply is not shown, and its timeline ends here.
+    pending?.timeline.stop();
     pending = request;
     listEl.setAttribute('aria-busy', 'true');
     host.setStatus(`Drawing ${request.label}…`);
     void (async () => {
-      const sent = await postWithBytes(
-        (data) => ({ type: 'drawing-open', bytes: data, kind, id: request.id, req: request.req }),
-        () => pending === request,
-      );
-      if (sent) posted = request.req;
-      else if (pending === request) cancelPending();
+      try {
+        const sent = await postWithBytes(
+          (data) => ({ type: 'drawing-open', bytes: data, kind, id: request.id, req: request.req }),
+          () => pending === request,
+          request.timeline,
+        );
+        if (sent) posted = request.req;
+        else if (pending === request) cancelPending();
+      } catch (err) {
+        // The file could not be read again (moved, or no longer readable): the request ends here.
+        request.timeline.stop();
+        if (pending !== request) return;
+        cancelPending();
+        const message = `The file could not be read: ${err instanceof Error ? err.message : String(err)}`;
+        host.setStatus(`Drawing: ${message}`);
+        host.toast(message, 'bad');
+      }
     })();
   });
 
@@ -297,7 +447,9 @@ export function initModelDrawings(
   return {
     /** Lists the open model's sheets and views. */
     async load(): Promise<void> {
-      await postWithBytes((data) => ({ type: 'drawing-list', bytes: data }), () => true);
+      listTimeline?.stop();
+      listTimeline = new Timeline(host.frameStats);
+      await postWithBytes((data) => ({ type: 'drawing-list', bytes: data }), () => true, listTimeline);
     },
     /** A new file: no list, no drawing, the 3D view. */
     reset(): void {
@@ -309,6 +461,10 @@ export function initModelDrawings(
       listEl.removeAttribute('aria-busy');
       delete listEl.dataset.count;
       delete listEl.dataset.times;
+      delete listEl.dataset.timeline;
+      delete listEl.dataset.untilClick;
+      listTimeline?.stop();
+      listTimeline = null;
       titleEl.textContent = '';
       if (app.dataset.mode !== 'drawing') view.clear();
       listening?.removeEventListener('message', onMessage as EventListener);
