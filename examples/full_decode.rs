@@ -260,6 +260,11 @@ fn main() -> anyhow::Result<()> {
         .filter_map(rvt::builtin_parameters::parameter)
         .filter(|p| !p.enum_name.is_empty())
         .map(|p| (p.enum_name.to_string(), json!(p.id)))
+        .chain(
+            rvt::builtin_parameters::ALIASES
+                .iter()
+                .map(|(name, id)| (name.to_string(), json!(id))),
+        )
         .collect();
     // The single-object streams, each read as one object graph from its first byte.
     let category_names: serde_json::Map<String, J> = rvt::builtin_parameters::category_ids()
