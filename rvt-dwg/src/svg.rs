@@ -434,7 +434,7 @@ impl<'a> Renderer<'a> {
             }
             Geom::Point { p } => {
                 // A dot: 1 mm on paper, or three units in model space.
-                let dot = self.width_per_mm.map_or(3.0, |per_mm| per_mm);
+                let dot = self.width_per_mm.unwrap_or(3.0);
                 write!(el, "<circle data-handle=\"{handle}\" cx=\"{}\" cy=\"{}\" r=\"0\" stroke=\"{stroke}\" stroke-width=\"{}\"/>", f(p[0]), f(p[1]), fw(dot)).ok();
             }
             Geom::Arc { .. } | Geom::Ellipse { .. } | Geom::Polyline { .. } | Geom::Path { .. } => {
@@ -817,13 +817,23 @@ mod tests {
         ] {
             let w = paper_widths(&s.svg, handle);
             assert_eq!(w.len(), 1, "{handle} drawn once, in its own viewport only");
-            assert!((w[0] - mm).abs() < 1e-9, "{handle}: {} mm on paper, not {mm}", w[0]);
+            assert!(
+                (w[0] - mm).abs() < 1e-9,
+                "{handle}: {} mm on paper, not {mm}",
+                w[0]
+            );
         }
-        assert!(!s.svg.contains("<use"), "no shared copy: its width could only suit one scale");
+        assert!(
+            !s.svg.contains("<use"),
+            "no shared copy: its width could only suit one scale"
+        );
         // In feet the same lineweight is the same paper width.
         let mut feet = d.clone();
         feet.units = 2;
-        let w = paper_widths(&render(&feet, Some("A1"), &Limits::DEFAULT).unwrap().svg, "T");
+        let w = paper_widths(
+            &render(&feet, Some("A1"), &Limits::DEFAULT).unwrap().svg,
+            "T",
+        );
         assert!((w[0] * 304.8 - 0.25).abs() < 1e-3, "{}", w[0]);
         // Model space on its own: one-unit lines, marked for a fixed screen width.
         let m = render(&d, None, &Limits::DEFAULT).unwrap();
