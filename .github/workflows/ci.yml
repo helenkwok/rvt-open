@@ -501,6 +501,37 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: "tiny-exports-${{ matrix.part }}", path: "${{ runner.temp }}/tiny-out", retention-days: 1 }
 
+  # How completely one file is decoded, on three axes (tools/full-decode,
+  # docs/full-decode.md): every byte of 1-hip-roof (Revit 2024) classified,
+  # every element of its Revit API dump located and its attributes compared,
+  # every parameter value compared. Fails when a total falls below
+  # tools/full-decode/floor.tsv.
+  full-decode:
+    name: full decode of one tiny model
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile, save-if: false }
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
+      - run: tools/ci/fetch-tiny-models.sh _tiny
+      - run: cargo build --profile ci --example full_decode
+      - name: Bytes, elements and values against the Revit API dump
+        run: |
+          m=_tiny/rvt-open-tiny-models-1/2024/1-hip-roof
+          target/ci/examples/full_decode "$m.rvt" > "$RUNNER_TEMP/facts.json"
+          python3 -m venv "$RUNNER_TEMP/ole" && "$RUNNER_TEMP/ole/bin/pip" install -q --require-hashes -r tools/ci/requirements-olefile.txt
+          "$RUNNER_TEMP/ole/bin/python" tools/full-decode/full_decode.py "$m.rvt" "$m.api-dump.json" "$RUNNER_TEMP/facts.json" "$RUNNER_TEMP/full-decode" --floor tools/full-decode/floor.tsv
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: full-decode, path: "${{ runner.temp }}/full-decode", if-no-files-found: ignore }
+
   tiny-models:
     name: tiny reference models
     needs: tiny-export
@@ -541,7 +572,7 @@ jobs:
   # rest (about 127 s). Re-balance when a leg runs much longer than the other.
   viewer:
     name: viewer (Playwright) / leg ${{ matrix.leg }}
-    needs: wasm32
+    needs: [wasm32, samples]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -552,11 +583,15 @@ jobs:
       LEG2: "butt-joins|stops against at T joints|dragging to orbit|exposes geometry diagnostics|raises a toast"
       # A public project with sheets for tests/model-drawings.spec.ts (BIM4LCA, CC BY-SA 4.0).
       RVT_DRAWINGS_MODEL: ${{ github.workspace }}/_bim4lca/ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt
+      # Autodesk's metric Technical School sample (public download) for tests/sheet-lineweights.spec.ts.
+      RVT_SHEETS_MODEL: ${{ github.workspace }}/_samples/flat/2026-Technicalschoolcurrentm.rvt
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: viewer-pkg, path: viewer/pkg }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
       - name: Real sample projects for the demo gallery (MIT)
         uses: ./.github/actions/fetch-corpus
         with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }
@@ -582,7 +617,7 @@ jobs:
           for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt; do
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          specs=(tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts)
+          specs=(tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts)
           if [ "${{ matrix.leg }}" = 2 ]; then
             pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
           else
