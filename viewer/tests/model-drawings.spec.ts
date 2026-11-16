@@ -53,6 +53,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
     sections: await sections.count(),
   };
   console.log('drawings listed', JSON.stringify(counts));
+  console.log('list steps ms', await list.getAttribute('data-times'));
   // Templates and loaded families' own plan views are not listed (51 plan views read before).
   expect(counts).toEqual({ sheets: 40, plans: 12, sections: 2 });
   await expect(list.getByRole('button', { name: '3D model' })).toHaveAttribute('aria-pressed', 'true');
@@ -66,6 +67,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   await expect(page.locator('#drawing-title')).toHaveText(sheetName);
   const sheetCounts = await drawn(page);
   console.log('sheet', sheetName, JSON.stringify(sheetCounts));
+  console.log('sheet steps ms', await page.locator('#drawing-sheet > svg').getAttribute('data-times'));
   console.log(
     'sheet extents',
     await page.locator('#drawing-sheet > svg').evaluate((el) => {

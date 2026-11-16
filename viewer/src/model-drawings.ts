@@ -25,6 +25,8 @@ interface DrawingList {
   sheets: { id: number; number: string; name: string; views: number[] }[];
   plans: { id: number; name: string; level: string | null; ceiling: boolean; scale: number | null; onSheet: boolean }[];
   sections: { id: number; name: string; scale: number | null }[];
+  /** Milliseconds per step of the listing. */
+  times?: Record<string, number>;
 }
 
 interface Drawn {
@@ -35,6 +37,8 @@ interface Drawn {
   scale: number;
   counts: { lines: number; texts: number; viewports: number; entities: number };
   notes: string[];
+  /** Milliseconds per step of the drawing (`model` and `views` only when the first drawing reads them). */
+  times?: Record<string, number>;
 }
 
 type Reply =
@@ -134,6 +138,7 @@ export function initModelDrawings(
           svg.dataset.lines = String(msg.drawn.counts.lines);
           svg.dataset.texts = String(msg.drawn.counts.texts);
           svg.dataset.viewports = String(msg.drawn.counts.viewports);
+          svg.dataset.times = JSON.stringify(msg.drawn.times ?? {});
         }
         const c = msg.drawn.counts;
         host.setStatus(
@@ -239,6 +244,7 @@ export function initModelDrawings(
     ].filter((g): g is HTMLDetailsElement => g !== null);
     listEl.replaceChildren(item('model', '3D model'), ...groups);
     listEl.dataset.count = String(list.sheets.length + list.plans.length + list.sections.length);
+    listEl.dataset.times = JSON.stringify(list.times ?? {});
     if (groups.length === 0) {
       const p = document.createElement('p');
       p.className = 'drawings-empty';
@@ -302,6 +308,7 @@ export function initModelDrawings(
       listEl.replaceChildren();
       listEl.removeAttribute('aria-busy');
       delete listEl.dataset.count;
+      delete listEl.dataset.times;
       titleEl.textContent = '';
       if (app.dataset.mode !== 'drawing') view.clear();
       listening?.removeEventListener('message', onMessage as EventListener);
