@@ -1,0 +1,55 @@
+# Floor of tools/full-decode/full_decode.py on the tiny model 1-hip-roof (Revit 2024). A run fails when a 'higher' metric drops below or a 'lower' metric rises above its value here.
+metric	value	better
+bytes file decoded	17040	higher
+bytes file known	20489	lower
+bytes file unknown	0	lower
+bytes stored decoded	5636090	higher
+bytes stored known	11629	lower
+bytes stored unknown	0	lower
+bytes inflated decoded	26867852	higher
+bytes inflated known	3819349	lower
+bytes inflated unknown	6145745	lower
+elements located	5601	higher
+attr class match	5423	higher
+attr class differ	0	lower
+attr class not decoded	0	lower
+attr category match	5	higher
+attr category differ	2487	lower
+attr category not decoded	3109	lower
+attr is_type match	0	higher
+attr is_type differ	0	lower
+attr is_type not decoded	5601	lower
+attr name match	581	higher
+attr name differ	0	lower
+attr name not decoded	5020	lower
+attr level match	5601	higher
+attr level differ	0	lower
+attr level not decoded	0	lower
+attr host match	0	higher
+attr host differ	0	lower
+attr host not decoded	5601	lower
+attr workset match	0	higher
+attr workset differ	0	lower
+attr workset not decoded	5601	lower
+attr phase_created match	5601	higher
+attr phase_created differ	0	lower
+attr phase_created not decoded	0	lower
+attr phase_demolished match	5601	higher
+attr phase_demolished differ	0	lower
+attr phase_demolished not decoded	0	lower
+attr design_option match	5601	higher
+attr design_option differ	0	lower
+attr design_option not decoded	0	lower
+attr unique_id match	0	higher
+attr unique_id differ	0	lower
+attr unique_id not decoded	5601	lower
+values parameter: differ	97	lower
+values parameter: match	2076	higher
+values parameter: not stored (computed?)	17991	lower
+values parameter: not stored, writable	14059	lower
+values parameter: parameter id not known	3119	lower
+values parameter: storage differs	78	lower
+values property: match	28586	higher
+values property: no file field known	76509	lower
+values property: not decoded	3949	lower
+values property: object value (not compared)	9965	lower
