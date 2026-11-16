@@ -97,6 +97,9 @@ pub struct ElementQuantities {
     pub net_volume_cuft: Option<f64>,
     /// Volume before openings were taken away, cubic feet.
     pub gross_volume_cuft: Option<f64>,
+    /// A wall's largest vertical face, square feet, where its body is a
+    /// plan outline extruded upward ([`largest_side_sqft`]).
+    pub largest_side_sqft: Option<f64>,
     /// Surface of the body, square feet.
     pub surface_sqft: f64,
     /// Total layer thickness, feet (layered elements).
@@ -716,6 +719,7 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
         // A wall whose edited elevation profile is cut in its body: its box
         // less the regions, each the region's area through the wall.
         let profile_cut = profile_cut_shells(entity);
+        let cut_in_profile = profile_cut.is_some();
         let (extruded, mut shells) =
             match body_geometry::element_body(entity, &model.representation_maps) {
                 Some(_) if profile_cut.is_some() => (true, profile_cut),
@@ -762,6 +766,7 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
             basis,
             net_volume_cuft: None,
             gross_volume_cuft: None,
+            largest_side_sqft: None,
             surface_sqft: 0.0,
             thickness_feet: None,
             length_feet: length.get(&index).copied(),
@@ -803,6 +808,9 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
                 let net = (gross - removed).max(0.0);
                 q.net_volume_cuft = Some(net);
                 q.gross_volume_cuft = Some(gross);
+                if wall && !cut_in_profile && !model.body_pieces.contains_key(&index) {
+                    q.largest_side_sqft = largest_side_sqft(entity);
+                }
                 if thickness > 0.0
                     && matches!(
                         ifc_type.as_str(),
@@ -864,6 +872,40 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
         .collect()
 }
 
+/// The area of the largest vertical face of a wall whose body is a plan
+/// outline (one polyline, no voids) extruded upward: its longest edge times
+/// the height. Revit's IFC exporter's `PropertyUtil.CreateWallBaseQuantities`
+/// (CLEANROOM.md source 5) writes `GrossSideArea` as the area inside the outer
+/// loop of the solid's largest vertical face, and `GrossVolume` as the wall
+/// type's width times it. Where a layered wall's two ends step the same way,
+/// its sides are as long as each other and the box's volume over its
+/// thickness gives the same area; where one end stops flat and the other
+/// steps, the longer side is Revit's (the BIM4LCA concrete housing's walls
+/// 1566546 and 1566548). `None` for any other body.
+fn largest_side_sqft(entity: &IfcEntity) -> Option<f64> {
+    let IfcEntity::BuildingElement {
+        extrusion: Some(body),
+        solid_shape: None,
+        ..
+    } = entity
+    else {
+        return None;
+    };
+    let Some(super::entities::ProfileDef::ArbitraryClosed { points }) = &body.profile_override
+    else {
+        return None;
+    };
+    let n = points.len();
+    let longest = (0..n)
+        .map(|i| {
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            (b.0 - a.0).hypot(b.1 - a.1)
+        })
+        .fold(0.0, f64::max);
+    let area = longest * body.height_feet;
+    (area.is_finite() && area > 0.0).then_some(area)
+}
+
 /// The IFC4 quantities `q` gives its class's set: (name, value).
 fn base_quantities(q: &ElementQuantities) -> Vec<(&'static str, PropertyValue)> {
     let Some(net) = q.net_volume_cuft else {
@@ -873,14 +915,17 @@ fn base_quantities(q: &ElementQuantities) -> Vec<(&'static str, PropertyValue)> 
     let t = q.thickness_feet.filter(|t| *t > 0.0);
     match q.ifc_type.as_str() {
         "IFCWALL" | "IFCWALLSTANDARDCASE" => {
-            if let Some(gross) = q.gross_volume_cuft {
+            // Revit's export takes the side area from the wall's largest
+            // vertical face, and the gross volume as the width times it.
+            let side = q.largest_side_sqft.zip(t).map(|(side, t)| (side, side * t));
+            if let Some(gross) = side.map(|(_, volume)| volume).or(q.gross_volume_cuft) {
                 v.push(("GrossVolume", PropertyValue::VolumeCubicFeet(gross)));
             }
             if let Some(t) = t {
                 v.push(("Width", PropertyValue::PositiveLengthFeet(t)));
                 v.push(("NetSideArea", PropertyValue::AreaSquareFeet(net / t)));
-                if let Some(gross) = q.gross_volume_cuft {
-                    v.push(("GrossSideArea", PropertyValue::AreaSquareFeet(gross / t)));
+                if let Some(gross) = side.map(|(area, _)| area).or(q.gross_volume_cuft.map(|g| g / t)) {
+                    v.push(("GrossSideArea", PropertyValue::AreaSquareFeet(gross)));
                 }
             }
         }
@@ -1198,6 +1243,7 @@ mod tests {
             basis,
             net_volume_cuft: Some(1.0 / M3_PER_CUFT),
             gross_volume_cuft: None,
+            largest_side_sqft: None,
             surface_sqft: 0.0,
             thickness_feet: None,
             length_feet: None,
