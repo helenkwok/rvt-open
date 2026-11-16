@@ -68,10 +68,11 @@ pub fn parameter_by_enum(enum_name: &str) -> Option<BuiltInParameter> {
 /// `CLASSIFICATION_*`, `UNIFORMAT_*` to `ASSEMBLY_*`, the analytical heat
 /// transfer coefficient to thermal transmittance), and synonyms the API
 /// keeps beside them (`SYMBOL_NAME_PARAM` beside `ALL_MODEL_TYPE_NAME`).
-/// Each was checked on the tiny model 1-hip-roof (Revit 2024): the Revit
-/// API reports the parameter under this name with the catalog id's name and
-/// storage type, and where the file stores a value under that id (36
-/// values), it is the API's.
+/// Each was checked on the tiny model 1-hip-roof (Revit 2024; `DOOR_HEIGHT`
+/// and `GENERIC_WIDTH`, the names the Revit 2027 API gives two of the same
+/// ids, on its Revit 2027 copy): the Revit API reports the parameter under
+/// this name with the catalog id's name and storage type, and where the
+/// file stores a value under that id (36 values), it is the API's.
 pub const ALIASES: &[(&str, i64)] = &[
     ("SYMBOL_NAME_PARAM", -1002001),
     ("SYMBOL_FAMILY_NAME_PARAM", -1002002),
@@ -83,6 +84,8 @@ pub const ALIASES: &[(&str, i64)] = &[
     ("WINDOW_TYPE_ID", -1001405),
     ("GENERIC_HEIGHT", -1001300),
     ("DOOR_WIDTH", -1001301),
+    ("DOOR_HEIGHT", -1001300),
+    ("GENERIC_WIDTH", -1001301),
     ("WINDOW_THICKNESS", -1001302),
     ("BENDING_DETAIL_SEGMENET_REPESENTATION", -1155310),
     ("BENDING_DETAIL_REPESENTATION_FOR_3D_BARS", -1155308),
