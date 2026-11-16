@@ -58,8 +58,35 @@ pub fn parameter_by_enum(enum_name: &str) -> Option<BuiltInParameter> {
     table::PARAMETERS
         .iter()
         .find(|row| row.2 == enum_name)
-        .and_then(|row| parameter(row.0))
+        .map(|row| row.0)
+        .or_else(|| ALIASES.iter().find(|a| a.0 == enum_name).map(|a| a.1))
+        .and_then(parameter)
 }
+
+/// `BuiltInParameter` members that name the same id as the member the
+/// catalog lists: older names the Revit 2026 API renamed (`OMNICLASS_*` to
+/// `CLASSIFICATION_*`, `UNIFORMAT_*` to `ASSEMBLY_*`, the analytical heat
+/// transfer coefficient to thermal transmittance), and synonyms the API
+/// keeps beside them (`SYMBOL_NAME_PARAM` beside `ALL_MODEL_TYPE_NAME`).
+/// Each was checked on the tiny model 1-hip-roof (Revit 2024): the Revit
+/// API reports the parameter under this name with the catalog id's name and
+/// storage type, and where the file stores a value under that id (36
+/// values), it is the API's.
+pub const ALIASES: &[(&str, i64)] = &[
+    ("SYMBOL_NAME_PARAM", -1002001),
+    ("SYMBOL_FAMILY_NAME_PARAM", -1002002),
+    ("UNIFORMAT_CODE", -1002500),
+    ("UNIFORMAT_DESCRIPTION", -1002501),
+    ("OMNICLASS_CODE", -1002502),
+    ("OMNICLASS_DESCRIPTION", -1002503),
+    ("ANALYTICAL_HEAT_TRANSFER_COEFFICIENT", -1005430),
+    ("WINDOW_TYPE_ID", -1001405),
+    ("GENERIC_HEIGHT", -1001300),
+    ("DOOR_WIDTH", -1001301),
+    ("WINDOW_THICKNESS", -1001302),
+    ("BENDING_DETAIL_SEGMENET_REPESENTATION", -1155310),
+    ("BENDING_DETAIL_REPESENTATION_FOR_3D_BARS", -1155308),
+];
 
 /// The text Revit shows for the integer `value` of the enumeration
 /// parameter `id`, `None` where not known.
@@ -140,6 +167,9 @@ mod tests {
                 .all(|w| (w[0].0, w[0].1) < (w[1].0, w[1].1))
         );
         assert!(table::CATEGORIES.windows(2).all(|w| w[0].0 < w[1].0));
+        for (name, id) in ALIASES {
+            assert_eq!(parameter_by_enum(name).map(|p| p.id), Some(*id), "{name}");
+        }
         assert!(
             subcategory_names::SUBCATEGORY_NAMES
                 .windows(2)
