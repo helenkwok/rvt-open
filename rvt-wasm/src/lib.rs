@@ -2017,10 +2017,14 @@ fn bytes_digest(bytes: &js_sys::Uint8Array) -> u64 {
 pub fn drawing_list(bytes: &js_sys::Uint8Array, model: JsValue) -> Result<JsValue, JsValue> {
     use rvt::ifc::sheet_views::{section_window, view_window};
     install_panic_hook();
+    let t0 = js_sys::Date::now();
     let model: IfcModel = serde_wasm_bindgen::from_value(model).map_err(err_str)?;
+    let t1 = js_sys::Date::now();
     let mut rf = open(bytes)?;
     let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
+    let t2 = js_sys::Date::now();
     let out = serde_json::json!({
+        "times": { "model": (t1 - t0).round(), "views": (t2 - t1).round() },
         "sheets": facts.sheets.iter().map(|s| serde_json::json!({
             "id": s.id,
             "number": s.number,
@@ -2070,7 +2074,16 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
     };
     // The last drawing is dropped before this one is drawn, so the two are never held together.
     VIEW_DRAWING.with(|d| d.borrow_mut().take());
+    // Milliseconds per step, for the page to report where a drawing's time goes.
+    let mut times = serde_json::Map::new();
+    let mut clock = js_sys::Date::now();
+    let mut lap = |times: &mut serde_json::Map<String, serde_json::Value>, step: &str| {
+        let now = js_sys::Date::now();
+        times.insert(step.into(), serde_json::json!((now - clock).round()));
+        clock = now;
+    };
     let mut rf = open(bytes)?;
+    lap(&mut times, "open");
     let mut notes = Vec::new();
     let source = DRAWING_SOURCE.with(|cell| -> Result<_, JsValue> {
         let mut cell = cell.borrow_mut();
@@ -2081,12 +2094,15 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
             .is_none_or(|s: &DrawingSource| s.size != size || s.digest != digest)
         {
             let model = RvtDocExporter.export(&mut rf).map_err(err_str)?;
+            lap(&mut times, "model");
             let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
+            lap(&mut times, "views");
             let symbols = rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model)
                 .unwrap_or_else(|e| {
                     notes.push(format!("plan symbols not read: {e}"));
                     Default::default()
                 });
+            lap(&mut times, "symbols");
             *cell = Some(DrawingSource {
                 size,
                 digest,
@@ -2101,8 +2117,10 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
     let drawn = view_drawing(&mut rf, model, facts, key, symbols, &mut notes);
     DRAWING_SOURCE.with(|cell| *cell.borrow_mut() = Some(source));
     let drawn = drawn.map_err(err_str)?;
+    lap(&mut times, "draw");
     let svg = rvt_dwg::svg::render(&drawn.drawing, drawn.layout, &rvt_dwg::Limits::DEFAULT)
         .map_err(err_str)?;
+    lap(&mut times, "svg");
     let count = |kinds: &[&str]| {
         drawn
             .drawing
@@ -2125,6 +2143,7 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
             "entities": drawn.drawing.entities.len(),
         },
         "notes": notes,
+        "times": times,
     });
     VIEW_DRAWING.with(|d| *d.borrow_mut() = Some(drawn));
     serde_wasm_bindgen::to_value(&out).map_err(err_str)

@@ -141,6 +141,8 @@ struct Placed<'a> {
     geom: Geom,
     /// The entity's own colour (ByLayer and ByBlock resolved by the reader of `Placed`).
     colour: crate::Colour,
+    /// The entity's own lineweight, 1/100 mm (ByLayer and ByBlock as the entity has them).
+    lineweight: i16,
     /// Only what lies in this box (min x, min y, max x, max y) counts: model space seen through
     /// a viewport.
     clip: Option<[f64; 4]>,
@@ -214,6 +216,7 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                         kind: &e.kind,
                         geom: e.geom.transformed(t),
                         colour: e.colour,
+                        lineweight: e.lineweight,
                         clip: None,
                     });
                 }
@@ -234,6 +237,7 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                         kind: &e.kind,
                         geom: e.geom.transformed(t),
                         colour: e.colour,
+                        lineweight: e.lineweight,
                         clip: None,
                     });
                 }
@@ -242,6 +246,7 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                     kind: &e.kind,
                     geom: e.geom.transformed(t),
                     colour: e.colour,
+                    lineweight: e.lineweight,
                     clip: None,
                 }),
             }
@@ -327,6 +332,7 @@ fn through_viewports<'a>(
                 kind: p.kind,
                 geom: p.geom.transformed(&t),
                 colour: p.colour,
+                lineweight: p.lineweight,
                 clip: Some(clip),
             });
         }
@@ -343,6 +349,8 @@ fn inside(clip: Option<[f64; 4]>, p: &[f64; 2]) -> bool {
 pub(crate) struct Coloured {
     pub rgb: [u8; 3],
     pub geom: Geom,
+    /// The lineweight it is drawn with on paper, millimetres.
+    pub width_mm: f64,
 }
 
 /// Every drawable entity of `block`, inserts and dimensions expanded, with its colour.
@@ -362,6 +370,13 @@ pub(crate) fn flatten_coloured(d: &Drawing2d, block: &str, limits: &Limits) -> V
                 .to_rgb()
                 .or_else(|| layers.get(p.layer.as_str()).and_then(|l| l.colour.to_rgb()))
                 .unwrap_or([0, 0, 0]),
+            // ponytail: ByBlock takes the default, not the insert's weight; carry the insert's through `flatten` if a drawing relies on it.
+            width_mm: crate::lineweight(
+                p.lineweight,
+                layers.get(p.layer.as_str()).copied(),
+                crate::DEFAULT_LINEWEIGHT,
+            ) as f64
+                / 100.0,
             geom: p.geom,
         })
         .collect()

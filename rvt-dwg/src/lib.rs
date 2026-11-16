@@ -841,6 +841,33 @@ impl Geom {
     }
 }
 
+/// Millimetres per drawing unit (`$INSUNITS`); unitless drawings are taken as millimetres.
+pub(crate) fn mm_per_unit(units: i16) -> f64 {
+    match units {
+        1 => 25.4,
+        2 => 304.8,
+        5 => 10.0,
+        6 => 1000.0,
+        14 => 100.0,
+        _ => 1.0,
+    }
+}
+
+/// The lineweight a CAD program uses where none is set (0.25 mm), in 1/100 mm.
+pub(crate) const DEFAULT_LINEWEIGHT: i16 = 25;
+
+/// The lineweight an entity is drawn with, in 1/100 mm: its own, else its layer's (ByLayer),
+/// else `by_block` (the insert's, ByBlock), else the default. Never below 0.05 mm, so a
+/// 0.00 mm line still shows.
+pub(crate) fn lineweight(own: i16, layer: Option<&Layer2d>, by_block: i16) -> i16 {
+    let w = match own {
+        -1 => layer.map_or(-3, |l| l.lineweight),
+        -2 => by_block,
+        w => w,
+    };
+    if w >= 0 { w.max(5) } else { DEFAULT_LINEWEIGHT }
+}
+
 /// Bounding box of points.
 pub fn bounds(points: impl Iterator<Item = [f64; 2]>) -> Option<[f64; 4]> {
     let mut b: Option<[f64; 4]> = None;

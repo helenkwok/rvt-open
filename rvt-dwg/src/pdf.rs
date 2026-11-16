@@ -4,11 +4,12 @@
 //! One page (ISO 32000-1), the drawing as stroked paths and text in a PDF standard font (sans serif),
 //! colours from the entity or its layer (index 7 drawn black). Inserts and dimensions are expanded
 //! (bounded by [`Limits`]); curves are written as short straight segments; hatches are filled
-//! (solid) or tinted (patterned). Not written: linetype dashes, lineweights (one hairline width),
+//! (solid) or tinted (patterned). Lines are as wide as their lineweights on paper (model space at
+//! the page's scale). Not written: linetype dashes,
 //! other fonts, images and the entities the SVG does not draw either.
 
 use crate::compare::flatten_coloured;
-use crate::{Drawing2d, Error, Geom, Limits, Space, bounds};
+use crate::{Drawing2d, Error, Geom, Limits, Space, bounds, mm_per_unit};
 use std::fmt::Write;
 
 /// Points per millimetre.
@@ -26,18 +27,6 @@ pub struct Pdf {
     /// The drawing point at the page's bottom-left corner, and page points per drawing unit.
     pub origin: [f64; 2],
     pub points_per_unit: f64,
-}
-
-/// Millimetres per drawing unit (`$INSUNITS`); unitless drawings are taken as millimetres.
-fn mm_per_unit(units: i16) -> f64 {
-    match units {
-        1 => 25.4,
-        2 => 304.8,
-        5 => 10.0,
-        6 => 1000.0,
-        14 => 100.0,
-        _ => 1.0,
-    }
 }
 
 fn num(v: f64) -> String {
@@ -152,13 +141,16 @@ pub fn render(
         ((b[3] - b[1] + 2.0 * margin) * k).max(1.0),
     ];
 
-    let mut content = String::from("0.25 w 1 J 1 j\n");
+    // Line widths are paper millimetres, so the same in a viewport at any scale.
+    let mut content = String::from("1 J 1 j\n");
     let (mut paths, mut texts) = (0, 0);
     // Draw `items`, each point mapped by `map` (drawing units to page points).
     let mut draw = |content: &mut String,
                     items: &[crate::compare::Coloured],
                     map: &dyn Fn([f64; 2]) -> [f64; 2],
                     size: f64| {
+        // A `q`…`Q` around a viewport restores the width, so each call sets its own.
+        let mut width = f64::NAN;
         for p in items {
             let [r, g, bl] = match p.rgb {
                 [255, 255, 255] => [0, 0, 0],
@@ -212,6 +204,7 @@ pub fn render(
                     paths += 1;
                 }
                 Geom::Line { a, b } => {
+                    line_width(content, &mut width, p.width_mm);
                     path(content, &[[a[0], a[1]], [b[0], b[1]]], map, false);
                     writeln!(content, "{rgb} RG S").ok();
                     paths += 1;
@@ -228,6 +221,8 @@ pub fn render(
                             | Geom::Path { closed: true, .. }
                     );
                     let s = curve_points(&p.geom, size);
+                    // Width before the path: it cannot change inside one.
+                    line_width(content, &mut width, p.width_mm);
                     path(content, &s, map, closed);
                     writeln!(content, "{rgb} RG S").ok();
                     paths += 1;
@@ -310,6 +305,15 @@ pub fn render(
         origin: [x0, y0],
         points_per_unit: k,
     })
+}
+
+/// Set the line width (`mm` on paper) when it differs from the last one set.
+fn line_width(content: &mut String, current: &mut f64, mm: f64) {
+    let w = mm * PT_PER_MM;
+    if *current != w {
+        writeln!(content, "{} w", num(w)).ok();
+        *current = w;
+    }
 }
 
 /// The page width of a PDF this module wrote, points.
@@ -588,14 +592,16 @@ mod tests {
             is_model: false,
             limits: Some([0.0, 0.0, 841.0, 594.0]),
         });
-        d.entities.push(Entity2d::new(
+        let mut line = Entity2d::new(
             "LINE",
             "0",
             Geom::Line {
                 a: [0.0, 0.0, 0.0],
                 b: [5000.0, 0.0, 0.0],
             },
-        ));
+        );
+        line.lineweight = 50;
+        d.entities.push(line);
         let mut vp = Entity2d::new(
             "VIEWPORT",
             "0",
@@ -621,6 +627,8 @@ mod tests {
             "{x:?}"
         );
         assert!(s[0].1.is_some());
+        // 0.5 mm on paper at 1:100 too: 1.417 pt, not 1/100 of it or 100 times it.
+        assert!(String::from_utf8_lossy(&p.bytes).contains("\n1.417 w\n"));
         let m = check(&p.bytes, &d, Some("A101"), None, 0.1, &Limits::DEFAULT)
             .unwrap()
             .matched;
