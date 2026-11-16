@@ -98,7 +98,7 @@ pub struct ElementQuantities {
     /// Volume before openings were taken away, cubic feet.
     pub gross_volume_cuft: Option<f64>,
     /// A wall's largest vertical face, square feet, where its body is a
-    /// plan outline extruded upward ([`largest_side_sqft`]).
+    /// plan outline extruded upward.
     pub largest_side_sqft: Option<f64>,
     /// Surface of the body, square feet.
     pub surface_sqft: f64,
@@ -940,7 +940,10 @@ fn base_quantities(q: &ElementQuantities) -> Vec<(&'static str, PropertyValue)> 
             if let Some(t) = t {
                 v.push(("Width", PropertyValue::PositiveLengthFeet(t)));
                 v.push(("NetSideArea", PropertyValue::AreaSquareFeet(net / t)));
-                if let Some(gross) = side.map(|(area, _)| area).or(q.gross_volume_cuft.map(|g| g / t)) {
+                if let Some(gross) = side
+                    .map(|(area, _)| area)
+                    .or(q.gross_volume_cuft.map(|g| g / t))
+                {
                     v.push(("GrossSideArea", PropertyValue::AreaSquareFeet(gross)));
                 }
             }
