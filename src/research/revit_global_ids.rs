@@ -453,6 +453,38 @@ pub fn stored_global_ids(rf: &mut RevitFile, level_ids: &BTreeSet<u32>) -> Store
 /// example, which is 0 of 241 against an export that went through another
 /// tool) or its history does not parse.
 pub fn revit_global_ids(rf: &mut RevitFile) -> Result<BTreeMap<u32, String>> {
+    creation_episodes(rf, revit_ifc_global_id)
+}
+
+/// Every element's Revit `UniqueId`, by ElementId (both ids of a record): the
+/// GUID of the episode that created it, then `-` and the 8 hex digits of the
+/// id it was created with (the record's first). On 1-hip-roof (Revit 2024)
+/// it is the API's UniqueId for 5,601 of 5,601 elements.
+pub fn revit_unique_ids(rf: &mut RevitFile) -> Result<BTreeMap<u32, String>> {
+    creation_episodes(rf, unique_id_text)
+}
+
+/// The UniqueId text of an element created in episode `episode_guid` (Windows
+/// byte order) with ElementId `element_id`.
+pub fn unique_id_text(episode_guid: [u8; 16], element_id: u32) -> String {
+    let g = canonical_guid(episode_guid);
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}-{element_id:08x}",
+        hex(&g[0..4]),
+        hex(&g[4..6]),
+        hex(&g[6..8]),
+        hex(&g[8..10]),
+        hex(&g[10..16])
+    )
+}
+
+/// `make(episode GUID, first id)` for every element table record whose
+/// creation episode the history lists, by both of the record's ids.
+fn creation_episodes(
+    rf: &mut RevitFile,
+    make: impl Fn([u8; 16], u32) -> String,
+) -> Result<BTreeMap<u32, String>> {
     let records = elem_table::parse_records(rf)?;
     let episode_offset = match records.first().map(|record| record.raw.len()) {
         Some(elem_table::RECORD_LEN_40) => RECORD_EPISODE_OFFSET,
@@ -473,10 +505,10 @@ pub fn revit_global_ids(rf: &mut RevitFile) -> Result<BTreeMap<u32, String>> {
         // The UniqueId keeps the id the element was created with, the
         // record's first: an element whose ElementId has since changed (a
         // second id) still XORs the first.
-        let global_id = revit_ifc_global_id(guid, record.id_primary);
+        let value = make(guid, record.id_primary);
         for id in [record.id_primary, record.id_secondary] {
             if id != 0 {
-                out.entry(id).or_insert_with(|| global_id.clone());
+                out.entry(id).or_insert_with(|| value.clone());
             }
         }
     }
@@ -486,6 +518,23 @@ pub fn revit_global_ids(rf: &mut RevitFile) -> Result<BTreeMap<u32, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unique_id_text_is_the_episode_guid_and_the_id() {
+        // e3e052f9-0156-11d5-9301-0000863f27ad, stored in Windows byte order.
+        let stored = [
+            0xf9, 0x52, 0xe0, 0xe3, 0x56, 0x01, 0xd5, 0x11, 0x93, 0x01, 0x00, 0x00, 0x86, 0x3f,
+            0x27, 0xad,
+        ];
+        assert_eq!(
+            unique_id_text(stored, 1),
+            "e3e052f9-0156-11d5-9301-0000863f27ad-00000001"
+        );
+        assert_eq!(
+            unique_id_text(stored, 0x56108),
+            "e3e052f9-0156-11d5-9301-0000863f27ad-00056108"
+        );
+    }
 
     /// A history as `EpisodeHistory::parse` reads it: the count at `0x0e`, a table
     /// of `table` words, the count again and the entries (a GUID and a last byte).

@@ -21,12 +21,15 @@ python3 tools/full-decode/full_decode.py 1-hip-roof.rvt 1-hip-roof.api-dump.json
 
 **Values.** Every parameter the API reports with a value is looked up among the element's stored parameters, by its built-in id or by the id of its parameter element, and compared by storage type and value (lengths in internal feet, as Revit stores them). A value with no stored entry is `not stored`, split by whether the API marks it read-only (likely computed). Properties are compared where a file field is known for them.
 
-## Baseline (2026-11-16)
+## Measured
 
-| Bytes | decoded | known, not decoded | unknown |
+| Bytes, 1-hip-roof (Revit 2024) | decoded | known, not decoded | unknown |
 |---|---|---|---|
 | file container (stream sectors counted below) | 17,040 | 20,489 | 0 |
 | streams as stored | 5,636,090 | 11,629 | 0 |
-| inflated streams | 26,867,852 | 3,819,349 | 6,145,745 |
+| inflated streams, first measure | 26,867,852 | 3,819,349 | 6,145,745 |
+| inflated streams, element headers read | 33,013,573 | 3,819,349 | 24 |
 
-All 5,601 API elements are located; the file's other 30,522 element objects all lie in embedded content documents. Level, created and demolished phase and design option match on all 5,601; class on 5,423 (the rest share a file class with another API class); name on the 581 elements with an `m_name`; category, is_type, host, workset and UniqueId are not decoded yet. Of 37,420 parameter values, 2,076 match a stored value, 97 differ, 78 differ in storage type, 32,050 have no stored entry (17,991 read-only) and 3,119 have a built-in id the catalog does not hold.
+The bytes between a partition's data objects are element-header records, one per element object, in runs with a start and an end marker (`schema_objects::header_records`): on this file 36,123 records and their markers fill all 6,145,721 such bytes, and every record reads through the schema. The 24 unknown bytes are the element table's tail; the known ones are the `Global` object graphs and the schema stream (not yet accounted byte by byte), section signatures, stream prefix words, the `Contents` header and stale bytes in the container.
+
+All 5,601 API elements are located; the file's other 30,522 element objects all lie in embedded content documents. Category (the element header's), level, created and demolished phase, design option, workset (the element table's partition field), UniqueId (creation episode and first id) and host match on all 5,601; class on 5,423 (the rest share a file class with another API class); is_type on 5,432: the 169 others derive from `Symbol` and have the API class ElementType, but the dump marks them as no type; name on the 581 elements with an `m_name`. Of 37,420 parameter values, 2,076 match a stored value (97 differ, 78 differ in storage type). Most of the rest are fields Revit shows as parameters (`rvt::field_parameters`): 16,518 match the element header's category and design option (18 differ: sub-elements whose API category is a subcategory), and 6,117 match an element field through 367 (class, parameter, field) rules measured on this file. 9,397 have no stored entry and no rule yet (1,165 read-only), and 3,119 have a built-in id the catalog does not hold.
