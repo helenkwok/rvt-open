@@ -399,6 +399,9 @@ pub struct ButtJoin {
     /// edge, exterior first: its end is a slanted line. A
     /// single-layer wall has one pair, its two faces. `None` otherwise.
     pub layer_edge_reach_feet: Option<Vec<[f64; 2]>>,
+    /// Whether every layer stops flat at the partner's near face because the
+    /// end's join step names an omitted target ([`WallLine::omitted`]).
+    pub flat_stop: bool,
 }
 
 /// The butt join at each end of each wall, keyed by ElementId,
@@ -542,6 +545,7 @@ pub fn butt_joins(
                     runs_through,
                     reach_feet: None,
                     layer_reach_feet: None,
+                    flat_stop: false,
                     layer_edge_reach_feet: angled_layer_edges(
                         wall,
                         other,
@@ -555,6 +559,7 @@ pub fn butt_joins(
             let half = other.thickness_feet * 0.5;
             let single = wall.layers.len() == 1 && other.layers.len() == 1;
             let mut layer_reach_feet = layer_reaches(wall, other, point, into, runs_through);
+            let mut flat_stop = false;
             if let Some(reaches) = layer_reach_feet
                 .as_mut()
                 .filter(|_| !runs_through && wall.omitted[slot])
@@ -565,12 +570,14 @@ pub fn butt_joins(
                 })
             {
                 reaches.fill(-half);
+                flat_stop = true;
             }
             joins[slot] = Some(ButtJoin {
                 partner: other.element_id,
                 runs_through,
                 reach_feet: single.then_some(if runs_through { half } else { -half }),
                 layer_reach_feet,
+                flat_stop,
                 layer_edge_reach_feet: None,
             });
         }
@@ -620,6 +627,7 @@ fn joined_stop(
         runs_through: false,
         reach_feet: Some(reach),
         layer_reach_feet: (wall.layers.len() > 1).then(|| vec![reach; wall.layers.len()]),
+        flat_stop: false,
         layer_edge_reach_feet: None,
     })
 }
@@ -709,6 +717,7 @@ pub fn tee_join(
             runs_through: false,
             reach_feet: None,
             layer_reach_feet: None,
+            flat_stop: false,
             layer_edge_reach_feet: Some(angled_tee_edges(wall, host, point, into)?),
         });
     }
@@ -719,6 +728,7 @@ pub fn tee_join(
             runs_through: false,
             reach_feet: Some(-half),
             layer_reach_feet: None,
+            flat_stop: false,
             layer_edge_reach_feet: None,
         });
     }
@@ -816,6 +826,7 @@ pub fn tee_join(
         runs_through: false,
         reach_feet: None,
         layer_reach_feet: Some(reaches),
+        flat_stop: false,
         layer_edge_reach_feet: None,
     })
 }

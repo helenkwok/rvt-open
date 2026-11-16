@@ -736,6 +736,12 @@ pub const WALL_JOIN_LAYER_REACH_FIELDS: [&str; 2] = [
 pub const WALL_JOIN_AXIS_REACH_FIELDS: [&str; 2] =
     ["m_wall_join_start_axis_reach", "m_wall_join_end_axis_reach"];
 
+/// Fields holding, at a wall's start and its end, whether every layer
+/// stops flat at the partner's near face because the end's join step names
+/// an omitted target.
+pub const WALL_JOIN_FLAT_STOP_FIELDS: [&str; 2] =
+    ["m_wall_join_start_flat_stop", "m_wall_join_end_flat_stop"];
+
 /// Fields holding, at an angled join, how far past the start and the end of
 /// its centreline each of a wall's layers reaches along its exterior-side
 /// and its interior-side edge, exterior first, two values per layer, feet.

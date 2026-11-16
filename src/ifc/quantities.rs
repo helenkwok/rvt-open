@@ -879,18 +879,30 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
 /// loop of the solid's largest vertical face, and `GrossVolume` as the wall
 /// type's width times it. Where a layered wall's two ends step the same way,
 /// its sides are as long as each other and the box's volume over its
-/// thickness gives the same area; where one end stops flat and the other
-/// steps, the longer side is Revit's (the BIM4LCA concrete housing's walls
-/// 1566546 and 1566548). `None` for any other body.
+/// thickness gives the same area; where one end stops flat at an omitted
+/// target ([`crate::element_record_wall_joins::ButtJoin::flat_stop`]) and the
+/// other steps, the longer side is Revit's (the BIM4LCA concrete housing's
+/// walls 1566546 and 1566548). Only such walls take it: on the BIM4LCA files
+/// the longer side moves 280 other walls' areas away from Revit's and 103
+/// towards it. `None` for any other wall or body.
 fn largest_side_sqft(entity: &IfcEntity) -> Option<f64> {
     let IfcEntity::BuildingElement {
         extrusion: Some(body),
         solid_shape: None,
+        property_set: Some(own),
         ..
     } = entity
     else {
         return None;
     };
+    let flat = ["JoinStartFlatStop", "JoinEndFlatStop"].iter().any(|name| {
+        own.properties
+            .iter()
+            .any(|p| p.name == *name && matches!(p.value, PropertyValue::Boolean(true)))
+    });
+    if !flat {
+        return None;
+    }
     let Some(super::entities::ProfileDef::ArbitraryClosed { points }) = &body.profile_override
     else {
         return None;
