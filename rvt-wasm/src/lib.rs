@@ -1978,6 +1978,8 @@ pub fn dwg_save(format: &str, version: &str) -> Result<Vec<u8>, JsValue> {
 thread_local! {
     static VIEW_DRAWING: RefCell<Option<rvt::ifc::sheet_views::ViewDrawing>> = const { RefCell::new(None) };
     static DRAWING_SOURCE: RefCell<Option<DrawingSource>> = const { RefCell::new(None) };
+    /// The views [`drawing_list`] read, kept for the first drawing of the same file.
+    static LISTED_VIEWS: RefCell<Option<(u32, u64, rvt::plan_views::ViewFacts)>> = const { RefCell::new(None) };
 }
 
 /// What the drawings of one file are made from, as `rvt-sheet` makes them: its exported model, its
@@ -2018,7 +2020,17 @@ pub fn drawing_list(bytes: &js_sys::Uint8Array, model: JsValue) -> Result<JsValu
     use rvt::ifc::sheet_views::{section_window, view_window};
     install_panic_hook();
     let t0 = js_sys::Date::now();
-    let model: IfcModel = serde_wasm_bindgen::from_value(model).map_err(err_str)?;
+    // Only the storeys are needed (a plan's level elevation): the rest of the model is not
+    // copied in from the page.
+    let storeys = js_sys::Reflect::get(&model, &JsValue::from_str("building_storeys"))?;
+    let model = IfcModel {
+        building_storeys: if storeys.is_undefined() {
+            Vec::new()
+        } else {
+            serde_wasm_bindgen::from_value(storeys).map_err(err_str)?
+        },
+        ..IfcModel::default()
+    };
     let t1 = js_sys::Date::now();
     let mut rf = open(bytes)?;
     let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
@@ -2046,6 +2058,8 @@ pub fn drawing_list(bytes: &js_sys::Uint8Array, model: JsValue) -> Result<JsValu
             "scale": v.scale,
         })).collect::<Vec<_>>(),
     });
+    let (size, digest) = (bytes.length(), bytes_digest(bytes));
+    LISTED_VIEWS.with(|cell| *cell.borrow_mut() = Some((size, digest, facts)));
     serde_wasm_bindgen::to_value(&out).map_err(err_str)
 }
 
@@ -2095,7 +2109,12 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
         {
             let model = RvtDocExporter.export(&mut rf).map_err(err_str)?;
             lap(&mut times, "model");
-            let facts = rvt::plan_views::read(&mut rf).map_err(err_str)?;
+            // The views the list read, or read now.
+            let listed = LISTED_VIEWS.with(|c| c.borrow_mut().take());
+            let facts = match listed {
+                Some((s, d, facts)) if s == size && d == digest => facts,
+                _ => rvt::plan_views::read(&mut rf).map_err(err_str)?,
+            };
             lap(&mut times, "views");
             let symbols = rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model)
                 .unwrap_or_else(|e| {

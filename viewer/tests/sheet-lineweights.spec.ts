@@ -3,9 +3,14 @@ import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
 /**
+ * A public project with sheets at several scales: Autodesk's metric Technical School sample, which
+ * CI fetches into RVT_SHEETS_MODEL. Skipped without it.
+ */
+const MODEL = process.env.RVT_SHEETS_MODEL ?? '';
+
+/**
  * A sheet's lines on screen are their lineweights on paper, in every viewport whatever its scale:
- * the Einhoven demo (MIT), whose sheet A1 holds a 1:100 floor plan and sheet A2 sections and
- * details at several scales. Each line's on-screen width is its computed stroke width times the
+ * sheet A1 holds a 1:100 floor plan, and sheet A2 sections and details at several scales. Each line's on-screen width is its computed stroke width times the
  * screen scale of the element (the sheet is fitted to the pane). It also reports how long the
  * first drawing and a later one take.
  */
@@ -61,12 +66,13 @@ async function openSheet(page: Page, name: RegExp): Promise<{ ms: number; label:
 }
 
 test('sheet lines are their lineweights on paper at every viewport scale', async ({ page }) => {
+  test.skip(!MODEL || !fs.existsSync(MODEL), 'RVT_SHEETS_MODEL is not set or absent');
   test.setTimeout(900_000);
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/');
   await expect(page.locator('#status')).toHaveText(/Ready/);
   const t0 = Date.now();
-  await page.locator('[data-demo-id="einhoven-2023"]').click();
+  await page.locator('#file-input').setInputFiles(MODEL);
   await expect(page.locator('#status')).toHaveText(/Loaded/, { timeout: 600_000 });
   console.log(`project open: ${Date.now() - t0} ms`);
   const tList = Date.now();
@@ -79,8 +85,8 @@ test('sheet lines are their lineweights on paper at every viewport scale', async
 
   fs.mkdirSync(SHOTS, { recursive: true });
   for (const [name, file] of [
-    [/Floor Plan/, 'einhoven-a1-floor-plan'],
-    [/Sections/, 'einhoven-a2-sections'],
+    [/^A1 · Floor Plan$/, 'technical-school-a1-floor-plan'],
+    [/^A2 · Sections$/, 'technical-school-a2-sections'],
   ] as const) {
     const opened = await openSheet(page, name);
     console.log(`drawing ${opened.label}: ${opened.ms} ms, steps ${opened.times}`);
@@ -100,6 +106,6 @@ test('sheet lines are their lineweights on paper at every viewport scale', async
     // A default-weight line is as wide on screen in a 1:20 viewport as in a 1:100 one.
     const defaults = Object.values(w.viewports.byViewport).flat();
     expect(Math.max(...defaults) / Math.min(...defaults)).toBeLessThan(1.01);
-    if (name.source === 'Sections') expect(Object.keys(w.viewports.byViewport).length).toBeGreaterThan(1);
+    if (file.endsWith('sections')) expect(Object.keys(w.viewports.byViewport).length).toBeGreaterThan(1);
   }
 });

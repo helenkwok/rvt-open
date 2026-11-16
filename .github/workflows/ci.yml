@@ -541,7 +541,7 @@ jobs:
   # rest (about 127 s). Re-balance when a leg runs much longer than the other.
   viewer:
     name: viewer (Playwright) / leg ${{ matrix.leg }}
-    needs: wasm32
+    needs: [wasm32, samples]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -552,11 +552,15 @@ jobs:
       LEG2: "butt-joins|stops against at T joints|dragging to orbit|exposes geometry diagnostics|raises a toast"
       # A public project with sheets for tests/model-drawings.spec.ts (BIM4LCA, CC BY-SA 4.0).
       RVT_DRAWINGS_MODEL: ${{ github.workspace }}/_bim4lca/ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt
+      # Autodesk's metric Technical School sample (public download) for tests/sheet-lineweights.spec.ts.
+      RVT_SHEETS_MODEL: ${{ github.workspace }}/_samples/flat/2026-Technicalschoolcurrentm.rvt
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: viewer-pkg, path: viewer/pkg }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
       - name: Real sample projects for the demo gallery (MIT)
         uses: ./.github/actions/fetch-corpus
         with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }
