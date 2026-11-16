@@ -23,6 +23,10 @@ cargo run --example basics_inspect -- path/to/model.rvt
   rises above the committed baseline.
 - [`dhat_schema.rs`](dhat_schema.rs): heap-profiles the schema parser on a
   real Revit file (needs the `dhat-heap` feature).
+- [`full_decode.rs`](full_decode.rs): writes what the schema reader reads
+  of a file as JSON facts for `tools/full-decode/full_decode.py`, which
+  accounts for every byte and compares the elements and parameter values
+  with the file's Revit API dump (docs/full-decode.md).
 - [`perf_budget_op.rs`](perf_budget_op.rs): runs one operation per process
   for `tools/perf_budget.py`, which measures its wall time and peak memory.
 - [`stream_evidence.rs`](stream_evidence.rs): writes page-strip evidence
