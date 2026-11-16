@@ -125,7 +125,9 @@ differences between rvt-open and "Revit's export" are settings, not decoding:
 - **Coordinates.** Every export here uses shared coordinates. rvt-open writes
   Revit's internal coordinates, so compare after the export's own transform
   (Snowdon's is a rotation and a translation that its export's site placement
-  does not carry; `tools/re/openings_vs_ifc.py` takes it as `--shared`).
+  does not carry; the `autodesk-snowdon-2024-architectural-ifc4.ifc` entry of
+  `research/witness-registry.json` records it, and
+  `tools/re/openings_vs_ifc.py` takes it as `--shared`).
 - **What is exported.** Revit's exporter leaves out non-primary design
   options, elements not in the exported phase, 2D-only families and some
   types; rvt-open follows it where the bytes say which. A room is left out by its own phase, which Revit does by a room's own phase parameter; no model here has a room outside the last phase with a Revit export made with the default setup.
