@@ -394,6 +394,17 @@ impl<'a> Renderer<'a> {
         } else {
             e.geom.transformed(t)
         };
+        let mut samples = g.samples(f64::MAX);
+        if let Geom::Text {
+            at, height, value, ..
+        } = &g
+        {
+            // Text reaches roughly its height times its length to the right.
+            samples.push([
+                at[0] + height * 0.6 * value.chars().count() as f64,
+                at[1] + height,
+            ]);
+        }
         if let (Some(c), Some(b)) = (self.cull, cull_bounds(&g)) {
             if b[2] < c[0] || b[0] > c[2] || b[3] < c[1] || b[1] > c[3] {
                 return;
