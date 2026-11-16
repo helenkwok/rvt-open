@@ -580,7 +580,8 @@ def compare_values(api, facts, enum_ids):
             for pid, (kind, v) in e["params"]:
                 stored.setdefault(pid, (kind, v))
             # Values Revit shows from a field: the element header's, then the element object's.
-            for src, plist in (("the element header", header_params.get(a["id"], [])), ("an element field", e.get("field_params", []))):
+            for src, plist in (("the element header", header_params.get(a["id"], [])), ("an element field", e.get("field_params", [])),
+                               ("a nested parameter set", e.get("nested_params", [])), ("the element's name", e.get("name_params", []))):
                 for pid, (kind, v) in plist:
                     derived.setdefault(pid, (src, kind, v))
         for p in a["parameters"]:
@@ -601,7 +602,11 @@ def compare_values(api, facts, enum_ids):
                 st = "not stored (computed?)" if p.get("read_only") else "not stored, writable"
             else:
                 kind, v = stored[pid]
-                if kind != p["storage"]:
+                if kind == "Double" and p["storage"] == "Integer" and isinstance(v, (int, float)) and float(v).is_integer():
+                    # Some integer parameters (TEXT_STYLE_BOLD, ... of dimension and spot styles) sit in the
+                    # Double set; the API shows them as integers.
+                    st = "match from a Double entry" if int(v) == p["value"] else "differ"
+                elif kind != p["storage"]:
                     st = "storage differs"
                 elif same(kind, v, p["value"]):
                     st = "match"

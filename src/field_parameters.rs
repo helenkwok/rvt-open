@@ -17,15 +17,16 @@
 //!   table below. Each rule was measured on 1-hip-roof against its Revit API
 //!   dump: the field equals the API's value on every element of that class
 //!   that has the parameter, and the field's name names the parameter or its
-//!   values vary. 367 rules; they give the API's value for 6,117
-//!   parameters. Other releases and files: not measured; a class without
+//!   values vary. 367 rules gave the API's value for 6,117 parameters;
+//!   26 more follow a pointer into an object the element owns (a type's
+//!   compound structure, a material's own object) and give 508 more. Other releases and files: not measured; a class without
 //!   the field gives nothing.
 
 use crate::builtin_parameters;
 use crate::schema_objects::{Fields, ParamValue, Value};
 
 /// (schema class of the element object, `BuiltInParameter` enum name, field
-/// path: field names joined by `.` into objects held by value).
+/// path: field names joined by `.` into objects held by value or pointed to).
 pub const FIELD_RULES: &[(&str, &str, &str)] = &[
     (
         "AbsFlexDuctType",
@@ -48,6 +49,16 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "m_idDefaultUnion",
     ),
     ("AreaMeasureElem", "AREA_SCHEME_NAME", "m_areaElemName"),
+    (
+        "BasicWallType",
+        "COARSE_SCALE_FILL_PATTERN_COLOR",
+        "m_pCompoundStructure.m_coarseScaleFillColor",
+    ),
+    (
+        "BasicWallType",
+        "COARSE_SCALE_FILL_PATTERN_ID_PARAM",
+        "m_pCompoundStructure.m_coarseScaleFillPatternElemId",
+    ),
     ("BasicWallType", "FUNCTION_PARAM", "m_function"),
     ("CalloutTag", "CALLOUT_ATTR_HEAD_TAG", "m_familyTagId"),
     (
@@ -125,7 +136,9 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
     ("DBView3d", "VIEW_PARTS_VISIBILITY", "m_partsVisibility"),
     ("DBView3d", "VIEW_TEMPLATE_FOR_SCHEDULE", "m_viewTemplateId"),
     ("DBViewPlan", "ELEM_FAMILY_AND_TYPE_PARAM", "m_dbViewTypeId"),
+    ("DBViewPlan", "ELEM_FAMILY_PARAM", "m_dbViewTypeId"),
     ("DBViewPlan", "ELEM_TYPE_PARAM", "m_dbViewTypeId"),
+    ("DBViewPlan", "SYMBOL_ID_PARAM", "m_dbViewTypeId"),
     (
         "DBViewPlan",
         "VIEW_ANALYSIS_DISPLAY_STYLE",
@@ -234,6 +247,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "DimensionStyle",
         "DIAMETER_SYMBOL_TEXT",
         "m_radiusDiameterPrefixText",
+    ),
+    (
+        "DimensionStyle",
+        "DIM_LEADER_ARROWHEAD",
+        "m_arrowHeadStyleId",
     ),
     (
         "DimensionStyle",
@@ -408,6 +426,7 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "m_eProfileFamDefinition",
     ),
     ("Family", "FAM_PROFILE_USAGE", "m_eProfileFamUsage"),
+    ("Family", "OMNICLASS_CODE", "m_omniClassCode"),
     (
         "Family",
         "ROOM_CALCULATION_POINT",
@@ -442,6 +461,36 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "FilledRegionAttributes",
         "FOREGROUND_DRAFT_PATTERN_ID_PARAM",
         "m_fillPatternElemId",
+    ),
+    (
+        "FloorAttributes",
+        "COARSE_SCALE_FILL_PATTERN_COLOR",
+        "m_pCompoundStructure.m_coarseScaleFillColor",
+    ),
+    (
+        "FloorAttributes",
+        "COARSE_SCALE_FILL_PATTERN_ID_PARAM",
+        "m_pCompoundStructure.m_coarseScaleFillPatternElemId",
+    ),
+    (
+        "GeoLocation",
+        "ELEM_FAMILY_AND_TYPE_PARAM",
+        "m_pInstanceInfo.m_symbolId",
+    ),
+    (
+        "GeoLocation",
+        "ELEM_FAMILY_PARAM",
+        "m_pInstanceInfo.m_symbolId",
+    ),
+    (
+        "GeoLocation",
+        "ELEM_TYPE_PARAM",
+        "m_pInstanceInfo.m_symbolId",
+    ),
+    (
+        "GeoLocation",
+        "SYMBOL_ID_PARAM",
+        "m_pInstanceInfo.m_symbolId",
     ),
     (
         "GridAttributes",
@@ -706,6 +755,12 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "m_transitionType",
     ),
     ("ImageSymbol", "RASTER_SYMBOL_HEIGHT", "m_heightInFeet"),
+    (
+        "ImageSymbol",
+        "RASTER_SYMBOL_PIXELHEIGHT",
+        "m_heightInPixels",
+    ),
+    ("ImageSymbol", "RASTER_SYMBOL_PIXELWIDTH", "m_widthInPixels"),
     ("ImageSymbol", "RASTER_SYMBOL_WIDTH", "m_widthInFeet"),
     ("InteriorElevArrow", "ELEV_ASSOC_DATUM", "m_assocDatumId"),
     (
@@ -729,6 +784,17 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "LEVEL_ROOM_COMPUTATION_HEIGHT",
         "m_roomComputationElevationOffset",
     ),
+    ("MaterialElem", "MATERIAL_NAME", "m_pMaterial.m_name"),
+    (
+        "MaterialElem",
+        "MATERIAL_PARAM_COLOR",
+        "m_pMaterial.m_color",
+    ),
+    (
+        "MaterialElem",
+        "MATERIAL_PARAM_SHININESS",
+        "m_pMaterial.m_shininess",
+    ),
     ("NewCurtainWallType", "ALLOW_AUTO_EMBED", "m_allowAutoEmbed"),
     (
         "NewCurtainWallType",
@@ -736,6 +802,16 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "m_autoJoinCond",
     ),
     ("NewCurtainWallType", "AUTO_PANEL_WALL", "m_panel"),
+    (
+        "NewCurtainWallType",
+        "SPACING_LENGTH_HORIZ",
+        "m_oULineSpec.m_spacing",
+    ),
+    (
+        "NewCurtainWallType",
+        "SPACING_LENGTH_VERT",
+        "m_oVLineSpec.m_spacing",
+    ),
     ("ProfileRoof", "PHASE_CREATED", "m_createdPhaseId"),
     ("ProfileRoof", "PHASE_DEMOLISHED", "m_demolishedPhaseId"),
     ("ProfileRoof", "WALL_ATTR_ROOM_BOUNDING", "m_roomBounding"),
@@ -820,6 +896,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "RbsFlexPipeType",
         "RBS_CURVETYPE_DEFAULT_UNION_PARAM",
         "m_idDefaultUnion",
+    ),
+    (
+        "RbsHvacSystemType",
+        "RBS_SYSTEM_RISEDROP_PARAM",
+        "m_RiseDropSettings",
     ),
     (
         "RbsPipingSystemType",
@@ -986,6 +1067,16 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "WALL_SWEEP_DEFAULT_SETBACK_PARAM",
         "m_defaultSetback",
     ),
+    (
+        "RoofAttributes",
+        "COARSE_SCALE_FILL_PATTERN_COLOR",
+        "m_pCompoundStructure.m_coarseScaleFillColor",
+    ),
+    (
+        "RoofAttributes",
+        "COARSE_SCALE_FILL_PATTERN_ID_PARAM",
+        "m_pCompoundStructure.m_coarseScaleFillPatternElemId",
+    ),
     ("SWall", "PHASE_CREATED", "m_createdPhaseId"),
     ("SWall", "PHASE_DEMOLISHED", "m_demolishedPhaseId"),
     ("SWall", "WALL_ATTR_ROOM_BOUNDING", "m_roomBounding"),
@@ -1071,6 +1162,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "SpotElevationStyle",
         "SPOT_ELEV_IND_TYPE_TOP",
         "m_seIndTypeTop",
+    ),
+    (
+        "SpotElevationStyle",
+        "SPOT_ELEV_LEADER_ARROWHEAD",
+        "m_arrowHeadStyleId",
     ),
     (
         "SpotElevationStyle",
@@ -1328,6 +1424,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "m_minTreadDepth",
     ),
     (
+        "StructConnectionType",
+        "STRUCT_CONNECTION_TYPE_NAME",
+        "m_symbolInfo.m_name",
+    ),
+    (
         "SunAndShadowSettings",
         "VIEW_GRAPH_SUN_PATH_SIZE",
         "m_sunPathSize",
@@ -1338,6 +1439,7 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "CURTAIN_WALL_SYSPANEL_THICKNESS",
         "m_thickness",
     ),
+    ("SysPanelFamSym", "MATERIAL_ID_PARAM", "m_renderStyleId"),
     (
         "TagNoteAttributes",
         "LEADER_OFFSET_SHEET",
@@ -1438,6 +1540,7 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "VIEWER_ANNOTATION_CROP_ACTIVE",
         "m_bAnnotationCropActive",
     ),
+    ("Viewer", "VIEW_UNDERLAY_ORIENTATION", "m_bReflected"),
     (
         "ViewportAttributes",
         "VIEWPORT_ATTR_PRESERVE_TITLE_POSITION",
@@ -1545,19 +1648,22 @@ pub fn header_parameters(header: &Fields) -> Vec<(i64, ParamValue)> {
     out
 }
 
-/// The value at `path` (field names joined by `.`) of `fields`.
-fn at<'a>(fields: &'a Fields, path: &str) -> Option<&'a Value> {
-    let mut cur = fields;
+/// The value at `path` (field names joined by `.`) of the element object
+/// `objects[0]`, following objects held by value and pointers into
+/// `objects`.
+fn at<'a>(objects: &'a [Fields], path: &str) -> Option<&'a Value> {
+    let mut cur = objects.first()?;
     let mut parts = path.split('.').peekable();
     while let Some(name) = parts.next() {
         let v = cur.get(name)?;
         if parts.peek().is_none() {
             return Some(v);
         }
-        match v {
-            Value::Object(inner) => cur = inner,
+        cur = match v {
+            Value::Object(inner) => inner,
+            Value::New { index, .. } => objects.get(*index)?,
             _ => return None,
-        }
+        };
     }
     None
 }
@@ -1575,16 +1681,17 @@ fn as_parameter(v: &Value, storage: &str) -> Option<ParamValue> {
     })
 }
 
-/// The parameters the element object `root` of schema class `class` gives
-/// through [`FIELD_RULES`].
-pub fn field_parameters(class: &str, root: &Fields) -> Vec<(i64, ParamValue)> {
+/// The parameters an element of schema class `class` gives through
+/// [`FIELD_RULES`]; `objects` are its data object's objects, the element
+/// object first ([`crate::schema_objects::SchemaObject::objects`]).
+pub fn field_parameters(class: &str, objects: &[Fields]) -> Vec<(i64, ParamValue)> {
     let at_class = FIELD_RULES.partition_point(|r| r.0 < class);
     FIELD_RULES[at_class..]
         .iter()
         .take_while(|r| r.0 == class)
         .filter_map(|&(_, name, path)| {
             let p = builtin_parameters::parameter_by_enum(name)?;
-            Some((p.id, as_parameter(at(root, path)?, p.storage_type)?))
+            Some((p.id, as_parameter(at(objects, path)?, p.storage_type)?))
         })
         .collect()
 }
@@ -1652,10 +1759,31 @@ mod tests {
     fn a_field_through_an_object_held_by_value() {
         let attr = fields(vec![("m_bItalic", Value::Bool(true))]);
         let root = fields(vec![("m_lineAndTextAttr", Value::Object(attr))]);
-        let got = field_parameters("TextNoteAttributes", &root);
+        let got = field_parameters("TextNoteAttributes", &[root]);
         let italic = builtin_parameters::parameter_by_enum("TEXT_STYLE_ITALIC")
             .unwrap()
             .id;
         assert!(got.contains(&(italic, ParamValue::Integer(1))), "{got:?}");
+    }
+
+    #[test]
+    fn a_field_through_a_pointer() {
+        let material = fields(vec![("m_shininess", Value::Int(64))]);
+        let root = fields(vec![(
+            "m_pMaterial",
+            Value::New {
+                tag: 2,
+                index: 1,
+                marker: 0,
+            },
+        )]);
+        let got = field_parameters("MaterialElem", &[root, material]);
+        let shininess = builtin_parameters::parameter_by_enum("MATERIAL_PARAM_SHININESS")
+            .unwrap()
+            .id;
+        assert!(
+            got.contains(&(shininess, ParamValue::Integer(64))),
+            "{got:?}"
+        );
     }
 }
