@@ -105,6 +105,11 @@ pub fn category_name_and_parent(id: i64) -> Option<(&'static str, Option<&'stati
     })
 }
 
+/// Every known built-in parameter id, in ascending order.
+pub fn parameter_ids() -> impl Iterator<Item = i64> {
+    table::PARAMETERS.iter().map(|row| row.0)
+}
+
 /// Every known category id, for scans that look for any of them.
 pub fn category_ids() -> impl Iterator<Item = i64> {
     table::CATEGORIES.iter().map(|row| row.0)
