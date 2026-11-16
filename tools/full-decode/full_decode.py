@@ -551,7 +551,11 @@ def same(kind, got, want):
 
 PROPERTY_FIELDS = {"Id": ("m_id", "id"), "LevelId": ("m_assocLevelId", "id"), "CreatedPhaseId": ("m_createdPhaseId", "id"),
                    "DemolishedPhaseId": ("m_demolishedPhaseId", "id"), "OwnerViewId": ("m_ownerDBViewId", "id"),
-                   "Name": ("m_name", None)}
+                   "Name": ("m_name", None), "Pinned": ("m_locked", None)}
+
+
+# Properties the API computes from the live session, not from the file.
+RUNTIME_PROPERTIES = {"IsValidObject", "IsTransient", "IsModifiable", "CanBeDeleted", "CanBeRenamed", "CanBeCopied"}
 
 
 def compare_values(api, facts, enum_ids):
@@ -565,6 +569,8 @@ def compare_values(api, facts, enum_ids):
         if a["class"].endswith(("ParameterElement", "SharedParameterElement", "GlobalParameter")):
             pe_ids[a["name"]].add(a["id"])
     header_params = {h["id"]: h.get("header_params") or [] for h in facts.get("headers", [])}
+    partition = {r[1]: int.from_bytes(bytes.fromhex(r[5])[36:40], "little")
+                 for r in facts["elem_table"] if len(r) > 5 and r[4] == 40}
     rows, c = [], collections.Counter()
     for a in api:
         e = by_id.get(a["id"])
@@ -604,7 +610,21 @@ def compare_values(api, facts, enum_ids):
             rows.append((a["id"], "parameter", p.get("builtin") or p["name"], p["storage"], st))
         for k, v in (a.get("properties") or {}).items():
             want = v.get("element_id") if isinstance(v, dict) and "element_id" in v else v
-            if isinstance(want, dict):
+            if k in RUNTIME_PROPERTIES:
+                st = "API runtime state (not file data)"
+            elif k == "UniqueId":
+                got = facts.get("unique_ids", {}).get(str(a["id"]))
+                st = "not decoded" if got is None else ("match" if got == want else "differ")
+            elif k == "WorksetId" and isinstance(v, dict):
+                got = partition.get(a["id"])
+                st = "not decoded" if got is None else ("match" if str(got) == v.get("text") else "differ")
+            elif k == "DesignOption" and e and want is None:
+                got = fid(e["root"], "m_designOptionId")
+                st = "not decoded" if got is None else ("match" if got in (-1, -4) else "differ")
+            elif k == "ViewSpecific" and e:
+                got = fid(e["root"], "m_ownerDBViewId")
+                st = "not decoded" if got is None else ("match" if (got != -1) == want else "differ")
+            elif isinstance(want, dict):
                 st = "object value (not compared)"
             elif k in PROPERTY_FIELDS and e:
                 fname, sub = PROPERTY_FIELDS[k]

@@ -52,7 +52,8 @@ values parameter: not stored (computed?)	1165	lower
 values parameter: not stored, writable	8232	lower
 values parameter: parameter id not known	3119	lower
 values parameter: storage differs	78	lower
-values property: match	28586	higher
-values property: no file field known	76509	lower
+values property: API runtime state (not file data)	20013	lower
+values property: match	56591	higher
+values property: no file field known	34092	lower
 values property: not decoded	3949	lower
-values property: object value (not compared)	9965	lower
+values property: object value (not compared)	4364	lower
