@@ -44,9 +44,12 @@ attr unique_id match	5601	higher
 attr unique_id differ	0	lower
 attr unique_id not decoded	0	lower
 values parameter: differ	97	lower
+values parameter: differ from the element header	18	lower
 values parameter: match	2076	higher
-values parameter: not stored (computed?)	17991	lower
-values parameter: not stored, writable	14059	lower
+values parameter: match from an element field	6117	higher
+values parameter: match from the element header	16518	higher
+values parameter: not stored (computed?)	1165	lower
+values parameter: not stored, writable	8232	lower
 values parameter: parameter id not known	3119	lower
 values parameter: storage differs	78	lower
 values property: match	28586	higher

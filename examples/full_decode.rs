@@ -10,11 +10,13 @@
 //! inflated length, every data object (id, class, span, the bytes the schema
 //! read, the unread rest and why it stopped) and the byte ranges between
 //! objects, with the element-header records and run markers read from them;
-//! every element object's root fields and stored parameters; the
+//! every element object's root fields, stored parameters and the parameters
+//! its fields and header give ([`rvt::field_parameters`]); the
 //! element table's rows; the built-in parameter ids by enum name. Nothing is interpreted here: the script decides what
 //! matches the API.
 
 use rvt::RevitFile;
+use rvt::field_parameters::{field_parameters, header_parameters};
 use rvt::schema_objects::{Fields, IdWidth, ParamValue, Value, for_each_object, header_records};
 use serde_json::{Value as J, json};
 use std::path::PathBuf;
@@ -104,6 +106,13 @@ fn main() -> anyhow::Result<()> {
                 "exact": o.exact,
                 "root": fields(root),
                 "params": o.stored_parameters().iter().map(|(p, v)| json!([p, param(v)])).collect::<Vec<_>>(),
+                "field_params": field_parameters(
+                    layouts.classes.get(&root.tag).map_or("", |c| c.name.as_str()),
+                    root,
+                )
+                .iter()
+                .map(|(p, v)| json!([p, param(v)]))
+                .collect::<Vec<_>>(),
             }));
         }
     })?;
@@ -128,6 +137,12 @@ fn main() -> anyhow::Result<()> {
                     "unparsed": o.unparsed.as_ref().map(|r| [r.start, r.end]),
                     "stopped": o.stopped,
                     "root": o.root().map(fields),
+                    "header_params": o.root().map(|r| {
+                        header_parameters(r)
+                            .iter()
+                            .map(|(p, v)| json!([p, param(v)]))
+                            .collect::<Vec<_>>()
+                    }),
                 }));
             }
         }

@@ -176,6 +176,7 @@ pub mod element_id;
 pub mod elements;
 pub mod error;
 pub mod family_documents;
+pub mod field_parameters;
 pub mod file_types;
 pub mod formats;
 pub mod geometry;
