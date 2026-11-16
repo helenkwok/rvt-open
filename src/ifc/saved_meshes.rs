@@ -3874,7 +3874,9 @@ fn horizontal_triangles(primitive: &Primitive) -> Vec<Option<Horizontal>> {
             // every corner at one height (0.001 ft): a shallow slope that
             // passes the normal test is not one level.
             let height = (a[2] * 1000.0).round() as i64;
-            let level = [b, c].iter().all(|p| (p[2] * 1000.0).round() as i64 == height);
+            let level = [b, c]
+                .iter()
+                .all(|p| (p[2] * 1000.0).round() as i64 == height);
             (level && normal[2].abs() / length >= HORIZONTAL).then(|| Horizontal {
                 height,
                 up: normal[2] > 0.0,
