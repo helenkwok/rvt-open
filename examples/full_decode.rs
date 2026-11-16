@@ -142,9 +142,12 @@ fn main() -> anyhow::Result<()> {
     // (`FULL_DECODE_ALL_OBJECTS=1`): it multiplies the output's size.
     let all_objects = std::env::var_os("FULL_DECODE_ALL_OBJECTS").is_some();
     let mut all: Vec<J> = Vec::new();
-    // Every element's objects, for rules that follow an id into another element.
-    let mut element_objects: std::collections::HashMap<i64, Vec<Fields>> =
-        std::collections::HashMap::new();
+    // Every element object's objects, in the order of `elements`, and the
+    // first element object of each id, for rules that follow an id into
+    // another element. An id resolves to its first element object, as names
+    // do (`names`); ids of embedded content documents can repeat the host's.
+    let mut element_objects: Vec<Vec<Fields>> = Vec::new();
+    let mut first_of_id: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let gaps = for_each_object(&mut rf, |o| {
         let element = o.element();
         objects.push(json!({
@@ -165,9 +168,8 @@ fn main() -> anyhow::Result<()> {
                     o.objects.iter().map(fields).collect::<Vec<_>>()
                 ]));
             }
-            element_objects
-                .entry(id)
-                .or_insert_with(|| o.objects.clone());
+            first_of_id.entry(id).or_insert(element_objects.len());
+            element_objects.push(o.objects.clone());
             let owner = match root.get("m_ownerId") {
                 Some(Value::Id(i)) => Some(*i),
                 _ => None,
@@ -219,15 +221,11 @@ fn main() -> anyhow::Result<()> {
         }
         false
     };
-    for e in &mut elements {
-        let id = e["id"].as_i64().unwrap_or(0);
+    for (e, objects) in elements.iter_mut().zip(&element_objects) {
         let tag = e["tag"].as_u64().unwrap_or(0) as u16;
         let class = layouts.classes.get(&tag).map_or("", |c| c.name.as_str());
-        let Some(objects) = element_objects.get(&id) else {
-            continue;
-        };
         let linked = rvt::field_parameters::linked_parameters(class, objects, |t| {
-            element_objects.get(&t).map(Vec::as_slice)
+            first_of_id.get(&t).map(|&i| element_objects[i].as_slice())
         });
         if let Some(list) = e["field_params"].as_array_mut() {
             list.extend(linked.iter().map(|(p, v)| json!([p, param(v)])));

@@ -407,6 +407,7 @@ impl SchemaObject {
             let Some(Value::List(entries)) = o.get("m_paramSet") else {
                 continue;
             };
+            let set_start = out.len();
             for entry in entries {
                 let Value::Object(e) = entry else { continue };
                 let (Some(param), Some(value)) = (e.id("m_paramId"), e.get("m_value")) else {
@@ -421,22 +422,28 @@ impl SchemaObject {
                 };
                 out.push((param, value));
             }
-        }
-        // Revit shows a structural asset's unit weight as its density times
-        // standard gravity, not the unit-weight entry the set stores (T: 43
-        // of 45 property sets on 1-hip-roof, Revit 2024).
-        let density = out.iter().find_map(|(p, v)| match v {
-            ParamValue::Double(d) if *p == PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY => Some(*d),
-            _ => None,
-        });
-        if let Some(d) = density {
-            out.retain(|(p, _)| *p != PHY_MATERIAL_PARAM_UNIT_WEIGHT);
-            out.push((
-                PHY_MATERIAL_PARAM_UNIT_WEIGHT,
-                ParamValue::Double(d * STANDARD_GRAVITY_FT_S2),
-            ));
+            unit_weight_from_density(&mut out[set_start..]);
         }
         out
+    }
+}
+
+/// Revit shows a structural asset's unit weight as its density times
+/// standard gravity, not the unit-weight entry the set stores (T: 43 of 45
+/// property sets on 1-hip-roof, Revit 2024; the other two store no density).
+/// Rewrites the unit-weight entry of one parameter set that holds both; a set
+/// without a density, or without a unit-weight entry, is left as stored.
+fn unit_weight_from_density(set: &mut [(i64, ParamValue)]) {
+    let density = set.iter().find_map(|(p, v)| match v {
+        ParamValue::Double(d) if *p == PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY => Some(*d),
+        _ => None,
+    });
+    if let Some(d) = density {
+        for (p, v) in set.iter_mut() {
+            if *p == PHY_MATERIAL_PARAM_UNIT_WEIGHT {
+                *v = ParamValue::Double(d * STANDARD_GRAVITY_FT_S2);
+            }
+        }
     }
 }
 
@@ -1309,6 +1316,36 @@ pub fn read_elements(rf: &mut RevitFile) -> Result<BTreeMap<i64, SchemaElement>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unit_weight_is_density_times_standard_gravity() {
+        assert_eq!(
+            crate::builtin_parameters::parameter(PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY)
+                .map(|p| p.enum_name),
+            Some("PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY")
+        );
+        assert_eq!(
+            crate::builtin_parameters::parameter(PHY_MATERIAL_PARAM_UNIT_WEIGHT)
+                .map(|p| p.enum_name),
+            Some("PHY_MATERIAL_PARAM_UNIT_WEIGHT")
+        );
+        // 2,400 kg/m^3 = 67.96 kg/ft^3; times 32.174 ft/s^2.
+        let mut set = vec![
+            (PHY_MATERIAL_PARAM_UNIT_WEIGHT, ParamValue::Double(1.08e-5)),
+            (
+                PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY,
+                ParamValue::Double(67.960_420_8),
+            ),
+        ];
+        unit_weight_from_density(&mut set);
+        let ParamValue::Double(w) = set[0].1 else {
+            panic!()
+        };
+        assert!((w - 67.960_420_8 * 9.80665 / 0.3048).abs() < 1e-9);
+        let mut no_density = vec![(PHY_MATERIAL_PARAM_UNIT_WEIGHT, ParamValue::Double(1.0))];
+        unit_weight_from_density(&mut no_density);
+        assert_eq!(no_density[0].1, ParamValue::Double(1.0));
+    }
     use crate::formats::{SchemaField, SchemaFieldType, SchemaLayout};
 
     /// A schema with one class, tag 7, holding one u32.
