@@ -34,8 +34,11 @@ import collections
 import csv
 import json
 import os
+import io
 import struct
 import sys
+import xml.etree.ElementTree as ET
+import zipfile
 import zlib
 
 import olefile
@@ -314,6 +317,110 @@ def partition(led, name, data):
     return ms, sections
 
 
+# u64 format version at the head of each Global/* stream: the same in all 220 tiny reference files (Revit 2018 to 2027).
+GLOBAL_VERSIONS = {"Global/ContentDocuments": 1, "Global/DocumentIncrementTable": 1, "Global/ElemTable": 0,
+                   "Global/History": 1, "Global/Latest": 5, "Global/PartitionTable": 0}
+CONTENTS_MAGIC = 0x05221962
+
+
+def contents_header(led, name, head):
+    """`Contents` before its gzip member: u32 magic, u32 format version, u32 1, (before Revit 2025) a
+    block of 63 more bytes, then the magic again and a u32 build number."""
+    n = len(head)
+    if n < 24 or struct.unpack_from("<I", head, 0)[0] != CONTENTS_MAGIC or struct.unpack_from("<I", head, n - 8)[0] != CONTENTS_MAGIC:
+        led.add("stored", name, 0, n, "known", "Contents header (not the known layout)")
+        return
+    led.add("stored", name, 0, 12, "decoded", "Contents magic, format version, u32 1")
+    if n > 20:
+        led.add("stored", name, 12, n - 8, "known", "Contents header block before Revit 2025 (meaning not known)")
+    else:
+        led.add("stored", name, 12, n - 8, zero_or(head[12 : n - 8]), "Contents zero word")
+    led.add("stored", name, n - 8, n, "decoded", "Contents magic and build number")
+
+
+def utf16_counted(b, at):
+    """A u32 character count and that many UTF-16 characters at `at`: (text, end) or None."""
+    if at + 4 > len(b):
+        return None
+    k = struct.unpack_from("<I", b, at)[0]
+    end = at + 4 + 2 * k
+    if k == 0 or end > len(b):
+        return None
+    try:
+        t = b[at + 4 : end].decode("utf-16-le")
+    except UnicodeDecodeError:
+        return None
+    return (t, end) if all(c.isprintable() or c in "\r\n\t" for c in t) else None
+
+
+def basic_file_info(led, name, b):
+    """`BasicFileInfo`: a u32 version, then counted UTF-16 strings (release, build, paths, GUIDs, language,
+    application) with flags and small integers between them, then the same facts as UTF-16 text lines to
+    the end. Strings and text lines are decoded; the scalars between strings are known (their meaning is
+    not all read)."""
+    at = 4
+    led.add("stored", name, 0, 4, "decoded", "BasicFileInfo version")
+    scal = None
+    # The text lines start after the last counted string: walk strings and scalars up to them.
+    while at < len(b):
+        u = utf16_counted(b, at)
+        if u and u[1] - at > 6:
+            if scal is not None:
+                led.add("stored", name, scal, at, "known", "BasicFileInfo flags and integers between strings")
+                scal = None
+            led.add("stored", name, at, u[1], "decoded", "BasicFileInfo counted UTF-16 string")
+            at = u[1]
+            continue
+        if b[at:].startswith(b"\r\n") and b[at + 2 :].decode("utf-16-le", "replace").count(": ") >= 3:
+            break
+        if scal is None:
+            scal = at
+        at += 1
+    if scal is not None:
+        led.add("stored", name, scal, at, "known", "BasicFileInfo flags and integers between strings")
+    try:
+        lines = b[at + 2 :].decode("utf-16-le").split("\r\n")
+        ok = at < len(b) and all(": " in l for l in lines if l)
+    except UnicodeDecodeError:
+        ok = False
+    led.add("stored", name, at, len(b), "decoded" if ok else "known", "BasicFileInfo text lines (key: value)")
+
+
+def transmission_data(led, name, b):
+    """`TransmissionData`: a u32 character count and that much UTF-16 XML."""
+    u = utf16_counted(b, 0)
+    ok = False
+    if u and u[1] == len(b):
+        try:
+            ET.fromstring(u[0].encode("utf-8").replace(b'encoding="utf-16"', b""))
+            ok = True
+        except ET.ParseError:
+            pass
+    led.add("stored", name, 0, len(b), "decoded" if ok else "known",
+            "TransmissionData: counted UTF-16 XML" + ("" if ok else " (did not parse)"))
+
+
+def project_information(led, name, b):
+    """`ProjectInformation`: a ZIP archive; decoded when every member's CRC checks and its local
+    headers, data, central directory and end record cover the stream exactly."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(b))
+        ok = z.testzip() is None
+        covered = 0
+        for i in z.infolist():
+            lh = b[i.header_offset : i.header_offset + 30]
+            fn, ex = struct.unpack_from("<HH", lh, 26)
+            covered += 30 + fn + ex + i.compress_size
+        eocd = b.rfind(b"PK\x05\x06")
+        cd_size = struct.unpack_from("<I", b, eocd + 12)[0]
+        covered += cd_size + 22 + struct.unpack_from("<H", b, eocd + 20)[0]
+        ok = ok and covered == len(b)
+    except (zipfile.BadZipFile, struct.error, ValueError):
+        ok = False
+    led.add("stored", name, 0, len(b), "decoded" if ok else "known",
+            "ProjectInformation: ZIP archive (CRCs and layout checked)" if ok else "ProjectInformation (not accounted)")
+
+
 def streams(led, raw):
     """Every stream's stored bytes. Returns {name: inflated bytes} and partition member maps."""
     inflated, parts = {}, {}
@@ -328,14 +435,23 @@ def streams(led, raw):
         if name == "Formats/Latest":
             inflated[name] = single_member(led, name, data, 0)
         elif name.startswith("Global/"):
-            led.add("stored", name, 0, 4, "known", "stream prefix word (meaning not known)")
-            led.add("stored", name, 4, 8, zero_or(data[4:8]), "stream prefix zero word")
+            # A u64 format version per stream, as a partition's.
+            v = struct.unpack_from("<Q", data, 0)[0] if len(data) >= 8 else None
+            ok = GLOBAL_VERSIONS.get(name) == v
+            led.add("stored", name, 0, 8, "decoded" if ok else "known",
+                    "stream format version" if ok else "stream prefix (not the known format version)")
             inflated[name] = single_member(led, name, data, 8)
         elif name == "Contents":
             ms = members(data, 0)
             first = ms[0][0] if ms else len(data)
-            led.add("stored", name, 0, first, "known", "Contents header (release words; rest not read)")
+            contents_header(led, name, data[:first])
             inflated[name] = single_member(led, name, data, first) if ms else None
+        elif name == "BasicFileInfo":
+            basic_file_info(led, name, b)
+        elif name == "TransmissionData":
+            transmission_data(led, name, b)
+        elif name == "ProjectInformation":
+            project_information(led, name, b)
         elif name.startswith("Partitions/"):
             parts[name] = partition(led, name, data)
             inflated[name] = b"".join(m[2] for m in parts[name][0])
