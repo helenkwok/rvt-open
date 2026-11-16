@@ -874,6 +874,11 @@ def main():
             g = got.get(m, 0)
             if (better == "higher" and g < v) or (better == "lower" and g > v):
                 bad.append(f"{m}: {g} (floor {v}, {better} is better)")
+        # A 'lower' metric with no floor row has a floor of 0: the floor omits metrics that were 0
+        # when it was written (no differing values of that kind), and a new kind must not pass unseen.
+        for m, g, better in tot:
+            if better == "lower" and m not in floor and g > 0:
+                bad.append(f"{m}: {g} (no floor row, so 0; lower is better)")
         if bad:
             print("Coverage fell below the floor:\n  " + "\n  ".join(bad))
             return 1
