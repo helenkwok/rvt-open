@@ -249,6 +249,17 @@ fn partial_refusal(meshes: &GraphicsMeshes) -> Option<String> {
 /// ([`Primitive::frame`]) moved into the model's, as the walls that embed a
 /// curtain wall are measured.
 fn in_world(meshes: &GraphicsMeshes) -> GraphicsMeshes {
+    move_to_world(meshes, false)
+}
+
+/// [`in_world`], with each primitive's saved normals turned into the model's
+/// frame too (by the inverse transpose of the frame's linear part), for a
+/// reader that orients its faces by them.
+fn in_world_oriented(meshes: &GraphicsMeshes) -> GraphicsMeshes {
+    move_to_world(meshes, true)
+}
+
+fn move_to_world(meshes: &GraphicsMeshes, normals: bool) -> GraphicsMeshes {
     let mut primitives = meshes.primitives.clone();
     for primitive in &mut primitives {
         let Some(m) = primitive.frame.take() else {
@@ -258,9 +269,26 @@ fn in_world(meshes: &GraphicsMeshes) -> GraphicsMeshes {
         for vertex in &mut primitive.vertices {
             *vertex = super::instancing::apply(&frame, *vertex);
         }
-        if super::instancing::det(&frame) < 0.0 {
+        let det = super::instancing::det(&frame);
+        if det < 0.0 {
             for triangle in &mut primitive.triangles {
                 triangle.swap(1, 2);
+            }
+        }
+        if normals {
+            // cofactors: the inverse transpose up to the determinant, whose
+            // sign keeps each normal pointing the same way out.
+            let c = |r: usize, k: usize| {
+                let (r1, r2) = ((r + 1) % 3, (r + 2) % 3);
+                let (k1, k2) = ((k + 1) % 3, (k + 2) % 3);
+                frame[r1][k1] * frame[r2][k2] - frame[r1][k2] * frame[r2][k1]
+            };
+            let sign = if det < 0.0 { -1.0 } else { 1.0 };
+            for n in &mut primitive.normals {
+                let old = *n;
+                *n = std::array::from_fn(|r| {
+                    sign * (c(r, 0) * old[0] + c(r, 1) * old[1] + c(r, 2) * old[2])
+                });
             }
         }
     }
@@ -895,7 +923,7 @@ pub fn attach_scoped_in_batches(
             if (ceiling.is_some() || instance.is_some())
                 && partial_refusal(&element.meshes).is_none()
             {
-                let world = in_world(&element.meshes);
+                let world = in_world_oriented(&element.meshes);
                 let primitives = &world.primitives;
                 // as for walls, to 1e-9 every batch size agrees.
                 let tidy = |x: f64| (x * 1e9).round() / 1e9;
@@ -3807,7 +3835,8 @@ struct Horizontal {
 }
 
 /// Each triangle of `primitive`, in order, where its outward normal is
-/// vertical to 0.999 (none where it is not, has no area or names a vertex the
+/// vertical to 0.999 and its corners lie at one height to 0.001 ft (none
+/// where they do not, has no area or names a vertex the
 /// primitive lacks). The direction of a triangle is its winding turned outward
 /// by its saved normals, where the primitive has one per vertex.
 fn horizontal_triangles(primitive: &Primitive) -> Vec<Option<Horizontal>> {
@@ -3842,8 +3871,12 @@ fn horizontal_triangles(primitive: &Primitive) -> Vec<Option<Horizontal>> {
                     normal = [-normal[0], -normal[1], -normal[2]];
                 }
             }
-            (normal[2].abs() / length >= HORIZONTAL).then(|| Horizontal {
-                height: (a[2] * 1000.0).round() as i64,
+            // every corner at one height (0.001 ft): a shallow slope that
+            // passes the normal test is not one level.
+            let height = (a[2] * 1000.0).round() as i64;
+            let level = [b, c].iter().all(|p| (p[2] * 1000.0).round() as i64 == height);
+            (level && normal[2].abs() / length >= HORIZONTAL).then(|| Horizontal {
+                height,
                 up: normal[2] > 0.0,
                 corners: [a, b, c],
                 area: length / 2.0,

@@ -3,7 +3,7 @@
 Revit 2015 to 2023 file?
 
 Reads `probes/examples/probe_unnamed_before_2024.rs`'s `wfam` lines and
-Revit's IFC export. For each door and window with a Tag in both, whose drawn
+Revit's IFC export. For each door and window with a Tag in both and a material in Revit's (one Revit writes with no material is outside what is compared), whose drawn
 symbol's map holds geometry mapped to no material (-1), counts whether Revit's
 material set for the same Tag (the occurrence's, or its type's, through
 IfcOpenShell) holds `<Unnamed>` (Revit 2018's IFC2X3 export spells it

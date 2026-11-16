@@ -6,6 +6,7 @@
   Revit's `GrossArea` on all 370 such ceilings of the BIM4LCA office and
   housing, cut or uncut. The office's 22 cut ceilings of one piece now carry
   it, equal to Revit's on all 22, with nothing else moving; 15 ceilings of
-  Autodesk's sample projects gain one that no Revit export checks. A ceiling
-  in pieces, a sloped one and one whose saved mesh does not decode whole keep
-  none.
+  Autodesk's sample projects gain one that no Revit export checks. A sloped
+  ceiling and one whose saved mesh does not decode whole keep none; a ceiling
+  in pieces takes the area of the piece the export names, from the first part
+  of its saved mesh's first face (the entry on ceilings in pieces).

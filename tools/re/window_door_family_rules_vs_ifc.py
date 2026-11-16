@@ -3,7 +3,7 @@
 to Revit's material set for a door or window of a Revit 2015 to 2023 file?
 
 Reads `probes/examples/probe_family_rules_pre2024.rs`'s `wrule` lines and
-Revit's IFC export. For each door and window with a Tag in both, the material
+Revit's IFC export. For each door and window with a Tag in both and a material in Revit's (one Revit writes with no material is outside what is compared), the material
 names IfcOpenShell resolves for Revit's element (the occurrence's, or its
 type's) are compared with the names the drawn symbol's map holds (geometry
 mapped to no material counting as `<Unnamed>`) before the rules and
@@ -73,7 +73,8 @@ def names(state, text):
     if state != "read":
         return None
     unset = text.endswith("+unset")
-    text = text.removesuffix("+unset")
+    if text.endswith("+unset"):
+        text = text[: -len("+unset")]
     found = set() if text == "-" else {urllib.parse.unquote(n) for n in text.split("|")}
     if unset:
         found.add(UNNAMED)

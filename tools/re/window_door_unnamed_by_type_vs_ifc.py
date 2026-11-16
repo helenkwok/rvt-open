@@ -30,7 +30,7 @@ Counts only, in fixed wording, for held-out projects
         nested instance bound to a parameter: written g, not written h
 
 A *fact group* is the doors or windows of one project that share every fact of
-The bound-Visible probe (the family's forms with no material effectively shown, hidden
+the bound-Visible probe (the family's forms with no material effectively shown, hidden
 or unresolved, bound and ambiguous, voids, nested instances); one *with both outcomes*
 has `<Unnamed>` written on some of its elements and not on others, and is
 *constant within a symbol* where each symbol's elements in it are all written
@@ -107,7 +107,7 @@ def main():
             "symbol": symbol,
             "family": family,
             "unset_tags": int(unset_tags),
-            "facts": (shown, hidden, unresolved, bound, voids, nested),
+            "facts": (shown, hidden, unresolved, bound, ambiguous, voids, nested),
             "nested": "none" if int(nested) == 0 else (
                 "bound" if int(nested_bound) else ("hidden" if int(nested_hidden) else "shown")
             ),
@@ -150,7 +150,7 @@ def main():
             f"with both outcomes {len(both)}: "
             f"constant within a symbol {sum(constant(g, lambda e: e['symbol']) for g in both)}, "
             f"within a family {sum(constant(g, lambda e: e['family']) for g in both)}, "
-            f"within an unset tag count {sum(constant(g, lambda e: min(e['unset_tags'], 3)) for g in both)}"
+            f"within an unset tag count {sum(constant(g, lambda e: e['unset_tags']) for g in both)}"
         )
         by_nested = collections.defaultdict(lambda: [0, 0])
         for e in items:
