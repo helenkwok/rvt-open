@@ -459,8 +459,12 @@ def section_of(facts, parts):
 
 
 # The schema class element types derive from: all 901 elements the API dump marks as types do,
-# and 169 more whose API class is ElementType although the dump marks them as no type.
+# and the 169 whose API class is ElementType, which the dump marks as no type.
 TYPE_BASES = {"Symbol"}
+
+# FamilySymbol elements whose API class is a subclass, by the category in their element header:
+# OST_RoomTags, OST_AreaTags, OST_GenericAnnotation.
+SYMBOL_CLASS_BY_CATEGORY = {-2000480: " (room tag)", -2005020: " (area tag)", -2000150: " (generic annotation)"}
 
 HOST_FIELDS = ("m_hostId",)
 
@@ -477,12 +481,21 @@ def compare_elements(api, facts, sections, cls):
     partition = {r[1]: int.from_bytes(bytes.fromhex(r[5])[36:40], "little")
                  for r in facts["elem_table"] if len(r) > 5 and r[4] == 40}
     rows_et = {r[1] for r in facts["elem_table"]} | {r[2] for r in facts["elem_table"]}
+    def file_class(e):
+        # A family type's API class follows its category: room tags, area tags and generic annotations
+        # have their own type classes (RoomTagType, AreaTagType, AnnotationSymbolType).
+        fc = cls[e["tag"]]
+        if fc == "FamilySymbol":
+            h = header.get(e["id"])
+            fc += SYMBOL_CLASS_BY_CATEGORY.get(fid(h, "m_categroryId") if h else None, "")
+        return fc
+
     # Class: the file's class decodes the API's when the pairs seen form a function.
     pairs = collections.defaultdict(set)
     for a in api:
         e = by_id.get(a["id"])
         if e:
-            pairs[cls[e["tag"]]].add(a["class"].split(".")[-1])
+            pairs[file_class(e)].add(a["class"].split(".")[-1])
     bases = {int(k): v for k, v in facts.get("bases", {}).items()}
 
     def is_type(tag):
@@ -504,7 +517,7 @@ def compare_elements(api, facts, sections, cls):
             rows.append(r)
             continue
         root = e["root"]
-        fc = cls[e["tag"]]
+        fc = file_class(e)
         r["file_class"] = fc
         r["class"] = "match" if len(pairs[fc]) == 1 else "ambiguous"
 
@@ -514,7 +527,9 @@ def compare_elements(api, facts, sections, cls):
         h = header.get(a["id"])
         # The element header's category (the schema spells it m_categroryId).
         cmp("category", fid(h, "m_categroryId") if h else None, a.get("category_id"), lambda x: -1 if x is None else x)
-        cmp("is_type", is_type(e["tag"]) if bases else None, a.get("is_type"))
+        # The dump's is_type is false for the 169 elements whose API class is ElementType itself (a
+        # subclass test); every element of a class derived from ElementType is a type.
+        cmp("is_type", is_type(e["tag"]) if bases else None, a.get("is_type") or r["api_class"] == "ElementType")
         # The name rvt-open reads (`rvt::element_names`): own objects, a graphics style's category.
         cmp("name", e.get("name"), a.get("name"))
         cmp("level", fid(root, "m_assocLevelId"), a.get("level_id"), lambda x: -1 if x is None else x)
