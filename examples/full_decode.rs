@@ -119,7 +119,13 @@ fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("usage: full_decode <file.rvt>"))?
         .into();
     let mut rf = RevitFile::open(&path)?;
-    let release = rf.basic_file_info().map(|b| b.version).unwrap_or(0);
+    let info = rf.basic_file_info().ok();
+    let release = info.as_ref().map_or(0, |b| b.version);
+    // Names Revit keeps in its program are shown in the language the file
+    // was saved in ("Locale when saved"), English where it stores none.
+    let language = info
+        .and_then(|b| b.locale)
+        .unwrap_or_else(|| "ENU".to_string());
     let layouts = rf.schema_layouts()?;
     let classes: serde_json::Map<String, J> = layouts
         .classes
@@ -235,6 +241,7 @@ fn main() -> anyhow::Result<()> {
     for (id, root) in &styles {
         let n = rvt::element_names::graphics_style_name(
             root,
+            &language,
             |c| names.get(&c).and_then(|n| n.0.clone()),
             |c| names.get(&c).and_then(|n| n.1),
         );
@@ -258,8 +265,17 @@ fn main() -> anyhow::Result<()> {
         if let Some(n) = n.as_ref().filter(|_| derives(tag, "Symbol")) {
             name_params.push(json!([SYMBOL_NAME_PARAM, ["String", n]]));
         }
-        if let Some(family) = e["family_id"].as_i64() {
-            if let Some(f) = names.get(&family).and_then(|n| n.0.as_ref()) {
+        let family = e["family_id"]
+            .as_i64()
+            .and_then(|f| names.get(&f))
+            .and_then(|n| n.0.as_ref());
+        if let Some(f) = family {
+            name_params.push(json!([SYMBOL_FAMILY_NAME_PARAM, ["String", f]]));
+        } else if derives(tag, "Symbol") {
+            // A system family's types point to no family element: its name
+            // is Revit's own, by the types' class.
+            let class = layouts.classes.get(&tag).map_or("", |c| c.name.as_str());
+            if let Some(f) = rvt::program_names::system_family_name(class, &language) {
                 name_params.push(json!([SYMBOL_FAMILY_NAME_PARAM, ["String", f]]));
             }
         }
@@ -396,6 +412,7 @@ fn main() -> anyhow::Result<()> {
     let mut out = json!({
         "unique_ids": unique_ids,
         "release": release,
+        "language": language,
         "builtin_ids": builtin_ids,
         "category_names": category_names,
         "classes": classes,
