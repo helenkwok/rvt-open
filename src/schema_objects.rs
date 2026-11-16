@@ -652,6 +652,90 @@ pub fn read_frame(layouts: &SchemaLayouts, stream: &str, buf: &[u8], frame: Fram
     out
 }
 
+/// The object graph of a single-object stream (`Global/ElemTable`,
+/// `Global/PartitionTable`, `Global/DocumentIncrementTable`, ...): the root
+/// object whose class tag is at `start` of the inflated `buf`, then every
+/// object it introduces, read as [`read_frame`] reads a data object. The
+/// frame's `id` and `adler` are 0; `unparsed` holds what follows the graph.
+pub fn read_graph(layouts: &SchemaLayouts, stream: &str, buf: &[u8], start: usize) -> SchemaObject {
+    let end = buf.len();
+    let frame = Frame {
+        header: ObjectHeader {
+            id: 0,
+            width: IdWidth::Wide,
+            adler: 0,
+            size: u32::try_from(end.saturating_sub(start)).unwrap_or(u32::MAX),
+            tag: buf
+                .get(start..start + 2)
+                .map_or(0, |b| u16::from_le_bytes([b[0], b[1]])),
+        },
+        span: start..end,
+        payload: start..end,
+    };
+    if start + 2 > end {
+        return SchemaObject {
+            stream: stream.to_string(),
+            frame,
+            objects: Vec::new(),
+            exact: false,
+            stopped: Some("no class tag".to_string()),
+            unparsed: Some(start.min(end)..end),
+        };
+    }
+    read_frame(layouts, stream, buf, frame)
+}
+
+/// One embedded document of `Global/ContentDocuments`: its key object and
+/// its document graph.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContentDocument {
+    /// The key object (its class's fields: a pointer and the document's
+    /// GUID, the GUID of its partition section).
+    pub key: SchemaObject,
+    /// The document's object graph (root class tag first), `size` bytes.
+    pub graph: SchemaObject,
+    /// The whole record: key, `u32 size`, graph, `u32 size`.
+    pub span: Range<usize>,
+}
+
+/// The embedded documents of an inflated `Global/ContentDocuments`, and the
+/// offset where the records end.
+///
+/// The stream is a run of records `key object · u32 size · graph (size
+/// bytes) · u32 size`, one per embedded (family) document, then a closing key
+/// object whose pointer is null and a `u32 0`. Measured on 1-hip-roof
+/// (Revit 2024): 93 records (the file's 93 partition sections) fill all but
+/// the closing 14 bytes, and every key and graph reads exactly.
+pub fn content_documents(layouts: &SchemaLayouts, buf: &[u8]) -> (Vec<ContentDocument>, usize) {
+    const STREAM: &str = "Global/ContentDocuments";
+    let mut out = Vec::new();
+    let mut p = 0;
+    loop {
+        let key = read_graph(layouts, STREAM, buf, p);
+        let Some(after_key) = key.objects.last().map(|o| o.span.end) else {
+            break;
+        };
+        let Some(size) = u32_at(buf, after_key) else {
+            break;
+        };
+        let start = after_key + 4;
+        let Some(end) = start.checked_add(size as usize) else {
+            break;
+        };
+        if size < 2 || end + 4 > buf.len() || u32_at(buf, end) != Some(size) {
+            break;
+        }
+        let graph = read_graph(layouts, STREAM, &buf[..end], start);
+        out.push(ContentDocument {
+            key,
+            graph,
+            span: p..end + 4,
+        });
+        p = end + 4;
+    }
+    (out, p)
+}
+
 /// The element-header records between a partition's data objects, read by
 /// the schema.
 ///
@@ -1238,5 +1322,44 @@ mod tests {
             got.records[0].root().unwrap().get("m_x"),
             Some(&Value::Int(0x0c77))
         );
+    }
+
+    #[test]
+    fn a_graph_reads_from_its_root_and_keeps_the_rest() {
+        let mut buf = Vec::new();
+        buf.extend(7u16.to_le_bytes());
+        buf.extend(9u32.to_le_bytes());
+        buf.extend(0u32.to_le_bytes());
+        let got = read_graph(&layouts(), "G", &buf, 0);
+        assert_eq!(got.root().unwrap().get("m_x"), Some(&Value::Int(9)));
+        assert_eq!(got.unparsed, Some(6..10));
+        assert!(read_graph(&layouts(), "G", &buf, 9).objects.is_empty());
+    }
+
+    #[test]
+    fn content_documents_are_key_size_graph_size_records() {
+        let object = |x: u32| {
+            let mut b = 7u16.to_le_bytes().to_vec();
+            b.extend(x.to_le_bytes());
+            b
+        };
+        let mut buf = Vec::new();
+        for x in [1, 2] {
+            buf.extend(object(x));
+            buf.extend(6u32.to_le_bytes());
+            buf.extend(object(10 + x));
+            buf.extend(6u32.to_le_bytes());
+        }
+        let records_end = buf.len();
+        buf.extend([0x7b, 0x03, 0, 0, 0, 0]);
+        let (docs, end) = content_documents(&layouts(), &buf);
+        assert_eq!(end, records_end);
+        assert_eq!(docs.len(), 2);
+        assert_eq!(docs[1].span, 20..40);
+        assert_eq!(
+            docs[1].graph.root().unwrap().get("m_x"),
+            Some(&Value::Int(12))
+        );
+        assert!(docs.iter().all(|d| d.graph.exact));
     }
 }

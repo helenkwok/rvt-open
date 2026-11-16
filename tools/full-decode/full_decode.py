@@ -387,17 +387,45 @@ def inflated_bytes(led, inflated, facts):
             led.add("inflated", name, s, e, "decoded", "element-header run marker")
         for s, e in p["header_rest"]:
             led.add("inflated", name, s, e, "unknown", "between objects, not a header record")
-    et = inflated.get("Global/ElemTable")
-    if et:
-        rows = facts["elem_table"]
-        end = rows[-1][0] + rows[-1][4] if rows else 6
-        led.add("inflated", "Global/ElemTable", 0, 6, "decoded", "class tag and row count")
-        led.add("inflated", "Global/ElemTable", 6, end, "decoded", "element rows")
-        led.add("inflated", "Global/ElemTable", end, len(et), "unknown", "after the rows")
+    graphs = {g["stream"]: g for g in facts.get("graphs", [])}
     for name, b in sorted(inflated.items()):
-        if b is None or name.startswith("Partitions/") or name == "Global/ElemTable":
+        if b is None or name.startswith("Partitions/"):
             continue
-        led.add("inflated", name, 0, len(b), "known", "object graph: not accounted byte by byte")
+        sch = facts.get("schema")
+        if name == "Formats/Latest" and sch and sch["inflated"] == len(b):
+            # Totals only: the GUID lists lie inside the class records, counted here at the end.
+            # Each class record ends with a u32 GUID count (read) and that many GUIDs (stepped over).
+            n, guids = sch["parsed"], sch["guid_list_bytes"] - 4 * sch["classes"]
+            led.add("inflated", name, 0, n - guids, "decoded", "schema classes and fields read by the grammar (GUIDs counted apart)")
+            led.add("inflated", name, n - guids, n, "known", "the classes' GUIDs, stepped over (total of all classes)")
+            led.add("inflated", name, n, len(b), "unknown", "after the schema grammar stopped: " + (sch["stopped"] or ""))
+            continue
+        g = graphs.get(name)
+        if g and "documents" in g and g["inflated"] == len(b):
+            for d in g["documents"]:
+                s, e = d["span"]
+                gs, ge = d["graph"]
+                led.add("inflated", name, s, d["key_read_to"], "decoded", "embedded document key read by the schema")
+                led.add("inflated", name, d["key_read_to"], gs, "decoded", "embedded document size")
+                led.add("inflated", name, gs, d["graph_read_to"], "decoded", "embedded document graph read by the schema")
+                led.add("inflated", name, d["graph_read_to"], ge, "known", "embedded document bytes not read: " + (d["graph_stopped"] or ""))
+                led.add("inflated", name, ge, e, "decoded", "embedded document trailing size")
+            led.add("inflated", name, g["records_end"], len(b), "known", "closing key object (null pointer) and u32 0, not read")
+            continue
+        if not g or g.get("read_to", 0) == 0 or g["inflated"] != len(b):
+            led.add("inflated", name, 0, len(b), "known", "not read as an object graph")
+            continue
+        r = g["read_to"]
+        led.add("inflated", name, 0, r, "decoded", "object graph read by the schema")
+        rest = b[r:]
+        if rest == b"\0\0\0\0":
+            led.add("inflated", name, r, len(b), "decoded", "u32 0 after the graph")
+        elif name == "Global/History" and len(rest) >= 8 and len(rest) == 8 + 17 * struct.unpack_from("<I", rest)[0] \
+                and rest[-4:] == b"\0\0\0\0":
+            # u32 n, n episodes (16-byte GUID and one byte), u32 0: the episodes UniqueIds name.
+            led.add("inflated", name, r, len(b), "decoded", "episode list and u32 0 after the graph")
+        else:
+            led.add("inflated", name, r, len(b), "known", "after the object graph: " + (g["stopped"] or ""))
 
 
 # --- elements --------------------------------------------------------------------------
