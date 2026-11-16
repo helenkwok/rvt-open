@@ -108,6 +108,17 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.target.set(0, 0, 0);
 
+// The 3D view is drawn when something in it changed, not every frame: an unchanging scene
+// redrawn sixty times a second keeps the GPU (a CPU, where the browser renders in software) busy
+// for nothing, and slows the worker drawing a sheet meanwhile. Whatever changes the scene, the
+// camera or the canvas calls this; the camera's own moves (a drag, its damping, a framing move)
+// draw while they last.
+let needsRender = true;
+function requestRender(): void {
+  needsRender = true;
+}
+controls.addEventListener('change', requestRender);
+
 // Physical light units: a matte face returns its colour times the light
 // it receives over pi, so a face lit by both lights shows about its own
 // category colour, and faces turned away fall off from there.
@@ -148,6 +159,7 @@ function applySceneTheme(): void {
   axes.setColors(tokenColour('--viewer-axis-x'), tokenColour('--viewer-axis-y'), tokenColour('--viewer-axis-z'));
   highlightMaterial.color = tokenColour('--viewer-highlight');
   highlightMaterial.emissive = tokenColour('--viewer-highlight').multiplyScalar(0.25);
+  requestRender();
 }
 
 let currentModel: THREE.Group | null = null;
@@ -161,6 +173,7 @@ function resize(): void {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  requestRender();
 }
 window.addEventListener('resize', resize);
 // The viewport also changes size without a window resize: the responsive
@@ -203,16 +216,29 @@ function advanceCameraTween(now: number): void {
  */
 const frameStats = { frames: 0, ms: 0, maxMs: 0, maxGapMs: 0 };
 let lastTick: number | null = null;
+let drawingShown = false;
 
 function tick(now: number = performance.now()): void {
   if (lastTick !== null) frameStats.maxGapMs = Math.max(frameStats.maxGapMs, now - lastTick);
   lastTick = now;
   // While a sheet or view covers the 3D view (model-drawings.ts) it is not drawn; its camera
-  // and scene are kept as they are.
-  if (appEl.dataset.view !== 'drawing') {
+  // and scene are kept as they are, and it is drawn again when it shows.
+  const covered = appEl.dataset.view === 'drawing';
+  if (covered !== drawingShown) {
+    drawingShown = covered;
+    if (!covered) needsRender = true;
+  }
+  if (!covered) {
     const t = performance.now();
+    const tweening = cameraTween !== null;
     advanceCameraTween(now);
-    controls.update();
+    // OrbitControls.update() is true while the camera moves: a drag, a zoom or its damping.
+    const moved = controls.update();
+    if (!moved && !tweening && !needsRender) {
+      requestAnimationFrame(tick);
+      return;
+    }
+    needsRender = false;
     renderer.render(scene, camera);
     const ms = performance.now() - t;
     frameStats.frames += 1;
@@ -292,6 +318,7 @@ function clearHighlight(): void {
   highlighted = [];
   activeTypeHighlight = null;
   activeMaterialHighlight = null;
+  requestRender();
 }
 
 /**
@@ -309,6 +336,7 @@ function highlightWhere(match: (data: MeshIdentity) => boolean): number {
     highlighted.push({ mesh, material: mesh.material });
     mesh.material = highlightMaterial;
   });
+  requestRender();
   return highlighted.length;
 }
 
@@ -1749,6 +1777,7 @@ function renderScene(glb: Uint8Array): void {
       else if (mat) (mat as THREE.Material).dispose();
     });
     currentModel = null;
+    requestRender();
   }
   // TS 5.7+ parameterises Uint8Array over ArrayBufferLike, which
   // isn't assignable to BlobPart directly. Extract the underlying
@@ -1764,6 +1793,7 @@ function renderScene(glb: Uint8Array): void {
       // A category hidden before the meshes arrived stays hidden.
       applyCategoryVisibility();
       scene.add(currentModel);
+      requestRender();
       frameCamera(currentModel);
       URL.revokeObjectURL(url);
       // The schedule renders before the loader resolves, so the
@@ -1809,6 +1839,7 @@ function frameBox(box: THREE.Box3): void {
   camera.near = maxDim / 100;
   camera.far = Math.max(dist * 10, dist + modelDim * 2);
   camera.updateProjectionMatrix();
+  requestRender();
 
   if (prefersReducedMotion()) {
     cameraTween = null;
@@ -2730,6 +2761,7 @@ function applyCategoryVisibility(): void {
     const u = obj.userData as { ifcType?: string };
     if (u.ifcType) obj.visible = !hiddenTypes.has(u.ifcType);
   });
+  requestRender();
 }
 
 /** Index whose panel payload we are waiting on from the worker. */

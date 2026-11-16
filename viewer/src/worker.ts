@@ -84,6 +84,9 @@
  *   leaves the open model as it is (a failed open has dropped the last drawing).
  *   Every drawing reply also carries `wasmMemoryBytes`, the wasm linear memory
  *   after it: drawing grows it and it never shrinks.
+ *   It also carries `at`: when the worker received the request, started and
+ *   ended the wasm call and posted the reply, in ms since the epoch (the page's
+ *   clock), so the page can time a request end to end.
  */
 
 import init, {
