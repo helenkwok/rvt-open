@@ -394,18 +394,7 @@ impl<'a> Renderer<'a> {
         } else {
             e.geom.transformed(t)
         };
-        let mut samples = g.samples(f64::MAX);
-        if let Geom::Text {
-            at, height, value, ..
-        } = &g
-        {
-            // Text reaches roughly its height times its length to the right.
-            samples.push([
-                at[0] + height * 0.6 * value.chars().count() as f64,
-                at[1] + height,
-            ]);
-        }
-        if let (Some(c), Some(b)) = (self.cull, bounds(samples.iter().copied())) {
+        if let (Some(c), Some(b)) = (self.cull, cull_bounds(&g)) {
             if b[2] < c[0] || b[0] > c[2] || b[3] < c[1] || b[1] > c[3] {
                 return;
             }
@@ -609,10 +598,55 @@ fn path_d(g: &Geom) -> String {
     d
 }
 
+/// A conservative box for culling: the curve-aware [`Geom::bbox`], and for text the four corners
+/// of its run (roughly its height times its length) turned by its rotation about the anchor.
+fn cull_bounds(g: &Geom) -> Option<[f64; 4]> {
+    if let Geom::Text {
+        at,
+        height,
+        rotation,
+        value,
+    } = g
+    {
+        let (w, (sin, cos)) = (
+            height * 0.6 * value.chars().count() as f64,
+            rotation.sin_cos(),
+        );
+        let corners = [[0.0, 0.0], [w, 0.0], [0.0, *height], [w, *height]];
+        return bounds(
+            corners
+                .into_iter()
+                .map(|[x, y]| [at[0] + x * cos - y * sin, at[1] + x * sin + y * cos]),
+        );
+    }
+    g.bbox()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Block2d, Layer2d, Layout2d};
+
+    #[test]
+    fn cull_box_holds_curve_tops_and_rotated_text() {
+        // A circle whose sampled points miss a viewport its top arc crosses.
+        let circle = Geom::Circle {
+            c: [0.0, 0.0, 0.0],
+            r: 10.0,
+        };
+        let b = cull_bounds(&circle).unwrap();
+        assert!(b[3] >= 10.0 && b[1] <= -10.0, "{b:?}");
+        // Text turned a quarter turn runs up from its anchor, not to the right.
+        let text = Geom::Text {
+            at: [10.0, 0.0, 0.0],
+            height: 1.0,
+            rotation: std::f64::consts::FRAC_PI_2,
+            value: "x".repeat(20),
+        };
+        let b = cull_bounds(&text).unwrap();
+        assert!(b[3] > 11.9 && b[1] < 1e-9, "{b:?}");
+        assert!(b[0] >= 8.9 && b[2] <= 10.0 + 1e-9, "{b:?}");
+    }
 
     #[test]
     fn sheet_shows_model_space_through_its_viewport_and_groups_layers() {

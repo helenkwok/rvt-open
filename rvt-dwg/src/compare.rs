@@ -141,7 +141,8 @@ struct Placed<'a> {
     geom: Geom,
     /// The entity's own colour (ByLayer and ByBlock resolved by the reader of `Placed`).
     colour: crate::Colour,
-    /// The entity's own lineweight, 1/100 mm (ByLayer and ByBlock as the entity has them).
+    /// The lineweight it is drawn with, 1/100 mm (ByLayer and ByBlock resolved, ByBlock to the
+    /// insert's or dimension's own).
     lineweight: i16,
     /// Only what lies in this box (min x, min y, max x, max y) counts: model space seen through
     /// a viewport.
@@ -156,6 +157,8 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
     }
     let base: HashMap<&str, [f64; 3]> =
         d.blocks.iter().map(|b| (b.name.as_str(), b.base)).collect();
+    let layers: HashMap<&str, &crate::Layer2d> =
+        d.layers.iter().map(|l| (l.name.as_str(), l)).collect();
     let mut out = Vec::new();
     let mut budget = limits.max_expanded;
     let t = Affine {
@@ -171,9 +174,11 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
         block: &str,
         t: &Affine,
         layer: &str,
+        by_block: i16,
         depth: usize,
         by_owner: &HashMap<&str, Vec<&'a Entity2d>>,
         base: &HashMap<&str, [f64; 3]>,
+        layers: &HashMap<&str, &crate::Layer2d>,
         limits: &Limits,
         budget: &mut usize,
         out: &mut Vec<Placed<'a>>,
@@ -191,6 +196,7 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
             } else {
                 e.layer.as_str()
             };
+            let weight = crate::lineweight(e.lineweight, layers.get(layer).copied(), by_block);
             match &e.geom {
                 Geom::Insert {
                     block,
@@ -204,9 +210,11 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                         block,
                         &t.then(&Affine::insert(b, *at, *scale, *rotation)),
                         layer,
+                        weight,
                         depth + 1,
                         by_owner,
                         base,
+                        layers,
                         limits,
                         budget,
                         out,
@@ -216,7 +224,7 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                         kind: &e.kind,
                         geom: e.geom.transformed(t),
                         colour: e.colour,
-                        lineweight: e.lineweight,
+                        lineweight: weight,
                         clip: None,
                     });
                 }
@@ -225,9 +233,11 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                         block,
                         t,
                         layer,
+                        weight,
                         depth + 1,
                         by_owner,
                         base,
+                        layers,
                         limits,
                         budget,
                         out,
@@ -237,7 +247,7 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                         kind: &e.kind,
                         geom: e.geom.transformed(t),
                         colour: e.colour,
-                        lineweight: e.lineweight,
+                        lineweight: weight,
                         clip: None,
                     });
                 }
@@ -246,7 +256,7 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
                     kind: &e.kind,
                     geom: e.geom.transformed(t),
                     colour: e.colour,
-                    lineweight: e.lineweight,
+                    lineweight: weight,
                     clip: None,
                 }),
             }
@@ -256,9 +266,11 @@ fn flatten<'a>(d: &'a Drawing2d, block: &str, scale: f64, limits: &Limits) -> Ve
         block,
         &t,
         "0",
+        crate::DEFAULT_LINEWEIGHT,
         0,
         &by_owner,
         &base,
+        &layers,
         limits,
         &mut budget,
         &mut out,
@@ -370,13 +382,7 @@ pub(crate) fn flatten_coloured(d: &Drawing2d, block: &str, limits: &Limits) -> V
                 .to_rgb()
                 .or_else(|| layers.get(p.layer.as_str()).and_then(|l| l.colour.to_rgb()))
                 .unwrap_or([0, 0, 0]),
-            // ponytail: ByBlock takes the default, not the insert's weight; carry the insert's through `flatten` if a drawing relies on it.
-            width_mm: crate::lineweight(
-                p.lineweight,
-                layers.get(p.layer.as_str()).copied(),
-                crate::DEFAULT_LINEWEIGHT,
-            ) as f64
-                / 100.0,
+            width_mm: p.lineweight as f64 / 100.0,
             geom: p.geom,
         })
         .collect()
@@ -808,6 +814,36 @@ mod tests {
                 b: [b[0], b[1], 0.0],
             },
         )
+    }
+
+    #[test]
+    fn by_block_lineweight_takes_the_inserts() {
+        let mut child = line("0", [0.0, 0.0], [1.0, 0.0]);
+        child.owner = "B".into();
+        child.lineweight = -2;
+        let mut insert = Entity2d::new(
+            "INSERT",
+            "A-WALL",
+            Geom::Insert {
+                block: "B".into(),
+                at: [0.0; 3],
+                scale: [1.0; 3],
+                rotation: 0.0,
+                attributes: Vec::new(),
+            },
+        );
+        insert.lineweight = 50;
+        let d = Drawing2d {
+            layers: vec![Layer2d::new("A-WALL", 7)],
+            entities: vec![child, insert],
+            ..Default::default()
+        };
+        let lines: Vec<f64> = flatten_coloured(&d, crate::MODEL_SPACE, &Limits::default())
+            .into_iter()
+            .filter(|c| matches!(c.geom, Geom::Line { .. }))
+            .map(|c| c.width_mm)
+            .collect();
+        assert_eq!(lines, vec![0.5]);
     }
 
     #[test]
