@@ -129,6 +129,9 @@ pub struct ExportOptions {
     /// element the walk decoded, its stream and offset are read from a table
     /// built for the purpose and dropped.
     pub export_decisions: bool,
+    /// Also keep a copy of the model as the exporter alone built it, before the later passes
+    /// ([`ExportRun::base_model`]). Off by default.
+    pub keep_base: bool,
 }
 
 impl Default for ExportOptions {
@@ -144,11 +147,19 @@ impl Default for ExportOptions {
             phase: None,
             element_provenance: false,
             export_decisions: false,
+            keep_base: false,
         }
     }
 }
 
 impl ExportOptions {
+    /// Whether to keep the exporter's own model as [`ExportRun::base_model`].
+    #[must_use]
+    pub fn with_keep_base(mut self, keep_base: bool) -> Self {
+        self.keep_base = keep_base;
+        self
+    }
+
     /// Which exporter builds the model.
     #[must_use]
     pub fn with_kind(mut self, kind: ExportKind) -> Self {
@@ -531,6 +542,9 @@ pub struct ExportRun {
     pub unread: Vec<UnreadStream>,
     /// What the steps reported, in step order.
     pub notes: Vec<ExportNote>,
+    /// The model as the exporter alone built it, before the saved-graphics and the other passes,
+    /// when [`ExportOptions::keep_base`] is set: what `rvt-sheet` draws from.
+    pub base_model: Option<IfcModel>,
 }
 
 /// The model `rvt-ifc` writes the IFC from, built as `rvt-ifc` builds it, under
@@ -665,8 +679,9 @@ fn run_export_steps(
     opts.guid_namespace = std::env::var("RVT_OPEN_GUID_NAMESPACE")
         .ok()
         .filter(|ns| super::validate_guid_namespace(ns).is_ok());
-    let exported =
-        crate::convert::export_with_control(rf, &opts, control).map_err(|error| match error
+    let (exported, base_model) =
+        crate::convert::export_keeping_base_with_control(rf, &opts, control, options.keep_base)
+            .map_err(|error| match error
             .downcast::<crate::Error>(
         ) {
             Ok(error) => error,
@@ -725,5 +740,6 @@ fn run_export_steps(
         diagnostics,
         unread,
         notes,
+        base_model,
     })
 }

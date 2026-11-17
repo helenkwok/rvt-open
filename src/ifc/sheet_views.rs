@@ -1106,61 +1106,6 @@ pub struct ViewDrawing {
     pub scale: f64,
 }
 
-/// The model a viewer's 3D view is built from, as a drawing wants it. The viewer's open adds
-/// bodies the plain export has not: meshes from saved graphics and family documents, and stand-in
-/// shapes. In a plan or a section they add every sharp edge of every part (a hundred times the
-/// entities, most of them lines the authoring tool does not draw), so a drawing of the viewer's
-/// model as it comes scores below the plain export's. Each element that has a box or extrusion
-/// body is drawn from that body, and an element whose only body is one of those added shapes is
-/// not drawn, as in the plain export.
-pub fn drawing_model_of_viewer(model: &mut IfcModel) {
-    use super::{family_bodies, family_extrusions, family_file, proxy_shapes, symbol_meshes};
-    const ADDED: [&str; 13] = [
-        super::saved_meshes::SAVED_MESH_BODY_SOURCE,
-        family_file::FORM_SAVED_MESH_BODY_SOURCE,
-        family_file::FORM_SOLID_BODY_SOURCE,
-        family_file::FORM_SOLVED_BODY_SOURCE,
-        family_file::FORM_BOX_BODY_SOURCE,
-        family_file::NESTED_SAVED_MESH_BODY_SOURCE,
-        symbol_meshes::SYMBOL_MESH_BODY_SOURCE,
-        symbol_meshes::SITE_SURFACE_BODY_SOURCE,
-        proxy_shapes::PROXY_BODY_SOURCE,
-        family_bodies::FAMILY_DOCUMENT_BODY_SOURCE,
-        family_bodies::FAMILY_DOCUMENT_SCALED_BODY_SOURCE,
-        family_extrusions::FAMILY_EXTRUSION_BODY_SOURCE,
-        "family_revolution",
-    ];
-    let added: Vec<usize> = {
-        let sets = super::element_table::element_sets(model);
-        sets.iter()
-            .filter(|(_, sets)| {
-                sets.iter().flat_map(|set| &set.properties).any(|p| {
-                    p.name == "BodySource"
-                        && matches!(&p.value, super::entities::PropertyValue::Text(t) if ADDED.contains(&t.as_str()))
-                })
-            })
-            .map(|(index, _)| *index)
-            .collect()
-    };
-    for index in added {
-        if let Some(super::entities::IfcEntity::BuildingElement { solid_shape, .. }) =
-            model.entities.get_mut(index)
-        {
-            *solid_shape = None;
-        }
-    }
-    for entity in &mut model.entities {
-        if let super::entities::IfcEntity::BuildingElement {
-            extrusion: Some(_),
-            solid_shape,
-            ..
-        } = entity
-        {
-            *solid_shape = None;
-        }
-    }
-}
-
 /// Draw `key` as `rvt-sheet --sheet` or `--view` draws it to DXF, DWG or PDF. `symbols` are the
 /// family instances' plan symbols ([`super::plan_maps::instance_plan_symbols`]); what is not
 /// drawn is said in `notes`.

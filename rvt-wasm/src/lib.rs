@@ -442,7 +442,8 @@ struct ExportJson<'a> {
 }
 
 thread_local! {
-    /// The model the last open built (the one the 3D view shows), kept with the file's size and
+    /// The model the last open's exporter built before the later passes (the base of the one the 3D
+    /// view shows), kept with the file's size and
     /// digest for the first drawing of the same file, which draws from it instead of exporting
     /// the file again. Only an open at the default phase is kept: a drawing is of that phase.
     static OPENED_MODEL: RefCell<Option<(u32, u64, IfcModel)>> = const { RefCell::new(None) };
@@ -481,7 +482,8 @@ fn export_with_control(
         } else {
             SavedMeshChoice::Off
         })
-        .with_phase(phase);
+        .with_phase(phase)
+        .with_keep_base(true);
     let run = run_export_with_limits_and_control(&mut rf, &options, walker_limits, control)
         .map_err(err_str)?;
     let ExportRun {
@@ -489,6 +491,7 @@ fn export_with_control(
         mut diagnostics,
         unread,
         notes,
+        base_model,
         ..
     } = run;
     // Saved graphics only improve bodies: when they cannot be read the model
@@ -514,7 +517,7 @@ fn export_with_control(
     })
     .map_err(err_str)?;
     let kept = match (phase_requested, u32::try_from(bytes.len())) {
-        (false, Ok(size)) => Some((size, slice_digest(bytes), model)),
+        (false, Ok(size)) => base_model.map(|base| (size, slice_digest(bytes), base)),
         _ => None,
     };
     OPENED_MODEL.with(|cell| *cell.borrow_mut() = kept);
@@ -2136,10 +2139,7 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
             // the file is exported now.
             let opened = OPENED_MODEL.with(|c| c.borrow_mut().take());
             let model = match opened {
-                Some((s, d, mut model)) if s == size && d == digest => {
-                    rvt::ifc::sheet_views::drawing_model_of_viewer(&mut model);
-                    model
-                }
+                Some((s, d, model)) if s == size && d == digest => model,
                 _ => RvtDocExporter.export(&mut rf).map_err(err_str)?,
             };
             lap(&mut times, "model");

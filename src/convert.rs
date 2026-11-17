@@ -144,11 +144,24 @@ pub fn export_with_control(
     opts: &ConvertOptions,
     control: &WalkerControl,
 ) -> anyhow::Result<Exported> {
+    Ok(export_keeping_base_with_control(rf, opts, control, false)?.0)
+}
+
+/// [`export_with_control`] that also hands back, when `keep_base` is set, a copy of the model as
+/// the exporter alone built it (step 1a), before the later passes changed it. A drawing is made
+/// from that model, which is the one `rvt-sheet` draws from.
+pub fn export_keeping_base_with_control(
+    rf: &mut RevitFile,
+    opts: &ConvertOptions,
+    control: &WalkerControl,
+    keep_base: bool,
+) -> anyhow::Result<(Exported, Option<IfcModel>)> {
     let mut exported = export_base_with_control(rf, opts, control)?;
+    let base = keep_base.then(|| exported.model.clone());
     control.check()?;
     refine_with_control(rf, &mut exported, opts, control);
     control.check()?;
-    Ok(exported)
+    Ok((exported, base))
 }
 
 /// Step 1a: the exporter alone. With default options its model is the one

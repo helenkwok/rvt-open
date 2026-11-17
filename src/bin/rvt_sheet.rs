@@ -145,8 +145,8 @@ struct Cli {
     #[arg(long)]
     list_views: bool,
 
-    /// Draw from the model the viewer's 3D view is built from (bodies drawn from the meshes the
-    /// file saved, family geometry, the project's last phase) instead of the plain export.
+    /// Draw from the model the viewer's open keeps for its drawings (the exporter's model, taken
+    /// from the open's own run) instead of exporting the file again.
     #[arg(long)]
     viewer_model: bool,
 }
@@ -243,14 +243,10 @@ fn run(cli: &Cli) -> Result<(), String> {
     let model = if cli.viewer_model {
         rvt::ifc::run_export_with_limits(
             &mut rf,
-            &rvt::ifc::ExportOptions::default(),
+            &rvt::ifc::ExportOptions::default().with_keep_base(true),
             rvt::walker::WalkerLimits::default(),
         )
-        .map(|run| {
-            let mut model = run.model;
-            rvt::ifc::sheet_views::drawing_model_of_viewer(&mut model);
-            model
-        })
+        .map(|run| run.base_model.unwrap_or(run.model))
     } else {
         RvtDocExporter.export(&mut rf)
     }
