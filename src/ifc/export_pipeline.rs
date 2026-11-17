@@ -681,12 +681,10 @@ fn run_export_steps(
         .filter(|ns| super::validate_guid_namespace(ns).is_ok());
     let (exported, base_model) =
         crate::convert::export_keeping_base_with_control(rf, &opts, control, options.keep_base)
-            .map_err(|error| match error
-            .downcast::<crate::Error>(
-        ) {
-            Ok(error) => error,
-            Err(error) => crate::Error::InvalidInput(format!("{error:#}")),
-        })?;
+            .map_err(|error| match error.downcast::<crate::Error>() {
+                Ok(error) => error,
+                Err(error) => crate::Error::InvalidInput(format!("{error:#}")),
+            })?;
     let crate::convert::Exported {
         mut model,
         mut diagnostics,
