@@ -87,9 +87,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   // As rvt-sheet draws sheet AR01: its site plan in one viewport, its title block and notes, and
   // the title block's 13 labels filled from the sheet and the project information.
   expect(sheetName).toBe('AR01 · ASEMAPIIRUSTUS');
-  // The first drawing is drawn from the model the open built, not from a second export: 7 of the 880 lines
-  // are of bodies that the open replaces with meshes, which a drawing leaves out (see the pull request).
-  expect(sheetCounts).toEqual({ lines: 873, texts: 30, viewports: 1 });
+  expect(sheetCounts).toEqual({ lines: 880, texts: 30, viewports: 1 });
   await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
   await shot(page, 'sheet');
   fs.writeFileSync(path.join(SHOTS, 'sheet.svg'), await page.locator('#drawing-sheet > svg').evaluate((el) => el.outerHTML));
@@ -152,8 +150,7 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   const sectionCounts = await drawn(page);
   console.log('section', sectionName, JSON.stringify(sectionCounts));
   expect(sectionName).toBe('A');
-  // From the model the open built (123 lines from a second export; see the pull request).
-  expect(sectionCounts).toEqual({ lines: 128, texts: 4, viewports: 0 });
+  expect(sectionCounts).toEqual({ lines: 123, texts: 4, viewports: 0 });
   at('section drawn');
   await shot(page, 'section');
 
