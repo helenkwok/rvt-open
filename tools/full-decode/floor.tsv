@@ -46,8 +46,7 @@ attr unique_id not decoded	0	lower
 values parameter: differ	97	lower
 values parameter: differ from the element header	18	lower
 values parameter: differ from the element's name	12	lower
-values parameter: match	2112	higher
-values parameter: match from a Double entry	78	higher
+values parameter: match	2190	higher
 values parameter: match from a nested parameter set	2825	higher
 values parameter: match from an element field	8718	higher
 values parameter: match from the element header	16518	higher
