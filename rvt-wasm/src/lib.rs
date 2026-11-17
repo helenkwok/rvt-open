@@ -2136,7 +2136,10 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
             // the file is exported now.
             let opened = OPENED_MODEL.with(|c| c.borrow_mut().take());
             let model = match opened {
-                Some((s, d, model)) if s == size && d == digest => model,
+                Some((s, d, mut model)) if s == size && d == digest => {
+                    rvt::ifc::sheet_views::drawing_model_of_viewer(&mut model);
+                    model
+                }
                 _ => RvtDocExporter.export(&mut rf).map_err(err_str)?,
             };
             lap(&mut times, "model");

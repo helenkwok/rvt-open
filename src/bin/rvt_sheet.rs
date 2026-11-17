@@ -246,7 +246,11 @@ fn run(cli: &Cli) -> Result<(), String> {
             &rvt::ifc::ExportOptions::default(),
             rvt::walker::WalkerLimits::default(),
         )
-        .map(|run| run.model)
+        .map(|run| {
+            let mut model = run.model;
+            rvt::ifc::sheet_views::drawing_model_of_viewer(&mut model);
+            model
+        })
     } else {
         RvtDocExporter.export(&mut rf)
     }
