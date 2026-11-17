@@ -7,7 +7,7 @@
 // H = machine-matched: the term at the same place of the same Revit 2027 help topic in each of the 12
 // languages, cited per entry; - = no public source, the field is empty.
 //  - inputs: bip_enum.tsv 30fb56087a3ddbd2, bic_enum.tsv b27530a314bf49ca, storage.tsv 5d7db7d1ad93d53c,
-//    group-spec.tsv ac569a466f50bc6e, enum-texts.tsv e5a96046b4908c3b, help-terms.tsv ae3d493759810d93.
+//    group-spec.tsv ac569a466f50bc6e, enum-texts.tsv f69ca6fe602012e1, help-terms.tsv ae3d493759810d93.
 //  - ids: the reference's BuiltInParameter members plus 7 ids kept with no name (no public source names them).
 //  - category names: the `Category` property of Revit's IFC export of public samples, the most voted name of each category id (category-names.tsv df600f528b9958d9); where it has none, the help term of `program_names`.
 //  - The Revit API dump of the public samples is the answer key only: tools/builtin-parameters/score.py.
@@ -32770,7 +32770,6 @@ pub(super) const ENUM_TEXTS: &[(i64, i64, &str)] = &[
     (-1001122, 3, "Finish Face: Interior"),
     (-1001122, 4, "Core Face: Exterior"),
     (-1001122, 5, "Core Face: Interior"),
-    (-1001103, -1, "Up to level: Roof"),
     (-1001006, 0, "Interior"),
     (-1001006, 1, "Exterior"),
     (-1001006, 2, "Foundation"),

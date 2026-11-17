@@ -24,7 +24,7 @@ tup = re.compile(r'\(\s*(-?\d+),\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)",\s
 un = lambda s: s.replace('\\"', '"').replace('\\\\', '\\')
 cat = {int(m[0]): [un(x) for x in m[1:]] for m in tup.findall(src.split('PARAMETERS: &[', 1)[1].split('ENUM_TEXTS', 1)[0])}
 enum_texts = {}
-for m in re.finditer(r'\((-?\d+), (-?\d+), "((?:[^"\\]|\\.)*)"\),', src.split('ENUM_TEXTS', 1)[1].split('CATEGORIES', 1)[0]):
+for m in re.finditer(r'\(\s*(-?\d+),\s*(-?\d+),\s*"((?:[^"\\]|\\.)*)"\s*,?\s*\)', src.split('ENUM_TEXTS', 1)[1].split('CATEGORIES', 1)[0]):
     enum_texts[(int(m[1]), int(m[2]))] = un(m[3])
 
 
@@ -70,10 +70,10 @@ tally('enum_text', [(enum_texts.get(k, ''), v[0]) for k, v in ke.items()])
 kc = {int(r[0]): r[1] for r in rows('builtin_categories.tsv') if int(r[0]) < 0 and r[1]}
 # category names: the table's (Revit's IFC export), else program_names' help term
 ct = {}
-for m in re.finditer(r'\((-?\d+), "((?:[^"\\]|\\.)*)", "((?:[^"\\]|\\.)*)"\),', src.split('CATEGORIES', 1)[1].split('LOCALIZED', 1)[0]):
+for m in re.finditer(r'\(\s*(-?\d+),\s*"((?:[^"\\]|\\.)*)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*,?\s*\)', src.split('CATEGORIES', 1)[1].split('LOCALIZED', 1)[0]):
     ct[int(m[1])] = un(m[3])
 pn = open(args.program_names, encoding='utf-8').read()
-pn_en = {int(m.group(1)): m.group(2) for m in re.finditer(r'\n        (-\d+),\n        \[\n            "((?:[^"\\]|\\.)*)"', pn)}
+pn_en = {int(m.group(1)): m.group(2) for m in re.finditer(r'\(\s*(-\d+),\s*\[\s*"((?:[^"\\]|\\.)*)"', pn)}
 tally('category_name', [(ct.get(i) or pn_en.get(i, ''), n) for i, n in kc.items()])
 out = ['field\tkey_ids\tfilled\tmatch\tdiffer\tempty']
 for k, v in counts.items():
