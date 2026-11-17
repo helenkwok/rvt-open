@@ -59,6 +59,29 @@ use std::ops::Range;
 /// `PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY` and `PHY_MATERIAL_PARAM_UNIT_WEIGHT`.
 const PHY_MATERIAL_PARAM_STRUCTURAL_DENSITY: i64 = -1_152_313;
 const PHY_MATERIAL_PARAM_UNIT_WEIGHT: i64 = -1_140_309;
+
+/// `TEXT_STYLE_BOLD`, `TEXT_STYLE_ITALIC` and `TEXT_STYLE_UNDERLINE` of dimension and spot
+/// elevation styles: the file stores each of them as an integer in the Int set of some
+/// elements (188,807 entries each on the 101 public sample files) and as a whole-number float in
+/// the Double set of others (148,932 entries each, none with a fraction), and no other parameter
+/// is kept in both. Their value is an integer either way (the flag fields beside them, such as
+/// `m_bBold`, are flags), so an entry of the Double set is read as the integer it holds.
+const INTEGER_IN_EITHER_SET: [i64; 3] = [-1_006_313, -1_006_312, -1_006_311];
+
+/// A parameter value set entry's value as a [`ParamValue`]: the kind the entry stores, but
+/// an [`INTEGER_IN_EITHER_SET`] parameter's whole-number float as an integer.
+fn entry_value(param: i64, value: &Value) -> Option<ParamValue> {
+    Some(match value {
+        Value::Float(v) if INTEGER_IN_EITHER_SET.contains(&param) && v.fract() == 0.0 => {
+            ParamValue::Integer(*v as i64)
+        }
+        Value::Float(v) => ParamValue::Double(*v),
+        Value::Int(v) => ParamValue::Integer(*v),
+        Value::Text(v) => ParamValue::String(v.clone()),
+        Value::Id(v) => ParamValue::ElementId(*v),
+        _ => return None,
+    })
+}
 /// Standard gravity, 9.80665 m/s^2, in ft/s^2 (Revit's internal length unit).
 const STANDARD_GRAVITY_FT_S2: f64 = 9.80665 / 0.3048;
 
@@ -365,12 +388,8 @@ impl SchemaObject {
                 let (Some(param), Some(value)) = (e.id("m_paramId"), e.get("m_value")) else {
                     continue;
                 };
-                let value = match value {
-                    Value::Float(v) => ParamValue::Double(*v),
-                    Value::Int(v) => ParamValue::Integer(*v),
-                    Value::Text(v) => ParamValue::String(v.clone()),
-                    Value::Id(v) => ParamValue::ElementId(*v),
-                    _ => continue,
+                let Some(value) = entry_value(param, value) else {
+                    continue;
                 };
                 out.push((param, value));
             }
@@ -413,12 +432,8 @@ impl SchemaObject {
                 let (Some(param), Some(value)) = (e.id("m_paramId"), e.get("m_value")) else {
                     continue;
                 };
-                let value = match value {
-                    Value::Float(v) => ParamValue::Double(*v),
-                    Value::Int(v) => ParamValue::Integer(*v),
-                    Value::Text(v) => ParamValue::String(v.clone()),
-                    Value::Id(v) => ParamValue::ElementId(*v),
-                    _ => continue,
+                let Some(value) = entry_value(param, value) else {
+                    continue;
                 };
                 out.push((param, value));
             }
