@@ -435,10 +435,28 @@ fn export_with_limits(
 /// project's phases in order (the last is the export's unless the request
 /// named another), empty where the export applies no phase.
 #[derive(serde::Serialize)]
-struct ExportJson {
-    model: IfcModel,
+struct ExportJson<'a> {
+    model: &'a IfcModel,
     diagnostics: ExportDiagnostics,
     phases: Vec<ProjectPhase>,
+}
+
+thread_local! {
+    /// The model the last open's exporter built before the later passes (the base of the one the 3D
+    /// view shows), kept with the file's size and
+    /// digest for the first drawing of the same file, which draws from it instead of exporting
+    /// the file again. Only an open at the default phase, mode and limits is kept.
+    static OPENED_MODEL: RefCell<Option<(u32, u64, IfcModel)>> = const { RefCell::new(None) };
+}
+
+/// [`bytes_digest`] of a slice, the same value for the same bytes.
+fn slice_digest(bytes: &[u8]) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for piece in bytes.chunks(1 << 20) {
+        hasher.write(piece);
+    }
+    hasher.finish()
 }
 
 fn export_with_control(
@@ -451,6 +469,14 @@ fn export_with_control(
     control: &WalkerControl,
 ) -> Result<JsValue, JsValue> {
     let quality_mode = ExportQualityMode::parse(mode).map_err(err_str)?;
+    // The first drawing exports the file at the default phase, mode and limits when this copy is
+    // absent, so only an open under those is kept for it (`OpenLimits` has no equality: its debug
+    // text is compared).
+    let drawing_equivalent = phase.is_none()
+        && quality_mode == ExportQualityMode::Scaffold
+        && walker_limits == rvt::walker::WalkerLimits::default()
+        && format!("{open_limits:?}") == format!("{:?}", OpenLimits::default());
+    OPENED_MODEL.with(|cell| cell.borrow_mut().take());
     let mut rf = RevitFile::open_bytes_with_limits(bytes.to_vec(), open_limits).map_err(err_str)?;
     // The build `rvt-ifc` runs ([`run_export_with_limits_and_control`]), with every boxed
     // element drawn from its saved mesh (Revit 2014 to 2027 only) unless
@@ -462,7 +488,8 @@ fn export_with_control(
         } else {
             SavedMeshChoice::Off
         })
-        .with_phase(phase);
+        .with_phase(phase)
+        .with_keep_base(true);
     let run = run_export_with_limits_and_control(&mut rf, &options, walker_limits, control)
         .map_err(err_str)?;
     let ExportRun {
@@ -470,6 +497,7 @@ fn export_with_control(
         mut diagnostics,
         unread,
         notes,
+        base_model,
         ..
     } = run;
     // Saved graphics only improve bodies: when they cannot be read the model
@@ -488,12 +516,18 @@ fn export_with_control(
         record_unread_streams(&mut diagnostics, &unread);
     }
     let phases = rf.project_phases();
-    serde_wasm_bindgen::to_value(&ExportJson {
-        model,
+    let value = serde_wasm_bindgen::to_value(&ExportJson {
+        model: &model,
         diagnostics,
         phases,
     })
-    .map_err(err_str)
+    .map_err(err_str)?;
+    let kept = match (!drawing_equivalent, u32::try_from(bytes.len())) {
+        (false, Ok(size)) => base_model.map(|base| (size, slice_digest(bytes), base)),
+        _ => None,
+    };
+    OPENED_MODEL.with(|cell| *cell.borrow_mut() = kept);
+    Ok(value)
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -2107,7 +2141,13 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
             .as_ref()
             .is_none_or(|s: &DrawingSource| s.size != size || s.digest != digest)
         {
-            let model = RvtDocExporter.export(&mut rf).map_err(err_str)?;
+            // The model the 3D view was built from, when that open was of this file; else
+            // the file is exported now.
+            let opened = OPENED_MODEL.with(|c| c.borrow_mut().take());
+            let model = match opened {
+                Some((s, d, model)) if s == size && d == digest => model,
+                _ => RvtDocExporter.export(&mut rf).map_err(err_str)?,
+            };
             lap(&mut times, "model");
             // The views the list read, or read now.
             let listed = LISTED_VIEWS.with(|c| c.borrow_mut().take());
