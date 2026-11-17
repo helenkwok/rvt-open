@@ -44,6 +44,7 @@ for l in open(bipf):
     if l[0]=='#': continue
     p=l.rstrip('\n').split('\t')
     if len(p)>2 and p[2]: lab[int(p[1])].add(p[2])
+def cl(x): return re.sub(r'[\t\r\n]',' ',str(x))  # a tab or newline in a name or value must not move a column or row
 NAMES=set()  # the model's own storey and type names
 def ifc_props(path):
     ents={}
@@ -119,7 +120,7 @@ for fn in sorted(os.listdir(ifcdir)):
         for (st,pn,ity,iv) in props: pc[(st,pn,ity)]+=1
     with open(f'{out}/{label}.props.tsv','w') as pf:
         pf.write('#set\tprop\tifctype\tn\n')
-        for (st,pn,ity),n in pc.items(): pf.write(f'{st}\t{pn}\t{ity}\t{n}\n')
+        for (st,pn,ity),n in pc.items(): pf.write(f'{cl(st)}\t{cl(pn)}\t{cl(ity)}\t{n}\n')
     file=collections.defaultdict(list)
     with gzip.open(cf,'rt',encoding='utf-8',errors='replace') as g:
         for line in g:
@@ -128,6 +129,7 @@ for fn in sorted(os.listdir(ifcdir)):
             file[p[0]].append((int(p[1]),p[2],p[3],p[4]))
     FAC=[1.0,304.8,0.09290304,0.028316846592,57.29577951308232,0.3048,1000.0*0.3048,0.0929,0.0283168]
     def eq(fv,t,iv,ity):
+        if iv is None: return False
         if t=='String': return isinstance(iv,str) and fv==iv
         try: x=float(fv)
         except ValueError: return False
@@ -149,6 +151,6 @@ for fn in sorted(os.listdir(ifcdir)):
                 if eq(fv,ft,iv,ity) and ft!='ElementId' and not (ft=='Double' and abs(float(fv))<1e-9) : meth=(meth or '')+'V'
                 if meth:
                     hit=True; npair+=1
-                    o.write(f'{tag}\t{st}\t{pn}\t{ity}\t{iv}\t{pid}\t{org}\t{ft}\t{fv}\t{meth}\n')
+                    o.write(f'{tag}\t{cl(st)}\t{cl(pn)}\t{cl(ity)}\t{cl(iv)}\t{pid}\t{org}\t{ft}\t{cl(fv)}\t{meth}\n')
     o.close()
     print(label,'ifc elements',len(el),'props',nprop,'pairs',npair,'other classes',dict(cls_other.most_common(4)),flush=True)

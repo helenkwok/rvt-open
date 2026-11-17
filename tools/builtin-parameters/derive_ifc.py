@@ -39,6 +39,15 @@ for fn in glob.glob(os.path.join(pairs, '*.props.tsv')):
             continue
         s, n, t, c = l.rstrip('\n').split('\t')
         props[n][(s, t)] += int(c)
+def sample(fn):
+    """The sample a file belongs to: its name without the exact suffix (dots elsewhere stay)."""
+    b = os.path.basename(fn)
+    for suffix in ('.names.tsv', '.pairs.tsv', '.props.tsv'):
+        if b.endswith(suffix):
+            return b[:-len(suffix)]
+    return b
+
+
 res = {}
 for n, c in props.items():
     ids = labels.get(n, ())
@@ -65,7 +74,7 @@ for fn in glob.glob(os.path.join(pairs, '*.pairs.tsv')):
         file_votes[pid][p[1]][p[3]] += 1
         if p[7] == 'Integer' and p[3] in ('IFCLABEL', 'IFCTEXT', 'IFCIDENTIFIER'):
             enum[pid][p[8]][p[4]] += 1
-            enum_models[(pid, p[8], p[4])].add(os.path.basename(fn))
+            enum_models[(pid, p[8], p[4])].add(sample(fn))
 for pid, sv in file_votes.items():
     sets = collections.Counter()
     types = collections.Counter()
@@ -77,7 +86,7 @@ for pid, sv in file_votes.items():
 # it is dropped when the part after its last `: ` is a storey or type name of the sample that wrote it.
 own = {}
 for fn in glob.glob(os.path.join(pairs, '*.names.tsv')):
-    own[os.path.basename(fn).split('.')[0]] = {tuple(l.rstrip('\n').split('\t', 1)) for l in open(fn, encoding='utf-8') if l[0] != '#'}
+    own[sample(fn)] = {tuple(l.rstrip('\n').split('\t', 1)) for l in open(fn, encoding='utf-8') if l[0] != '#'}
 def embeds_name(text, models):
     if ': ' not in text:
         return False
@@ -88,7 +97,7 @@ rows = []
 for i in sorted(enum):
     for raw in sorted(enum[i], key=lambda x: int(x) if x.lstrip('-').isdigit() else 0):
         text = enum[i][raw].most_common(1)[0][0]
-        models = {m.split('.')[0] for m in enum_models[(i, raw, text)]}
+        models = enum_models[(i, raw, text)]
         if embeds_name(text, models):
             dropped.append((i, raw, text))
             continue
