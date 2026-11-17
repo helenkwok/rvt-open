@@ -10,7 +10,6 @@
 //! Revit 2027 API reference's `BuiltInParameter` page; enum names from the
 //! same reference. Labels are English, as Revit 2018-2027 shows them.
 
-mod subcategory_names;
 mod table;
 
 /// What is known of one built-in parameter.
@@ -73,22 +72,32 @@ pub fn parameter_by_enum(enum_name: &str) -> Option<BuiltInParameter> {
 /// ids, on its Revit 2027 copy): the Revit API reports the parameter under
 /// this name with the catalog id's name and storage type, and where the
 /// file stores a value under that id (36 values), it is the API's.
+///
+/// Every id is as the public Revit API reference gives it, page
+/// `BuiltInParameter Enumeration` (help.autodesk.com, `cloudhelp/<year>/ENU/
+/// Revit-API-MainReference/files/html/fb011c91-be7e-f737-28c7-3f1e1917a0e0.htm`),
+/// which lists each member with its value: the 2027 page for the names it
+/// still lists, the 2025 page for the names the 2026 API renamed. The two
+/// misspelled `BENDING_DETAIL_*` names are in the Revit 2024 reference (same
+/// page id, no values) with the labels `Representation` and `View for 3D
+/// Shape`, which the 2025 page gives `BENDING_DETAIL_SEGMENT_REPRESENTATION`
+/// (-1,155,310) and `BENDING_DETAIL_REPRESENTATION_FOR_3D_BARS` (-1,155,308).
 pub const ALIASES: &[(&str, i64)] = &[
-    ("SYMBOL_NAME_PARAM", -1002001),
-    ("SYMBOL_FAMILY_NAME_PARAM", -1002002),
-    ("UNIFORMAT_CODE", -1002500),
-    ("UNIFORMAT_DESCRIPTION", -1002501),
-    ("OMNICLASS_CODE", -1002502),
-    ("OMNICLASS_DESCRIPTION", -1002503),
-    ("ANALYTICAL_HEAT_TRANSFER_COEFFICIENT", -1005430),
-    ("WINDOW_TYPE_ID", -1001405),
-    ("GENERIC_HEIGHT", -1001300),
-    ("DOOR_WIDTH", -1001301),
-    ("DOOR_HEIGHT", -1001300),
-    ("GENERIC_WIDTH", -1001301),
-    ("WINDOW_THICKNESS", -1001302),
-    ("BENDING_DETAIL_SEGMENET_REPESENTATION", -1155310),
-    ("BENDING_DETAIL_REPESENTATION_FOR_3D_BARS", -1155308),
+    ("SYMBOL_NAME_PARAM", -1002001), // 2027 page: -1,002,001 Type Name
+    ("SYMBOL_FAMILY_NAME_PARAM", -1002002), // 2027 page: -1,002,002 Family Name
+    ("UNIFORMAT_CODE", -1002500),    // 2025 page: -1,002,500
+    ("UNIFORMAT_DESCRIPTION", -1002501), // 2025 page: -1,002,501
+    ("OMNICLASS_CODE", -1002502),    // 2025 page: -1,002,502
+    ("OMNICLASS_DESCRIPTION", -1002503), // 2025 page: -1,002,503
+    ("ANALYTICAL_HEAT_TRANSFER_COEFFICIENT", -1005430), // 2025 and 2026 pages: -1,005,430
+    ("WINDOW_TYPE_ID", -1001405),    // 2027 page: -1,001,405 Type Mark
+    ("GENERIC_HEIGHT", -1001300),    // 2027 page: -1,001,300 Height
+    ("DOOR_WIDTH", -1001301),        // 2027 page: -1,001,301 Width
+    ("DOOR_HEIGHT", -1001300),       // 2027 page: -1,001,300 Height
+    ("GENERIC_WIDTH", -1001301),     // 2027 page: -1,001,301 Width
+    ("WINDOW_THICKNESS", -1001302),  // 2027 page: -1,001,302 Thickness
+    ("BENDING_DETAIL_SEGMENET_REPESENTATION", -1155310), // 2025 page: BENDING_DETAIL_SEGMENT_REPRESENTATION
+    ("BENDING_DETAIL_REPESENTATION_FOR_3D_BARS", -1155308), // 2025 page: BENDING_DETAIL_REPRESENTATION_FOR_3D_BARS
 ];
 
 /// The text Revit shows for the integer `value` of the enumeration
@@ -107,7 +116,8 @@ pub fn is_enumeration(id: i64) -> bool {
 }
 
 /// The `BuiltInCategory` `id`'s enum name (`OST_Walls`) and the name Revit
-/// shows (`Walls`; empty where the dump never saw the category).
+/// shows (`Walls`; empty where the API dump of the public sample models
+/// never saw the category).
 pub fn category(id: i64) -> Option<(&'static str, &'static str)> {
     table::CATEGORIES
         .binary_search_by_key(&id, |row| row.0)
@@ -138,13 +148,14 @@ pub fn category_name_and_parent(id: i64) -> Option<(&'static str, Option<&'stati
 
 /// The name Revit shows for category `id` without its parent: a
 /// subcategory's own name (`Glass` for the windows' glass), as Revit names
-/// the category's graphics styles; `None` for a category not known.
+/// the category's graphics styles; `None` for a category whose display name
+/// the catalog does not hold. Revit does not store a built-in category's
+/// name in the file, so a subcategory the catalog's public sources never
+/// showed has no name here (the enum name, `OST_DoorsGlassProjection`, is
+/// not the name Revit shows, so it is not offered as one).
 pub fn category_own_name(id: i64) -> Option<&'static str> {
-    if let Ok(at) = subcategory_names::SUBCATEGORY_NAMES.binary_search_by_key(&id, |row| row.0) {
-        return Some(subcategory_names::SUBCATEGORY_NAMES[at].1);
-    }
-    let full = category_name(id)?;
-    Some(full.rsplit_once(": ").map_or(full, |(_, name)| name))
+    let (_, full) = category(id)?;
+    (!full.is_empty()).then(|| full.rsplit_once(": ").map_or(full, |(_, name)| name))
 }
 
 /// Every known built-in parameter id, in ascending order.
@@ -173,11 +184,6 @@ mod tests {
         for (name, id) in ALIASES {
             assert_eq!(parameter_by_enum(name).map(|p| p.id), Some(*id), "{name}");
         }
-        assert!(
-            subcategory_names::SUBCATEGORY_NAMES
-                .windows(2)
-                .all(|w| w[0].0 < w[1].0)
-        );
     }
 
     #[test]
@@ -195,6 +201,10 @@ mod tests {
             Some(-1_001_105)
         );
         assert_eq!(category(-2_000_011), Some(("OST_Walls", "Walls")));
+        assert_eq!(category_own_name(-2_000_011), Some("Walls"));
+        assert_eq!(category_own_name(-2_000_919), Some("Runs"));
+        // No public name: not the enum name, and not a name from a model's API dump.
+        assert_eq!(category_own_name(-2_000_031), None);
         assert_eq!(category_name(-2_000_080), Some("Furniture"));
         assert_eq!(
             category_name_and_parent(-2_000_919),
