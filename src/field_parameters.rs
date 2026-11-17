@@ -19,7 +19,13 @@
 //!   that has the parameter, and the field's name names the parameter or its
 //!   values vary. 367 rules gave the API's value for 6,117 parameters;
 //!   26 more follow a pointer into an object the element owns (a type's
-//!   compound structure, a material's own object) and give 508 more. Other releases and files: not measured; a class without
+//!   compound structure, a material's own object) and give 508 more. A second search
+//!   (paths with a field name naming the parameter, or values that vary)
+//!   added 39 rules there and 39 [`LINKED_RULES`] through another element,
+//!   1,533 more values on 1-hip-roof (Revit 2024), 1,457 on 2021, 1,532 on 2027,
+//!   none differing; 11 more linked rules (a style's line weight and colour
+//!   from its category element's first graphics style) give 560 more on 2024,
+//!   553 on 2021 and 560 on 2027, none differing. Other releases and files: not measured; a class without
 //!   the field gives nothing.
 
 use crate::builtin_parameters;
@@ -78,6 +84,46 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
     ),
     ("ColorFillSymbol", "SHOW_TITLE", "m_bShowTitle"),
     (
+        "ColorFillSymbol",
+        "TEXT_BACKGROUND",
+        "m_oLineAndTextAttr.m_background",
+    ),
+    (
+        "ColorFillSymbol",
+        "TEXT_STYLE_BOLD",
+        "m_oLineAndTextAttr.m_bBold",
+    ),
+    (
+        "ColorFillSymbol",
+        "TEXT_STYLE_ITALIC",
+        "m_oLineAndTextAttr.m_bItalic",
+    ),
+    (
+        "ColorFillSymbol",
+        "TEXT_STYLE_UNDERLINE",
+        "m_oLineAndTextAttr.m_bUnderline",
+    ),
+    (
+        "ColorFillSymbol",
+        "TITLE_STYLE_BOLD",
+        "m_oTitleLineAndTextAttr.m_bBold",
+    ),
+    (
+        "ColorFillSymbol",
+        "TITLE_STYLE_ITALIC",
+        "m_oTitleLineAndTextAttr.m_bItalic",
+    ),
+    (
+        "ColorFillSymbol",
+        "TITLE_STYLE_UNDERLINE",
+        "m_oTitleLineAndTextAttr.m_bUnderline",
+    ),
+    (
+        "CompoundCeilingType",
+        "COARSE_SCALE_FILL_PATTERN_ID_PARAM",
+        "m_pCompoundStructure.m_coarseScaleFillPatternElemId",
+    ),
+    (
         "ConceptualConstructionType",
         "CONCEPTUAL_CONSTRUCTION_MATERIAL",
         "m_materialId",
@@ -113,6 +159,21 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "CONTOUR_LABELS_PRIMARY_ONLY",
         "m_makePrimaryOnly",
     ),
+    (
+        "ContourLabelingAttributes",
+        "TEXT_STYLE_BOLD",
+        "m_lineAndTextAttr.m_bBold",
+    ),
+    (
+        "ContourLabelingAttributes",
+        "TEXT_STYLE_ITALIC",
+        "m_lineAndTextAttr.m_bItalic",
+    ),
+    (
+        "ContourLabelingAttributes",
+        "TEXT_STYLE_UNDERLINE",
+        "m_lineAndTextAttr.m_bUnderline",
+    ),
     ("CorniceAttr", "WALL_SWEEP_CUTS_WALL_PARAM", "m_cutsWall"),
     (
         "CorniceAttr",
@@ -130,11 +191,23 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "AUTO_JOIN_CONDITION",
         "m_autoJoinCond",
     ),
+    ("CutMarkType", "CUT_LINE_ANGLE", "m_rotationAngle"),
+    (
+        "CutMarkType",
+        "CUT_LINE_DISTANCE",
+        "m_distanceBetweenTwoLines",
+    ),
+    (
+        "CutMarkType",
+        "CUT_LINE_EXTENSION",
+        "m_extensionDistanceToBoundary",
+    ),
     ("CutMarkType", "CUT_LINE_TYPE", "m_cutLineType"),
     ("CutMarkType", "CUT_MARK_SYMBOL", "m_cutMarkSymbol"),
     ("CutMarkType", "CUT_MARK_SYMBOL_SIZE", "m_cutMarkSymbolSize"),
     ("DBView3d", "VIEW_PARTS_VISIBILITY", "m_partsVisibility"),
     ("DBView3d", "VIEW_TEMPLATE_FOR_SCHEDULE", "m_viewTemplateId"),
+    ("DBView3d", "VIEW_TYPE", "m_viewDescription"),
     ("DBViewPlan", "ELEM_FAMILY_AND_TYPE_PARAM", "m_dbViewTypeId"),
     ("DBViewPlan", "ELEM_FAMILY_PARAM", "m_dbViewTypeId"),
     ("DBViewPlan", "ELEM_TYPE_PARAM", "m_dbViewTypeId"),
@@ -187,6 +260,7 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "VIEW_TEMPLATE_FOR_SCHEDULE",
         "m_viewTemplateId",
     ),
+    ("DBViewProject", "VIEW_TYPE", "m_viewDescription"),
     (
         "DBViewSection",
         "VIEW_ANALYSIS_DISPLAY_STYLE",
@@ -264,6 +338,7 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "m_leaderShoulderLength",
     ),
     ("DimensionStyle", "DIM_LEADER_TYPE", "m_leaderType"),
+    ("DimensionStyle", "DIM_PREFIX", "m_prefix"),
     (
         "DimensionStyle",
         "DIM_STYLE_CENTERLINE_TICK_MARK",
@@ -293,6 +368,12 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "DimensionStyle",
         "DIM_STYLE_SUPPRESS_SPACES",
         "m_suppressSpaces",
+    ),
+    ("DimensionStyle", "DIM_SUFFIX", "m_suffix"),
+    (
+        "DimensionStyle",
+        "DIM_TEXT_BACKGROUND",
+        "m_txtBackgroundTransparent",
     ),
     (
         "DimensionStyle",
@@ -334,6 +415,21 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "DimensionStyle",
         "RADIUS_SYMBOL_TEXT",
         "m_radiusDiameterPrefixText",
+    ),
+    (
+        "DimensionStyle",
+        "TEXT_STYLE_BOLD",
+        "m_pLineAndTextAttr.m_bBold",
+    ),
+    (
+        "DimensionStyle",
+        "TEXT_STYLE_ITALIC",
+        "m_pLineAndTextAttr.m_bItalic",
+    ),
+    (
+        "DimensionStyle",
+        "TEXT_STYLE_UNDERLINE",
+        "m_pLineAndTextAttr.m_bUnderline",
     ),
     (
         "DimensionStyle",
@@ -790,6 +886,7 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "MATERIAL_PARAM_COLOR",
         "m_pMaterial.m_color",
     ),
+    ("MaterialElem", "MATERIAL_PARAM_GLOW", "m_pMaterial.m_glow"),
     (
         "MaterialElem",
         "MATERIAL_PARAM_SHININESS",
@@ -802,6 +899,7 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "m_autoJoinCond",
     ),
     ("NewCurtainWallType", "AUTO_PANEL_WALL", "m_panel"),
+    ("NewCurtainWallType", "FUNCTION_PARAM", "m_function"),
     (
         "NewCurtainWallType",
         "SPACING_LENGTH_HORIZ",
@@ -877,6 +975,7 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "VIEW_TEMPLATE_FOR_SCHEDULE",
         "m_viewTemplateId",
     ),
+    ("RbsDbViewSystemNavigator", "VIEW_TYPE", "m_viewDescription"),
     (
         "RbsFlexPipeType",
         "RBS_CURVETYPE_DEFAULT_TAKEOFF_PARAM",
@@ -899,6 +998,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
     ),
     (
         "RbsHvacSystemType",
+        "RBS_SYSTEM_ABBREVIATION_PARAM",
+        "m_abbreviation",
+    ),
+    (
+        "RbsHvacSystemType",
         "RBS_SYSTEM_RISEDROP_PARAM",
         "m_RiseDropSettings",
     ),
@@ -916,6 +1020,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "RbsPipingSystemType",
         "RBS_PIPE_SYSTEM_CALCULATION_PARAM",
         "m_calculationLevel",
+    ),
+    (
+        "RbsPipingSystemType",
+        "RBS_SYSTEM_ABBREVIATION_PARAM",
+        "m_abbreviation",
     ),
     (
         "RbsPipingSystemType",
@@ -1077,6 +1186,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "COARSE_SCALE_FILL_PATTERN_ID_PARAM",
         "m_pCompoundStructure.m_coarseScaleFillPatternElemId",
     ),
+    (
+        "RoofSoffitType",
+        "COARSE_SCALE_FILL_PATTERN_ID_PARAM",
+        "m_pCompoundStructure.m_coarseScaleFillPatternElemId",
+    ),
     ("SWall", "PHASE_CREATED", "m_createdPhaseId"),
     ("SWall", "PHASE_DEMOLISHED", "m_demolishedPhaseId"),
     ("SWall", "WALL_ATTR_ROOM_BOUNDING", "m_roomBounding"),
@@ -1128,6 +1242,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "SpotElevationStyle",
         "DIM_STYLE_SUPPRESS_SPACES",
         "m_suppressSpaces",
+    ),
+    (
+        "SpotElevationStyle",
+        "DIM_TEXT_BACKGROUND",
+        "m_txtBackgroundTransparent",
     ),
     (
         "SpotElevationStyle",
@@ -1193,6 +1312,21 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "SpotElevationStyle",
         "SPOT_SLOPE_LEADER_LENGTH",
         "m_seLeaderLength",
+    ),
+    (
+        "SpotElevationStyle",
+        "TEXT_STYLE_BOLD",
+        "m_pLineAndTextAttr.m_bBold",
+    ),
+    (
+        "SpotElevationStyle",
+        "TEXT_STYLE_ITALIC",
+        "m_pLineAndTextAttr.m_bItalic",
+    ),
+    (
+        "SpotElevationStyle",
+        "TEXT_STYLE_UNDERLINE",
+        "m_pLineAndTextAttr.m_bUnderline",
     ),
     (
         "StairsLandingType",
@@ -1462,13 +1596,25 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
     ),
     (
         "TagNoteAttributes",
+        "TEXT_STYLE_ITALIC",
+        "m_lineAndTextAttr.m_bItalic",
+    ),
+    (
+        "TagNoteAttributes",
         "TEXT_STYLE_UNDERLINE",
         "m_lineAndTextAttr.m_bUnderline",
     ),
+    ("Text3dAttrSymbol", "TEXT_STYLE_BOLD", "m_bBold"),
+    ("Text3dAttrSymbol", "TEXT_STYLE_ITALIC", "m_bItalic"),
     (
         "TextNoteAttributes",
         "LEADER_OFFSET_SHEET",
         "m_leaderOffsetSheet",
+    ),
+    (
+        "TextNoteAttributes",
+        "TEXT_BACKGROUND",
+        "m_lineAndTextAttr.m_background",
     ),
     (
         "TextNoteAttributes",
@@ -1477,8 +1623,18 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
     ),
     (
         "TextNoteAttributes",
+        "TEXT_STYLE_BOLD",
+        "m_lineAndTextAttr.m_bBold",
+    ),
+    (
+        "TextNoteAttributes",
         "TEXT_STYLE_ITALIC",
         "m_lineAndTextAttr.m_bItalic",
+    ),
+    (
+        "TextNoteAttributes",
+        "TEXT_STYLE_UNDERLINE",
+        "m_lineAndTextAttr.m_bUnderline",
     ),
     (
         "TopRailType",
@@ -1534,6 +1690,11 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
         "TopRailType",
         "CONTINUOUSRAIL_TRANSITION_TYPE_PARAM",
         "m_transitionType",
+    ),
+    (
+        "ToposolidType",
+        "COARSE_SCALE_FILL_PATTERN_ID_PARAM",
+        "m_pCompoundStructure.m_coarseScaleFillPatternElemId",
     ),
     (
         "Viewer",
@@ -1619,6 +1780,251 @@ pub const FIELD_RULES: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// (schema class of the element object, `BuiltInParameter` enum name, path)
+/// for values Revit shows from another element: the path's part before `->`
+/// is an ElementId field of the element (as in [`FIELD_RULES`]), the part
+/// after it a field path in the element that id names (a text type's font
+/// element, a family type's family, a viewer's view); a path may hop more
+/// than once, and `name[0]` takes a list's first item (a style's line pen and
+/// colour: its category element's first graphics style, which held them for
+/// 563 of 563 values on 1-hip-roof 2024 and none differ on 2021 or 2027).
+pub const LINKED_RULES: &[(&str, &str, &str)] = &[
+    (
+        "ColorFillSymbol",
+        "TEXT_STYLE_FONT",
+        "m_oLineAndTextAttr.m_fontId->m_pFont.m_name",
+    ),
+    (
+        "ColorFillSymbol",
+        "TEXT_STYLE_SIZE",
+        "m_oLineAndTextAttr.m_fontId->m_pFont.m_size",
+    ),
+    (
+        "ContourLabelingAttributes",
+        "LINE_COLOR",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "ContourLabelingAttributes",
+        "TEXT_FONT",
+        "m_lineAndTextAttr.m_fontId->m_pFont.m_name",
+    ),
+    (
+        "ContourLabelingAttributes",
+        "TEXT_SIZE",
+        "m_lineAndTextAttr.m_fontId->m_pFont.m_size",
+    ),
+    (
+        "DBViewPlan",
+        "VIEWER_ANNOTATION_CROP_ACTIVE",
+        "m_viewerId->m_bAnnotationCropActive",
+    ),
+    (
+        "DBViewSection",
+        "VIEWER_ANNOTATION_CROP_ACTIVE",
+        "m_viewerId->m_bAnnotationCropActive",
+    ),
+    (
+        "DimensionStyle",
+        "LINE_COLOR",
+        "m_pLineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "DimensionStyle",
+        "LINE_PEN",
+        "m_pLineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
+    (
+        "DimensionStyle",
+        "TEXT_FONT",
+        "m_pLineAndTextAttr.m_fontId->m_pFont.m_name",
+    ),
+    (
+        "DimensionStyle",
+        "TEXT_SIZE",
+        "m_pLineAndTextAttr.m_fontId->m_pFont.m_size",
+    ),
+    (
+        "FamilySymbol",
+        "OMNICLASS_CODE",
+        "m_familyId->m_omniClassCode",
+    ),
+    (
+        "FamilySymbol",
+        "STRUCTURAL_FAMILY_CODE_NAME",
+        "m_familyId->m_structuralCodeName",
+    ),
+    (
+        "FilledRegionAttributes",
+        "LINE_PEN",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
+    (
+        "InteriorElevArrow",
+        "VIEW_ANALYSIS_DISPLAY_STYLE",
+        "m_dbViewId->m_analysisDisplayStyleId",
+    ),
+    (
+        "InteriorElevArrow",
+        "VIEW_DESCRIPTION",
+        "m_dbViewId->m_viewDescription",
+    ),
+    (
+        "InteriorElevArrow",
+        "VIEW_FIXED_SKETCH_PLANE",
+        "m_dbViewId->m_fixedSketchPlaneId",
+    ),
+    (
+        "InteriorElevArrow",
+        "VIEW_MODEL_DISPLAY_MODE",
+        "m_dbViewId->m_modelDisplayMode",
+    ),
+    ("InteriorElevArrow", "VIEW_NAME", "m_dbViewId->m_viewName"),
+    (
+        "InteriorElevArrow",
+        "VIEW_PARTS_VISIBILITY",
+        "m_dbViewId->m_partsVisibility",
+    ),
+    (
+        "InteriorElevArrow",
+        "VIEW_TEMPLATE",
+        "m_dbViewId->m_viewTemplateId",
+    ),
+    (
+        "LevelAttributes",
+        "LINE_COLOR",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "LevelAttributes",
+        "LINE_PEN",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
+    (
+        "LinearDimString",
+        "DIM_LEADER",
+        "m_styleSymbolId->m_leaderType",
+    ),
+    (
+        "SpotElevationStyle",
+        "LINE_COLOR",
+        "m_pLineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "SpotElevationStyle",
+        "TEXT_FONT",
+        "m_pLineAndTextAttr.m_fontId->m_pFont.m_name",
+    ),
+    (
+        "SpotElevationStyle",
+        "TEXT_SIZE",
+        "m_pLineAndTextAttr.m_fontId->m_pFont.m_size",
+    ),
+    (
+        "SysMullionFamSym",
+        "OMNICLASS_CODE",
+        "m_familyId->m_omniClassCode",
+    ),
+    (
+        "SysMullionFamSym",
+        "STRUCTURAL_FAMILY_CODE_NAME",
+        "m_familyId->m_structuralCodeName",
+    ),
+    (
+        "SysPanelFamSym",
+        "OMNICLASS_CODE",
+        "m_familyId->m_omniClassCode",
+    ),
+    (
+        "SysPanelFamSym",
+        "STRUCTURAL_FAMILY_CODE_NAME",
+        "m_familyId->m_structuralCodeName",
+    ),
+    (
+        "TagNoteAttributes",
+        "LINE_COLOR",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "TagNoteAttributes",
+        "LINE_PEN",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
+    (
+        "TagNoteAttributes",
+        "TEXT_FONT",
+        "m_lineAndTextAttr.m_fontId->m_pFont.m_name",
+    ),
+    (
+        "TagNoteAttributes",
+        "TEXT_SIZE",
+        "m_lineAndTextAttr.m_fontId->m_pFont.m_size",
+    ),
+    (
+        "Text3dAttrSymbol",
+        "MODEL_TEXT_SIZE",
+        "m_fontId->m_pFont.m_size",
+    ),
+    ("Text3dAttrSymbol", "TEXT_FONT", "m_fontId->m_pFont.m_name"),
+    (
+        "TextNoteAttributes",
+        "LINE_COLOR",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_color",
+    ),
+    (
+        "TextNoteAttributes",
+        "LINE_PEN",
+        "m_lineAndTextAttr.m_categoryId->m_gstyleIds[0]->m_pGStyle.m_penNumber",
+    ),
+    (
+        "TextNoteAttributes",
+        "TEXT_FONT",
+        "m_lineAndTextAttr.m_fontId->m_pFont.m_name",
+    ),
+    (
+        "TextNoteAttributes",
+        "TEXT_SIZE",
+        "m_lineAndTextAttr.m_fontId->m_pFont.m_size",
+    ),
+    (
+        "Viewer",
+        "VIEW_ANALYSIS_DISPLAY_STYLE",
+        "m_dbViewId->m_analysisDisplayStyleId",
+    ),
+    (
+        "Viewer",
+        "VIEW_DESCRIPTION",
+        "m_dbViewId->m_viewDescription",
+    ),
+    (
+        "Viewer",
+        "VIEW_FIXED_SKETCH_PLANE",
+        "m_dbViewId->m_fixedSketchPlaneId",
+    ),
+    (
+        "Viewer",
+        "VIEW_MODEL_DISPLAY_MODE",
+        "m_dbViewId->m_modelDisplayMode",
+    ),
+    ("Viewer", "VIEW_NAME", "m_dbViewId->m_viewName"),
+    (
+        "Viewer",
+        "VIEW_PARTS_VISIBILITY",
+        "m_dbViewId->m_partsVisibility",
+    ),
+    ("Viewer", "VIEW_TEMPLATE", "m_dbViewId->m_viewTemplateId"),
+    (
+        "Viewer",
+        "VIEW_UNDERLAY_TOP_ID",
+        "m_dbViewId->m_idUnderlayTopLevel",
+    ),
+    (
+        "ZoneElement",
+        "ZONE_LEVEL_ID",
+        "m_zoneSchemeId->m_assocLevelId",
+    ),
+];
+
 /// `ELEM_CATEGORY_PARAM`.
 pub const ELEM_CATEGORY_PARAM: i64 = -1_140_362;
 /// `ELEM_CATEGORY_PARAM_MT`.
@@ -1655,7 +2061,14 @@ fn at<'a>(objects: &'a [Fields], path: &str) -> Option<&'a Value> {
     let mut cur = objects.first()?;
     let mut parts = path.split('.').peekable();
     while let Some(name) = parts.next() {
-        let v = cur.get(name)?;
+        // `name[0]`: the first item of a list field.
+        let v = match name.strip_suffix("[0]") {
+            Some(list) => match cur.get(list)? {
+                Value::List(items) => items.first()?,
+                _ => return None,
+            },
+            None => cur.get(name)?,
+        };
         if parts.peek().is_none() {
             return Some(v);
         }
@@ -1696,6 +2109,32 @@ pub fn field_parameters(class: &str, objects: &[Fields]) -> Vec<(i64, ParamValue
         .collect()
 }
 
+/// The parameters an element of schema class `class` gives through
+/// [`LINKED_RULES`]; `element` gives another element's objects by its id.
+pub fn linked_parameters<'a>(
+    class: &str,
+    objects: &[Fields],
+    element: impl Fn(i64) -> Option<&'a [Fields]>,
+) -> Vec<(i64, ParamValue)> {
+    let at_class = LINKED_RULES.partition_point(|r| r.0 < class);
+    LINKED_RULES[at_class..]
+        .iter()
+        .take_while(|r| r.0 == class)
+        .filter_map(|&(_, name, path)| {
+            let p = builtin_parameters::parameter_by_enum(name)?;
+            let mut hops = path.split("->");
+            let mut v = at(objects, hops.next()?)?;
+            for hop in hops {
+                let Value::Id(target) = v else {
+                    return None;
+                };
+                v = at(element(*target)?, hop)?;
+            }
+            Some((p.id, as_parameter(v, p.storage_type)?))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1719,10 +2158,91 @@ mod tests {
                 .windows(2)
                 .all(|w| (w[0].0, w[0].1) < (w[1].0, w[1].1))
         );
-        for (_, name, _) in FIELD_RULES {
+        assert!(
+            LINKED_RULES
+                .windows(2)
+                .all(|w| (w[0].0, w[0].1) < (w[1].0, w[1].1))
+        );
+        for (_, name, path) in FIELD_RULES.iter().chain(LINKED_RULES) {
             let p = builtin_parameters::parameter_by_enum(name).expect(name);
             assert!(!p.storage_type.is_empty(), "{name} has no storage type");
+            assert_eq!(
+                path.contains("->"),
+                LINKED_RULES.iter().any(|r| r.2 == *path)
+            );
+            // Every hop and step names a field; `[` only as a first-item `[0]`.
+            for step in path.split("->").flat_map(|hop| hop.split('.')) {
+                let field = step.strip_suffix("[0]").unwrap_or(step);
+                assert!(!field.is_empty() && !field.contains('['), "{path}");
+            }
         }
+    }
+
+    #[test]
+    fn line_pen_through_two_hops_and_a_list() {
+        let attr = fields(vec![("m_categoryId", Value::Id(362))]);
+        let root = fields(vec![("m_lineAndTextAttr", Value::Object(attr))]);
+        let category = [fields(vec![(
+            "m_gstyleIds",
+            Value::List(vec![Value::Id(363), Value::Id(999)]),
+        )])];
+        let style = [
+            fields(vec![(
+                "m_pGStyle",
+                Value::New {
+                    tag: 1,
+                    index: 1,
+                    marker: 0,
+                },
+            )]),
+            fields(vec![
+                ("m_penNumber", Value::Int(3)),
+                ("m_color", Value::Int(255)),
+            ]),
+        ];
+        let got = linked_parameters("TextNoteAttributes", &[root], |id| match id {
+            362 => Some(&category[..]),
+            363 => Some(&style[..]),
+            _ => None,
+        });
+        let pen = builtin_parameters::parameter_by_enum("LINE_PEN")
+            .unwrap()
+            .id;
+        let color = builtin_parameters::parameter_by_enum("LINE_COLOR")
+            .unwrap()
+            .id;
+        assert!(got.contains(&(pen, ParamValue::Integer(3))));
+        assert!(got.contains(&(color, ParamValue::Integer(255))));
+    }
+
+    #[test]
+    fn text_font_through_the_font_element() {
+        let attr = fields(vec![("m_fontId", Value::Id(364))]);
+        let root = fields(vec![("m_lineAndTextAttr", Value::Object(attr))]);
+        let font = fields(vec![
+            ("m_name", Value::Text("Arial".into())),
+            ("m_size", Value::Float(0.0082)),
+        ]);
+        let font_elem = fields(vec![(
+            "m_pFont",
+            Value::New {
+                tag: 1,
+                index: 1,
+                marker: 0,
+            },
+        )]);
+        let target = [font_elem, font];
+        let got = linked_parameters("TextNoteAttributes", &[root], |id| {
+            (id == 364).then_some(&target[..])
+        });
+        let font_id = builtin_parameters::parameter_by_enum("TEXT_FONT")
+            .unwrap()
+            .id;
+        let size_id = builtin_parameters::parameter_by_enum("TEXT_SIZE")
+            .unwrap()
+            .id;
+        assert!(got.contains(&(font_id, ParamValue::String("Arial".into()))));
+        assert!(got.contains(&(size_id, ParamValue::Double(0.0082))));
     }
 
     #[test]

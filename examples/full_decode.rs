@@ -138,6 +138,16 @@ fn main() -> anyhow::Result<()> {
     let mut owner_named = std::collections::HashSet::new();
     let mut objects: Vec<J> = Vec::new();
     let mut elements: Vec<J> = Vec::new();
+    // Every object of every element, for rule searches; only when asked
+    // (`FULL_DECODE_ALL_OBJECTS=1`): it multiplies the output's size.
+    let all_objects = std::env::var_os("FULL_DECODE_ALL_OBJECTS").is_some();
+    let mut all: Vec<J> = Vec::new();
+    // Every element object's objects, in the order of `elements`, and the
+    // first element object of each id, for rules that follow an id into
+    // another element. An id resolves to its first element object, as names
+    // do (`names`); ids of embedded content documents can repeat the host's.
+    let mut element_objects: Vec<Vec<Fields>> = Vec::new();
+    let mut first_of_id: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     let gaps = for_each_object(&mut rf, |o| {
         let element = o.element();
         objects.push(json!({
@@ -152,6 +162,14 @@ fn main() -> anyhow::Result<()> {
             "element": element.is_some(),
         }));
         if let (Some(id), Some(root)) = (element, o.root()) {
+            if all_objects {
+                all.push(json!([
+                    id,
+                    o.objects.iter().map(fields).collect::<Vec<_>>()
+                ]));
+            }
+            first_of_id.entry(id).or_insert(element_objects.len());
+            element_objects.push(o.objects.clone());
             let owner = match root.get("m_ownerId") {
                 Some(Value::Id(i)) => Some(*i),
                 _ => None,
@@ -203,6 +221,16 @@ fn main() -> anyhow::Result<()> {
         }
         false
     };
+    for (e, objects) in elements.iter_mut().zip(&element_objects) {
+        let tag = e["tag"].as_u64().unwrap_or(0) as u16;
+        let class = layouts.classes.get(&tag).map_or("", |c| c.name.as_str());
+        let linked = rvt::field_parameters::linked_parameters(class, objects, |t| {
+            first_of_id.get(&t).map(|&i| element_objects[i].as_slice())
+        });
+        if let Some(list) = e["field_params"].as_array_mut() {
+            list.extend(linked.iter().map(|(p, v)| json!([p, param(v)])));
+        }
+    }
     let mut style_names = std::collections::HashMap::new();
     for (id, root) in &styles {
         let n = rvt::element_names::graphics_style_name(
@@ -365,7 +393,7 @@ fn main() -> anyhow::Result<()> {
             .into_iter()
             .map(|(id, u)| (id.to_string(), json!(u)))
             .collect();
-    let out = json!({
+    let mut out = json!({
         "unique_ids": unique_ids,
         "release": release,
         "builtin_ids": builtin_ids,
@@ -380,6 +408,9 @@ fn main() -> anyhow::Result<()> {
         "schema": schema,
         "elem_table": rows,
     });
+    if all_objects {
+        out["all_objects"] = json!(all);
+    }
     println!("{out}");
     Ok(())
 }
