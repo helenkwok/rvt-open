@@ -152,7 +152,8 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
   const sectionCounts = await drawn(page);
   console.log('section', sectionName, JSON.stringify(sectionCounts));
   expect(sectionName).toBe('A');
-  expect(sectionCounts).toEqual({ lines: 123, texts: 4, viewports: 0 });
+  // From the model the open built (123 lines from a second export; see the pull request).
+  expect(sectionCounts).toEqual({ lines: 128, texts: 4, viewports: 0 });
   at('section drawn');
   await shot(page, 'section');
 
