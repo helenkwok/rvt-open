@@ -44,17 +44,16 @@ attr unique_id match	5601	higher
 attr unique_id differ	0	lower
 attr unique_id not decoded	0	lower
 values parameter: differ	97	lower
-values parameter: differ from a nested parameter set	33	lower
 values parameter: differ from the element header	18	lower
 values parameter: differ from the element's name	12	lower
 values parameter: match	2112	higher
 values parameter: match from a Double entry	78	higher
-values parameter: match from a nested parameter set	2792	higher
-values parameter: match from an element field	6625	higher
+values parameter: match from a nested parameter set	2825	higher
+values parameter: match from an element field	8158	higher
 values parameter: match from the element header	16518	higher
 values parameter: match from the element's name	1206	higher
-values parameter: not stored (computed?)	2562	lower
-values parameter: not stored, writable	5367	lower
+values parameter: not stored (computed?)	2309	lower
+values parameter: not stored, writable	4087	lower
 values property: API runtime state (not file data)	20013	lower
 values property: match	56591	higher
 values property: no file field known	34092	lower
