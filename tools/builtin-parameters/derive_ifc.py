@@ -11,8 +11,13 @@ property set (group) and IFC value type. Route 2 (file and label): where the lab
 several ids, the element's own stored parameter picks the id. Route 2 wins where both give one.
 Enumeration texts: an integer parameter whose IFC value is a text gives (id, stored integer) -> text.
 Writes OUT_PREFIX.group-spec.tsv (id, group, ifc_type, route) and OUT_PREFIX.enum-texts.tsv."""
-import collections, glob, os, sys
-pairs, bip, out = sys.argv[1:4]
+import argparse, collections, glob, os
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument('pairs_dir')
+ap.add_argument('bip_enum')
+ap.add_argument('out_prefix')
+args = ap.parse_args()
+pairs, bip, out = args.pairs_dir, args.bip_enum, args.out_prefix
 labels = collections.defaultdict(set)
 for l in open(bip):
     if l[0] != '#':

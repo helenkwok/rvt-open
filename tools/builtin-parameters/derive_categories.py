@@ -9,7 +9,7 @@ Revit's export writes each element's category name as the `Category` property of
 property set (and of its type's). An element's partition record names its category by id, so each
 (category id, name) pair is a vote; the most voted name of an id is kept, with the votes.
 OUT.tsv: id, name, votes, models, other names (name:votes;...)."""
-import collections, re, sys
+import argparse, collections, re
 
 ENT = re.compile(r"^#(\d+)=\s*(\w+)\((.*)\);\s*$")
 
@@ -112,9 +112,13 @@ def ifc_categories(path):
     return out
 
 
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument('pairs_tsv')
+ap.add_argument('out_tsv')
+args = ap.parse_args()
 votes = collections.defaultdict(collections.Counter)
 models = collections.defaultdict(set)
-for line in open(sys.argv[1]):
+for line in open(args.pairs_tsv):
     ifc, cats = line.rstrip('\n').split('\t')
     names = ifc_categories(ifc)
     n = 0
@@ -125,7 +129,7 @@ for line in open(sys.argv[1]):
             models[int(c)].add(ifc)
             n += 1
     print(ifc, 'elements joined', n, flush=True)
-with open(sys.argv[2], 'w', encoding='utf-8') as f:
+with open(args.out_tsv, 'w', encoding='utf-8') as f:
     f.write('# id\tname\tvotes\tmodels\tother names\n')
     for i in sorted(votes):
         c = votes[i]

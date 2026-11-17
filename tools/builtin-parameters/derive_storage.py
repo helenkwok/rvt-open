@@ -9,8 +9,12 @@ sets, N its other parameter sets, F what `field_parameters` derives from object 
 are read: a type is a file's own, not an interpretation. An id seen with two types takes the more common
 one and the other counts are kept.
 OUT.tsv: id, type, models, counts (type:n;...), and a second file OUT.f-only.tsv lists the ids only F gives."""
-import collections, gzip, os, sys
-d, out = sys.argv[1:3]
+import argparse, collections, gzip, os
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument('census_dir')
+ap.add_argument('out_tsv')
+args = ap.parse_args()
+d, out = args.census_dir, args.out_tsv
 sn = collections.defaultdict(collections.Counter)
 models = collections.defaultdict(set)
 fonly = collections.defaultdict(collections.Counter)

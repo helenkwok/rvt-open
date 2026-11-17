@@ -17,6 +17,8 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .ok_or_else(|| anyhow::anyhow!("usage: header_categories <file.rvt>"))?;
     let mut rf = RevitFile::open(&path)?;
+    // `element_categories` reads nothing from a file whose info it cannot read: stop instead.
+    rf.basic_file_info()?;
     let out = std::io::stdout();
     let mut w = std::io::BufWriter::new(out.lock());
     for (element, category) in element_categories(&mut rf) {

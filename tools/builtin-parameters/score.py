@@ -9,16 +9,16 @@ published; this repository keeps only the counts below (expected-score.tsv) and 
 For each field it counts, over the ids the key has: filled (the table has a value), match, differ, empty
 (the table has none). It exits 1 when `match` falls below, or `differ` rises above, the counts in
 expected-score.tsv: a field filled from a source that disagrees with the key, or a match lost, fails."""
-import csv, hashlib, os, re, sys
+import argparse, csv, hashlib, os, re, sys
 here = os.path.dirname(os.path.abspath(__file__))
-args = sys.argv[1:]
-key = args.pop(0)
-opt = {}
-while args:
-    a = args.pop(0)
-    opt[a] = True if a == '--write-expected' else args.pop(0)
-table = opt.get('--table', os.path.join(here, '..', '..', 'src', 'builtin_parameters', 'table.rs'))
-expected = opt.get('--expected', os.path.join(here, 'expected-score.tsv'))
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument('key_dir')
+ap.add_argument('--table', default=os.path.join(here, '..', '..', 'src', 'builtin_parameters', 'table.rs'))
+ap.add_argument('--expected', default=os.path.join(here, 'expected-score.tsv'))
+ap.add_argument('--program-names', default=os.path.join(here, '..', '..', 'src', 'program_names', 'table.rs'))
+ap.add_argument('--write-expected', action='store_true')
+args = ap.parse_args()
+key, table, expected = args.key_dir, args.table, args.expected
 src = open(table, encoding='utf-8').read()
 tup = re.compile(r'\(\s*(-?\d+),\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)",\s*"([-A-Z]{6})",?\s*\)', re.S)
 un = lambda s: s.replace('\\"', '"').replace('\\\\', '\\')
@@ -72,7 +72,7 @@ kc = {int(r[0]): r[1] for r in rows('builtin_categories.tsv') if int(r[0]) < 0 a
 ct = {}
 for m in re.finditer(r'\((-?\d+), "((?:[^"\\]|\\.)*)", "((?:[^"\\]|\\.)*)"\),', src.split('CATEGORIES', 1)[1].split('LOCALIZED', 1)[0]):
     ct[int(m[1])] = un(m[3])
-pn = open(opt.get('--program-names', os.path.join(here, '..', '..', 'src', 'program_names', 'table.rs')), encoding='utf-8').read()
+pn = open(args.program_names, encoding='utf-8').read()
 pn_en = {int(m.group(1)): m.group(2) for m in re.finditer(r'\n        (-\d+),\n        \[\n            "((?:[^"\\]|\\.)*)"', pn)}
 tally('category_name', [(ct.get(i) or pn_en.get(i, ''), n) for i, n in kc.items()])
 out = ['field\tkey_ids\tfilled\tmatch\tdiffer\tempty']
@@ -81,7 +81,7 @@ for k, v in counts.items():
 hashes = '# key files: ' + ', '.join(f"{n} {sha(n)}" for n in ('builtin_parameters.tsv', 'builtin_enums.tsv', 'builtin_categories.tsv'))
 print(hashes)
 print('\n'.join(out))
-if opt.get('--write-expected'):
+if args.write_expected:
     open(expected, 'w').write(hashes + '\n' + '\n'.join(out) + '\n')
     sys.exit(0)
 bad = 0

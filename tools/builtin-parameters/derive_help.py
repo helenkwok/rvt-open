@@ -13,8 +13,13 @@ carries it in all 12 languages, with the same term on all of them, is written, t
 cited per language (sorted).
 Terms only: no help text is kept.
 OUT.tsv: id, language, term, topic (`<component>/<topic>`)."""
-import collections, html, os, re, sys
-helpdir, names, out = sys.argv[1:4]
+import argparse, collections, html, os, re
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument('helpdir')
+ap.add_argument('names')
+ap.add_argument('out')
+args = ap.parse_args()
+helpdir, names, out = args.helpdir, args.names, args.out
 LANGS = 'CHT CHS CSY DEU ESP FRA ITA JPN KOR PLK PTB RUS'.split()
 PAT = {k: re.compile(v, re.S) for k, v in {
     'td': r'<td\b[^>]*>(.*?)</td>', 'li': r'<li\b[^>]*>(.*?)</li>',

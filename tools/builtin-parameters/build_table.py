@@ -12,9 +12,13 @@ INPUTS_DIR (tools/builtin-parameters/inputs/):
   help-terms.tsv   id, language, term, topic: one consistent help term in each of the 12 languages (derive_help.py)
   category-names.tsv  id, name, votes, models, other names: Revit's IFC export of public samples (derive_categories.py)
 The Revit API dump of public samples is not an input: it is the answer key `score.py` checks the result against."""
-import hashlib, os, sys
+import argparse, hashlib, os, sys
 
-d, out = sys.argv[1:3]
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument('inputs_dir')
+ap.add_argument('out_rs')
+args = ap.parse_args()
+d, out = args.inputs_dir, args.out_rs
 # Ids Helen decided to keep with an empty name: no public source names them (the reference lacks them).
 KEPT_NO_NAME = [-1154658, -1154657, -1140313, -1017024, -1017023, -1006800, -1005051]
 SPEC = {
