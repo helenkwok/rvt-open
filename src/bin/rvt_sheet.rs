@@ -144,6 +144,11 @@ struct Cli {
     /// templates left out) as JSON and exit.
     #[arg(long)]
     list_views: bool,
+
+    /// Draw from the model the viewer's 3D view is built from (bodies drawn from the meshes the
+    /// file saved, family geometry, the project's last phase) instead of the plain export.
+    #[arg(long)]
+    viewer_model: bool,
 }
 
 fn main() -> ExitCode {
@@ -235,9 +240,17 @@ fn run(cli: &Cli) -> Result<(), String> {
     } else {
         None
     };
-    let model = RvtDocExporter
-        .export(&mut rf)
-        .map_err(|e| format!("export {}: {e}", input.display()))?;
+    let model = if cli.viewer_model {
+        rvt::ifc::run_export_with_limits(
+            &mut rf,
+            &rvt::ifc::ExportOptions::default(),
+            rvt::walker::WalkerLimits::default(),
+        )
+        .map(|run| run.model)
+    } else {
+        RvtDocExporter.export(&mut rf)
+    }
+    .map_err(|e| format!("export {}: {e}", input.display()))?;
     // A plan view draws each family instance's plan symbol (door swings, window lines).
     let symbols = if cli.sheet.is_some() || (cli.view.is_some() && cli.format != "svg") {
         rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model).unwrap_or_else(|e| {

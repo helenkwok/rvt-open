@@ -30,7 +30,7 @@
 #
 # Writes under <out dir>/<export name>/: reference/ (tables, SVG of every layout, report.json),
 # candidate.<format> and <format>/score.json, score.tsv when there is a candidate, and
-# <out dir>/summary.tsv. Binaries: rvt-dwg and rvt-sheet on PATH, or RVT_BIN=<folder holding them>.
+# <out dir>/summary.tsv. SHEET_ARGS adds arguments to every rvt-sheet call (e.g. --viewer-model). Binaries: rvt-dwg and rvt-sheet on PATH, or RVT_BIN=<folder holding them>.
 set -euo pipefail
 exports=${1:?usage: score.sh <exports dir> <samples dir> <out dir> [manifest.tsv] [layer-map.tsv]}
 samples=${2:?samples dir}
@@ -72,7 +72,7 @@ while IFS=$'\t' read -r export sample kind layout tol view; do
   for fmt in "${formats[@]}"; do
     [[ $fmt == pdf ]] && continue
     cand="$dir/candidate.$fmt"
-    "$SHEET" "$samples/$sample" "${sheet[@]}" --format "$fmt" -o "$cand" > "$dir/candidate.$fmt.log" 2>&1 \
+    "$SHEET" "$samples/$sample" "${sheet[@]}" ${SHEET_ARGS:-} --format "$fmt" -o "$cand" > "$dir/candidate.$fmt.log" 2>&1 \
       || { printf '%s\t%s\t%s\t\t\t\t\t\t\t\tcandidate failed (%s)\n' "$export" "$kind" "$fmt" "$note" >> "$out/summary.tsv"; continue; }
     mkdir -p "$dir/$fmt"
     "$DWG" compare "$ref" "$cand" "${args[@]}" -o "$dir/$fmt" > "$dir/$fmt/compare.log" 2>&1 \

@@ -1,0 +1,1 @@
+- **The viewer's first drawing is drawn from the model its 3D view was built from.** The first sheet or view drawn after a file is opened exported the whole file a second time. It now takes the model the open built, and `rvt-sheet --viewer-model` draws from that same model. The figures are in the pull request.
