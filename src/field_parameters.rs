@@ -2081,15 +2081,16 @@ fn at<'a>(objects: &'a [Fields], path: &str) -> Option<&'a Value> {
     None
 }
 
-/// A field value as a parameter of storage type `storage` (`Integer`,
-/// `Double`, `String`, `ElementId`); `None` when the kinds do not fit.
-fn as_parameter(v: &Value, storage: &str) -> Option<ParamValue> {
-    Some(match (storage, v) {
-        ("Integer", Value::Int(i)) => ParamValue::Integer(*i),
-        ("Integer", Value::Bool(b)) => ParamValue::Integer(i64::from(*b)),
-        ("Double", Value::Float(f)) => ParamValue::Double(*f),
-        ("String", Value::Text(s)) => ParamValue::String(s.clone()),
-        ("ElementId", Value::Id(i)) => ParamValue::ElementId(*i),
+/// A field value as a parameter value, of the storage type its own kind
+/// gives (a flag or integer is `Integer`, a float `Double`, a text
+/// `String`, an element id `ElementId`); `None` for any other kind.
+fn as_parameter(v: &Value) -> Option<ParamValue> {
+    Some(match v {
+        Value::Int(i) => ParamValue::Integer(*i),
+        Value::Bool(b) => ParamValue::Integer(i64::from(*b)),
+        Value::Float(f) => ParamValue::Double(*f),
+        Value::Text(s) => ParamValue::String(s.clone()),
+        Value::Id(i) => ParamValue::ElementId(*i),
         _ => return None,
     })
 }
@@ -2104,7 +2105,7 @@ pub fn field_parameters(class: &str, objects: &[Fields]) -> Vec<(i64, ParamValue
         .take_while(|r| r.0 == class)
         .filter_map(|&(_, name, path)| {
             let p = builtin_parameters::parameter_by_enum(name)?;
-            Some((p.id, as_parameter(at(objects, path)?, p.storage_type)?))
+            Some((p.id, as_parameter(at(objects, path)?)?))
         })
         .collect()
 }
@@ -2130,7 +2131,7 @@ pub fn linked_parameters<'a>(
                 };
                 v = at(element(*target)?, hop)?;
             }
-            Some((p.id, as_parameter(v, p.storage_type)?))
+            Some((p.id, as_parameter(v)?))
         })
         .collect()
 }
@@ -2165,7 +2166,7 @@ mod tests {
         );
         for (_, name, path) in FIELD_RULES.iter().chain(LINKED_RULES) {
             let p = builtin_parameters::parameter_by_enum(name).expect(name);
-            assert!(!p.storage_type.is_empty(), "{name} has no storage type");
+            assert_ne!(p.id, 0, "{name}");
             assert_eq!(
                 path.contains("->"),
                 LINKED_RULES.iter().any(|r| r.2 == *path)

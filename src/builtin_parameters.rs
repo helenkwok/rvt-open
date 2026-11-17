@@ -1,14 +1,18 @@
 //! Revit's built-in parameters and categories by id: the name
 //! Revit shows for a built-in parameter's negative id, its storage type,
-//! spec, parameter group and enumeration texts, and each `BuiltInCategory`'s
-//! enum name and the name Revit shows.
+//! spec, parameter group and enumeration texts, its name in the other 12
+//! languages of Revit's help, and each `BuiltInCategory`'s enum name and
+//! the name Revit shows.
 //!
-//! Every entry comes from a public source or our own Revit API dump, as the
-//! specs and enumeration texts from `Parameter.Definition.Name`,
-//! `StorageType` and `AsValueString` dumped from 102 public sample models
-//! writes each parameter in; ids the dump never saw named by the label in the
-//! Revit 2027 API reference's `BuiltInParameter` page; enum names from the
-//! same reference. Labels are English, as Revit 2018-2027 shows them.
+//! Every entry comes from a public source, and each field says which: the
+//! names and enum names from the Revit 2027 API reference's
+//! `BuiltInParameter` page; the storage type from the values public sample
+//! files store; the spec, group and enumeration texts from Revit's own IFC
+//! export of public samples; the names in the other languages from the
+//! same Revit 2027 help topic in each language (machine-matched, cited per
+//! entry). A field no public source gives is empty. The Revit API dump of
+//! the public samples is not a source: it is the answer key
+//! `tools/builtin-parameters/score.py` scores the table against.
 
 mod table;
 
@@ -16,30 +20,40 @@ mod table;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltInParameter {
     pub id: i64,
-    /// The name Revit shows (`LabelUtils`), e.g. `Unconnected Height`.
+    /// The name Revit shows, e.g. `Unconnected Height`: the label of the
+    /// Revit 2027 API reference; empty where the reference has none.
     pub name: &'static str,
     /// The `BuiltInParameter` enum name, e.g. `WALL_USER_HEIGHT_PARAM`;
     /// empty where the API reference lists none.
     pub enum_name: &'static str,
-    /// `String`, `Integer`, `Double` or `ElementId`; empty where unseen.
+    /// `String`, `Integer`, `Double` or `ElementId`, the type of the values
+    /// public files store for this id; empty where none does.
     pub storage_type: &'static str,
-    /// The spec type id the display was measured as (length, area, Yes/No,
-    /// ...); empty where not known or not a measure.
+    /// The spec type id from the value type of the property of the same
+    /// name in Revit's IFC export (length, area, Yes/No, ...); empty where
+    /// it is not exported or not a measure.
     pub spec_type_id: &'static str,
     /// The parameter group's label, as Revit's own IFC export names the set
     /// (`Constraints`, `Identity Data`); empty where never exported.
     pub group: &'static str,
-    /// `true` where the entry comes from our API dump, `false` where only
-    /// from the API reference.
-    pub dumped: bool,
+    /// One code per field, in the order name, enum name, storage type,
+    /// spec, group, localized names: `R` the API reference, `F` stored
+    /// values of public files, `E` Revit's IFC export, `H` machine-matched
+    /// help terms, `-` no public source (the field is empty).
+    pub sources: &'static str,
 }
+
+/// The languages of [`localized_name`], in the order of the table.
+pub const LOCALIZED_LANGUAGES: [&str; 12] = [
+    "CHT", "CHS", "CSY", "DEU", "ESP", "FRA", "ITA", "JPN", "KOR", "PLK", "PTB", "RUS",
+];
 
 /// The built-in parameter `id`, `None` for one not known.
 pub fn parameter(id: i64) -> Option<BuiltInParameter> {
     let at = table::PARAMETERS
         .binary_search_by_key(&id, |row| row.0)
         .ok()?;
-    let (id, name, enum_name, storage_type, spec_type_id, group, source) = table::PARAMETERS[at];
+    let (id, name, enum_name, storage_type, spec_type_id, group, sources) = table::PARAMETERS[at];
     Some(BuiltInParameter {
         id,
         name,
@@ -47,8 +61,25 @@ pub fn parameter(id: i64) -> Option<BuiltInParameter> {
         storage_type,
         spec_type_id,
         group,
-        dumped: source == 'D',
+        sources,
     })
+}
+
+/// The name of built-in parameter `id` in `language` (a Revit locale code
+/// from [`LOCALIZED_LANGUAGES`]) and the help topic (`<component>/<topic>`,
+/// help.autodesk.com Revit 2027) the term was taken from. Only parameters
+/// whose term is the same on every help topic that carries their name, in
+/// all 12 languages, have one. The match is by machine: the term at the same
+/// place of the same topic as the English name.
+pub fn localized_name(id: i64, language: &str) -> Option<(&'static str, &'static str)> {
+    let col = LOCALIZED_LANGUAGES
+        .iter()
+        .position(|l| l.eq_ignore_ascii_case(language))?;
+    let at = table::LOCALIZED
+        .binary_search_by_key(&id, |row| row.0)
+        .ok()?;
+    let (term, topic) = table::LOCALIZED[at].1[col];
+    (!term.is_empty()).then_some((term, topic))
 }
 
 /// The built-in parameter whose `BuiltInParameter` enum name is
@@ -116,16 +147,27 @@ pub fn is_enumeration(id: i64) -> bool {
 }
 
 /// The `BuiltInCategory` `id`'s enum name (`OST_Walls`) and the name Revit
-/// shows (`Walls`; empty where the API dump of the public sample models
-/// never saw the category).
+/// shows (`Walls`: the `Category` property of Revit's IFC export of public
+/// samples, else the term of Revit's public help, see
+/// [`crate::program_names`]; empty where neither gives one).
 pub fn category(id: i64) -> Option<(&'static str, &'static str)> {
     table::CATEGORIES
         .binary_search_by_key(&id, |row| row.0)
         .ok()
-        .map(|at| (table::CATEGORIES[at].1, table::CATEGORIES[at].2))
+        .map(|at| {
+            let (_, enum_name, name) = table::CATEGORIES[at];
+            (
+                enum_name,
+                if name.is_empty() {
+                    crate::program_names::category_name(id, "ENU").unwrap_or("")
+                } else {
+                    name
+                },
+            )
+        })
 }
 
-/// The name Revit shows for category `id`: the dumped name, else the enum
+/// The name Revit shows for category `id`: the help's name, else the enum
 /// name without `OST_`.
 pub fn category_name(id: i64) -> Option<&'static str> {
     let (enum_name, name) = category(id)?;
@@ -137,7 +179,8 @@ pub fn category_name(id: i64) -> Option<&'static str> {
 }
 
 /// Revit's `Category.Name` for category `id` and its parent's name, where it
-/// has one: the dumped `Stairs: Runs` is `Runs`, under `Stairs`.
+/// has one. The help gives a category's own name only, so a subcategory has
+/// no parent here.
 pub fn category_name_and_parent(id: i64) -> Option<(&'static str, Option<&'static str>)> {
     let full = category_name(id)?;
     Some(match full.split_once(": ") {
@@ -195,20 +238,23 @@ mod tests {
         assert!(height.spec_type_id.starts_with("autodesk.spec.aec:length-"));
         assert_eq!(height.group, "Constraints");
         assert_eq!(parameter(-1_140_422).map(|p| p.name), Some("Keynote"));
+        assert_eq!(height.sources, "RRFEE-");
         assert_eq!(parameter(1), None);
+        // No public source names this id: kept, with an empty name.
+        assert_eq!(parameter(-1_005_051).map(|p| p.name), Some(""));
         assert_eq!(
             parameter_by_enum("WALL_USER_HEIGHT_PARAM").map(|p| p.id),
             Some(-1_001_105)
         );
         assert_eq!(category(-2_000_011), Some(("OST_Walls", "Walls")));
         assert_eq!(category_own_name(-2_000_011), Some("Walls"));
-        assert_eq!(category_own_name(-2_000_919), Some("Runs"));
         // No public name: not the enum name, and not a name from a model's API dump.
+        assert_eq!(category_own_name(-2_000_919), None);
         assert_eq!(category_own_name(-2_000_031), None);
         assert_eq!(category_name(-2_000_080), Some("Furniture"));
         assert_eq!(
-            category_name_and_parent(-2_000_919),
-            Some(("Runs", Some("Stairs")))
+            category_name_and_parent(-2_000_919).map(|c| c.1),
+            Some(None)
         );
         assert_eq!(
             category_name_and_parent(-2_000_080),

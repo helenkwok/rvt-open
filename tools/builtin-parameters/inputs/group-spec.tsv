@@ -1,0 +1,470 @@
+# id	group	ifc_type	route
+-1180416	Dimensions	IFCREAL	label
+-1180403	Dimensions	IFCLENGTHMEASURE	label
+-1180402	Dimensions	IFCLENGTHMEASURE	label
+-1155221	Construction	IFCBOOLEAN	label
+-1155215	Construction	IFCBOOLEAN	label
+-1155210	Data	IFCBOOLEAN	label
+-1155150	Electrical - Circuiting	IFCINTEGER	label
+-1155113	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1155112	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1155111	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1155107	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1155106	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1155105	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1155100	Electrical - Circuiting	IFCBOOLEAN	label
+-1155099	Electrical - Circuiting	IFCIDENTIFIER	label
+-1154694	Construction	IFCIDENTIFIER	label
+-1154619	Identity Data	IFCTEXT	label
+-1154617	Construction	IFCTEXT	label
+-1154616	Construction	IFCTEXT	label
+-1154614	Construction	IFCTEXT	label
+-1152385	Identity Data	IFCLABEL	file+label
+-1152373	Geometric Position	IFCLENGTHMEASURE	label
+-1152372	Geometric Position	IFCIDENTIFIER	label
+-1152371	Geometric Position	IFCLENGTHMEASURE	label
+-1152370	Geometric Position	IFCIDENTIFIER	label
+-1152369	Geometric Position	IFCLENGTHMEASURE	label
+-1152368	Geometric Position	IFCIDENTIFIER	label
+-1152367	Geometric Position	IFCLENGTHMEASURE	label
+-1152366	Geometric Position	IFCIDENTIFIER	label
+-1152365	Geometric Position	IFCLENGTHMEASURE	label
+-1152364	Geometric Position	IFCIDENTIFIER	label
+-1152363	Geometric Position	IFCLENGTHMEASURE	label
+-1152362	Geometric Position	IFCIDENTIFIER	label
+-1152361	Geometric Position	IFCIDENTIFIER	label
+-1152360	Geometric Position	IFCLENGTHMEASURE	label
+-1152359	Geometric Position	IFCLENGTHMEASURE	label
+-1152358	Geometric Position	IFCLENGTHMEASURE	label
+-1152300	Constraints	IFCLENGTHMEASURE	label
+-1152177	Risers	IFCBOOLEAN	label
+-1152176	Risers	IFCBOOLEAN	label
+-1152161	Risers	IFCIDENTIFIER	label
+-1152151	Treads	IFCBOOLEAN	label
+-1151811	Dimensions	IFCBOOLEAN	label
+-1151810	Dimensions	IFCLENGTHMEASURE	label
+-1151809	Dimensions	IFCLENGTHMEASURE	label
+-1151708	Constraints	IFCIDENTIFIER	label
+-1151706	Constraints	IFCIDENTIFIER	label
+-1151705	Constraints	IFCIDENTIFIER	label
+-1151604	Treads	IFCBOOLEAN	label
+-1151603	Construction	IFCLENGTHMEASURE	label
+-1151507	Dimensions	IFCLENGTHMEASURE	label
+-1151501	Constraints	IFCLENGTHMEASURE	label
+-1151309	Dimensions	IFCLENGTHMEASURE	label
+-1151306	Dimensions	IFCINTEGER	label
+-1151304	Construction	IFCLENGTHMEASURE	label
+-1151303	Constraints	IFCLENGTHMEASURE	label
+-1151302	Constraints	IFCLENGTHMEASURE	label
+-1151301	Constraints	IFCLENGTHMEASURE	label
+-1151237	Supports	IFCBOOLEAN	label
+-1151236	Supports	IFCLENGTHMEASURE	label
+-1151235	Supports	IFCLENGTHMEASURE	label
+-1151234	Graphics	IFCLABEL	label
+-1151232	Supports	IFCIDENTIFIER	label
+-1151231	Supports	IFCIDENTIFIER	label
+-1151229	End Connection	IFCLENGTHMEASURE	label
+-1151228	End Connection	IFCLENGTHMEASURE	label
+-1151226	End Connection	IFCLENGTHMEASURE	label
+-1151225	End Connection	IFCLENGTHMEASURE	label
+-1151224	End Connection	IFCIDENTIFIER	label
+-1151217	Supports	IFCINTEGER	label
+-1151216	Calculation Rules	IFCLENGTHMEASURE	label
+-1151211	Supports	IFCLABEL	label
+-1151210	Supports	IFCLABEL	label
+-1151209	Supports	IFCLABEL	label
+-1151208	Construction	IFCLABEL	label
+-1151207	Construction	IFCLABEL	label
+-1151154	Dimensions	IFCINTEGER	label
+-1151105	Constraints	IFCLENGTHMEASURE	label
+-1150435	Lining	IFCTEXT	label
+-1150434	Insulation	IFCTEXT	label
+-1150420	Identity Data	IFCTEXT	label
+-1150403	Identity Data	IFCLABEL	label
+-1150380	Top Rail	IFCBOOLEAN	label
+-1150321	Adaptive Component	IFCBOOLEAN	label
+-1150171	Constraints	IFCIDENTIFIER	label
+-1150141	Photometrics	IFCTEXT	label
+-1150130	Dimensions	IFCLENGTHMEASURE	label
+-1150129	Photometrics	IFCLENGTHMEASURE	label
+-1150128	Photometrics	IFCLENGTHMEASURE	label
+-1150127	Photometrics	IFCLENGTHMEASURE	label
+-1150126	Photometrics	IFCLENGTHMEASURE	label
+-1150118	Photometrics	IFCBOOLEAN	label
+-1150117	Photometrics	IFCIDENTIFIER	label
+-1150115	Photometrics	IFCREAL	label
+-1150114	Photometrics	IFCREAL	label
+-1150113	Photometrics	IFCREAL	label
+-1150112	Photometrics	IFCREAL	label
+-1150110	Photometrics	IFCREAL	label
+-1150109	Photometrics	IFCREAL	label
+-1150108	Photometrics	IFCINTEGER	label
+-1150107	Photometrics	IFCREAL	label
+-1150106	Photometrics	IFCILLUMINANCEMEASURE	label
+-1150105	Photometrics	IFCLUMINOUSINTENSITYMEASURE	label
+-1150104	Photometrics	IFCREAL	label
+-1150103	Photometrics	IFCPOWERMEASURE	label
+-1150070	Graphics	IFCBOOLEAN	label
+-1141040	Dimensions	IFCLENGTHMEASURE	label
+-1141033	Constraints	IFCLENGTHMEASURE	label
+-1141032	Constraints	IFCLENGTHMEASURE	label
+-1141031	Constraints	IFCLENGTHMEASURE	label
+-1141030	Constraints	IFCLENGTHMEASURE	label
+-1141028	Insulation	IFCLENGTHMEASURE	label
+-1141027	Insulation	IFCLENGTHMEASURE	label
+-1141024	Constraints	IFCLENGTHMEASURE	label
+-1141023	Constraints	IFCLENGTHMEASURE	label
+-1141021	Constraints	IFCLENGTHMEASURE	label
+-1141020	Constraints	IFCLENGTHMEASURE	label
+-1140717	Dimensions	IFCLENGTHMEASURE	label
+-1140716	Structural	IFCIDENTIFIER	label
+-1140715	Dimensions	IFCLENGTHMEASURE	label
+-1140713	Construction	IFCBOOLEAN	label
+-1140712	Dimensions	IFCLENGTHMEASURE	label
+-1140711	Construction	IFCIDENTIFIER	label
+-1140710	Structural	IFCBOOLEAN	label
+-1140706	Structural	IFCIDENTIFIER	label
+-1140705	Structural	IFCBOOLEAN	label
+-1140704	Structural	IFCBOOLEAN	label
+-1140422	Identity Data	IFCTEXT	file+label
+-1140324	Mechanical	IFCTEXT	label
+-1140284	Dimensions	IFCLENGTHMEASURE	label
+-1140283	Dimensions	IFCLENGTHMEASURE	label
+-1140277	Mechanical	IFCLABEL	label
+-1140266	Fire Protection	IFCLENGTHMEASURE	label
+-1140264	Fire Protection	IFCREAL	label
+-1140263	Fire Protection	IFCIDENTIFIER	label
+-1140262	Fire Protection	IFCIDENTIFIER	label
+-1140261	Fire Protection	IFCIDENTIFIER	label
+-1140260	Fire Protection	IFCIDENTIFIER	label
+-1140252	Mechanical	IFCREAL	label
+-1140251	Mechanical	IFCREAL	label
+-1140250	Mechanical	IFCREAL	label
+-1140237	Mechanical	IFCLENGTHMEASURE	label
+-1140211	Mechanical - Flow	IFCREAL	label
+-1140210	Mechanical - Flow	IFCREAL	label
+-1140209	Mechanical - Flow	IFCIDENTIFIER	label
+-1140208	Mechanical - Flow	IFCREAL	label
+-1140200	Mechanical	IFCLABEL	label
+-1140166	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1140165	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1140164	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1140154	Materials and Finishes	IFCLABEL	label
+-1140153	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1140152	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
+-1140151	Electrical - Loads	IFCPOSITIVERATIOMEASURE	label
+-1140148	Electrical - Circuiting	IFCINTEGER	label
+-1140142	Electrical - Circuiting	IFCBOOLEAN	label
+-1140140	Electrical - Circuiting	IFCELECTRICCURRENTMEASURE	label
+-1140129	Other	IFCIDENTIFIER	file+label
+-1140119	Electrical	IFCREAL	label
+-1140117	Other	IFCTEXT	label
+-1140114	Dimensions	IFCLENGTHMEASURE	label
+-1140113	Dimensions	IFCLENGTHMEASURE	label
+-1140112	Dimensions	IFCLENGTHMEASURE	label
+-1140103	Electrical - Loads	IFCTEXT	label
+-1140088	Electrical - Loads	IFCLABEL	file+label
+-1140087	Electrical - Circuiting	IFCLABEL	label
+-1140083	General	IFCTEXT	label
+-1140082	Electrical - Circuiting	IFCELECTRICCURRENTMEASURE	label
+-1140081	General	IFCTEXT	label
+-1140079	Electrical - Circuiting	IFCINTEGER	label
+-1140078	Electrical Equipment Connection Schedule	IFCTEXT	file+label
+-1140064	Electrical - Circuiting	IFCLABEL	file+label
+-1140040	Electrical - Lighting	IFCBOOLEAN	file+label
+-1140034	Photometrics	IFCTEXT	label
+-1140008	Electrical	IFCREAL	label
+-1140001	Electrical	IFCINTEGER	label
+-1114394	Fittings	IFCLABEL	label
+-1114393	Fittings	IFCLABEL	label
+-1114388	Fittings	IFCLABEL	label
+-1114387	Fittings	IFCLABEL	label
+-1114242	Graphics	IFCBOOLEAN	file+label
+-1114241	Electrical - Circuiting	IFCTEXT	label
+-1114238	Other	IFCBOOLEAN	label
+-1114236	Other	IFCTEXT	label
+-1114218	Photometrics	IFCREAL	label
+-1114217	Photometrics	IFCREAL	label
+-1114216	Electrical - Lighting	IFCREAL	label
+-1114215	Dimensions	IFCREAL	label
+-1114214	Dimensions	IFCREAL	label
+-1114213	Dimensions	IFCREAL	label
+-1114212	Dimensions	IFCREAL	label
+-1114211	Dimensions	IFCREAL	label
+-1114167	Mechanical	IFCBOOLEAN	label
+-1114134	Fittings	IFCIDENTIFIER	label
+-1114133	Fittings	IFCLABEL	label
+-1114131	Fittings	IFCLABEL	label
+-1114129	Mechanical - Flow	IFCLENGTHMEASURE	label
+-1114128	Mechanical - Flow	IFCREAL	label
+-1114127	Mechanical	IFCLENGTHMEASURE	label
+-1114126	Fittings	IFCLABEL	label
+-1114125	Mechanical - Flow	IFCINTEGER	label
+-1114124	Mechanical	IFCREAL	label
+-1114123	Mechanical - Flow	IFCVOLUMETRICFLOWRATEMEASURE	label
+-1114122	Mechanical - Flow	IFCVOLUMETRICFLOWRATEMEASURE	label
+-1114113	Fittings	IFCLABEL	label
+-1114112	Fittings	IFCLABEL	label
+-1114111	Fittings	IFCLABEL	label
+-1114106	Constraints	IFCIDENTIFIER	label
+-1114105	Constraints	IFCIDENTIFIER	label
+-1114005	Graphics	IFCIDENTIFIER	label
+-1019100	Cross-Section Definition	IFCIDENTIFIER	label
+-1018505	Construction	IFCLABEL	label
+-1018503	Structural	IFCVOLUMEMEASURE	label
+-1018502	Structural	IFCVOLUMEMEASURE	label
+-1018274	Construction	IFCIDENTIFIER	label
+-1017712	Structural	IFCMASSMEASURE	label
+-1017710	Dimensions	IFCLENGTHMEASURE	label
+-1017709	Dimensions	IFCLENGTHMEASURE	label
+-1017708	Construction	IFCLENGTHMEASURE	label
+-1017707	Dimensions	IFCLENGTHMEASURE	label
+-1017706	Dimensions	IFCLENGTHMEASURE	label
+-1017624	Structural	IFCAREADENSITYMEASURE	label
+-1017623	Structural	IFCREAL	label
+-1017622	Structural	IFCREAL	label
+-1017621	Structural	IFCMASSMEASURE	label
+-1017620	Layers	IFCLENGTHMEASURE	label
+-1017619	Layers	IFCINTEGER	label
+-1017618	Layers	IFCIDENTIFIER	label
+-1017617	Layers	IFCLENGTHMEASURE	label
+-1017616	Layers	IFCLENGTHMEASURE	label
+-1017614	Dimensions	IFCLENGTHMEASURE	label
+-1017613	Layers	IFCLENGTHMEASURE	label
+-1017612	Layers	IFCINTEGER	label
+-1017611	Layers	IFCIDENTIFIER	label
+-1017610	Layers	IFCLENGTHMEASURE	label
+-1017609	Layers	IFCLENGTHMEASURE	label
+-1017607	Layers	IFCLENGTHMEASURE	label
+-1017606	Construction	IFCLENGTHMEASURE	label
+-1017605	Construction	IFCLENGTHMEASURE	label
+-1017604	Construction	IFCLABEL	label
+-1017603	Construction	IFCLABEL	label
+-1017601	Dimensions	IFCLENGTHMEASURE	label
+-1017065	Rebar Set	IFCINTEGER	label
+-1017057	Rebar Set	IFCIDENTIFIER	label
+-1017055	Identity Data	IFCIDENTIFIER	label
+-1017045	Construction	IFCINTEGER	label
+-1017044	Construction	IFCINTEGER	label
+-1017041	Dimensions	IFCLENGTHMEASURE	label
+-1017020	Dimensions	IFCLENGTHMEASURE	label
+-1017019	Dimensions	IFCLENGTHMEASURE	label
+-1017016	Dimensions	IFCLENGTHMEASURE	label
+-1017010	Dimensions	IFCLENGTHMEASURE	label
+-1017008	Construction	IFCLABEL	label
+-1017006	Construction	IFCLABEL	label
+-1017005	Dimensions	IFCLENGTHMEASURE	label
+-1013449	Identity Data	IFCBOOLEAN	label
+-1013440	Structural	IFCLABEL	file+label
+-1013439	Structural	IFCLABEL	label
+-1013438	Structural	IFCLABEL	label
+-1013437	Structural	IFCLABEL	label
+-1013436	Structural	IFCLABEL	label
+-1013435	Structural	IFCLABEL	label
+-1013431	Pattern	IFCLENGTHMEASURE	label
+-1013430	Pattern	IFCLENGTHMEASURE	label
+-1013419	Pattern	IFCLABEL	label
+-1013411	Pattern	IFCLABEL	label
+-1013408	Pattern	IFCLENGTHMEASURE	label
+-1012840	Constraints	IFCLENGTHMEASURE	label
+-1012829	Constraints	IFCLENGTHMEASURE	file+label
+-1012828	Constraints	IFCLENGTHMEASURE	file+label
+-1012827	Constraints	IFCLENGTHMEASURE	file+label
+-1012825	Constraints	IFCLENGTHMEASURE	file+label
+-1012804	Constraints	IFCLENGTHMEASURE	label
+-1012802	Constraints	IFCLENGTHMEASURE	label
+-1012502	Constraints	IFCLENGTHMEASURE	file+label
+-1012101	Phasing	IFCLABEL	label
+-1012100	Phasing	IFCLABEL	label
+-1012006	Dimensions	IFCAREAMEASURE	label
+-1012004	Dimensions	IFCAREAMEASURE	label
+-1011100	Dimensions	IFCLENGTHMEASURE	label
+-1010505	Photometrics	IFCPLANEANGLEMEASURE	label
+-1010503	Photometrics	IFCLUMINOUSFLUXMEASURE	label
+-1010501	Electrical	IFCTEXT	file+label
+-1010109	Identity Data	IFCTEXT	file+label
+-1010108	Identity Data	IFCTEXT	file+label
+-1010106	Identity Data	IFCTEXT	file+label
+-1010105	Identity Data	IFCTEXT	file+label
+-1010104	Identity Data	IFCTEXT	file+label
+-1010103	Identity Data	IFCTEXT	file+label
+-1008632	Construction	IFCIDENTIFIER	file+label
+-1008631	Construction	IFCIDENTIFIER	file+label
+-1008630	Construction	IFCIDENTIFIER	file+label
+-1008629	Construction	IFCLENGTHMEASURE	file+label
+-1008628	Construction	IFCBOOLEAN	file+label
+-1008621	Constraints	IFCLENGTHMEASURE	file+label
+-1008619	Construction	IFCLENGTHMEASURE	file+label
+-1008602	Construction	IFCLENGTHMEASURE	file+label
+-1008308	Materials and Finishes	IFCLABEL	label
+-1008303	Dimensions	IFCLENGTHMEASURE	label
+-1008301	Dimensions	IFCREAL	label
+-1007358	Other	IFCLENGTHMEASURE	file+label
+-1007357	Other	IFCLENGTHMEASURE	file+label
+-1007355	Other	IFCLENGTHMEASURE	file+label
+-1007354	Other	IFCLENGTHMEASURE	file+label
+-1007353	Construction	IFCBOOLEAN	label
+-1007351	Constraints	IFCLENGTHMEASURE	file+label
+-1007322	Construction	IFCLENGTHMEASURE	file+label
+-1007321	Dimensions	IFCLENGTHMEASURE	file+label
+-1007320	Dimensions	IFCLENGTHMEASURE	file+label
+-1007304	Construction	IFCLENGTHMEASURE	file+label
+-1007301	Dimensions	IFCLENGTHMEASURE	file+label
+-1007300	Dimensions	IFCLENGTHMEASURE	file+label
+-1007278	Graphics	IFCBOOLEAN	file+label
+-1007277	Stringers	IFCIDENTIFIER	file+label
+-1007276	Graphics	IFCBOOLEAN	file+label
+-1007275	Graphics	IFCTEXT	file+label
+-1007274	Graphics	IFCBOOLEAN	file+label
+-1007273	Graphics	IFCBOOLEAN	file+label
+-1007272	Graphics	IFCTEXT	file+label
+-1007271	Graphics	IFCBOOLEAN	file+label
+-1007268	Materials and Finishes	IFCLABEL	file+label
+-1007267	Stringers	IFCLENGTHMEASURE	file+label
+-1007266	Construction	IFCLENGTHMEASURE	file+label
+-1007265	Stringers	IFCIDENTIFIER	file+label
+-1007264	Stringers	IFCIDENTIFIER	file+label
+-1007263	Treads	IFCIDENTIFIER	file+label
+-1007262	Risers	IFCIDENTIFIER	file+label
+-1007261	Risers	IFCLENGTHMEASURE	file+label
+-1007260	Stringers	IFCINTEGER	file+label
+-1007259	Construction	IFCLENGTHMEASURE	file+label
+-1007258	Risers	IFCBOOLEAN	file+label
+-1007257	Risers	IFCBOOLEAN	file+label
+-1007256	Construction	IFCIDENTIFIER	file+label
+-1007255	Construction	IFCBOOLEAN	file+label
+-1007245	Graphics	IFCBOOLEAN	file+label
+-1007244	Materials and Finishes	IFCLABEL	file+label
+-1007243	Risers	IFCIDENTIFIER	file+label
+-1007242	Materials and Finishes	IFCLABEL	file+label
+-1007241	Treads	IFCLENGTHMEASURE	file+label
+-1007240	Treads	IFCLABEL	file+label
+-1007239	Materials and Finishes	IFCLABEL	file+label
+-1007238	Stringers	IFCLENGTHMEASURE	file+label
+-1007237	Stringers	IFCLENGTHMEASURE	file+label
+-1007219	Constraints	IFCLENGTHMEASURE	file+label
+-1007218	Constraints	IFCLENGTHMEASURE	file+label
+-1007211	Treads	IFCLENGTHMEASURE	file+label
+-1007210	Stringers	IFCLENGTHMEASURE	file+label
+-1007209	Stringers	IFCLENGTHMEASURE	file+label
+-1007204	Dimensions	IFCLENGTHMEASURE	file+label
+-1007203	Calculation Rules	IFCLENGTHMEASURE	file+label
+-1007202	Calculation Rules	IFCLENGTHMEASURE	file+label
+-1006414	Dimensions	IFCLENGTHMEASURE	label
+-1006308	Graphics	IFCIDENTIFIER	label
+-1006307	Graphics	IFCTEXT	label
+-1006015	Other	IFCLENGTHMEASURE	label
+-1006014	Other	IFCLENGTHMEASURE	label
+-1006008	Constraints	IFCLENGTHMEASURE	label
+-1006007	Constraints	IFCBOOLEAN	label
+-1006006	Constraints	IFCBOOLEAN	label
+-1005556	Identity Data	IFCTEXT	label
+-1005554	Identity Data	IFCTEXT	label
+-1005530	Structural Section Geometry	IFCLENGTHMEASURE	label
+-1005529	Structural Section Geometry	IFCLENGTHMEASURE	label
+-1005528	Structural Section Geometry	IFCLENGTHMEASURE	label
+-1005525	Structural Section Geometry	IFCLENGTHMEASURE	label
+-1005524	Structural Section Geometry	IFCLENGTHMEASURE	label
+-1005521	Structural Analysis	IFCWARPINGCONSTANTMEASURE	label
+-1005520	Structural Analysis	IFCVOLUMEMEASURE	label
+-1005519	Structural Analysis	IFCMOMENTOFINERTIAMEASURE	label
+-1005518	Structural Analysis	IFCVOLUMEMEASURE	label
+-1005517	Structural Analysis	IFCVOLUMEMEASURE	label
+-1005516	Structural Analysis	IFCVOLUMEMEASURE	label
+-1005515	Structural Analysis	IFCVOLUMEMEASURE	label
+-1005514	Structural Analysis	IFCMOMENTOFINERTIAMEASURE	label
+-1005513	Structural Analysis	IFCMOMENTOFINERTIAMEASURE	label
+-1005512	Structural Analysis	IFCLINEARFORCEMEASURE	label
+-1005509	Structural Section Geometry	IFCLENGTHMEASURE	label
+-1005508	Structural Section Geometry	IFCLENGTHMEASURE	label
+-1005507	Structural Analysis	IFCAREAMEASURE	label
+-1005506	Dimensions	IFCLENGTHMEASURE	label
+-1005505	Structural Section Geometry	IFCLENGTHMEASURE	label
+-1005501	Structural	IFCINTEGER	label
+-1005500	Materials and Finishes	IFCLABEL	label
+-1005439	Analytical Properties	IFCIDENTIFIER	file+label
+-1005437	Analytical Properties	IFCTEXT	file+label
+-1005435	Analytical Properties	IFCREAL	label
+-1005434	Analytical Properties	IFCREAL	label
+-1005433	Analytical Properties	IFCREAL	file+label
+-1005432	Analytical Properties	IFCREAL	file+label
+-1005431	Analytical Properties	IFCTHERMALRESISTANCEMEASURE	label
+-1005198	Identity Data	IFCTEXT	label
+-1005195	Identity Data	IFCTEXT	label
+-1005192	Landscape Schedule	IFCLABEL	label
+-1005133	Materials and Finishes	IFCLABEL	label
+-1004011	Graphics	IFCBOOLEAN	label
+-1004009	Identity Data	IFCTEXT	label
+-1004008	Other	IFCPLANEANGLEMEASURE	label
+-1004007	Other	IFCPLANEANGLEMEASURE	label
+-1002563	Constraints	IFCTEXT	label
+-1002557	Construction	IFCLENGTHMEASURE	label
+-1002555	Construction	IFCIDENTIFIER	label
+-1002501	Identity Data	IFCTEXT	file+label
+-1002500	Identity Data	IFCTEXT	file+label
+-1002300	Constraints	IFCLENGTHMEASURE	file+label
+-1002112	Construction	IFCIDENTIFIER	label
+-1002111	Construction	IFCIDENTIFIER	label
+-1002110	Graphics	IFCINTEGER	file+label
+-1002106	Graphics	IFCLABEL	label
+-1002053	Identity Data	IFCIDENTIFIER	label
+-1002000	Other	IFCLABEL	label
+-1001954	Structural	IFCBOOLEAN	file+label
+-1001951	Constraints	IFCLENGTHMEASURE	file+label
+-1001817	Profile	IFCPLANEANGLEMEASURE	file+label
+-1001801	Constraints	IFCLENGTHMEASURE	label
+-1001800	Constraints	IFCLENGTHMEASURE	label
+-1001716	Constraints	IFCLENGTHMEASURE	file+label
+-1001713	Constraints	IFCBOOLEAN	label
+-1001711	Construction	IFCLENGTHMEASURE	file+label
+-1001710	Construction	IFCIDENTIFIER	file+label
+-1001709	Construction	IFCIDENTIFIER	file+label
+-1001705	Construction	IFCLENGTHMEASURE	file+label
+-1001703	Constraints	IFCLENGTHMEASURE	file+label
+-1001702	Constraints	IFCLABEL	label
+-1001701	Constraints	IFCLENGTHMEASURE	file+label
+-1001658	Dimensions	IFCLENGTHMEASURE	label
+-1001657	Dimensions	IFCLENGTHMEASURE	label
+-1001656	Dimensions	IFCLENGTHMEASURE	label
+-1001655	Dimensions	IFCLENGTHMEASURE	label
+-1001654	Dimensions	IFCLENGTHMEASURE	label
+-1001653	Constraints	IFCLENGTHMEASURE	label
+-1001603	Slab Shape Edit	IFCIDENTIFIER	label
+-1001592	Dimensions	IFCBOOLEAN	label
+-1001591	Dimensions	IFCLENGTHMEASURE	label
+-1001564	Constraints	IFCLENGTHMEASURE	label
+-1001559	Structural	IFCLENGTHMEASURE	label
+-1001557	Dimensions	IFCLENGTHMEASURE	label
+-1001530	Structural	IFCTEXT	file+label
+-1001529	Structural	IFCTEXT	file+label
+-1001516	Bottom Chords	IFCIDENTIFIER	file+label
+-1001515	Bottom Chords	IFCIDENTIFIER	file+label
+-1001405	Identity Data	IFCTEXT	file+label
+-1001398	Structural	IFCLENGTHMEASURE	label
+-1001397	Structural	IFCLENGTHMEASURE	label
+-1001396	Structural	IFCLABEL	label
+-1001395	Structural	IFCLABEL	label
+-1001391	Structural	IFCIDENTIFIER	label
+-1001389	Structural	IFCIDENTIFIER	label
+-1001370	Constraints	IFCBOOLEAN	label
+-1001365	Constraints	IFCLABEL	label
+-1001362	Other	IFCLENGTHMEASURE	label
+-1001361	Constraints	IFCLENGTHMEASURE	label
+-1001360	Constraints	IFCLENGTHMEASURE	label
+-1001305	Dimensions	IFCLENGTHMEASURE	label
+-1001304	Dimensions	IFCLENGTHMEASURE	label
+-1001210	Materials and Finishes	IFCLABEL	label
+-1001208	Materials and Finishes	IFCLABEL	label
+-1001206	Identity Data	IFCTEXT	file+label
+-1001205	Identity Data	IFCREAL	file+label
+-1001203	Identity Data	IFCTEXT	file+label
+-1001124	Identity Data	IFCIDENTIFIER	label
+-1001123	Constraints	IFCLENGTHMEASURE	label
+-1001109	Constraints	IFCLENGTHMEASURE	file+label
+-1001108	Constraints	IFCLENGTHMEASURE	file+label
+-1001107	Constraints	IFCLABEL	file+label
+-1001105	Constraints	IFCLENGTHMEASURE	file+label
+-1001103	Constraints	IFCLABEL	file+label
+-1001009	Construction	IFCBOOLEAN	label
+-1001007	Constraints	IFCBOOLEAN	label
+-1001006	Construction	IFCIDENTIFIER	file+label

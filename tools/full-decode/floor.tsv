@@ -19,9 +19,9 @@ attr category not decoded	0	lower
 attr is_type match	5601	higher
 attr is_type differ	0	lower
 attr is_type not decoded	0	lower
-attr name match	4450	higher
+attr name match	4205	higher
 attr name differ	102	lower
-attr name not decoded	1049	lower
+attr name not decoded	1294	lower
 attr level match	5601	higher
 attr level differ	0	lower
 attr level not decoded	0	lower
@@ -44,6 +44,7 @@ attr unique_id match	5601	higher
 attr unique_id differ	0	lower
 attr unique_id not decoded	0	lower
 values parameter: differ	97	lower
+values parameter: differ from an element field	4	lower
 values parameter: differ from the element header	18	lower
 values parameter: differ from the element's name	12	lower
 values parameter: match	2112	higher
@@ -53,7 +54,7 @@ values parameter: match from an element field	8718	higher
 values parameter: match from the element header	16518	higher
 values parameter: match from the element's name	1399	higher
 values parameter: not stored (computed?)	2116	lower
-values parameter: not stored, writable	3527	lower
+values parameter: not stored, writable	3523	lower
 values property: API runtime state (not file data)	20013	lower
 values property: match	56591	higher
 values property: no file field known	34092	lower

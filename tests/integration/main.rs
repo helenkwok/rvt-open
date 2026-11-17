@@ -83,6 +83,8 @@ mod beam_system_params;
 mod binary_inventory;
 #[path = "../boxless_room.rs"]
 mod boxless_room;
+#[path = "../builtin_catalog_sources.rs"]
+mod builtin_catalog_sources;
 #[path = "../category_type_phase.rs"]
 mod category_type_phase;
 #[path = "../cli_ergonomics.rs"]

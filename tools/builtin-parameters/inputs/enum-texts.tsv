@@ -1,0 +1,26 @@
+# id	value	text
+-1140129	1	Bend
+-1140129	2	Fitting
+-1008632	0	Trim
+-1008632	1	Weld
+-1008631	0	Add Vertical/Horizontal Segments
+-1008630	2	Extend Rails to Meet
+-1007277	0	Do not trim
+-1007277	1	Match Level
+-1007265	1	Closed
+-1007264	1	Closed
+-1007263	0	Front Only
+-1007262	0	Extend Riser Behind Tread
+-1007262	1	Extend Tread Under Riser
+-1007256	1	Smooth
+-1007243	1	Straight
+-1005439	0	Building Type
+-1005439	1	Schematic Type
+-1001710	33615	Plumb Cut
+-1001710	33618	Two Cut - Square
+-1001710	33619	Two Cut - Plumb
+-1001709	0	Truss
+-1001516	1	Pinned
+-1001515	1	Pinned
+-1001006	0	Interior
+-1001006	1	Exterior
