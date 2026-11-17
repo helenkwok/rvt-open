@@ -445,7 +445,7 @@ thread_local! {
     /// The model the last open's exporter built before the later passes (the base of the one the 3D
     /// view shows), kept with the file's size and
     /// digest for the first drawing of the same file, which draws from it instead of exporting
-    /// the file again. Only an open at the default phase is kept: a drawing is of that phase.
+    /// the file again. Only an open at the default phase, mode and limits is kept.
     static OPENED_MODEL: RefCell<Option<(u32, u64, IfcModel)>> = const { RefCell::new(None) };
 }
 
@@ -469,7 +469,13 @@ fn export_with_control(
     control: &WalkerControl,
 ) -> Result<JsValue, JsValue> {
     let quality_mode = ExportQualityMode::parse(mode).map_err(err_str)?;
-    let phase_requested = phase.is_some();
+    // The first drawing exports the file at the default phase, mode and limits when this copy is
+    // absent, so only an open under those is kept for it (`OpenLimits` has no equality: its debug
+    // text is compared).
+    let drawing_equivalent = phase.is_none()
+        && quality_mode == ExportQualityMode::Scaffold
+        && walker_limits == rvt::walker::WalkerLimits::default()
+        && format!("{open_limits:?}") == format!("{:?}", OpenLimits::default());
     OPENED_MODEL.with(|cell| cell.borrow_mut().take());
     let mut rf = RevitFile::open_bytes_with_limits(bytes.to_vec(), open_limits).map_err(err_str)?;
     // The build `rvt-ifc` runs ([`run_export_with_limits_and_control`]), with every boxed
@@ -516,7 +522,7 @@ fn export_with_control(
         phases,
     })
     .map_err(err_str)?;
-    let kept = match (phase_requested, u32::try_from(bytes.len())) {
+    let kept = match (!drawing_equivalent, u32::try_from(bytes.len())) {
         (false, Ok(size)) => base_model.map(|base| (size, slice_digest(bytes), base)),
         _ => None,
     };
