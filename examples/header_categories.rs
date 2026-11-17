@@ -22,5 +22,6 @@ fn main() -> anyhow::Result<()> {
     for (element, category) in element_categories(&mut rf) {
         writeln!(w, "{element}\t{category}")?;
     }
+    w.flush()?;
     Ok(())
 }

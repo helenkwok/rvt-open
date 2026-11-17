@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .ok_or_else(|| anyhow::anyhow!("usage: param_census <file.rvt>"))?;
     let mut rf = RevitFile::open(&path)?;
-    let release = rf.basic_file_info().map_or(0, |b| b.version);
+    let release = rf.basic_file_info()?.version;
     let layouts = rf.schema_layouts()?;
     let out = std::io::stdout();
     let mut w = std::io::BufWriter::new(out.lock());
@@ -37,7 +37,10 @@ fn main() -> anyhow::Result<()> {
             ),
             ParamValue::ElementId(i) => ("ElementId", i.to_string()),
         };
-        let _ = writeln!(w, "{id}\t{p}\t{origin}\t{t}\t{s}\t{class}");
+        if let Err(e) = writeln!(w, "{id}\t{p}\t{origin}\t{t}\t{s}\t{class}") {
+            eprintln!("write failed: {e}");
+            std::process::exit(1);
+        }
     };
     let gaps = for_each_object(&mut rf, |o| {
         let Some(id) = o.element() else { return };
@@ -68,5 +71,6 @@ fn main() -> anyhow::Result<()> {
             }
         }
     }
+    w.flush()?;
     Ok(())
 }

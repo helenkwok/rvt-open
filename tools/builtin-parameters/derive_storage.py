@@ -38,7 +38,7 @@ with open(out, 'w') as f:
     for i in sorted(sn):
         c = sn[i]
         f.write(f"{i}\t{c.most_common(1)[0][0]}\t{len(models[i])}\t{';'.join(f'{t}:{n}' for t, n in c.most_common())}\n")
-with open(out.replace('.tsv', '.f-only.tsv'), 'w') as f:
+with open(os.path.splitext(out)[0] + '.f-only.tsv', 'w') as f:
     f.write('# id\tcounts (origin F only)\n')
     for i in sorted(fonly):
         if i not in sn:

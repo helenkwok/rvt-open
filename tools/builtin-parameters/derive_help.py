@@ -8,8 +8,9 @@ HELP_DIR/<LANG>/<component>/<topic>.htm: Revit 2027 help topics (help.autodesk.c
 RUS; the same topic path in every language. NAMES.tsv: id, English name (the API reference label).
 A name found as an exact structured term (table cell, list item, `uicontrol`, bold text, `dt`) of an
 English topic takes, in each language, the term at the same position of the same topic where that topic
-has as many such terms in that language. Only a name whose term is the same on every topic that
-carries it, in all 12 languages, is written, with the first such topic cited per language (sorted).
+has as many such terms in that language. Only a name found at the same place in every topic that
+carries it in all 12 languages, with the same term on all of them, is written, the first such topic
+cited per language (sorted).
 Terms only: no help text is kept.
 OUT.tsv: id, language, term, topic (`<component>/<topic>`)."""
 import collections, html, os, re, sys
@@ -37,6 +38,8 @@ def lists(lang, comp, topic):
 
 
 terms = collections.defaultdict(lambda: collections.defaultdict(dict))  # name -> lang -> term -> first topic
+carried = collections.Counter()  # name -> English occurrences
+aligned = collections.defaultdict(collections.Counter)  # name -> lang -> occurrences with a term at the same place
 for comp in sorted(os.listdir(os.path.join(helpdir, 'ENU'))):
     for fn in sorted(os.listdir(os.path.join(helpdir, 'ENU', comp))):
         topic = fn[:-4]
@@ -48,15 +51,17 @@ for comp in sorted(os.listdir(os.path.join(helpdir, 'ENU'))):
             continue
         loc = {l: lists(l, comp, topic) for l in LANGS}
         for k, i, x in hits:
+            carried[x] += 1
             for l, d in loc.items():
                 if d and len(d[k]) == len(en[k]) and d[k][i] and len(d[k][i]) <= 60:
                     terms[x][l].setdefault(d[k][i], f'{comp}/{topic}')
+                    aligned[x][l] += 1
 n = 0
 with open(out, 'w', encoding='utf-8') as f:
     f.write('# id\tlanguage\tterm\ttopic\n')
     for name, ids in sorted(wanted.items()):
         t = terms.get(name)
-        if not t or any(len(t.get(l, {})) != 1 for l in LANGS):
+        if not t or any(len(t.get(l, {})) != 1 or aligned[name][l] != carried[name] for l in LANGS):
             continue
         for i in sorted(ids):
             n += 1

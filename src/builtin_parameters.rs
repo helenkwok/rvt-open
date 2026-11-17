@@ -179,8 +179,7 @@ pub fn category_name(id: i64) -> Option<&'static str> {
 }
 
 /// Revit's `Category.Name` for category `id` and its parent's name, where it
-/// has one. The help gives a category's own name only, so a subcategory has
-/// no parent here.
+/// has one: `Stairs: Runs` is `Runs`, under `Stairs`.
 pub fn category_name_and_parent(id: i64) -> Option<(&'static str, Option<&'static str>)> {
     let full = category_name(id)?;
     Some(match full.split_once(": ") {
@@ -248,8 +247,8 @@ mod tests {
         );
         assert_eq!(category(-2_000_011), Some(("OST_Walls", "Walls")));
         assert_eq!(category_own_name(-2_000_011), Some("Walls"));
+        assert_eq!(category_own_name(-2_000_919), Some("Runs"));
         // No public name: not the enum name, and not a name from a model's API dump.
-        assert_eq!(category_own_name(-2_000_919), None);
         assert_eq!(category_own_name(-2_000_031), None);
         assert_eq!(category_name(-2_000_080), Some("Furniture"));
         assert_eq!(

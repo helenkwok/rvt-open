@@ -7,7 +7,7 @@
 // H = machine-matched: the term at the same place of the same Revit 2027 help topic in each of the 12
 // languages, cited per entry; - = no public source, the field is empty.
 //  - inputs: bip_enum.tsv 30fb56087a3ddbd2, bic_enum.tsv b27530a314bf49ca, storage.tsv 5d7db7d1ad93d53c,
-//    group-spec.tsv ac569a466f50bc6e, enum-texts.tsv e5a96046b4908c3b, help-terms.tsv cab9f1279f3d2c42.
+//    group-spec.tsv ac569a466f50bc6e, enum-texts.tsv e5a96046b4908c3b, help-terms.tsv ae3d493759810d93.
 //  - ids: the reference's BuiltInParameter members plus 7 ids kept with no name (no public source names them).
 //  - category names: the `Category` property of Revit's IFC export of public samples, the most voted name of each category id (category-names.tsv df600f528b9958d9); where it has none, the help term of `program_names`.
 //  - The Revit API dump of the public samples is the answer key only: tools/builtin-parameters/score.py.
@@ -2278,7 +2278,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1155094,
@@ -2584,7 +2584,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1155058,
@@ -2854,7 +2854,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1155027,
@@ -4226,7 +4226,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1152376,
@@ -4235,7 +4235,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1152375,
@@ -8343,7 +8343,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1150078,
@@ -8748,7 +8748,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "autodesk.spec.aec:length-2.0.0",
         "Constraints",
-        "RR-EEH",
+        "RR-EE-",
     ),
     (
         -1141030,
@@ -8757,7 +8757,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "autodesk.spec.aec:length-2.0.0",
         "Constraints",
-        "RR-EEH",
+        "RR-EE-",
     ),
     (
         -1141029,
@@ -13510,7 +13510,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
     ),
     (-1133404, "Height", "CONNECTOR_HEIGHT", "", "", "", "RR----"),
     (-1133403, "Width", "CONNECTOR_WIDTH", "", "", "", "RR----"),
-    (-1133401, "Radius", "CONNECTOR_RADIUS", "", "", "", "RR---H"),
+    (-1133401, "Radius", "CONNECTOR_RADIUS", "", "", "", "RR----"),
     (
         -1133400,
         "Shape",
@@ -15428,7 +15428,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1114196,
@@ -16434,7 +16434,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "RR----",
     ),
-    (-1028004, "Radius", "SKETCHING_RADIUS", "", "", "", "RR---H"),
+    (-1028004, "Radius", "SKETCHING_RADIUS", "", "", "", "RR----"),
     (
         -1028003,
         "Radius",
@@ -16442,7 +16442,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (-1028002, "Offset", "SKETCHING_OFFSET", "", "", "", "RR----"),
     (-1028001, "Chain", "SKETCHING_CHAIN", "", "", "", "RR---H"),
@@ -21077,7 +21077,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1012811,
@@ -21242,7 +21242,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1012617,
@@ -21393,7 +21393,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "RR---H",
     ),
-    (-1012407, "Radius", "BOUNDARY_RADIUS", "", "", "", "RR---H"),
+    (-1012407, "Radius", "BOUNDARY_RADIUS", "", "", "", "RR----"),
     (
         -1012405,
         "Subcategory",
@@ -24417,7 +24417,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Double",
         "",
         "",
-        "RRF--H",
+        "RRF---",
     ),
     (
         -1007322,
@@ -26572,7 +26572,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Integer",
         "",
         "",
-        "RRF--H",
+        "RRF---",
     ),
     (
         -1006475,
@@ -29722,7 +29722,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1004013,
@@ -29758,7 +29758,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1004009,
@@ -32364,7 +32364,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "",
         "",
-        "RR---H",
+        "RR----",
     ),
     (
         -1001153,
@@ -32638,7 +32638,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Double",
         "autodesk.spec.aec:length-2.0.0",
         "Constraints",
-        "RRFEEH",
+        "RRFEE-",
     ),
     (
         -1001103,
@@ -38012,59 +38012,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
         ],
     ),
     (
-        -1155095,
-        [
-            (
-                "路徑分析設定",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "布线分析设置",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "Nastavení analýzy trasy",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "Routen-Analyse-Einstellungen",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "Configuración de análisis de ruta",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "Paramètres de l’analyse du trajet",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "Impostazioni di Analisi percorso",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "ルート解析の設定",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "경로 해석 설정",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "Ustawienia analizy trasy",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "Configurações da análise da rota",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-            (
-                "Параметры анализа пути движения",
-                "Revit-Analyze/GUID-1393ED58-3F0D-4BBA-AF89-87FBB9EACEB5",
-            ),
-        ],
-    ),
-    (
         -1155094,
         [
             (
@@ -39068,59 +39015,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Угол фаски",
                 "Revit-StructEng/GUID-912942CC-9126-4135-B098-0ABE912A5F27",
-            ),
-        ],
-    ),
-    (
-        -1155059,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
             ),
         ],
     ),
@@ -40393,59 +40287,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Основной тип",
                 "Revit-StructEng/GUID-2B62E5AF-7656-43B3-B207-F9D4B4FC6A5B",
-            ),
-        ],
-    ),
-    (
-        -1155028,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
             ),
         ],
     ),
@@ -43414,112 +43255,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Режим",
                 "Revit-ArchDesign/GUID-61C2F5F4-93C0-4030-9E9D-E166E4A3D25D",
-            ),
-        ],
-    ),
-    (
-        -1152377,
-        [
-            (
-                "分析表面的解析度",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "分析表面分辨率",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Rozlišení analytického povrchu",
-                "Revit-Analyze/GUID-3C378374-D360-4207-A558-3500922A452E",
-            ),
-            (
-                "Auflösung berechneter Oberflächen",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Resolución de superficie analítica",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Résolution de la surface analytique",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Risoluzione superficie analitica",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "解析用サーフェス分割値",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "해석 표면 처리 간격 지정",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Rozdzielczość powierzchni analitycznej",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Resolução do espaço analítico",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Разрешение аналитической поверхности",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-        ],
-    ),
-    (
-        -1152376,
-        [
-            (
-                "分析空間的解析度",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "分析空间分辨率",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Rozlišení analytického prostoru",
-                "Revit-Analyze/GUID-3C378374-D360-4207-A558-3500922A452E",
-            ),
-            (
-                "Auflösung berechneter Räume",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Resolución de espacio analítico",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Résolution de l’espace analytique",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Risoluzione vano analitico",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "解析用スペース分割値",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "해석 공간 처리 간격 지정",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Rozdzielczość przestrzeni analitycznej",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Resolução do espaço analítico",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
-            (
-                "Разрешение аналитического пространства",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
             ),
         ],
     ),
@@ -54389,59 +54124,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
         ],
     ),
     (
-        -1150079,
-        [
-            (
-                "元件",
-                "Revit-Model/GUID-584591D8-A0F9-468C-8A45-B7D3795A6181",
-            ),
-            (
-                "构件",
-                "Revit-Model/GUID-584591D8-A0F9-468C-8A45-B7D3795A6181",
-            ),
-            (
-                "Komponenty",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "Bauteile",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "Componentes",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "Composants",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "Componenti",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "コンポーネント",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "구성요소",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "Komponenty",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "Componentes",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-            (
-                "Компоненты",
-                "Revit-Collaborate/GUID-03D9317F-DF2A-490C-893C-59457E0FA45C",
-            ),
-        ],
-    ),
-    (
         -1150072,
         [
             (
@@ -55339,112 +55021,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Отметка оси трубы",
                 "Revit-MEPEng/GUID-50D11C48-1AD4-45C2-BAF1-946EEEB7A6D9",
-            ),
-        ],
-    ),
-    (
-        -1141031,
-        [
-            (
-                "下端轉面高程",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "下端管内顶标高",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Výška stropu trubky dole",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Unteres Ende – Scheitelhöhe",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Elevación superior interior de extremo inferior",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Arase supérieure interne aval",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Quota altimetrica parte interna estremità inferiore",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "下端の管頂高さ",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "하단 끝 환질 높이",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Rzędna górnego sklepienia na dolnym końcu",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Elevação do topo da extremidade inferior",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Отметка низа внутреннего диаметра трубы над осью трубы",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-        ],
-    ),
-    (
-        -1141030,
-        [
-            (
-                "上端轉面高程",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "上端管内顶标高",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Výška stropu trubky nahoře",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Oberes Ende – Scheitelhöhe",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Elevación superior interior de extremo superior",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Arase supérieure interne amont",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Quota altimetrica parte interna estremità superiore",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "上端の管頂高さ",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "상단 끝 환질 높이",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Rzędna górnego sklepienia na górnym końcu",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Elevação do topo da extremidade superior",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
-            ),
-            (
-                "Отметка верха внутреннего диаметра трубы над осью трубы",
-                "Revit-MEPEng/GUID-33D54198-C4E1-4E79-97BB-15E25C236E87",
             ),
         ],
     ),
@@ -64830,59 +64406,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
         ],
     ),
     (
-        -1133401,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-        ],
-    ),
-    (
         -1123521,
         [
             (
@@ -67851,59 +67374,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
         ],
     ),
     (
-        -1114197,
-        [
-            (
-                "能源設定",
-                "Revit-Analyze/GUID-32BD5A12-DF5B-4B51-B51A-D799C729A78A",
-            ),
-            (
-                "能量设置",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "Energetická nastavení",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "Energieeinstellungen",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "Configuración de energía",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "Paramètres énergétiques",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "Impostazioni energetiche",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "エネルギー設定",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "에너지 설정",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "Ustawienia energii",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "Configurações de energia",
-                "Revit-Analyze/GUID-27B3CAD4-A0FE-437E-8B95-F82E7FC56668",
-            ),
-            (
-                "Параметры энергопотребления",
-                "Revit-Analyze/GUID-32BD5A12-DF5B-4B51-B51A-D799C729A78A",
-            ),
-        ],
-    ),
-    (
         -1114196,
         [
             (
@@ -70444,112 +69914,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Блокировать",
                 "Revit-Customize/GUID-7C0C2F22-8E85-4576-BD84-D710AC6D4B6F",
-            ),
-        ],
-    ),
-    (
-        -1028004,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-        ],
-    ),
-    (
-        -1028003,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
             ),
         ],
     ),
@@ -80942,59 +80306,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
         ],
     ),
     (
-        -1012812,
-        [
-            (
-                "貼花屬性",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "贴花属性",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "Atributy obtisků",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "Abziehbildattribute",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "Atributos de estampado",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "Attributs des vignettes",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "Attributi decalcomania",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "デカル転写属性",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "그림 속성",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "Atrybuty graffiti",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "Atributos de decalque",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-            (
-                "Атрибуты деколи",
-                "Revit-DocumentPresent/GUID-0F183276-352D-4E20-8E46-37F832D90BF3",
-            ),
-        ],
-    ),
-    (
         -1012809,
         [
             (
@@ -81309,59 +80620,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Базовая отметка",
                 "Revit-Model/GUID-945D511C-CE83-41B6-88FC-2CD940EB2A6C",
-            ),
-        ],
-    ),
-    (
-        -1012618,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
             ),
         ],
     ),
@@ -81839,59 +81097,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Имя ссылки",
                 "Revit-Collaborate/GUID-06B93886-3D55-4967-ABE2-4B6B262663CD",
-            ),
-        ],
-    ),
-    (
-        -1012407,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
             ),
         ],
     ),
@@ -88941,59 +88146,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Угловой импост",
                 "Revit-ArchDesign/GUID-68BA473F-E6F8-45BB-A946-2D0BD70A3AAA",
-            ),
-        ],
-    ),
-    (
-        -1007350,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
             ),
         ],
     ),
@@ -96149,59 +95301,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Смещение базовой линии",
                 "Revit-DocumentPresent/GUID-46D6AD78-A6D6-4A6C-B9B8-58876AA87C05",
-            ),
-        ],
-    ),
-    (
-        -1006476,
-        [
-            (
-                "引線支點",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "引线水平段",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "Rameno odkazové čáry",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "Führungsschulter",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "Hombro de directriz",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "Accotement de repère",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "Spalla linea direttrice",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "引出線の折り曲げ",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "지시 보조선",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "Ramię linii odniesienia",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "Ressalto da chamada de detalhe",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
-            (
-                "Полка выноски",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
             ),
         ],
     ),
@@ -105640,59 +104739,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
         ],
     ),
     (
-        -1004014,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-        ],
-    ),
-    (
         -1004012,
         [
             (
@@ -105795,59 +104841,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Линия детализации",
                 "Revit-Analyze/GUID-6DDE2506-9E12-4ED5-B9B5-D7AF9AA4C027",
-            ),
-        ],
-    ),
-    (
-        -1004010,
-        [
-            (
-                "半徑",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Poloměr",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radius",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Radio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Rayon",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raggio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "半径",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "반지름",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Promień",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Raio",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
-            ),
-            (
-                "Радиус",
-                "Revit-ArchDesign/GUID-05BAFEAA-5186-484E-80F4-8D900C454748",
             ),
         ],
     ),
@@ -111417,59 +110410,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
         ],
     ),
     (
-        -1001154,
-        [
-            (
-                "不連續高度",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "无连接高度",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Nepřipojená výška",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Nicht verknüpfte Höhe",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Altura desconectada",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Hauteur non contrainte",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Altezza non collegata",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "高さ指定",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "미연결 높이",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Niepołączona wysokość",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Altura não conectada",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Неприсоединенная высота",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-        ],
-    ),
-    (
         -1001140,
         [
             (
@@ -112208,59 +111148,6 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
             (
                 "Примыкание снизу",
                 "Revit-ArchDesign/GUID-A9DF72D1-6AC9-429F-A67B-A7F998645FD1",
-            ),
-        ],
-    ),
-    (
-        -1001105,
-        [
-            (
-                "不連續高度",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "无连接高度",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Nepřipojená výška",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Nicht verknüpfte Höhe",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Altura desconectada",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Hauteur non contrainte",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Altezza non collegata",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "高さ指定",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "미연결 높이",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Niepołączona wysokość",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Altura não conectada",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
-            ),
-            (
-                "Неприсоединенная высота",
-                "Revit-ArchDesign/GUID-5CCEDB56-B3D0-4CF2-A3BA-46F072DC6C53",
             ),
         ],
     ),

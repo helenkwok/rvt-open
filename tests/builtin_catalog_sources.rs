@@ -12,7 +12,7 @@ use rvt::builtin_parameters::{LOCALIZED_LANGUAGES, localized_name, parameter, pa
 /// (files), spec and group (IFC export), localized names (help).
 const ENTRIES: usize = 3812;
 const FILLED: [usize; 6] = [3805, 3805, 486, 303, 495, LOCALIZED];
-const LOCALIZED: usize = 1476;
+const LOCALIZED: usize = 1455;
 
 #[test]
 fn every_field_is_from_its_public_source_or_empty() {
