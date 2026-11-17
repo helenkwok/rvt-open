@@ -6,7 +6,7 @@ usage: derive_categories.py PAIRS.tsv OUT.tsv
 PAIRS.tsv: one line per sample, `<Revit's IFC export>\t<header_categories output for the same file>`
 (`cargo run --release --example header_categories -- model.rvt`: element id, BuiltInCategory id).
 Revit's export writes each element's category name as the `Category` property of its `Other`
-property set (and of its type's). An element's header names its category by id, so each
+property set (and of its type's). An element's partition record names its category by id, so each
 (category id, name) pair is a vote; the most voted name of an id is kept, with the votes.
 OUT.tsv: id, name, votes, models, other names (name:votes;...)."""
 import collections, re, sys

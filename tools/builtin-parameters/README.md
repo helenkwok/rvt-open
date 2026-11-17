@@ -5,10 +5,10 @@
 | Field | Source | Input | Made by |
 |---|---|---|---|
 | name, enum name | the Revit 2027 API reference, `BuiltInParameter` page (label and enum name of each member) and `BuiltInCategory` page | `bip_enum.tsv`, `bic_enum.tsv` | the page's HTML, first quoted text of each member's description |
-| storage type | the type of the values public sample files store: the element's own value sets and the other parameter sets of its objects (not what `field_parameters` derives from fields) | `storage.tsv` | `derive_storage.py` over the output of `examples/param_census.rs` on each file |
+| storage type | the type of the values public sample files store: the element's own value sets and the other parameter sets of its objects (not what `field_parameters` derives from fields) | `storage.tsv` | `derive_storage.py` over the output of `examples/param_census.rs` on each file (origins S and N only) |
 | spec, group, enumeration texts | Revit's own IFC export of public samples (Revit property sets on): the value type and property set of the property whose name is the parameter's reference label; where several ids share a label, the id the element stores | `group-spec.tsv`, `enum-texts.tsv` | `derive_ifc.py` |
 | names in the 12 other languages | Revit 2027 help: the term at the same place of the same topic in each language, for a name found as an exact structured term of an English topic; only names with one term on every topic, in all 12 languages | `help-terms.tsv` | `derive_help.py` (the topic list is the first column of `help-terms.tsv`; the match is by machine) |
-| category names | the `Category` property of Revit's own IFC export of public samples, joined to the category id each element's header names; the most voted name of an id. Where it has none, the term of `program_names` (Revit's help) | `category-names.tsv` | `derive_categories.py` over the output of `examples/header_categories.rs` |
+| category names | the `Category` property of Revit's own IFC export of public samples, joined to the category id the exporter reads for each element (`element_categories`); the most voted name of an id. Where it has none, the term of `program_names` (Revit's help) | `category-names.tsv` | `derive_categories.py` over the output of `examples/header_categories.rs` |
 
 Source codes, one per field in the order name, enum name, storage type, spec, group, localized names: `R` API reference, `F` stored values of files, `E` IFC export, `H` machine-matched help terms, `-` none.
 

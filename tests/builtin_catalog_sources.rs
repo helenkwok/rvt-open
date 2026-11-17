@@ -11,7 +11,7 @@ use rvt::builtin_parameters::{LOCALIZED_LANGUAGES, localized_name, parameter, pa
 /// Entries, then fields filled per source: name, enum name (API reference), storage type
 /// (files), spec and group (IFC export), localized names (help).
 const ENTRIES: usize = 3812;
-const FILLED: [usize; 6] = [3805, 3805, 486, 294, 469, LOCALIZED];
+const FILLED: [usize; 6] = [3805, 3805, 486, 303, 495, LOCALIZED];
 const LOCALIZED: usize = 1476;
 
 #[test]
