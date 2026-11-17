@@ -3,8 +3,10 @@
 //! Revit keeps most element names in the element object (`m_name`) or in an
 //! object it points to: an element type's `m_symbolInfo`, a category's,
 //! material's or pattern's own object, a parameter's definition. A graphics
-//! style stores no name: it is its category's, a built-in category's from
-//! the catalog, a subcategory's from that category element, and, where the
+//! style stores no name: it is its category's, a built-in category's or
+//! subcategory's from Revit's help in the file's language
+//! ([`program_names`](crate::program_names)) or the catalog, a project
+//! subcategory's from that category element, and, where the
 //! subcategory's own name is empty, the name of the element that owns it (a
 //! text, tag or dimension type's own style category).
 //!
@@ -103,11 +105,14 @@ fn property_set_name(objects: &[Fields]) -> Option<String> {
 }
 
 /// A graphics style's name (`GStyleElem`), from its `m_categoryId`: a
-/// built-in category's own name from the catalog, else `element_name` of the
+/// built-in category's or subcategory's name in `language` (a Revit locale
+/// code, `ENU` for English) from [`program_names`](crate::program_names),
+/// else its English name from the catalog; else `element_name` of the
 /// category element, else, where that is empty, `element_name` of the
 /// category element's owner (`owner_of`).
 pub fn graphics_style_name(
     root: &Fields,
+    language: &str,
     element_name: impl Fn(i64) -> Option<String>,
     owner_of: impl Fn(i64) -> Option<i64>,
 ) -> Option<String> {
@@ -115,7 +120,9 @@ pub fn graphics_style_name(
         return None;
     };
     if *category < 0 {
-        return builtin_parameters::category_own_name(*category).map(str::to_string);
+        return crate::program_names::category_name(*category, language)
+            .or_else(|| builtin_parameters::category_own_name(*category))
+            .map(str::to_string);
     }
     match element_name(*category) {
         Some(n) if !n.is_empty() => Some(n),
@@ -162,6 +169,7 @@ mod tests {
         let style = fields(vec![("m_categoryId", Value::Id(235))]);
         let name = graphics_style_name(
             &style,
+            "ENU",
             |id| {
                 Some(if id == 234 {
                     "Arrowhead 1".into()
@@ -174,14 +182,19 @@ mod tests {
         assert_eq!(name.as_deref(), Some("Arrowhead 1"));
         let walls = fields(vec![("m_categoryId", Value::Id(-2000011))]);
         assert_eq!(
-            graphics_style_name(&walls, |_| None, |_| None).as_deref(),
+            graphics_style_name(&walls, "ENU", |_| None, |_| None).as_deref(),
             Some("Walls")
         );
-        // A built-in subcategory with no public name has none: the element
-        // and owner lookups are not tried for a built-in category.
-        let glass = fields(vec![("m_categoryId", Value::Id(-2000031))]);
+        // A built-in subcategory: named from Revit's help, in the file's
+        // language; the element and owner lookups are not tried.
+        let risers = fields(vec![("m_categoryId", Value::Id(-2000936))]);
         assert_eq!(
-            graphics_style_name(&glass, |_| Some("x".into()), |_| Some(1)),
+            graphics_style_name(&risers, "ENU", |_| Some("x".into()), |_| Some(1)).as_deref(),
+            Some("Riser Lines")
+        );
+        let unnamed = fields(vec![("m_categoryId", Value::Id(-1001101))]);
+        assert_eq!(
+            graphics_style_name(&unnamed, "DEU", |_| Some("x".into()), |_| Some(1)),
             None
         );
     }
