@@ -567,7 +567,7 @@ jobs:
     needs: [scope, samples]
     if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -581,9 +581,24 @@ jobs:
       - run: |
           st=0; python3 tools/ci/fetch-bim4lca.py research/bim4lca-models.tsv _bim4lca ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt || st=$?
           [ $st = 0 ] || [ $st = 2 ]
+      # The three largest BIM4LCA architectural files (CC BY-SA 4.0), read by byte range from the archive.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _bim4lca_big, key: "bim4lca-big-${{ hashFiles('research/bim4lca-models.tsv') }}" }
+      - run: |
+          for f in ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt ARK_NordicLCA_Office_Concrete_BuildingPermit.rvt; do
+            st=0; python3 tools/ci/fetch-bim4lca.py research/bim4lca-models.tsv _bim4lca_big "$f" || st=$?
+            [ $st = 0 ] || [ $st = 2 ] || exit 1
+          done
       - run: cargo build --profile ci --bin rvt-sheet
-      - name: Draw sheet AR01 (Office Terrain) and A1 (Technical School) both ways
-        run: tools/ci/sheet-identity.sh target/ci/rvt-sheet "$PWD/_bim4lca/ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt:AR01" "$PWD/_samples/flat/2026-Technicalschoolcurrentm.rvt:A1"
+      - name: Draw one sheet of each file both ways (AR01 of the BIM4LCA files, A1 of the Technical School)
+        run: |
+          big="$PWD/_bim4lca_big"
+          tools/ci/sheet-identity.sh target/ci/rvt-sheet \
+            "$PWD/_bim4lca/ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt:AR01" \
+            "$PWD/_samples/flat/2026-Technicalschoolcurrentm.rvt:A1" \
+            "$big/ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt:AR01" \
+            "$big/ARK_NordicLCA_Housing_Timber_BuildingPermit.rvt:AR01" \
+            "$big/ARK_NordicLCA_Office_Concrete_BuildingPermit.rvt:AR01"
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: sheet-identity, path: sheet-identity-out, if-no-files-found: ignore, retention-days: 3 }
