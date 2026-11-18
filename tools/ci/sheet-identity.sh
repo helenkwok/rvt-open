@@ -15,8 +15,8 @@ for spec in "$@"; do
   # Each way twice: a way that differs from itself is not deterministic, whatever the other says.
   "$sheet" "$model" --sheet "$name" --format svg -o "$out/$stem-export2.svg"
   "$sheet" "$model" --sheet "$name" --format svg --viewer-model -o "$out/$stem-kept2.svg"
-  cmp -s "$out/$stem-export.svg" "$out/$stem-export2.svg" && echo "export twice: same" || echo "export twice: DIFFERENT"
-  cmp -s "$out/$stem-kept.svg" "$out/$stem-kept2.svg" && echo "kept twice: same" || echo "kept twice: DIFFERENT"
+  cmp -s "$out/$stem-export.svg" "$out/$stem-export2.svg" && echo "export twice: same" || { echo "export twice: DIFFERENT"; status=1; }
+  cmp -s "$out/$stem-kept.svg" "$out/$stem-kept2.svg" && echo "kept twice: same" || { echo "kept twice: DIFFERENT"; status=1; }
   if cmp -s "$out/$stem-export.svg" "$out/$stem-kept.svg"; then
     echo "identical: $stem ($(stat -c %s "$out/$stem-kept.svg") bytes)"
   else
