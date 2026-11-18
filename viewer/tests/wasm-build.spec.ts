@@ -79,8 +79,8 @@ test('a browser that does not accept memory64 gets the 32-bit build', async ({ p
   await page.addInitScript(() => {
     const real = URL.createObjectURL.bind(URL);
     const prelude =
-      'const v = WebAssembly.validate.bind(WebAssembly);' +
-      'WebAssembly.validate = (b) => (b instanceof Uint8Array && b.length === 13 && b[8] === 5 && b[11] === 4 ? false : v(b));\n';
+      '(() => { const v = WebAssembly.validate.bind(WebAssembly);' +
+      'WebAssembly.validate = (b) => (b instanceof Uint8Array && b.length === 13 && b[8] === 5 && b[11] === 4 ? false : v(b)); })();\n';
     const realValidate = WebAssembly.validate.bind(WebAssembly);
     WebAssembly.validate = (b: BufferSource) =>
       b instanceof Uint8Array && b.length === 13 && b[8] === 5 && b[11] === 4 ? false : realValidate(b);
