@@ -8,3 +8,12 @@
   running build's limit. The Pages site and the viewer tests use the same
   package as the release, and CI runs the whole browser suite on both builds.
   The measurements are in the pull request.
+- **A Large Model open keeps the exporter's model for the first drawing when no limit bound.**
+  An open under the Large Model limits had never kept the model, so the first
+  drawing exported the file again. On the 64-bit build, where those limits
+  differ from the defaults, that added 3.5 to 60 s to the first drawing. The
+  open now keeps the model whenever no stream was left unread and no limit
+  event was recorded during it, because its model is then the one the default
+  limits give, and the drawing is the same. A file a limit does bind on keeps
+  nothing, and its first drawing exports the file again at the defaults.
+  The figures are in the pull request.

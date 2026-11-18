@@ -445,7 +445,8 @@ thread_local! {
     /// The model the last open's exporter built before the later passes (the base of the one the 3D
     /// view shows), kept with the file's size and
     /// digest for the first drawing of the same file, which draws from it instead of exporting
-    /// the file again. Only an open at the default phase, mode and limits is kept.
+    /// the file again. Only an open at the default phase and mode is kept, and only one whose limits
+    /// are the defaults or did not bind (no stream left unread, no limit event) during the open.
     static OPENED_MODEL: RefCell<Option<(u32, u64, IfcModel)>> = const { RefCell::new(None) };
 }
 
@@ -470,11 +471,12 @@ fn export_with_control(
 ) -> Result<JsValue, JsValue> {
     let quality_mode = ExportQualityMode::parse(mode).map_err(err_str)?;
     // The first drawing exports the file at the default phase, mode and limits when this copy is
-    // absent, so only an open under those is kept for it (`OpenLimits` has no equality: its debug
-    // text is compared).
-    let drawing_equivalent = phase.is_none()
-        && quality_mode == ExportQualityMode::Scaffold
-        && walker_limits == rvt::walker::WalkerLimits::default()
+    // absent. An open at another phase or mode is never kept for it. One at the default phase and
+    // mode is built with the copy, and kept if its limits are the defaults (`OpenLimits` has no
+    // equality: its debug text is compared) or, whatever they are, did not bind during the open
+    // (checked below), because then the model is the one the default limits give.
+    let same_phase_and_mode = phase.is_none() && quality_mode == ExportQualityMode::Scaffold;
+    let default_limits = walker_limits == rvt::walker::WalkerLimits::default()
         && format!("{open_limits:?}") == format!("{:?}", OpenLimits::default());
     OPENED_MODEL.with(|cell| cell.borrow_mut().take());
     let mut rf = RevitFile::open_bytes_with_limits(bytes.to_vec(), open_limits).map_err(err_str)?;
@@ -489,7 +491,7 @@ fn export_with_control(
             SavedMeshChoice::Off
         })
         .with_phase(phase)
-        .with_keep_base(drawing_equivalent);
+        .with_keep_base(same_phase_and_mode);
     let run = run_export_with_limits_and_control(&mut rf, &options, walker_limits, control)
         .map_err(err_str)?;
     let ExportRun {
@@ -522,9 +524,15 @@ fn export_with_control(
         phases,
     })
     .map_err(err_str)?;
-    // `base_model` is only built for an open that is eligible, so it is `None` for any other.
+    // A limit bound during the open when a stream was left unread (a stream, member or total cap)
+    // or the file recorded a limit event (a walker scan cap, an inflate memory check): the model
+    // may then differ from the default limits'. `base_model` is `None` unless the phase and mode
+    // matched.
+    let limits_bound = !unread.is_empty() || !rf.limit_events().is_empty();
+    let eligible = default_limits || !limits_bound;
     let kept = u32::try_from(bytes.len())
         .ok()
+        .filter(|_| eligible)
         .and_then(|size| base_model.map(|base| (size, slice_digest(bytes), base)));
     OPENED_MODEL.with(|cell| *cell.borrow_mut() = kept);
     Ok(value)
