@@ -28,8 +28,9 @@ memory diagnostics.
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version <the wasm-bindgen version in Cargo.lock>
 
-# both builds, and the loader, into viewer/pkg (the 64-bit build needs the nightly
-# that tools/ci/wasm64-build.sh names, with rust-src):
+# both builds, and the loader, into viewer/pkg. Needs Node (the script patches and
+# checks the 64-bit package with it) and the nightly the 64-bit build uses, with rust-src:
+rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
 tools/ci/wasm-package.sh viewer/pkg
 # -> viewer/pkg/rvt_open.js, rvt_open_bg.wasm (32-bit), rvt_open64.js, rvt_open64_bg.wasm
 #    (64-bit, memory64), rvt_open_auto.js, their .d.ts files, LICENSE and NOTICE
@@ -165,9 +166,11 @@ client-side-only posture.
 in `site/` plus the viewer at `/viewer/`. Pull requests build only; pushes
 to `main` and manual runs also deploy to GitHub Pages. The build job:
 
-1. installs the pinned Rust toolchain with the wasm32 target and the
-   matching `wasm-bindgen` CLI;
-2. builds `rvt-wasm` and runs `wasm-bindgen` into `viewer/pkg`, as above;
+1. installs the pinned Rust toolchain with the wasm32 target, the
+   `nightly-2026-10-30` toolchain with `rust-src` for the 64-bit build, and
+   the matching `wasm-bindgen` CLI (Node comes with the runner);
+2. runs `tools/ci/wasm-package.sh viewer/pkg`, which builds both decoders and
+   the loader, as above;
 3. fetches the demo samples: `magnetar-io/revit-test-datasets` into
    `_project_corpus/` and `phi-ag/rvt` into `_corpus/`, through
    `.github/actions/fetch-corpus`;

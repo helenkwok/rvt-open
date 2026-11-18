@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CEILING_GIB } from './build-bits';
+import { ceilingGiB } from './build-bits';
 
 // a stream over the reader's resource limits is not read, and the
 // viewer says so and offers "Retry with large-model limits", which reopens
@@ -66,9 +66,9 @@ test('streams over the limits are reported, and the large-model retry reads them
   await expect(retry).toHaveCount(1);
   await expect(retry).toBeVisible();
   await expect(retry).toBeEnabled();
-  await expect(page.locator('#large-model-note')).toContainText(`${CEILING_GIB} GiB`);
+  await expect(page.locator('#large-model-note')).toContainText(`${await ceilingGiB(page)} GiB`);
   await expect(page.locator('#large-model-note')).toContainText('rvt-ifc --large-model');
-  await expect(retry).toHaveAccessibleDescription(new RegExp(`at most ${CEILING_GIB} GiB of memory`));
+  await expect(retry).toHaveAccessibleDescription(new RegExp(`at most ${await ceilingGiB(page)} GiB of memory`));
 
   // Retried: the same file is read again under the large-model limits.
   await retry.click();

@@ -6,6 +6,9 @@
   "description": "In-browser Revit viewer powered by rvt-open compiled to WebAssembly. Zero upload — every byte stays in the tab.",
   "license": "Apache-2.0",
   "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24.22.1"
+  },
   "scripts": {
     "stage:demos": "node scripts/stage-demos.mjs",
     "predev": "pnpm run stage:demos",

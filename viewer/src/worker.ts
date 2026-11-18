@@ -48,7 +48,10 @@
  *                  which only grows, so it is the peak against the 4 GiB (32-bit
  *                  build) or 16 GiB (64-bit) a tab can hold, and the build.
  *   worker → main: { type: 'info', index, panel }
- *   worker → main: { type: 'error', message: string, tooLarge?: TooLarge }
+ *   worker → main: { type: 'error', message: string, tooLarge?: TooLarge,
+ *                    startup?: true }
+ *                  `startup` is set when the decoder itself did not start (the file
+ *                  was not read): a build asked for with `bits` that will not load.
  *                  `tooLarge` is set when the failure is the wasm instance
  *                  running out of memory (see `outOfMemory`), with what the
  *                  worker knew when it stopped: the wasm memory reached, the
@@ -60,6 +63,7 @@
  * in its wasm instance, so later requests do not resend the file:
  *   main → worker: { type: 'dwg-open', bytes: Uint8Array, wasmUrls: WasmUrls, bits?: 32 | 64 }
  *   worker → main: { type: 'dwg-ready', summary, svg }
+ *                  `bits` is the build that ran.
  *                  `summary` is dwgOpen's { version, units, layouts, layers,
  *                  notes, counts }; `svg` is dwgSvg(null)'s { svg, layers,
  *                  notDrawn, truncated } for model space.
@@ -202,15 +206,25 @@ async function startWasm(o: {
 }): Promise<{ bits: Bits; compiled: WebAssembly.Module | null }> {
   if (running) return { bits: running.bits, compiled: null };
   const compiled: Partial<Record<WasmName, WebAssembly.Module>> = {};
-  const loaded = await load<Glue>({
-    // A module handed over is for one build: no other is tried.
-    bits: o.module ? o.moduleBits : o.bits,
-    glue: (name) => (name === 'rvt_open64' ? glue64 : glue32) as Glue,
-    wasm: async (name) => {
-      if (o.module && name === wasmName(o.moduleBits ?? 32)) return o.module;
-      return (compiled[name] = await compileWasm(o.urls[name]));
-    },
-  });
+  const attempt = (bits: Bits | undefined, module?: WebAssembly.Module, moduleBits?: Bits) =>
+    load<Glue>({
+      bits,
+      glue: (name) => (name === 'rvt_open64' ? glue64 : glue32) as Glue,
+      wasm: async (name) => {
+        if (module && name === wasmName(moduleBits ?? 32)) return module;
+        return (compiled[name] = await compileWasm(o.urls[name]));
+      },
+    });
+  let loaded;
+  try {
+    // A module handed over is for one build: no other is tried with it.
+    loaded = o.module ? await attempt(o.moduleBits, o.module, o.moduleBits) : await attempt(o.bits);
+  } catch (err) {
+    // Not asked for a build, and the page's 64-bit module will not start in this worker: the 32-bit
+    // build, as for a first open (the page then keeps the module compiled here).
+    if (!(o.module && o.moduleBits === 64 && o.bits === undefined)) throw err;
+    loaded = await attempt(32);
+  }
   running = { glue: loaded.module, memory: loaded.memory, bits: loaded.bits };
   instanceMemory = loaded.memory;
   return { bits: loaded.bits, compiled: compiled[wasmName(loaded.bits)] ?? null };
@@ -220,11 +234,12 @@ async function handleDwg(msg: DwgMsg): Promise<void> {
   // Started from a blob URL, the worker has no base to find the wasm from:
   // the open names it, and later messages reuse the instance.
   if (msg.type === 'dwg-open') await startWasm({ urls: msg.wasmUrls, bits: msg.bits });
+  // (a DWG reply's `bits` is what the pane shows; the page's cached RVT module is unchanged)
   const wasm = api();
   switch (msg.type) {
     case 'dwg-open': {
       const summary = plain(wasm.dwgOpen(msg.bytes));
-      send({ type: 'dwg-ready', summary, svg: plain(wasm.dwgSvg(null)) });
+      send({ type: 'dwg-ready', summary, svg: plain(wasm.dwgSvg(null)), bits: running?.bits });
       return;
     }
     case 'dwg-svg':
@@ -374,12 +389,19 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
   try {
     step('Initializing wasm');
     const startedAt = performance.now();
-    const started = await startWasm({
-      urls: msg.wasmUrls,
-      bits: msg.bits,
-      module: msg.wasmModule,
-      moduleBits: msg.wasmBits,
-    });
+    let started;
+    try {
+      started = await startWasm({
+        urls: msg.wasmUrls,
+        bits: msg.bits,
+        module: msg.wasmModule,
+        moduleBits: msg.wasmBits,
+      });
+    } catch (err) {
+      // The decoder did not start: nothing was read of the file, so the page must not call it unreadable.
+      send({ type: 'error', message: err instanceof Error ? err.message : String(err), startup: true });
+      return;
+    }
     const wasm = running!;
     const glue = wasm.glue;
     wasmMemory = wasm.memory;

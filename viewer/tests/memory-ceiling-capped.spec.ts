@@ -2,7 +2,7 @@ import { chromium, expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CEILING_GIB } from './build-bits';
+import { ceilingGiB } from './build-bits';
 
 // the stop. wasm32 addresses at most 4 GiB, and a failed allocation ends
 // the wasm instance with a bare `RuntimeError: unreachable` and no panic
@@ -152,7 +152,7 @@ einhovenTest(
         expect(await noteIsOnTop(page)).toBe(true);
         await expect(note.locator('#scaffold-note-title')).toHaveText('Ran out of memory');
         const body = note.locator('#scaffold-note-body');
-        await expect(body).toContainText(`a long way short of the ${CEILING_GIB} GiB a tab can hold`);
+        await expect(body).toContainText(`a long way short of the ${await ceilingGiB(page)} GiB a tab can hold`);
         await expect(body).toContainText('may be damaged');
         await expect(body).not.toContainText('needs more');
         await expect(page.locator('#toast-region .toast.bad')).toContainText('ran out of memory');

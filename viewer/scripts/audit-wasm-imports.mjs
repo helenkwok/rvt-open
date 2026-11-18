@@ -132,6 +132,7 @@ function main() {
     }
     const one = auditWasmImports(fs.readFileSync(wasm), fs.readFileSync(glue, 'utf8'));
     report.imports += one.imports;
+    if (one.imports === 0) report.unread.push(`${name}: no imports to read`);
     report.hits.push(...one.hits.map((hit) => `${name}: ${hit}`));
     report.unread.push(...one.unread.map((label) => `${name}: ${label}`));
   }

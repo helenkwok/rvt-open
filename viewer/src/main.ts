@@ -863,8 +863,9 @@ function saveLoadEvents(): void {
  * tab has. It is an estimate from the file's size alone, so it
  * warns and the open goes ahead; the worker reports the real stop.
  */
-function showMemoryWarning(file: File): void {
+function showMemoryWarning(file: File, announce = true): void {
   const estimate = estimatePeakBytes(file.size);
+  const warnedBefore = loadMemoryWarned;
   loadMemoryWarned = estimate >= memoryCeiling();
   loadWarningEl.classList.toggle('hidden', !loadMemoryWarned);
   if (!loadMemoryWarned) return;
@@ -873,7 +874,7 @@ function showMemoryWarning(file: File): void {
     `(the largest reference model took 10 times, smaller ones up to 27), so about ${formatMemory(estimate)} for ${formatMemory(file.size)}, ` +
     `past the ${formatMemory(memoryCeiling())} a browser tab can hold. Larger files may take less per byte, so it is tried anyway. ` +
     'rvt-ifc and rvt-gltf with --large-model can read a larger one.';
-  toast(`${file.name} may be too large for the browser. Trying anyway.`, 'info');
+  if (announce && !warnedBefore) toast(`${file.name} may be too large for the browser. Trying anyway.`, 'info');
 }
 
 function startLoadOverlay(file: File): void {
@@ -894,6 +895,7 @@ function startLoadOverlay(file: File): void {
   loadHintEl.textContent = loadExpectationText;
   loadElapsedEl.textContent = '0 s elapsed';
   loadOverlayEl.classList.remove('hidden');
+  loadMemoryWarned = false;
   showMemoryWarning(file);
   // The options apply to the read in progress; a change reopens the file.
   savedMeshesEl.disabled = true;
@@ -1008,11 +1010,10 @@ const wasmUrls: WasmUrls = {
   rvt_open64: new URL('../pkg/rvt_open64_bg.wasm', import.meta.url).href,
 };
 /** Says which decoder build is running, in the About line and as `data-wasm-bits` on the status. */
-function showBuild(): void {
-  const bits = activeBits();
-  statusEl.dataset.wasmBits = String(decoderBits ?? '');
+function showBuild(bits: Bits | null = decoderBits): void {
+  statusEl.dataset.wasmBits = String(bits ?? '');
   const el = document.getElementById('wasm-build');
-  if (el) el.textContent = decoderBits ? describeBuild(bits) : '';
+  if (el) el.textContent = bits ? describeBuild(bits) : '';
 }
 function resetWorker(): Worker_ {
   stopWorker();
@@ -1514,14 +1515,17 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
         }
       | { type: 'info'; index: number; panel: ElementInfoPanel | null }
       | { type: 'wasm'; module: WebAssembly.Module; bits: Bits }
-      | { type: 'error'; message: string; tooLarge?: TooLarge };
+      | { type: 'error'; message: string; tooLarge?: TooLarge; startup?: true };
     if (msg.type === 'wasm') {
       // Kept for good: the same wasm serves every file. The workers that read
       // saved parameters, the main thread's exports and the next open start from
       // it, so none of them fetches anything.
       decoderWasm = msg.module;
+      const changed = decoderBits !== msg.bits;
       decoderBits = msg.bits;
       showBuild();
+      // The estimate was judged against the build the page expected: judge it again against the one that ran.
+      if (changed && currentFile) showMemoryWarning(currentFile, true);
       return;
     }
     if (msg.type === 'info') {
@@ -1590,7 +1594,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
       // A memory stop is `msg.tooLarge` and went above, whatever limits the
       // open ran under; any other failure, a panic included, says only what it
       // is, since nothing says it is memory.
-      failLoad(file, msg.message);
+      failLoad(file, msg.message, msg.startup === true);
       return;
     }
     // Replies to the Drawings list (model-drawings.ts) are its own, but drawing grows the
@@ -1664,13 +1668,21 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
 }
 
 /** The card, the status line, the panel and a toast for a file that did not open. */
-function failLoad(file: File, detail: string): void {
+function failLoad(file: File, detail: string, startup = false): void {
   stopWorker();
   stopLoadOverlay();
   clearDemoCardBusy();
   saveLoadEvents();
   setStatus(`Error: ${detail}`);
-  renderErrorStatusPanel(detail);
+  if (startup) {
+    renderErrorStatusPanel(
+      detail,
+      'Decoder did not start',
+      'Not read · the decoder did not start; the file was not inspected. Try ?bits=auto or ?bits=32 in the address',
+    );
+  } else {
+    renderErrorStatusPanel(detail);
+  }
   hideScaffoldNote();
   setDropzoneVisible(true);
   setExportHint('Open a file to export');
@@ -4547,6 +4559,7 @@ const drawing = initDrawing({
   resetWorker,
   wasmUrls,
   bits: askedBits,
+  showBuild: (bits) => showBuild(bits),
   setStatus,
   setStatusBusy,
   toast,
