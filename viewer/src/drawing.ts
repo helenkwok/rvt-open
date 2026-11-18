@@ -5,12 +5,15 @@
  * image/svg+xml, stripped of anything active or external, and imported as DOM.
  */
 import { drawnBox } from './drawn-box';
+import type { Bits, WasmUrls } from './wasm-build';
 
 /** What the pane needs from main.ts; passed in so this module has no import cycle. */
 export interface DrawingHost {
   resetWorker(): Worker;
-  /** Where the wasm is: a worker started from a blob URL cannot resolve it. */
-  wasmUrl: string;
+  /** Where the two decoder builds' wasm are: a worker started from a blob URL cannot resolve them. */
+  wasmUrls: WasmUrls;
+  /** The build the page asks for, if it does (`?bits=`). */
+  bits?: Bits;
   setStatus(text: string): void;
   setStatusBusy(busy: boolean): void;
   toast(message: string, kind?: 'ok' | 'bad' | 'info'): void;
@@ -487,7 +490,7 @@ export function initDrawing(host: DrawingHost, view: SvgView): {
     worker = host.resetWorker();
     worker.addEventListener('message', onMessage as EventListener);
     host.setStatus('Opening drawing');
-    post({ type: 'dwg-open', bytes, wasmUrl: host.wasmUrl }, [bytes.buffer as ArrayBuffer]);
+    post({ type: 'dwg-open', bytes, wasmUrls: host.wasmUrls, bits: host.bits }, [bytes.buffer as ArrayBuffer]);
   }
 
   return { open, close, isOpen: () => app.dataset.mode === 'drawing', pick: pickEntity };

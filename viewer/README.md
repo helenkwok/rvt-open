@@ -161,7 +161,7 @@ User drops .rvt
      ▼
 main.ts ── postMessage ──▶ worker.ts
                                 │
-                                ├── init wasm (pkg/rvt.js)
+                                ├── init wasm (pkg/rvt_open64.js where memory64 is accepted, else pkg/rvt_open.js)
                                 ├── openRvtBytesWithDiagnosticsModeAndOpenLimits()
                                 │                         → IfcModel + diagnostics JSON
                                 ├── buildSceneGraph()     → SceneNode JSON

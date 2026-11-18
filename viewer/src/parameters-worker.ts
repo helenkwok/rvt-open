@@ -20,7 +20,7 @@
  * still reads parameters.
  *
  * Protocol:
- *   main → worker: { type: 'read', file: File, ids: number[], module: WebAssembly.Module,
+ *   main → worker: { type: 'read', file: File, ids: number[], module: WebAssembly.Module, bits: 32 | 64,
  *                    lock: string | null, limits?: OpenLimitsOptions }
  *                  `limits` are the ones the file was opened under; `lock` names a
  *                  Web Lock the worker holds for as long as it lives, so that the
@@ -36,7 +36,9 @@
  *   worker → main: { type: 'error', message, outOfMemory }
  */
 
-import { initSync, savedParameters } from '../pkg/rvt.js';
+import * as glue32 from '../pkg/rvt_open.js';
+import * as glue64 from '../pkg/rvt_open64.js';
+import type { Bits } from './wasm-build';
 import { PANIC_PREFIX, outOfMemory } from './wasm-failure';
 
 interface OpenLimitsOptions {
@@ -50,6 +52,8 @@ interface ReadMsg {
   file: File;
   ids: number[];
   module: WebAssembly.Module;
+  /** The build `module` is: the glue has to be its own. */
+  bits: Bits;
   lock: string | null;
   limits?: OpenLimitsOptions;
 }
@@ -87,10 +91,11 @@ self.addEventListener('message', async (ev: MessageEvent<ReadMsg>) => {
       await holdLock(msg.lock);
     }
     send({ type: 'started' });
-    const wasm = initSync({ module: msg.module });
+    const glue = msg.bits === 64 ? glue64 : glue32;
+    const wasm = glue.initSync({ module: msg.module });
     const bytes = new Uint8Array(await msg.file.arrayBuffer());
     lastPanic = null;
-    const json = savedParameters(bytes, new Float64Array(msg.ids), msg.limits ?? null);
+    const json = glue.savedParameters(bytes, new Float64Array(msg.ids), msg.limits ?? null);
     send({
       type: 'result',
       result: JSON.parse(json) as unknown,

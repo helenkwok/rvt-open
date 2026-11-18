@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CEILING_GIB } from './build-bits';
 
 // a stream over the reader's resource limits is not read, and the
 // viewer says so and offers "Retry with large-model limits", which reopens
@@ -60,14 +61,14 @@ test('streams over the limits are reported, and the large-model retry reads them
   await expect(page.locator('#scaffold-note')).toContainText('Part of the file was not read');
   await expect(page.locator('#scaffold-note')).not.toContainText(/expected result/i);
 
-  // Offered: one retry button, which names the 4 GiB browser ceiling.
+  // Offered: one retry button, which names the browser ceiling (4 GiB on the 32-bit build, 16 GiB on the 64-bit one).
   const retry = page.getByRole('button', { name: 'Retry with large-model limits' });
   await expect(retry).toHaveCount(1);
   await expect(retry).toBeVisible();
   await expect(retry).toBeEnabled();
-  await expect(page.locator('#large-model-note')).toContainText('4 GiB');
+  await expect(page.locator('#large-model-note')).toContainText(`${CEILING_GIB} GiB`);
   await expect(page.locator('#large-model-note')).toContainText('rvt-ifc --large-model');
-  await expect(retry).toHaveAccessibleDescription(/at most 4 GiB of memory/);
+  await expect(retry).toHaveAccessibleDescription(new RegExp(`at most ${CEILING_GIB} GiB of memory`));
 
   // Retried: the same file is read again under the large-model limits.
   await retry.click();

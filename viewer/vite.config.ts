@@ -13,6 +13,9 @@ export default defineConfig({
   base: process.env.RVT_VIEWER_BASE ?? './',
   define: {
     __RVT_VIEWER_VERSION__: JSON.stringify(version),
+    // Which decoder build the page uses unless `?bits=` says otherwise: '32', '64', or '' for the engine's choice
+    // (64-bit where memory64 validates). The browser tests build once per build to run the suite on each.
+    __RVT_VIEWER_BITS__: JSON.stringify(process.env.RVT_VIEWER_BITS ?? ''),
   },
   server: {
     // Viewer is strictly client-side. No proxy, no SSR, no API back-end.

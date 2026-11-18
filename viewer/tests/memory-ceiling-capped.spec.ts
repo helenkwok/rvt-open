@@ -2,6 +2,7 @@ import { chromium, expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CEILING_GIB } from './build-bits';
 
 // the stop. wasm32 addresses at most 4 GiB, and a failed allocation ends
 // the wasm instance with a bare `RuntimeError: unreachable` and no panic
@@ -134,7 +135,7 @@ einhovenTest(
 einhovenTest(
   'a stop far short of the ceiling is not called too large',
   async ({ baseURL }) => {
-    // The same stop at 16 MiB, in a page that believes the real 4 GiB: the
+    // The same stop at 16 MiB, in a page that believes the build's real limit (4 GiB, or 16 GiB on the 64-bit build): the
     // decoder ran out of memory with 99.6% of a tab's to spare, on a file under
     // 1 MiB. That is what a damaged file looks like too, so the page says what
     // happened and does not say the file needs more memory than a tab has.
@@ -151,7 +152,7 @@ einhovenTest(
         expect(await noteIsOnTop(page)).toBe(true);
         await expect(note.locator('#scaffold-note-title')).toHaveText('Ran out of memory');
         const body = note.locator('#scaffold-note-body');
-        await expect(body).toContainText('a long way short of the 4 GiB a tab can hold');
+        await expect(body).toContainText(`a long way short of the ${CEILING_GIB} GiB a tab can hold`);
         await expect(body).toContainText('may be damaged');
         await expect(body).not.toContainText('needs more');
         await expect(page.locator('#toast-region .toast.bad')).toContainText('ran out of memory');

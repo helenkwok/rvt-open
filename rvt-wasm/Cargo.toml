@@ -10,8 +10,8 @@ repository = "https://github.com/helenkwok/rvt-open"
 publish = false  # Built by wasm-pack into viewer/pkg, not published.
 
 [lib]
-# wasm-pack's output names come from `--out-name rvt`, so the viewer still
-# loads `pkg/rvt.js` and `pkg/rvt_bg.wasm`.
+# The output names come from `--out-name rvt_open` (32-bit) and `rvt_open64` (memory64):
+# the viewer loads `pkg/rvt_open.js` or `pkg/rvt_open64.js` and the matching `_bg.wasm`.
 crate-type = ["cdylib"]
 
 

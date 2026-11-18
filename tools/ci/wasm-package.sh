@@ -31,7 +31,7 @@ if [[ ${2:-} != --assemble ]]; then
   [[ $rc64 == 0 ]] || { echo "FAIL: the wasm64 build exited $rc64" >&2; exit 1; }
 fi
 cp LICENSE NOTICE "$out/"
-for f in rvt_open.js rvt_open_bg.wasm rvt_open64.js rvt_open64_bg.wasm rvt_open_auto.js LICENSE NOTICE; do
+for f in rvt_open.js rvt_open_bg.wasm rvt_open64.js rvt_open64_bg.wasm rvt_open_auto.js rvt_open_auto.d.ts rvt_open.d.ts rvt_open64.d.ts LICENSE NOTICE; do
     [[ -s $out/$f ]] || { echo "FAIL: $out/$f missing" >&2; exit 1; }
 done
 echo "wasm package ok: $out"

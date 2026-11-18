@@ -86,7 +86,7 @@ rules:
   `viewer/index.html` that keeps `connect-src`
   restricted to `'self'` and `blob:`. The same-origin allowance
   exists only because the `wasm-pack` JavaScript loader fetches the
-  static `rvt_bg.wasm` bundle from the viewer origin; `blob:` is
+  static `rvt_open_bg.wasm` or `rvt_open64_bg.wasm` bundle from the viewer origin; `blob:` is
   needed for Three.js to read the in-memory GLB object URL generated
   from local WASM output. Application data requests are not allowed.
 - The same policy's `worker-src` is `'self' blob:`. `blob:` was added on
@@ -110,7 +110,7 @@ assets needed to boot the viewer:
   static import, not a chunk fetched at the first export), so none of them is a
   request; the first page load carries them, which made it heavier by the
   amount `docs/viewer-api.md` states;
-- the generated `rvt_bg.wasm` WebAssembly binary, fetched once, by the worker
+- the generated `rvt_open64_bg.wasm` (64-bit, where the browser accepts memory64) or `rvt_open_bg.wasm` (32-bit) WebAssembly binary, only the one in use, fetched once, by the worker
   of the first open, which compiles it and hands the compiled module to the
   page. The page keeps it for good: the next open (another phase, the
   saved-mesh toggle, the large-model retry, another file), a worker that reads

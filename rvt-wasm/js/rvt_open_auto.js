@@ -5,8 +5,10 @@
 //   const { module, memory, bits } = await (await import('./rvt_open_auto.js')).load();
 //   module.convert_all(bytes, {}, progress);
 //
-// `load({ bits: 32 })` forces the 32-bit build. `wasm(name)` may return the .wasm bytes or a Response
-// for `name` ("rvt_open" or "rvt_open64") where fetching a URL does not work (Node).
+// `load({ bits: 32 })` forces the 32-bit build. `wasm(name)` may return the .wasm bytes, a Response, a URL
+// or a compiled WebAssembly.Module for `name` ("rvt_open" or "rvt_open64") where fetching the file next to
+// this one does not work (Node, a bundled worker). `glue(name)` may return the already imported glue module
+// of `name`, for a page that bundles the two glue files and so cannot import them by URL.
 
 // The smallest module with a 64-bit memory: header, then a memory section holding one memory whose
 // limits flag 0x04 means "64-bit address, no maximum", minimum 0 pages. Validating it asks the engine
@@ -21,11 +23,13 @@ export function supportsMemory64() {
   }
 }
 
-export async function load({ bits, base = new URL('.', import.meta.url), wasm } = {}) {
+export async function load({ bits, base, wasm, glue } = {}) {
   const want64 = bits === undefined ? supportsMemory64() : bits === 64;
+  // Only resolved when a file is fetched by URL: a bundled worker's own URL (a blob) is no base.
+  const url = (file) => new URL(file, base ?? new URL('.', import.meta.url));
   const open = async (name) => {
-    const module = await import(new URL(`${name}.js`, base).href);
-    const exports = await module.default({ module_or_path: wasm ? await wasm(name) : new URL(`${name}_bg.wasm`, base) });
+    const module = glue ? await glue(name) : await import(/* @vite-ignore */ url(`${name}.js`).href);
+    const exports = await module.default({ module_or_path: wasm ? await wasm(name) : url(`${name}_bg.wasm`) });
     return { module, memory: exports.memory, bits: name === 'rvt_open64' ? 64 : 32 };
   };
   if (want64) {

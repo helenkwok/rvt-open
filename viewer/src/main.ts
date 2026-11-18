@@ -18,7 +18,16 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import supportMatrix from '../../docs/support-matrix.json';
 import { initDrawing, initSvgView, isDrawingFile } from './drawing';
 import { initModelDrawings } from './model-drawings';
-import * as wasmGlue from '../pkg/rvt.js';
+import * as glue32 from '../pkg/rvt_open.js';
+import * as glue64 from '../pkg/rvt_open64.js';
+import {
+  MEMORY_LIMIT_BYTES,
+  describeBuild,
+  plannedBits,
+  requestedBits,
+  type Bits,
+  type WasmUrls,
+} from './wasm-build';
 import DecoderWorker from './worker.ts?worker&inline';
 import ParametersWorker from './parameters-worker.ts?worker&inline';
 import {
@@ -619,8 +628,12 @@ function loadExpectation(bytes: number): string {
   return `${size}, about ${seconds} s`;
 }
 
-/** The most memory a wasm32 instance can address, and so a tab can give the decoder. */
-const WASM32_CEILING_BYTES = 4 * 2 ** 30;
+/** The build the page asked for (`?bits=`, else the viewer build's default), or undefined for the engine's choice. */
+const askedBits = requestedBits(window.location.search, __RVT_VIEWER_BITS__);
+/** The build a worker reported running, once one has: the first open sets it, and it stays the page's. */
+let decoderBits: Bits | null = null;
+/** The build an open uses or is about to use. */
+const activeBits = (): Bits => decoderBits ?? plannedBits(askedBits);
 
 /**
  * The multiple of its file's size an open has been measured to take at least:
@@ -634,9 +647,14 @@ const WASM32_CEILING_BYTES = 4 * 2 ** 30;
 const PEAK_MEMORY_PER_FILE_BYTE = 10;
 
 /** `?memoryCeilingBytes=` lowers the ceiling the warning compares with, for the browser test; a browser capped the same way (V8's `--wasm-max-mem-pages`) then really stops there. */
-const memoryCeilingBytes =
-  wholeBytesParam(new URLSearchParams(window.location.search), 'memoryCeilingBytes') ??
-  WASM32_CEILING_BYTES;
+const memoryCeilingOverride = wholeBytesParam(
+  new URLSearchParams(window.location.search),
+  'memoryCeilingBytes',
+);
+/** What a tab can give the decoder: the build's own limit (4 GiB of wasm32, 16 GiB of memory64), or the override. */
+function memoryCeiling(bits: Bits = activeBits()): number {
+  return memoryCeilingOverride ?? MEMORY_LIMIT_BYTES[bits];
+}
 
 function estimatePeakBytes(fileBytes: number): number {
   return fileBytes * PEAK_MEMORY_PER_FILE_BYTE;
@@ -847,13 +865,13 @@ function saveLoadEvents(): void {
  */
 function showMemoryWarning(file: File): void {
   const estimate = estimatePeakBytes(file.size);
-  loadMemoryWarned = estimate >= memoryCeilingBytes;
+  loadMemoryWarned = estimate >= memoryCeiling();
   loadWarningEl.classList.toggle('hidden', !loadMemoryWarned);
   if (!loadMemoryWarned) return;
   loadWarningEl.textContent =
     `This file may be too large for the browser. An open has taken at least about ${PEAK_MEMORY_PER_FILE_BYTE} times its file's size in memory ` +
     `(the largest reference model took 10 times, smaller ones up to 27), so about ${formatMemory(estimate)} for ${formatMemory(file.size)}, ` +
-    `past the ${formatMemory(memoryCeilingBytes)} a browser tab can hold. Larger files may take less per byte, so it is tried anyway. ` +
+    `past the ${formatMemory(memoryCeiling())} a browser tab can hold. Larger files may take less per byte, so it is tried anyway. ` +
     'rvt-ifc and rvt-gltf with --large-model can read a larger one.';
   toast(`${file.name} may be too large for the browser. Trying anyway.`, 'info');
 }
@@ -985,7 +1003,17 @@ function stopWorker(): void {
  * (`decoderWasm`), and every later open, and every worker that reads saved
  * parameters, starts from that module.
  */
-const wasmUrl = new URL('../pkg/rvt_bg.wasm', import.meta.url).href;
+const wasmUrls: WasmUrls = {
+  rvt_open: new URL('../pkg/rvt_open_bg.wasm', import.meta.url).href,
+  rvt_open64: new URL('../pkg/rvt_open64_bg.wasm', import.meta.url).href,
+};
+/** Says which decoder build is running, in the About line and as `data-wasm-bits` on the status. */
+function showBuild(): void {
+  const bits = activeBits();
+  statusEl.dataset.wasmBits = String(decoderBits ?? '');
+  const el = document.getElementById('wasm-build');
+  if (el) el.textContent = decoderBits ? describeBuild(bits) : '';
+}
 function resetWorker(): Worker_ {
   stopWorker();
   // Bundled into this script and started from a blob URL, so that opening the
@@ -1345,6 +1373,8 @@ interface TooLarge {
   step: string | null;
   /** The engine's own message, or the panic's. */
   detail: string;
+  /** The build that stopped, whose limit the message names; null if none had loaded. */
+  bits: Bits | null;
 }
 
 /** What the worker reports about one open (worker.ts). */
@@ -1355,6 +1385,8 @@ interface LoadStats {
   workerMs: number;
   /** The wasm linear memory after the open, which only grows: the peak against the 4 GiB a tab holds. */
   wasmMemoryBytes: number;
+  /** The decoder build that ran: 32 (4 GiB) or 64 (16 GiB). */
+  bits: Bits;
 }
 
 async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> {
@@ -1427,7 +1459,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     // A file the tab has no memory to hold is the same failure as one the
     // decoder has no memory to open.
     if (/allocation failed|out of memory|invalid array length/i.test(message)) {
-      showTooLarge(file, { wasmMemoryBytes: 0, report: null, step: null, detail: message });
+      showTooLarge(file, { wasmMemoryBytes: 0, report: null, step: null, detail: message, bits: null });
       return;
     }
     stopWorker();
@@ -1481,13 +1513,15 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
           phases?: ProjectPhase[];
         }
       | { type: 'info'; index: number; panel: ElementInfoPanel | null }
-      | { type: 'wasm'; module: WebAssembly.Module }
+      | { type: 'wasm'; module: WebAssembly.Module; bits: Bits }
       | { type: 'error'; message: string; tooLarge?: TooLarge };
     if (msg.type === 'wasm') {
       // Kept for good: the same wasm serves every file. The workers that read
       // saved parameters, the main thread's exports and the next open start from
       // it, so none of them fetches anything.
       decoderWasm = msg.module;
+      decoderBits = msg.bits;
+      showBuild();
       return;
     }
     if (msg.type === 'info') {
@@ -1597,6 +1631,8 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     downloadRoomsBtn.disabled = !scheduleHasType(msg.schedule, 'IFCSPACE');
     // What this open cost, for tests/saved-meshes-measure.spec.ts; cleared when
     // the next open starts.
+    decoderBits = msg.stats.bits;
+    showBuild();
     statusEl.dataset.loadStats = JSON.stringify({
       ...msg.stats,
       loadMs: Math.round(performance.now() - loadStartedAt),
@@ -1618,8 +1654,10 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
       bytes,
       mode: qualityMode,
       limits: { ...openLimits, savedMeshes, ...(phase === undefined ? {} : { phase }) },
-      wasmUrl,
+      wasmUrls,
+      bits: askedBits,
       wasmModule: decoderWasm ?? undefined,
+      wasmBits: decoderWasm ? (decoderBits ?? undefined) : undefined,
     },
     [bytes.buffer],
   );
@@ -1657,7 +1695,8 @@ function stopPhrase(tooLarge: TooLarge): string | null {
 }
 
 /**
- * The decode stopped for want of memory: wasm32 holds at most 4 GiB,
+ * The decode stopped for want of memory: the 32-bit build holds at most 4 GiB
+ * and the 64-bit one 16 GiB (`memoryCeiling`),
  * and a failed allocation ends the instance with a bare `unreachable`. When
  * the stop was near what a tab can hold, or the file is big enough that the
  * pre-check would have warned, this says plainly that the model is too large
@@ -1668,13 +1707,14 @@ function stopPhrase(tooLarge: TooLarge): string | null {
 function showTooLarge(file: File, tooLarge: TooLarge): void {
   const reached = formatMemory(tooLarge.wasmMemoryBytes);
   const size = formatMemory(file.size);
-  const ceiling = formatMemory(memoryCeilingBytes);
+  const limit = memoryCeiling(tooLarge.bits ?? undefined);
+  const ceiling = formatMemory(limit);
   const where = stopPhrase(tooLarge);
   const readFailed = tooLarge.wasmMemoryBytes === 0;
   const firm =
     readFailed ||
-    tooLarge.wasmMemoryBytes >= memoryCeilingBytes / 2 ||
-    estimatePeakBytes(file.size) >= memoryCeilingBytes;
+    tooLarge.wasmMemoryBytes >= limit / 2 ||
+    estimatePeakBytes(file.size) >= limit;
   const title = firm ? 'Too large for the browser' : 'Ran out of memory';
   const stopped = readFailed ? '' : ` at ${reached}`;
   let summary: string;
@@ -3232,7 +3272,7 @@ function residentWasmBytes(): number {
  * page judges an open by where `?memoryCeilingBytes=` lowers that.
  */
 function parametersAutoReadLimit(): number {
-  return Math.min(PARAMETERS_MEASURED_WASM_BYTES, memoryCeilingBytes / 4);
+  return Math.min(PARAMETERS_MEASURED_WASM_BYTES, memoryCeiling() / 4);
 }
 
 /** Whether a selection reads on its own: not past what has been measured, and not after a read ran out of memory. */
@@ -3562,7 +3602,7 @@ function readSavedParameters(id: number): void {
   w.addEventListener('messageerror', () =>
     settle({ type: 'error', message: 'the answer could not be received', outOfMemory: false }),
   );
-  w.postMessage({ type: 'read', file, ids: [id], module, lock, limits });
+  w.postMessage({ type: 'read', file, ids: [id], module, bits: decoderBits ?? 32, lock, limits });
 }
 
 /** The group of a selected element: its saved parameters, or the state they are in. */
@@ -4179,7 +4219,7 @@ function largeModelRetryRow(): HTMLElement {
   const note = document.createElement('p');
   note.id = 'large-model-note';
   note.textContent =
-    'Retrying reads those streams with the limits rvt-ifc --large-model uses: streams up to 2 GiB. A browser tab can use at most 4 GiB of memory, so a very large model can still fail to open.';
+    `Retrying reads those streams with the limits rvt-ifc --large-model uses: streams up to 2 GiB. A browser tab can use at most ${formatMemory(memoryCeiling())} of memory, so a very large model can still fail to open.`;
   const button = document.createElement('button');
   button.type = 'button';
   button.id = 'retry-large-model';
@@ -4505,7 +4545,8 @@ const drawingView = initSvgView($('drawing-sheet'), (target) => drawing.pick(tar
 $('drawing-fit').addEventListener('click', () => drawingView.fit());
 const drawing = initDrawing({
   resetWorker,
-  wasmUrl,
+  wasmUrls,
+  bits: askedBits,
   setStatus,
   setStatusBusy,
   toast,
@@ -4626,7 +4667,7 @@ document.body.addEventListener('drop', (ev) => {
  * this was added. A failed initialisation is not cached, so the next
  * click retries.
  */
-type WasmModule = typeof wasmGlue;
+type WasmModule = typeof glue32;
 let mainThreadWasmReady: Promise<WasmModule> | null = null;
 /** The main thread's instance's memory once an export has made one: it counts toward what a read may be made beside. */
 let mainThreadWasmMemory: WebAssembly.Memory | null = null;
@@ -4638,8 +4679,9 @@ function mainThreadWasm(): Promise<WasmModule> {
     // which the main thread allows at any size; `initSync` would not.
     mainThreadWasmReady = (async () => {
       if (!decoderWasm) throw new Error('the open did not hand over the decoder');
-      mainThreadWasmMemory = (await wasmGlue.default({ module_or_path: decoderWasm })).memory;
-      return wasmGlue;
+      const glue = (decoderBits === 64 ? glue64 : glue32) as WasmModule;
+      mainThreadWasmMemory = (await glue.default({ module_or_path: decoderWasm })).memory;
+      return glue;
     })().catch((err: unknown) => {
       mainThreadWasmReady = null;
       throw err;
