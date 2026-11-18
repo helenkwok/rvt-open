@@ -489,7 +489,7 @@ fn export_with_control(
             SavedMeshChoice::Off
         })
         .with_phase(phase)
-        .with_keep_base(true);
+        .with_keep_base(drawing_equivalent);
     let run = run_export_with_limits_and_control(&mut rf, &options, walker_limits, control)
         .map_err(err_str)?;
     let ExportRun {
@@ -522,10 +522,10 @@ fn export_with_control(
         phases,
     })
     .map_err(err_str)?;
-    let kept = match (!drawing_equivalent, u32::try_from(bytes.len())) {
-        (false, Ok(size)) => base_model.map(|base| (size, slice_digest(bytes), base)),
-        _ => None,
-    };
+    // `base_model` is only built for an open that is eligible, so it is `None` for any other.
+    let kept = u32::try_from(bytes.len())
+        .ok()
+        .and_then(|size| base_model.map(|base| (size, slice_digest(bytes), base)));
     OPENED_MODEL.with(|cell| *cell.borrow_mut() = kept);
     Ok(value)
 }
