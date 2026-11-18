@@ -17,3 +17,7 @@
   limits give, and the drawing is the same. A file a limit does bind on keeps
   nothing, and its first drawing exports the file again at the defaults.
   The figures are in the pull request.
+- **A limit on the ProjectInformation stream is recorded as a limit event.** An
+  inflate cap that stopped the project-information entry left the site and
+  building names unset without any note, so nothing showed that the model was
+  built under a limit. It is now a limit event, as the other streams' are.

@@ -1514,13 +1514,13 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
           phases?: ProjectPhase[];
         }
       | { type: 'info'; index: number; panel: ElementInfoPanel | null }
-      | { type: 'wasm'; module: WebAssembly.Module; bits: Bits }
+      | { type: 'wasm'; module?: WebAssembly.Module; bits: Bits }
       | { type: 'error'; message: string; tooLarge?: TooLarge; startup?: true };
     if (msg.type === 'wasm') {
       // Kept for good: the same wasm serves every file. The workers that read
       // saved parameters, the main thread's exports and the next open start from
       // it, so none of them fetches anything.
-      decoderWasm = msg.module;
+      if (msg.module) decoderWasm = msg.module;
       const changed = decoderBits !== msg.bits;
       decoderBits = msg.bits;
       showBuild();
@@ -3275,7 +3275,7 @@ function rememberParameters(id: number, reading: SavedParametersReading): void {
 
 /** The wasm memory this page holds: the open's, and the main thread's where its exports made an instance. */
 function residentWasmBytes(): number {
-  return loadedWasmMemoryBytes + (mainThreadWasmMemory?.buffer.byteLength ?? 0);
+  return loadedWasmMemoryBytes + mainThreadWasmMemories.reduce((sum, memory) => sum + memory.buffer.byteLength, 0);
 }
 
 /**
@@ -4682,10 +4682,18 @@ document.body.addEventListener('drop', (ev) => {
  */
 type WasmModule = typeof glue32;
 let mainThreadWasmReady: Promise<WasmModule> | null = null;
-/** The main thread's instance's memory once an export has made one: it counts toward what a read may be made beside. */
-let mainThreadWasmMemory: WebAssembly.Memory | null = null;
+/** The module and build the main thread's instance was made from: another module or build makes a new one. */
+let mainThreadWasmFor: { module: WebAssembly.Module; bits: Bits | null } | null = null;
+/** The main thread's instances' memory once an export has made one: it counts toward what a read may be made beside. */
+/** Every instance an export has made (one per module and build), all still resident. */
+const mainThreadWasmMemories: WebAssembly.Memory[] = [];
 function mainThreadWasm(): Promise<WasmModule> {
+  // A reopen that fell back to the other build hands the page another module: export from that one.
+  if (mainThreadWasmFor && (mainThreadWasmFor.module !== decoderWasm || mainThreadWasmFor.bits !== decoderBits)) {
+    mainThreadWasmReady = null;
+  }
   if (!mainThreadWasmReady) {
+    mainThreadWasmFor = decoderWasm ? { module: decoderWasm, bits: decoderBits } : null;
     // The glue is part of the page (a static import) and the module is the one
     // the open compiled, so an export fetches nothing, however late it is
     // clicked. `default` takes a module and instantiates it asynchronously,
@@ -4693,7 +4701,7 @@ function mainThreadWasm(): Promise<WasmModule> {
     mainThreadWasmReady = (async () => {
       if (!decoderWasm) throw new Error('the open did not hand over the decoder');
       const glue = (decoderBits === 64 ? glue64 : glue32) as WasmModule;
-      mainThreadWasmMemory = (await glue.default({ module_or_path: decoderWasm })).memory;
+      mainThreadWasmMemories.push((await glue.default({ module_or_path: decoderWasm })).memory);
       return glue;
     })().catch((err: unknown) => {
       mainThreadWasmReady = null;

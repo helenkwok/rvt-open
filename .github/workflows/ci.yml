@@ -660,7 +660,7 @@ jobs:
           for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt; do
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          specs=(tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/large-model-reuse.spec.ts)
+          specs=(tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts)
           if [ "${{ matrix.leg }}" = 2 ]; then
             pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
           else

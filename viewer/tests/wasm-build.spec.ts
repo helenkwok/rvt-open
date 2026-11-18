@@ -48,11 +48,13 @@ test('the build the suite was told to use is the build that opens the file', asy
   if (process.env.CI) expect(supported, 'the CI browser accepts memory64').toBe(true);
   await openTier1(page, '');
   const got = await reportedBits(page);
-  const want = EXPECTED_BITS ?? (supported ? 64 : 32);
-  expect(got.bits).toBe(want);
-  expect(got.stats).toBe(want);
-  expect(got.line).toContain(`${want}-bit decoder`);
-  expect(got.line).toContain(want === 64 ? '16 GiB' : '4 GiB');
+  // Pinned (as CI runs it): exactly that build. Unpinned, the page chooses: 64-bit where memory64 validates, and
+  // the documented fallback to 32-bit where the 64-bit build will not start is a successful open too.
+  const allowed = EXPECTED_BITS !== undefined ? [EXPECTED_BITS] : supported ? [64, 32] : [32];
+  expect(allowed).toContain(got.bits);
+  expect(got.stats).toBe(got.bits);
+  expect(got.line).toContain(`${got.bits}-bit decoder`);
+  expect(got.line).toContain(got.bits === 64 ? '16 GiB' : '4 GiB');
 });
 
 test('?bits=32 asks for the 32-bit build whatever the default is', async ({ page }) => {

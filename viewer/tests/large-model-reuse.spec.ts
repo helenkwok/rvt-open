@@ -16,7 +16,9 @@ const MODEL = process.env.RVT_SHEETS_MODEL ?? '';
 // hidden until a file is open, so its value is set directly, as the page reads it).
 
 interface Drawn {
-  /** The wasm export's model step of the first drawing, ms: a kept model is taken, not built. */
+  /** Whether the first drawing took the open's kept model (1) or exported the file again (0): `modelKept` of the drawing's steps. */
+  kept: number;
+  /** The model step of the first drawing, ms (logged, not asserted). */
   modelMs: number;
   /** The drawing's SVG content, as bytes of markup: the elements, not the timing data on the root. */
   svg: string;
@@ -40,7 +42,7 @@ async function openAndDraw(page: Page, query: string, prepare?: (page: Page) => 
   const svg = page.locator('#drawing-sheet > svg');
   await expect(svg).toHaveAttribute('data-timeline', /painted/, { timeout: 600_000 });
   const times = JSON.parse((await svg.getAttribute('data-times')) ?? '{}') as Record<string, number>;
-  return { modelMs: times.model, svg: await svg.evaluate((el) => el.innerHTML) };
+  return { kept: times.modelKept, modelMs: times.model, svg: await svg.evaluate((el) => el.innerHTML) };
 }
 
 test.describe('the first drawing after a Large Model open', () => {
@@ -61,9 +63,10 @@ test.describe('the first drawing after a Large Model open', () => {
     const reExport = await draw('', (page) => page.locator('#export-mode').evaluate((el) => { (el as HTMLSelectElement).value = 'typed-no-geometry'; }));
     console.log(`first drawing, model step ms: default ${defaults.modelMs}, large model ${largeModel.modelMs}, re-export ${reExport.modelMs}`);
 
-    // The kept model is taken, not exported again: the model step is a fraction of the export's.
-    expect(defaults.modelMs, 'the default open keeps its model').toBeLessThan(reExport.modelMs / 3);
-    expect(largeModel.modelMs, 'the Large Model open keeps its model').toBeLessThan(reExport.modelMs / 3);
+    // The kept model is taken, not exported again.
+    expect(defaults.kept, 'the default open keeps its model').toBe(1);
+    expect(largeModel.kept, 'the Large Model open keeps its model').toBe(1);
+    expect(reExport.kept, 'a mode other than scaffold keeps nothing').toBe(0);
     // And it is the same drawing, byte for byte.
     expect(largeModel.svg.length).toBeGreaterThan(10_000);
     expect(largeModel.svg === reExport.svg, 'Large Model drawing equals the re-export').toBe(true);
@@ -84,7 +87,6 @@ test.describe('the first drawing after a Large Model open', () => {
     const svg = page.locator('#drawing-sheet > svg');
     await expect(svg).toHaveAttribute('data-timeline', /painted/, { timeout: 600_000 });
     const times = JSON.parse((await svg.getAttribute('data-times')) ?? '{}') as Record<string, number>;
-    // A model step as long as an export: more than any kept model's take (6 to 66 ms on the files measured).
-    expect(times.model, 'the first drawing exported the file again').toBeGreaterThan(500);
+    expect(times.modelKept, 'the first drawing exported the file again').toBe(0);
   });
 });

@@ -31,10 +31,11 @@ Install and local build paths are documented in
 ## Local dev
 
 ```bash
-# 1. Build both decoders (32-bit and 64-bit) and the loader into viewer/pkg/, from the repository root.
+# Run this block from the repository root.
+# 1. Build both decoders (32-bit and 64-bit) and the loader into viewer/pkg/.
 #    Needs the wasm32 target, wasm-bindgen-cli at the version Cargo.lock pins, Node, and the nightly
 #    toolchain tools/ci/wasm64-build.sh names (it adds rust-src itself).
-(cd .. && tools/ci/wasm-package.sh viewer/pkg)
+tools/ci/wasm-package.sh viewer/pkg
 
 # 2. Install node deps
 cd viewer
@@ -82,13 +83,15 @@ A file opens under the reader's default limits (256 MiB per stream and per
 inflated member). When a stream is over them, File status reports "Part of the
 file not read" and offers "Retry with large-model limits", which reads the same
 file again with the limits `rvt-ifc --large-model` uses (streams up to 2 GiB).
-A browser tab can use at most 4 GiB of memory, so a very large model can still
-fail to open; `rvt-ifc --large-model` is not held to a tab's 4 GiB (its caps are
+A browser tab can use at most 4 GiB of memory with the 32-bit decoder and 16 GiB
+with the 64-bit one (which the viewer runs where the browser accepts memory64;
+a browser can give a tab less than its decoder can address), so a very large
+model can still fail to open; `rvt-ifc --large-model` is not held to a tab's limit (its caps are
 a 2 GiB stream and, on a 64-bit machine with the memory, 8 GiB inflated, and a
 file over 2 GiB is rejected whatever the flags). The button calls
 `openRvtBytesWithDiagnosticsModeAndOpenLimits` with `{ largeModel: true }`.
 
-A file whose size says it may need more than a tab's 4 GiB (an open has taken
+A file whose size says it may need more than a tab's limit, 4 GiB or 16 GiB by decoder (an open has taken
 at least about ten times the file's size, and the warning can fire on a file
 that fits) is warned about in the loading card before the decode, and still
 tried. When the wasm instance does run out of memory, the viewer says the model

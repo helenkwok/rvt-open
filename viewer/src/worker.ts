@@ -23,8 +23,8 @@
  *                  project's last.
  *   main → worker: { type: 'info', index: number }
  *   worker → main: { type: 'progress', step: string }
- *   worker → main: { type: 'wasm', module, bits } the decoder's compiled wasm and
- *                  which build it is, which the page hands to the workers that
+ *   worker → main: { type: 'wasm', module?, bits } which build is running, and, when
+ *                  this worker compiled it (the first open), the decoder's compiled wasm, which the page hands to the workers that
  *                  read saved parameters, so that selecting an element fetches
  *                  nothing
  * worker → main: { type: 'stage', stage, done, total, wasmMemoryBytes } 
@@ -233,7 +233,16 @@ async function startWasm(o: {
 async function handleDwg(msg: DwgMsg): Promise<void> {
   // Started from a blob URL, the worker has no base to find the wasm from:
   // the open names it, and later messages reuse the instance.
-  if (msg.type === 'dwg-open') await startWasm({ urls: msg.wasmUrls, bits: msg.bits });
+  if (msg.type === 'dwg-open') {
+    try {
+      await startWasm({ urls: msg.wasmUrls, bits: msg.bits });
+    } catch (err) {
+      // The decoder did not start: nothing was read of the file.
+      throw new Error(
+        `${err instanceof Error ? err.message : String(err)} (the decoder did not start; try ?bits=auto or ?bits=32 in the address)`,
+      );
+    }
+  }
   // (a DWG reply's `bits` is what the pane shows; the page's cached RVT module is unchanged)
   const wasm = api();
   switch (msg.type) {
@@ -406,7 +415,8 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
     const glue = wasm.glue;
     wasmMemory = wasm.memory;
     // The first open's module is the page's from here on.
-    if (started.compiled) send({ type: 'wasm', module: started.compiled, bits: started.bits });
+    // The build every start, the module only when this worker compiled it.
+    send({ type: 'wasm', module: started.compiled ?? undefined, bits: started.bits });
 
     // Progressive streaming. Emit the cheap metadata
     // first (sub-second even on hundreds-of-MB files) so the UI

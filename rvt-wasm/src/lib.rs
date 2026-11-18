@@ -518,21 +518,21 @@ fn export_with_control(
         record_unread_streams(&mut diagnostics, &unread);
     }
     let phases = rf.project_phases();
+    // Whether the base copy can be reused is known now: drop it here if not, so it is not held while the
+    // result is serialised.
+    let limits_bound = !unread.is_empty() || !rf.limit_events().is_empty();
+    let eligible = default_limits || !limits_bound;
+    let base_model = base_model.filter(|_| eligible);
     let value = serde_wasm_bindgen::to_value(&ExportJson {
         model: &model,
         diagnostics,
         phases,
     })
     .map_err(err_str)?;
-    // A limit bound during the open when a stream was left unread (a stream, member or total cap)
-    // or the file recorded a limit event (a walker scan cap, an inflate memory check): the model
-    // may then differ from the default limits'. `base_model` is `None` unless the phase and mode
-    // matched.
-    let limits_bound = !unread.is_empty() || !rf.limit_events().is_empty();
-    let eligible = default_limits || !limits_bound;
+    // `base_model` is `None` unless the phase and mode matched and the limits are the defaults or did not
+    // bind (a stream left unread, or a limit event recorded, during the open).
     let kept = u32::try_from(bytes.len())
         .ok()
-        .filter(|_| eligible)
         .and_then(|size| base_model.map(|base| (size, slice_digest(bytes), base)));
     OPENED_MODEL.with(|cell| *cell.borrow_mut() = kept);
     Ok(value)
@@ -2152,11 +2152,17 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
             // The model the 3D view was built from, when that open was of this file; else
             // the file is exported now.
             let opened = OPENED_MODEL.with(|c| c.borrow_mut().take());
+            let mut reused = false;
             let model = match opened {
-                Some((s, d, model)) if s == size && d == digest => model,
+                Some((s, d, model)) if s == size && d == digest => {
+                    reused = true;
+                    model
+                }
                 _ => RvtDocExporter.export(&mut rf).map_err(err_str)?,
             };
             lap(&mut times, "model");
+            // Not a time: 1 when the open's kept model was taken, 0 when the file was exported again.
+            times.insert("modelKept".into(), serde_json::json!(u8::from(reused)));
             // The views the list read, or read now.
             let listed = LISTED_VIEWS.with(|c| c.borrow_mut().take());
             let facts = match listed {
