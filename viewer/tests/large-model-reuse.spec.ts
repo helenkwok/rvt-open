@@ -12,7 +12,8 @@ const MODEL = process.env.RVT_SHEETS_MODEL ?? '';
 // no limit event): its model is then the default limits' model, and the drawing is the same as the re-export's.
 // `?maxStreamBytes=200` binds the first open (a stream is left unread), so an open under it keeps nothing; the
 // retry under the Large Model limits is what is checked. A mode other than scaffold is never kept (the first
-// drawing exports the file again at the defaults), which is how the re-export is forced here.
+// drawing exports the file again at the defaults), which is how the re-export is forced here (the select is
+// hidden until a file is open, so its value is set directly, as the page reads it).
 
 interface Drawn {
   /** The wasm export's model step of the first drawing, ms: a kept model is taken, not built. */
@@ -57,7 +58,7 @@ test.describe('the first drawing after a Large Model open', () => {
     };
     const defaults = await draw('');
     const largeModel = await draw('?maxStreamBytes=200');
-    const reExport = await draw('', (page) => page.locator('#export-mode').selectOption('typed-no-geometry'));
+    const reExport = await draw('', (page) => page.locator('#export-mode').evaluate((el) => { (el as HTMLSelectElement).value = 'typed-no-geometry'; }));
     console.log(`first drawing, model step ms: default ${defaults.modelMs}, large model ${largeModel.modelMs}, re-export ${reExport.modelMs}`);
 
     // The kept model is taken, not exported again: the model step is a fraction of the export's.
