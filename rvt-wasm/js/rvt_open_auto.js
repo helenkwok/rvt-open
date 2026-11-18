@@ -26,7 +26,8 @@ export function supportsMemory64() {
 export async function load({ bits, base, wasm, glue } = {}) {
   const want64 = bits === undefined ? supportsMemory64() : bits === 64;
   // Only resolved when a file is fetched by URL: a bundled worker's own URL (a blob) is no base.
-  const url = (file) => new URL(file, base ?? new URL('.', import.meta.url));
+  const here = import.meta.url; // not a literal `new URL('.', import.meta.url)`: a bundler would try to resolve that at build time
+  const url = (file) => new URL(file, base ?? new URL('.', here));
   const open = async (name) => {
     const module = glue ? await glue(name) : await import(/* @vite-ignore */ url(`${name}.js`).href);
     const exports = await module.default({ module_or_path: wasm ? await wasm(name) : url(`${name}_bg.wasm`) });
