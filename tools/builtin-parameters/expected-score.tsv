@@ -1,0 +1,8 @@
+# key files: builtin_parameters.tsv 7841c05fa6ef6a85, builtin_enums.tsv d6a14dd409f6cb72, builtin_categories.tsv d1a1aa4891cde579
+field	key_ids	filled	match	differ	empty
+name	2342	2335	2292	43	7
+storage	2342	439	439	0	1903
+spec	1106	266	240	26	840
+group	716	445	444	1	271
+enum_text	1239	48	48	0	1191
+category_name	361	134	127	7	227

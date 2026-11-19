@@ -180,6 +180,7 @@ cli       rvt_inspect_cli
 cli       rvt_schedule_cli
 
 contract  binary_inventory
+contract  builtin_catalog_sources
 contract  field_type_coverage
 contract  ifc_synthetic_project
 contract  ifc_synthetic_structural

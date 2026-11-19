@@ -7,7 +7,9 @@
 //! `RVT_PROJECT_CORPUS_DIR`.
 
 use rvt::RevitFile;
-use rvt::ifc::{RvtDocExporter, write_step};
+use rvt::ifc::entities::IfcEntity;
+use rvt::ifc::export_content::{ExportContentPolicy, append_typed_production_elements};
+use rvt::ifc::{ExportQualityMode, RvtDocExporter, write_step};
 use rvt::research::partition_schema_mvp::{IFC_EXPORT_AS_FIELD, IFC_PREDEFINED_TYPE_FIELD};
 use rvt::walker::{DecodedElement, InstanceField};
 use std::collections::BTreeMap;
@@ -113,4 +115,62 @@ fn core_interior_export_overrides_are_revits() {
         .filter(|(e, _)| e == "IFCSHADINGDEVICE")
         .count();
     assert_eq!(shading_rows, 20);
+}
+
+fn written(class: &str, export_as: &str, predefined: &str) -> (String, Option<String>) {
+    let element = DecodedElement {
+        id: Some(1),
+        class: class.to_string(),
+        fields: vec![
+            (
+                IFC_EXPORT_AS_FIELD.to_string(),
+                InstanceField::String(export_as.to_string()),
+            ),
+            (
+                IFC_PREDEFINED_TYPE_FIELD.to_string(),
+                InstanceField::String(predefined.to_string()),
+            ),
+        ],
+        byte_range: 0..0,
+        provenance: Default::default(),
+    };
+    let mut entities = Vec::new();
+    let mut storeys = Vec::new();
+    append_typed_production_elements(
+        std::iter::once(element),
+        &mut entities,
+        &mut storeys,
+        ExportContentPolicy::for_quality_mode(ExportQualityMode::Scaffold),
+    );
+    entities
+        .into_iter()
+        .find_map(|entity| match entity {
+            IfcEntity::BuildingElement {
+                ifc_type,
+                predefined_type,
+                ..
+            } => Some((ifc_type, predefined_type)),
+            _ => None,
+        })
+        .expect("the element is written")
+}
+
+/// A ceiling whose "Export to IFC As" is `IfcSlab` (with the predefined type
+/// that comes with it) is written as Revit's export writes it, a covering with
+/// the ceiling predefined type; a floor with the same values is still a slab
+/// of that predefined type.
+#[test]
+fn a_ceiling_ignores_an_ifc_slab_export_value_and_its_predefined_type() {
+    assert_eq!(
+        written("Ceiling", "IfcSlab", "USERDEFINED"),
+        ("IFCCOVERING".to_string(), Some("CEILING".to_string()))
+    );
+    assert_eq!(
+        written("Ceiling", "IfcSlab", "FLOOR"),
+        ("IFCCOVERING".to_string(), Some("CEILING".to_string()))
+    );
+    assert_eq!(
+        written("Floor", "IfcSlab", "ROOF"),
+        ("IFCSLAB".to_string(), Some("ROOF".to_string()))
+    );
 }

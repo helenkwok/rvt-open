@@ -200,8 +200,11 @@ mod tests {
             .iter()
             .map(|p| format!("{}={:?}", p.name, p.value))
             .collect();
-        assert_eq!(runs[1], "Category=Label(\"Runs\")", "{runs:?}");
-        assert_eq!(runs[2], "ParentCategory=Label(\"Stairs\")", "{runs:?}");
-        assert!(runs[3].contains("OST_StairsRuns"), "{runs:?}");
+        // The help names no parent, and none is invented for a subcategory.
+        assert!(
+            !runs.iter().any(|r| r.starts_with("ParentCategory")),
+            "{runs:?}"
+        );
+        assert!(runs[2].contains("OST_StairsRuns"), "{runs:?}");
     }
 }

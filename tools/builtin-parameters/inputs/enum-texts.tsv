@@ -1,0 +1,49 @@
+# id	value	text
+-1152175	0	Front Only
+-1152161	0	Extend Riser Behind Tread
+-1152161	1	Extend Tread Under Riser
+-1151402	1	Smooth
+-1151232	0	None
+-1151232	1	Stringer (Closed)
+-1151231	0	None
+-1151231	1	Stringer (Closed)
+-1151224	1	Notch
+-1140129	1	Bend
+-1140129	2	Fitting
+-1019100	1	Vertical
+-1008632	0	Trim
+-1008632	1	Weld
+-1008631	0	Add Vertical/Horizontal Segments
+-1008630	2	Extend Rails to Meet
+-1007395	0	Not Defined
+-1007395	1	Vertical Grid Continuous
+-1007395	4	Border and Horizontal Grid Continuous
+-1007387	0	Not Defined
+-1007277	0	Do not trim
+-1007277	1	Match Level
+-1007265	1	Closed
+-1007264	1	Closed
+-1007263	0	Front Only
+-1007262	0	Extend Riser Behind Tread
+-1007262	1	Extend Tread Under Riser
+-1007256	1	Smooth
+-1007243	1	Straight
+-1005439	0	Building Type
+-1005439	1	Schematic Type
+-1001710	33615	Plumb Cut
+-1001710	33618	Two Cut - Square
+-1001710	33619	Two Cut - Plumb
+-1001709	0	Truss
+-1001563	1	Bearing
+-1001516	1	Pinned
+-1001515	1	Pinned
+-1001122	0	Wall Centerline
+-1001122	1	Core Centerline
+-1001122	2	Finish Face: Exterior
+-1001122	3	Finish Face: Interior
+-1001122	4	Core Face: Exterior
+-1001122	5	Core Face: Interior
+-1001006	0	Interior
+-1001006	1	Exterior
+-1001006	2	Foundation
+-1001006	3	Retaining

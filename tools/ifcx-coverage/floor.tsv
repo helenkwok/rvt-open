@@ -3,12 +3,12 @@ set	kind	what	ifcx
 1	element instances	objects	240
 1	element instances	parameters	4264
 1	type objects	objects	90
-1	type objects	parameters	633
+1	type objects	parameters	621
 1	unused type objects	objects	31045
 1	levels and grids	objects	100
 1	levels and grids	parameters	1150
 1	site and location	objects	345
-1	site and location	parameters	1390
+1	site and location	parameters	1130
 1	project info	objects	50
 1	project info	parameters	450
 1	materials	objects	4745
@@ -18,16 +18,16 @@ set	kind	what	ifcx
 1	views	objects	1200
 1	views	parameters	19700
 1	revisions	objects	50
-1	revisions	parameters	370
+1	revisions	parameters	320
 2	element instances	objects	1327
-2	element instances	parameters	13689
+2	element instances	parameters	13483
 2	type objects	objects	312
-2	type objects	parameters	2016
+2	type objects	parameters	1982
 2	unused type objects	objects	105810
 2	levels and grids	objects	400
 2	levels and grids	parameters	4450
 2	site and location	objects	1173
-2	site and location	parameters	4726
+2	site and location	parameters	3842
 2	project info	objects	170
 2	project info	parameters	1530
 2	materials	objects	16133
@@ -39,4 +39,4 @@ set	kind	what	ifcx
 2	views	objects	4105
 2	views	parameters	67685
 2	revisions	objects	170
-2	revisions	parameters	1258
+2	revisions	parameters	1088
