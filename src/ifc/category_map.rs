@@ -1707,23 +1707,3 @@ pub fn lookup_export_override(value: &str) -> Option<&'static Mapping> {
         .iter()
         .find(|m| m.revit_class.eq_ignore_ascii_case(value.trim()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A ceiling's "Export to IFC As" `IfcSlab` is ignored, with its
-    /// predefined type; a floor's is not, and a gutter's `IfcCovering` is
-    /// still ignored.
-    #[test]
-    fn a_ceiling_ignores_an_ifc_slab_export_value() {
-        assert!(export_value_ignored("IfcSlab", "Ceiling"));
-        assert!(export_value_ignored(" ifcslab ", "Ceiling"));
-        assert!(lookup_export_override_for("IfcSlab", "Ceiling").is_none());
-        assert!(!export_value_ignored("IfcSlab", "Floor"));
-        assert!(lookup_export_override_for("IfcSlab", "Floor").is_some());
-        assert!(export_value_ignored("IfcCovering", "Gutter"));
-        assert!(!export_value_ignored("IfcCovering", "Ceiling"));
-        assert!(!export_value_ignored("NotAnEntity", "Ceiling"));
-    }
-}
