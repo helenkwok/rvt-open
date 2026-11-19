@@ -136,4 +136,9 @@ test('?bits=64 is an error, not a fallback, when the 64-bit build will not insta
   await openTier1(page, '?bits=64');
   await expect(page.locator('#status')).toHaveText(/^Error: .*refused for the test/s);
   await expect(page.locator('#status')).not.toHaveAttribute('data-wasm-bits', /.+/);
+  // A decoder that did not start is not a damaged file: the panel says so and offers the builds that may start.
+  await expect(page.locator('#status-panel')).toContainText('Decoder did not start');
+  await expect(page.locator('#status-panel')).toContainText('?bits=auto');
+  await expect(page.locator('#status-panel')).toContainText('?bits=32');
+  await expect(page.locator('#status-panel')).not.toContainText(/Corrupt or unreadable file/);
 });
