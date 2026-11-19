@@ -315,3 +315,90 @@ fn elevation_north_draws_the_walls_seen_from_the_north() {
         "walls span {lo:.0} to {hi:.0} mm"
     );
 }
+
+/// `--view-id` draws the plan view with that ElementId: for every plan view of the sample whose
+/// name no other view shares, the SVG by id is the SVG by name.
+#[test]
+fn view_id_draws_the_same_plan_view_as_its_name() {
+    let Some(rvt) = sample() else { return };
+    let listed = sheet(&[rvt.as_os_str(), "--list-views".as_ref()]).stdout;
+    let views: Vec<serde_json::Value> = serde_json::from_slice(&listed).expect("--list-views JSON");
+    let dir = std::env::temp_dir().join(format!("rvt-sheet-view-id-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut compared = 0;
+    for v in &views {
+        let (id, name) = (v["id"].as_i64().unwrap(), v["name"].as_str().unwrap());
+        if views.iter().filter(|w| w["name"] == v["name"]).count() != 1 {
+            continue;
+        }
+        let (by_id, by_name) = (dir.join("id.svg"), dir.join("name.svg"));
+        sheet(&[
+            rvt.as_os_str(),
+            "--view-id".as_ref(),
+            id.to_string().as_ref(),
+            "-o".as_ref(),
+            by_id.as_os_str(),
+        ]);
+        sheet(&[
+            rvt.as_os_str(),
+            "--view".as_ref(),
+            name.as_ref(),
+            "-o".as_ref(),
+            by_name.as_os_str(),
+        ]);
+        assert_eq!(
+            std::fs::read(&by_id).unwrap(),
+            std::fs::read(&by_name).unwrap(),
+            "view {name:?} ({id})"
+        );
+        compared += 1;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(compared >= 2, "compared {compared} views");
+}
+
+/// The collision `--view` cannot resolve: a view named "123" and the view whose ElementId is 123.
+/// The name wins in `ViewFacts::find`; `find_by_id` reaches both, and ignores view templates.
+#[test]
+fn a_view_named_after_another_views_id_does_not_take_its_place() {
+    use rvt::plan_views::{PlanView, ViewFacts};
+    let view = |id: i64, name: &str, template: bool| PlanView {
+        id,
+        name: name.into(),
+        template,
+        ..Default::default()
+    };
+    let facts = ViewFacts {
+        views: vec![
+            view(10, "123", false),
+            view(123, "Level 1", false),
+            view(7, "Level 1 template", true),
+        ],
+        ..Default::default()
+    };
+    assert_eq!(facts.find("123").unwrap().id, 10);
+    assert_eq!(facts.find_by_id(123).unwrap().name, "Level 1");
+    assert_eq!(facts.find_by_id(10).unwrap().name, "123");
+    assert!(facts.find_by_id(7).is_err());
+    assert!(facts.find_by_id(99).unwrap_err().contains("ElementId 99"));
+}
+
+/// `--view-id` is one way to pick what is drawn: the command line refuses it beside `--view`,
+/// `--level` or `--sheet` before it reads the file.
+#[test]
+fn view_id_cannot_be_combined_with_view_level_or_sheet() {
+    for other in [
+        ["--view", "Level 1"],
+        ["--level", "Level 1"],
+        ["--sheet", "A1"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_rvt-sheet"))
+            .args(["missing.rvt", "--view-id", "123"])
+            .args(other)
+            .output()
+            .expect("spawn rvt-sheet");
+        assert!(!out.status.success(), "{other:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("cannot be used with"), "{other:?}: {err}");
+    }
+}

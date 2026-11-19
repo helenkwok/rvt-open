@@ -1344,6 +1344,15 @@ impl ViewFacts {
             })
     }
 
+    /// The plan view whose ElementId is `id`, not a template. Unlike [`ViewFacts::find`] it never
+    /// reads `id` as a name, so a view named after another view's id cannot take its place.
+    pub fn find_by_id(&self, id: i64) -> std::result::Result<&PlanView, String> {
+        self.views
+            .iter()
+            .find(|v| !v.template && v.id == id)
+            .ok_or_else(|| format!("no plan view with ElementId {id}; see --list-views"))
+    }
+
     /// The plan view called `name`, not a template: an exact match first, then one ignoring case,
     /// then one where `_` stands for any character a file name cannot hold (`/ \ : * ? " < > |`)
     /// and accents are ignored.

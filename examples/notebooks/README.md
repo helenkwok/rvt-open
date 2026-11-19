@@ -4,7 +4,7 @@ Three [marimo](https://marimo.io) notebooks (reactive, stored as `.py`) on a pub
 
 - [`01_open_a_model.py`](01_open_a_model.py): file information, element counts by category, a table of one category's elements, and the parameters of the element you pick (Python bindings).
 - [`02_parameters_across_a_model.py`](02_parameters_across_a_model.py): runs `rvt-schedule --format sqlite`, reads the element and parameter tables with `sqlite3`, lists the parameters of a set with how many elements hold each, and charts elements per level.
-- [`03_a_view_and_a_sheet.py`](03_a_view_and_a_sheet.py): lists the plan views and sheets and draws the ones you pick as SVG with `rvt-sheet`.
+- [`03_a_view_and_a_sheet.py`](03_a_view_and_a_sheet.py): lists the plan views and sheets and draws the ones you pick as SVG with `rvt-sheet` (`--view-id` for the plan view, so views that share a name stay apart).
 
 ## Set up
 
