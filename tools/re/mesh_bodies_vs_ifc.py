@@ -120,6 +120,11 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
         settings = ifcopenshell.geom.settings()
         settings.set("use-world-coords", True)
     chosen = []
+    # Tag -> the representation-carrying parts already taken for it. A part an element
+    # aggregates is also an element of its own with the same Tag (Revit's IfcRamp holds its
+    # IfcRampFlight, and both carry the ramp's id as Tag), so it would be meshed once under
+    # each and the body counted twice: every ramp flight scored 0.5 of its volume by that alone.
+    taken = {}
     for element in model.by_type("IfcElement"):
         if element.is_a("IfcOpeningElement") or not element.Tag:
             continue
@@ -127,7 +132,10 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
             continue
         if source is not None and body_sources(element) != source:
             continue
-        chosen.append((element, shapes_of(element)))
+        seen = taken.setdefault(element.Tag, set())
+        parts = [part for part in shapes_of(element) if part.id() not in seen]
+        seen.update(part.id() for part in parts)
+        chosen.append((element, parts))
     shapes = mesh_parts(model, settings, [part for _, parts in chosen for part in parts], path)
     out = {}
     for element, parts in chosen:
@@ -514,8 +522,9 @@ def read_shells(scored, decided, ours, ref):
     polygon inscribed in the circle a saved mesh draws with more segments, so the two volumes differ
     by the ratio of the two polygons' areas with no body wrong, and the vertices of the two meshes lie
     the polygon's sagitta from each other's surface (0.134 of the radius for a hexagon, 0.29 for a
-    quadrilateral: the KAI-3 posts' are 0.06 ft); and it writes some bodies with every face twice, so
-    that their volume is twice the body's. A shell is `explained` only where Revit's end faces are such
+    quadrilateral: the KAI-3 posts' are 0.06 ft); and a body with every face twice has twice its
+    volume (the ramp flights that read 0.5000 were not such bodies: `meshes` counted a flight under
+    both the ramp that aggregates it and its own element). A shell is `explained` only where Revit's end faces are such
     polygons (to 0.001 ft) and its volume ratio is their area ratio, and `doubled` only where its
     volume is rvt-open's once Revit's repeated triangles count once; every other difference stays
     `other`, so no vertex-distance pre-filter is asked. Prints nothing for a file with no such body.
