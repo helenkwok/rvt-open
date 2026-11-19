@@ -302,7 +302,38 @@ impl Curve {
             } => add(mul(*x, -x_len * t.sin()), mul(*y, y_len * t.cos())),
         }
     }
+    /// How many equal parameter steps between `lo` and `hi` hold a spline's
+    /// chord error to `chord` feet (one for any other curve): by the largest
+    /// second difference of 64 samples, at most [`SPLINE_STEP_CAP`].
+    pub fn spline_steps(&self, lo: f64, hi: f64, chord: f64) -> usize {
+        if !matches!(self, Self::Hermite { .. }) {
+            return 1;
+        }
+        const SAMPLES: usize = 64;
+        let h = (hi - lo) / SAMPLES as f64;
+        let mut second = 0.0_f64;
+        for i in 1..SAMPLES {
+            let t = lo + h * i as f64;
+            let (a, b, c) = (self.eval(t - h), self.eval(t), self.eval(t + h));
+            second = second.max(len(sub(add(a, c), mul(b, 2.))));
+        }
+        if !second.is_finite() {
+            return SPLINE_STEP_CAP;
+        }
+        let steps = (SAMPLES as f64 * (second / (8. * chord)).sqrt()).ceil();
+        (steps as usize).clamp(1, SPLINE_STEP_CAP)
+    }
+    /// The greatest length of the derivative at 65 equal steps from `lo` to
+    /// `hi`.
+    pub fn speed(&self, lo: f64, hi: f64) -> f64 {
+        (0..=64)
+            .map(|i| len(self.derivative(lo + (hi - lo) * f64::from(i) / 64.)))
+            .fold(0., f64::max)
+    }
 }
+
+/// The most equal steps a spline profile is cut into to hold a chord error.
+const SPLINE_STEP_CAP: usize = 128;
 
 type HermiteNode = (f64, Point, Point);
 

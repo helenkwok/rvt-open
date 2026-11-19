@@ -311,14 +311,16 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
                     .fold(0., f64::max);
                 (angular(radius), 1. / length(*direction))
             }
-            Curve::Hermite { nodes, range } => (
+            Curve::Hermite { nodes, .. } => (
                 angular(
                     nodes
                         .iter()
                         .map(|n| n.1[0].hypot(n.1[1]))
                         .fold(0., f64::max),
                 ),
-                (range[1] - range[0]) / (8 * nodes.len()) as f64,
+                // a spline profile is cut into the equal steps its largest
+                // second difference asks for.
+                (max[1] - min[1]) / profile.spline_steps(min[1], max[1], CHORD) as f64,
             ),
             Curve::Arc { center, radius, .. } => (
                 angular(center[0].hypot(center[1]) + 2. * radius),
@@ -442,6 +444,9 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
 /// length in 1 ft steps, whichever is more (sampled at 64 points).
 fn curve_segments(c: &crate::native_parametric_surface::Curve) -> f64 {
     let range = c.range();
+    if matches!(c, crate::native_parametric_surface::Curve::Hermite { .. }) {
+        return c.spline_steps(range[0], range[1], 0.001) as f64;
+    }
     let at = |i: usize| range[0] + (range[1] - range[0]) * i as f64 / 64.;
     let norm = |p: [f64; 3]| p.iter().map(|x| x * x).sum::<f64>().sqrt();
     let (mut turn, mut length) = (0., 0.);

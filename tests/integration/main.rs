@@ -323,6 +323,8 @@ mod space_containment;
 mod space_types;
 #[path = "../spatial_property_sets.rs"]
 mod spatial_property_sets;
+#[path = "../spline_profile_steps.rs"]
+mod spline_profile_steps;
 #[path = "../stable_exports.rs"]
 mod stable_exports;
 #[path = "../stream_size_guards.rs"]
