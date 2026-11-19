@@ -72,6 +72,10 @@ The package exposes the 28 JS-callable wasm-bindgen bindings listed in [`docs/vi
 
 Rust 2024 edition (MSRV 1.89). **Eighteen CLIs ship** (`rvt-analyze`, `rvt-info`, `rvt-inspect`, `rvt-schema`, `rvt-history`, `rvt-diff`, `rvt-corpus`, `rvt-dump`, `rvt-doc`, `rvt-ifc`, `rvt-ifc-compare`, `rvt-gltf`, `rvt-sheet`, `rvt-elem-table`, `rvt-elements`, `rvt-capabilities`, `rvt-schedule`, `rvt-batch`).
 
+## Example notebooks
+
+[`examples/notebooks`](examples/notebooks) holds three reactive [marimo](https://marimo.io) notebooks, stored as plain `.py` files, that use only the public API on a public sample: open a model (file information, counts by category, a filterable element table, the parameters of a picked element), look at the parameters across a model (the SQLite element table, with one chart), and show a plan view and a sheet as SVG. Each also runs top to bottom as a plain script, which is how CI runs it (`python examples/notebooks/01_open_a_model.py`). See the folder's README for the setup.
+
 ## Support
 
 Support depends on the Revit release, the file type and the feature. [`docs/support-matrix.json`](docs/support-matrix.json) records each capability with its evidence and status; `rvt-capabilities --matrix -f text` prints it.

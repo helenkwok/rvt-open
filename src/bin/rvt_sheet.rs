@@ -16,6 +16,7 @@
 //! rvt-sheet model.rvt --format dwg --dwg-version 2013  # writes model.dwg
 //! rvt-sheet model.rvt --list-views                     # the plan views, as JSON
 //! rvt-sheet model.rvt --view "Level 1" --format dxf    # only what that plan view shows
+//! rvt-sheet model.rvt --view-id 312 --format dxf       # the same, by ElementId (a view named "312" cannot take its place)
 //! rvt-sheet model.rvt --level "Level 2" --cut-height 1200
 //! rvt-sheet model.rvt --view "Level 1" --format pdf    # vector PDF at the view's scale
 //! rvt-sheet model.rvt --list-sheets                    # the sheets and the views on them, as JSON
@@ -123,8 +124,14 @@ struct Cli {
     #[arg(long, conflicts_with = "level")]
     view: Option<String>,
 
+    /// Draw only what the plan view with this ElementId shows (or the section or elevation with it),
+    /// whatever any view is called: a view named "123" and the view whose id is 123 are told apart,
+    /// which `--view 123` cannot do (a name wins there). The ids are in `--list-views`.
+    #[arg(long, conflicts_with_all = ["view", "level", "sheet"])]
+    view_id: Option<i64>,
+
     /// Draw this sheet (its number or name; see `--list-sheets`) as DXF, DWG, PDF or SVG.
-    #[arg(long, conflicts_with_all = ["view", "level"])]
+    #[arg(long, conflicts_with_all = ["view", "view_id", "level"])]
     sheet: Option<String>,
 
     /// Print the sheets (number, name, the views placed on them) as JSON and exit.
@@ -235,7 +242,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         );
         return Ok(());
     }
-    let facts = if cli.view.is_some() || cli.sheet.is_some() {
+    let facts = if cli.view.is_some() || cli.view_id.is_some() || cli.sheet.is_some() {
         Some(rvt::plan_views::read(&mut rf).map_err(|e| e.to_string())?)
     } else {
         None
@@ -252,7 +259,9 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
     .map_err(|e| format!("export {}: {e}", input.display()))?;
     // A plan view draws each family instance's plan symbol (door swings, window lines).
-    let symbols = if cli.sheet.is_some() || (cli.view.is_some() && cli.format != "svg") {
+    let symbols = if cli.sheet.is_some()
+        || ((cli.view.is_some() || cli.view_id.is_some()) && cli.format != "svg")
+    {
         rvt::ifc::plan_maps::instance_plan_symbols(&mut rf, &model).unwrap_or_else(|e| {
             eprintln!("rvt-sheet: plan symbols not read: {e}");
             Default::default()
@@ -278,37 +287,44 @@ fn run(cli: &Cli) -> Result<(), String> {
             .map_err(|e| format!("write {}: {e}", output.display()))?;
         return Ok(());
     }
-    // A section or elevation (a name no plan view has): its projection, DXF, DWG or PDF.
-    if let (Some(name), Some(facts)) = (&cli.view, &facts) {
-        if facts.find(name).is_err() {
-            if let Some(view) = facts
-                .sections
-                .iter()
-                .find(|v| !v.template && v.name.eq_ignore_ascii_case(name))
-                .or_else(|| {
-                    let id: i64 = name.trim().parse().ok()?;
-                    facts.sections.iter().find(|v| !v.template && v.id == id)
-                })
-            {
-                let window = section_window(facts, view)
-                    .ok_or_else(|| format!("{name:?} has no crop box decoded"))?;
-                let drawing = projected_drawing_of(&model, &window, view.scale.unwrap_or(100.0))?;
-                let bytes = drawing_bytes(
-                    &drawing,
-                    None,
-                    view.scale.unwrap_or(100.0),
-                    &cli.format,
-                    cli,
-                )?;
-                rvt::cli::write_output(&output, &bytes)
-                    .map_err(|e| format!("write {}: {e}", output.display()))?;
-                return Ok(());
-            }
+    // A section or elevation (a name or ElementId no plan view has): its projection, DXF, DWG or PDF.
+    let section = match (&cli.view, cli.view_id, &facts) {
+        (_, Some(id), Some(facts)) if facts.find_by_id(id).is_err() => {
+            facts.sections.iter().find(|v| !v.template && v.id == id)
         }
+        (Some(name), None, Some(facts)) if facts.find(name).is_err() => facts
+            .sections
+            .iter()
+            .find(|v| !v.template && v.name.eq_ignore_ascii_case(name))
+            .or_else(|| {
+                let id: i64 = name.trim().parse().ok()?;
+                facts.sections.iter().find(|v| !v.template && v.id == id)
+            }),
+        _ => None,
+    };
+    if let (Some(view), Some(facts)) = (section, &facts) {
+        let window = section_window(facts, view)
+            .ok_or_else(|| format!("{:?} has no crop box decoded", view.name))?;
+        let drawing = projected_drawing_of(&model, &window, view.scale.unwrap_or(100.0))?;
+        let bytes = drawing_bytes(
+            &drawing,
+            None,
+            view.scale.unwrap_or(100.0),
+            &cli.format,
+            cli,
+        )?;
+        rvt::cli::write_output(&output, &bytes)
+            .map_err(|e| format!("write {}: {e}", output.display()))?;
+        return Ok(());
     }
-    let (window, annotation) = match (&cli.view, &facts, &cli.level) {
-        (Some(name), Some(facts), _) => {
-            let view = facts.find(name)?;
+    // The plan view `--view` names or `--view-id` numbers.
+    let picked = match (&cli.view, cli.view_id, &facts) {
+        (_, Some(id), Some(facts)) => Some(facts.find_by_id(id)?),
+        (Some(name), None, Some(facts)) => Some(facts.find(name)?),
+        _ => None,
+    };
+    let (window, annotation) = match (picked, &facts, &cli.level) {
+        (Some(view), Some(facts), _) => {
             let (window, annotation) = view_window(&model, facts, view)?;
             (Some(window), Some(annotation))
         }
@@ -330,12 +346,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         symbols,
     };
     // A view's PDF is drawn at the view's scale; a level band or the whole model at 1:100.
-    let pdf_scale = cli
-        .view
-        .as_ref()
-        .zip(facts.as_ref())
-        .and_then(|(name, f)| f.find(name).ok()?.scale)
-        .unwrap_or(100.0);
+    let pdf_scale = picked.and_then(|v| v.scale).unwrap_or(100.0);
     let bytes = match cli.format.as_str() {
         "svg" => render_plan_svg(&model, &options).into_bytes(),
         format => drawing_bytes(
