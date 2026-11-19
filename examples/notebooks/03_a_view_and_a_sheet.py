@@ -45,46 +45,76 @@ def _():
 
 
 @app.cell
-def _(mo, sheets, views):
-    view = mo.ui.dropdown(options=[v["name"] for v in views], value=views[0]["name"], label="Plan view")
+def _(mo, views):
+    # A floor plan and a ceiling plan can share a name, so each option is the view's own ElementId.
+    view = mo.ui.dropdown(
+        options={f"{v['name']} ({v['id']})": str(v["id"]) for v in views},
+        value=f"{views[0]['name']} ({views[0]['id']})" if views else None,
+        label="Plan view",
+    )
+    view
+    return (view,)
+
+
+@app.cell
+def _(mo, sheets):
     sheet = mo.ui.dropdown(
         options={f"{s['number']} {s['name']}": s["number"] for s in sheets},
-        value=f"{sheets[0]['number']} {sheets[0]['name']}", label="Sheet")
-    mo.hstack([view, sheet], justify="start")
-    return sheet, view
+        value=f"{sheets[0]['number']} {sheets[0]['name']}" if sheets else None,
+        label="Sheet",
+    )
+    sheet if sheets else mo.md("This model has no sheets.")
+    return (sheet,)
 
 
 @app.cell
 def _(mo, sheet_tool, view, work):
-    plan_path = work / "plan.svg"
-    sheet_tool("--view", view.value, "--format", "svg", "-o", str(plan_path))
-    plan_svg = plan_path.read_text(encoding="utf-8")
-    mo.vstack([mo.md(f"### Plan view: {view.value}"), mo.Html(plan_svg)])
+    plan_svg = ""
+    if view.value is None:
+        _out = mo.md("This model has no plan views.")
+    else:
+        plan_path = work / "plan.svg"
+        sheet_tool("--view", view.value, "--format", "svg", "-o", str(plan_path))
+        plan_svg = plan_path.read_text(encoding="utf-8")
+        _out = mo.vstack([mo.md(f"### Plan view {view.selected_key}"), mo.Html(plan_svg)])
+    _out
     return (plan_svg,)
 
 
 @app.cell
 def _(mo, sheet, sheet_tool, work):
-    sheet_path = work / "sheet.svg"
-    sheet_tool("--sheet", sheet.value, "--format", "svg", "-o", str(sheet_path))
-    sheet_svg = sheet_path.read_text(encoding="utf-8")
-    mo.vstack([mo.md(f"### Sheet {sheet.value}"), mo.Html(sheet_svg)])
+    sheet_svg = ""
+    if sheet.value is None:
+        _out = mo.md("No sheet to draw.")
+    else:
+        sheet_path = work / "sheet.svg"
+        sheet_tool("--sheet", sheet.value, "--format", "svg", "-o", str(sheet_path))
+        sheet_svg = sheet_path.read_text(encoding="utf-8")
+        _out = mo.vstack([mo.md(f"### Sheet {sheet.selected_key}"), mo.Html(sheet_svg)])
+    _out
     return (sheet_svg,)
 
 
 @app.cell
 def _(MODEL, plan_svg, sheet_svg, sheets, views):
-    # Results: named values that CI checks.
+    # Results: named values that CI checks. A drawing is non-empty when it holds more shapes than the
+    # background and border rectangles every plan SVG has (a lone rectangular footprint is a <rect> too).
+    def shapes(svg):
+        return sum(svg.count(t) for t in ("<path", "<line", "<polyline", "<polygon", "<rect"))
+
     result = {
         "model": MODEL,
         "plan_views": len(views),
         "sheets": len(sheets),
         "plan_svg_bytes": len(plan_svg),
+        "plan_svg_shapes": shapes(plan_svg),
         "sheet_svg_bytes": len(sheet_svg),
+        "sheet_svg_shapes": shapes(sheet_svg),
     }
-    shapes = ("<path", "<line", "<polyline", "<polygon")
-    assert "<svg" in plan_svg and any(t in plan_svg for t in shapes), "the plan SVG is empty"
-    assert "<svg" in sheet_svg and any(t in sheet_svg for t in shapes), "the sheet SVG is empty"
+    if views:
+        assert "<svg" in plan_svg and result["plan_svg_shapes"] > 2, "the plan SVG holds no model geometry"
+    if sheets:
+        assert "<svg" in sheet_svg and result["sheet_svg_shapes"] > 2, "the sheet SVG holds no drawing"
     print(result)
     return (result,)
 

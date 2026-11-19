@@ -20,6 +20,6 @@ export RVT_MODEL=_samples/flat/2024-racbasicsampleproject.rvt RVT_BIN_DIR=target
 .venv/bin/python examples/notebooks/01_open_a_model.py            # as a script; fails on any error
 ```
 
-`RVT_MODEL` is any `.rvt`, `.rfa`, `.rte` or `.rft` file, and `RVT_BIN_DIR` the folder with `rvt-schedule` and `rvt-sheet`. Each notebook ends with a cell that names its results and asserts them, so a run that reads nothing fails.
+`RVT_MODEL` is a Revit file (the sample above is the supported starting point) and `RVT_BIN_DIR` the folder with `rvt-schedule` and `rvt-sheet`. Notebooks 01 and 02 need a file with decoded elements (a project; a family or template with none shows empty tables and fails the results cell). Notebook 03 draws a plan view and a sheet when the model has them and says so when it has none. Each notebook ends with a cell that names its results and asserts them, so a run that reads nothing fails.
 
 CI (the `Example notebooks` job) runs every notebook this way on the Revit 2024 basic sample project, then exports each to static HTML (`marimo export html`) and uploads the pages as the `example-notebooks-html` artifact.
