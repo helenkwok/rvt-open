@@ -142,6 +142,10 @@ impl PartitionSchemaMvp {
 /// added without moving this number reports past it, which is clamped.
 const RECOVERY_SECTIONS: u64 = 87;
 
+/// The same for a Revit 2015 to 2023 file, whose recovery is the two sections
+/// before the branch and one for each `// --- ` heading inside it.
+const LEGACY_RECOVERY_SECTIONS: u64 = 25;
+
 /// Recover partition MVP elements for a file (version-gated, fail-closed).
 pub fn recover_partition_schema_mvp(
     rf: &mut RevitFile,
@@ -151,7 +155,12 @@ pub fn recover_partition_schema_mvp(
     let mut out = PartitionSchemaMvp::default();
     let mut wall_reads = crate::native_walls::WallReads::default();
 
-    rf.report_recovery_section(0, RECOVERY_SECTIONS);
+    let sections = if crate::partition_element_records_2023::is_32bit_release(revit_version) {
+        LEGACY_RECOVERY_SECTIONS
+    } else {
+        RECOVERY_SECTIONS
+    };
+    rf.report_recovery_section(0, sections);
     // --- Levels + Materials from partition strings / ArcWall elev ---
     let strings = rf.partition_string_records().unwrap_or_default();
     let string_values: Vec<&str> = strings.iter().map(|r| r.value.as_str()).collect();
@@ -175,22 +184,26 @@ pub fn recover_partition_schema_mvp(
     // exports hold none, and no 2023 plan loop (mostly triangles) came
     // within 10% of the plan area of a slab in two paired exports.
 
-    rf.report_recovery_section(1, RECOVERY_SECTIONS);
+    rf.report_recovery_section(1, sections);
     // --- Revit 2015 to 2023 element records:
     // identity, category, box and the readers called here; nothing else 2024
     // decodes on top of records is read. ---
     if crate::partition_element_records_2023::is_32bit_release(revit_version) {
         let references = recover_2023_records(rf, revit_version, &mut out, &mut wall_reads);
         attach_room_outlines(rf, revit_version, &mut out.rooms);
+        rf.report_recovery_section(2, LEGACY_RECOVERY_SECTIONS);
         // --- Pipes' types and centrelines, from their own native record
         // ---
         attach_native_pipes(rf, revit_version, &mut out.products);
+        rf.report_recovery_section(3, LEGACY_RECOVERY_SECTIONS);
         // --- Ducts' types, lines and sections, from their own native record
         // ---
         attach_native_ducts(rf, revit_version, &mut out.products);
+        rf.report_recovery_section(4, LEGACY_RECOVERY_SECTIONS);
         // --- Which element each connector of a family instance is joined to,
         // on 2015 to 2023 too ---
         attach_connector_pairs(rf, revit_version, &mut out.products);
+        rf.report_recovery_section(5, LEGACY_RECOVERY_SECTIONS);
         // --- Storeys from the Levels the records name, by the
         // same rules as 2024's ---
         let levels = crate::partition_level_records::recover_partition_levels(rf, revit_version)
@@ -199,6 +212,7 @@ pub fn recover_partition_schema_mvp(
             .iter()
             .map(|level| (level.element_id, level.elevation_feet))
             .collect();
+        rf.report_recovery_section(6, LEGACY_RECOVERY_SECTIONS);
         // --- Areas, which carry no record box, and the bodies their
         // boundary lines give them ---
         let level_ids = level_element_ids(rf, revit_version).unwrap_or_default();
@@ -231,18 +245,22 @@ pub fn recover_partition_schema_mvp(
             &level_elevations,
         );
         bind_beam_reference_levels(&beam_levels, &mut record_backed);
+        rf.report_recovery_section(7, LEGACY_RECOVERY_SECTIONS);
         // --- Curtain walls' parts' axes, types and families (the
         // curtain walls themselves come from the records' own lists) ---
         if CURTAIN_32BIT_REVIT_VERSIONS.contains(&revit_version) {
             attach_curtain_axes(rf, revit_version, &mut out.products);
             attach_curtain_part_types_32(rf, revit_version, &references, &mut out.products);
         }
+        rf.report_recovery_section(8, LEGACY_RECOVERY_SECTIONS);
         // --- Each door and window in the wall its own native record names,
         // as on 2024 to 2027 ---
         rebind_opening_hosts_to_native(rf, &out.walls, [&mut out.doors, &mut out.windows]);
+        rf.report_recovery_section(9, LEGACY_RECOVERY_SECTIONS);
         // --- Each door's and window's opening from the outline its symbol
         // cuts, as on 2024 to 2027 where no type opening is read ---
         attach_cut_loop_openings_32(rf, revit_version, [&mut out.doors, &mut out.windows]);
+        rf.report_recovery_section(10, LEGACY_RECOVERY_SECTIONS);
         // --- The Level parameters each element's own native record names
         // ---
         attach_levels_32(
@@ -258,6 +276,7 @@ pub fn recover_partition_schema_mvp(
                 &mut out.products,
             ],
         );
+        rf.report_recovery_section(11, LEGACY_RECOVERY_SECTIONS);
         // --- Beams along their location lines, the rotation first.
         // A beam a named column trims keeps its cut box: both
         // readers skip it, since the trim rewrote the record box they would test
@@ -266,8 +285,10 @@ pub fn recover_partition_schema_mvp(
             attach_beam_rotations(rf, revit_version, &mut out.products);
             attach_beam_axes(rf, revit_version, &mut out.products);
         }
+        rf.report_recovery_section(12, LEGACY_RECOVERY_SECTIONS);
         // --- A steel beam's I section from its type ---
         attach_beam_sections(rf, revit_version, &mut out.products);
+        rf.report_recovery_section(13, LEGACY_RECOVERY_SECTIONS);
         // --- System families' names; a wall's, roof's or
         // ceiling's needs its type's layers, not read on 2023 ---
         attach_system_family_names(
@@ -275,9 +296,11 @@ pub fn recover_partition_schema_mvp(
             revit_version,
             &mut [&mut out.walls, &mut out.slabs, &mut out.products],
         );
+        rf.report_recovery_section(14, LEGACY_RECOVERY_SECTIONS);
         // --- Footprint roofs' outlines and slopes, before the layers, which
         // leave a sloped roof out ---
         attach_roofs_32(rf, revit_version, &mut out.products);
+        rf.report_recovery_section(15, LEGACY_RECOVERY_SECTIONS);
         // --- Walls', floors' and roofs' layers, for their material layer
         // sets ---
         attach_wall_layers(rf, revit_version, &mut out.walls, &mut wall_reads);
@@ -289,6 +312,7 @@ pub fn recover_partition_schema_mvp(
                 .chain(out.products.iter_mut())
                 .collect(),
         );
+        rf.report_recovery_section(16, LEGACY_RECOVERY_SECTIONS);
         // --- The materials each family type's geometry uses. A
         // system type's data holds its layers where a family type's holds
         // its map, and a layer reads as a one-entry map, so the types of
@@ -319,6 +343,7 @@ pub fn recover_partition_schema_mvp(
         ] {
             attach_type_materials(&type_materials, elements);
         }
+        rf.report_recovery_section(17, LEGACY_RECOVERY_SECTIONS);
         // --- IFC export overrides, read through the schema ---
         attach_ifc_export_overrides(
             rf,
@@ -333,8 +358,10 @@ pub fn recover_partition_schema_mvp(
                 &mut out.rooms,
             ],
         );
+        rf.report_recovery_section(18, LEGACY_RECOVERY_SECTIONS);
         // --- Curtain mullions' and panels' materials, from their types ---
         attach_curtain_materials(rf, revit_version, &mut out.products);
+        rf.report_recovery_section(19, LEGACY_RECOVERY_SECTIONS);
         // --- A wall's type Function from its native type record,
         // the parameters named for IsExternal or a standard property from the
         // saved parameters, and the IsExternal Revit's
@@ -363,18 +390,23 @@ pub fn recover_partition_schema_mvp(
                 .chain(out.rooms.iter_mut())
                 .chain(out.products.iter_mut()),
         );
+        rf.report_recovery_section(20, LEGACY_RECOVERY_SECTIONS);
         // --- A curtain mullion's or panel's IsExternal: its curtain wall's ---
         attach_curtain_member_is_external(&out.walls, &mut out.products);
+        rf.report_recovery_section(21, LEGACY_RECOVERY_SECTIONS);
         // --- Whether a wall's top is joined to a roof or floor, from its
         // native record ---
         attach_wall_top_joins(rf, revit_version, &mut out.walls, &mut wall_reads);
+        rf.report_recovery_section(22, LEGACY_RECOVERY_SECTIONS);
         // --- The walls joined at each end of a wall, how, and whether joins
         // are allowed there, from the same records ---
         attach_wall_end_records_from_reads(rf, revit_version, &mut out.walls, &mut wall_reads);
 
+        rf.report_recovery_section(23, LEGACY_RECOVERY_SECTIONS);
         // --- A structural beam's or column's LoadBearing is its category's,
         // unless a parameter named for it says otherwise ---
         attach_load_bearing(out.columns.iter_mut().chain(out.products.iter_mut()));
+        rf.report_recovery_section(24, LEGACY_RECOVERY_SECTIONS);
         // --- The phase each element was created in, from its own body
         // ---
         attach_phases_created_32(
@@ -389,6 +421,7 @@ pub fn recover_partition_schema_mvp(
                 &mut out.products,
             ],
         );
+        rf.report_recovery_section(LEGACY_RECOVERY_SECTIONS, LEGACY_RECOVERY_SECTIONS);
         return Ok(out);
     }
 
