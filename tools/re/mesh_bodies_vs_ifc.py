@@ -133,12 +133,15 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
         if source is not None and body_sources(element) != source:
             continue
         seen = taken.setdefault(element.Tag, set())
-        parts = [part for part in shapes_of(element) if part.id() not in seen]
+        every = shapes_of(element)
+        parts = [part for part in every if part.id() not in seen]
         seen.update(part.id() for part in parts)
-        chosen.append((element, parts))
-    shapes = mesh_parts(model, settings, [part for _, parts in chosen for part in parts], path)
+        # An element whose parts were all taken still names the Tag (its class, ObjectType and
+        # curve flag), as the last element with the Tag always has: the flight, not the ramp.
+        chosen.append((element, parts, bool(every) and not parts))
+    shapes = mesh_parts(model, settings, [part for _, parts, _ in chosen for part in parts], path)
     out = {}
-    for element, parts in chosen:
+    for element, parts, repeated in chosen:
         triangles = []
         for part in parts:
             if part.id() not in shapes:
@@ -146,9 +149,9 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
             verts, faces = shapes[part.id()]
             if len(verts) and len(faces):
                 triangles.append(frame(verts)[faces])
-        if not triangles:
+        if not triangles and not (repeated and element.Tag in out):
             continue
-        triangles = np.concatenate(triangles)
+        triangles = np.concatenate(triangles) if triangles else np.zeros((0, 3, 3))
         if element.Tag in out:
             triangles = np.concatenate([out[element.Tag][2], triangles])
         out[element.Tag] = (element.is_a(), element.ObjectType or "", triangles)
