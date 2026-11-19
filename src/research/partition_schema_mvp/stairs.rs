@@ -55,7 +55,8 @@ pub(super) fn stair_part_word(class: &str) -> Option<&'static str> {
 /// - A stair's system family is its type's construction (Assembled or
 ///   Cast-In-Place Stair), and Revit names the stair `Family:Stair:ElementId`.
 /// - A run's family is Monolithic or Non-Monolithic Run, by its run type's
-///   monolithic flag; a landing's is Non-Monolithic Landing; a
+///   monolithic flag; a landing's is Monolithic or Non-Monolithic Landing, by
+///   its landing type's; a
 ///   stringer's or carriage's is Stringer or Carriage
 ///   ([`crate::partition_stairs::component_type_at`]). With the type's name
 ///   these give the part's `ObjectType`.

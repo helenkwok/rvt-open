@@ -509,3 +509,34 @@ fn a_type_with_a_field_the_grammar_does_not_know_has_no_name() {
         assert_eq!(of_class(&read, class), 0, "{class}");
     }
 }
+
+/// A stair landing of a monolithic type names its family `Monolithic Landing`
+/// on every release, so it has a type object of that family: the sample
+/// `racbasicsampleproject.rvt` has one such landing, and its Revit 2025 to
+/// 2027 saves (read from native records) carry an `IfcSlabType` named for it,
+/// as the Revit 2024 save does.
+#[test]
+fn a_monolithic_landing_has_its_type_object_on_every_release() {
+    let Some(dir) = std::env::var_os("RVT_AUTODESK_SAMPLES_DIR").map(PathBuf::from) else {
+        eprintln!("skipping: RVT_AUTODESK_SAMPLES_DIR is not set");
+        return;
+    };
+    for year in 2024..=2027 {
+        let path = dir.join(format!("{year}/racbasicsampleproject.rvt"));
+        if !path.exists() {
+            eprintln!("skipping: {} absent", path.display());
+            continue;
+        }
+        let mut rf = RevitFile::open(&path).expect("open");
+        let model = RvtDocExporter
+            .export_with_diagnostics(&mut rf)
+            .expect("export")
+            .model;
+        let step = rvt::ifc::write_step(&model);
+        let types = step
+            .lines()
+            .filter(|line| line.contains("IFCSLABTYPE(") && line.contains("'Monolithic Landing:"))
+            .count();
+        assert_eq!(types, 1, "{year}: IfcSlabType of the Monolithic Landing");
+    }
+}
