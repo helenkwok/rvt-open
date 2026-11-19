@@ -844,7 +844,25 @@ const OVERRIDE_CLASS_LIMITS: &[(&str, &[&str])] = &[
 /// around them, and Revit's IFC4 export of each of its six files writes both
 /// as `IfcFlowSegment`, as it does the third, which carries no value.
 /// As for a wall sweep's, a curtain wall's ([`export_override_applies`]).
-const OVERRIDE_CLASS_EXCLUSIONS: &[(&str, &[&str])] = &[("IfcCovering", &["Gutter"])];
+///
+/// The BIM4LCA timber housing's ceiling type `AK-4.EI60` carries "Export Type
+/// to IFC As" `IfcSlabType` with `USERDEFINED`, and Revit's export of the file
+/// as built writes its one ceiling as `IfcCovering` `CEILING`, typed by an
+/// `IfcCoveringType` `CEILING`: neither the entity nor the predefined type is
+/// acted on ([`export_value_ignored`]).
+const OVERRIDE_CLASS_EXCLUSIONS: &[(&str, &[&str])] =
+    &[("IfcCovering", &["Gutter"]), ("IfcSlab", &["Ceiling"])];
+
+/// Whether an element of `revit_class` carries an "Export to IFC As" value
+/// that Revit's export is measured to ignore for that class
+/// (`OVERRIDE_CLASS_EXCLUSIONS`). Its "IFC Predefined Type" goes with it: the
+/// predefined type the value comes with is not acted on either.
+pub fn export_value_ignored(value: &str, revit_class: &str) -> bool {
+    lookup_export_override(value).is_some()
+        && OVERRIDE_CLASS_EXCLUSIONS.iter().any(|(name, classes)| {
+            name.eq_ignore_ascii_case(value.trim()) && classes.contains(&revit_class)
+        })
+}
 
 /// [`lookup_export_override`] for an element of `revit_class`: `None` where
 /// the value is limited to other classes (`OVERRIDE_CLASS_LIMITS`) or
@@ -1688,4 +1706,24 @@ pub fn lookup_export_override(value: &str) -> Option<&'static Mapping> {
     EXPORT_OVERRIDE_TARGETS
         .iter()
         .find(|m| m.revit_class.eq_ignore_ascii_case(value.trim()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A ceiling's "Export to IFC As" `IfcSlab` is ignored, with its
+    /// predefined type; a floor's is not, and a gutter's `IfcCovering` is
+    /// still ignored.
+    #[test]
+    fn a_ceiling_ignores_an_ifc_slab_export_value() {
+        assert!(export_value_ignored("IfcSlab", "Ceiling"));
+        assert!(export_value_ignored(" ifcslab ", "Ceiling"));
+        assert!(lookup_export_override_for("IfcSlab", "Ceiling").is_none());
+        assert!(!export_value_ignored("IfcSlab", "Floor"));
+        assert!(lookup_export_override_for("IfcSlab", "Floor").is_some());
+        assert!(export_value_ignored("IfcCovering", "Gutter"));
+        assert!(!export_value_ignored("IfcCovering", "Ceiling"));
+        assert!(!export_value_ignored("NotAnEntity", "Ceiling"));
+    }
 }

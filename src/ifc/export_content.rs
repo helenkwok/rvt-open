@@ -1155,6 +1155,16 @@ pub fn append_typed_production_elements(
         // takes its own predefined type there where the entity is one of those
         // only a value reaches ([`category_map::override_predefined_type_for`]).
         let redirected = effective.ifc_type != mapping.ifc_type;
+        // a predefined type that comes with an "Export to IFC As" value
+        // Revit's export ignores for this class is ignored with it.
+        let value_ignored = decoded.fields.iter().any(|(name, value)| match value {
+            InstanceField::String(text)
+                if name == crate::partition_schema_mvp::IFC_EXPORT_AS_FIELD =>
+            {
+                category_map::export_value_ignored(text, &decoded.class)
+            }
+            _ => false,
+        });
         // the element's own or its type's IFC predefined type, when
         // it is an enumerator of the entity it exports as; a family instance
         // written as a space through its value takes its own.
@@ -1172,7 +1182,8 @@ pub fn append_typed_production_elements(
             .filter(|_| parameter_applies)
             .find_map(|(name, value)| match value {
                 InstanceField::String(text)
-                    if name == crate::partition_schema_mvp::IFC_PREDEFINED_TYPE_FIELD =>
+                    if name == crate::partition_schema_mvp::IFC_PREDEFINED_TYPE_FIELD
+                        && !value_ignored =>
                 {
                     category_map::predefined_type_for(effective.ifc_type, text)
                         .or_else(|| {
