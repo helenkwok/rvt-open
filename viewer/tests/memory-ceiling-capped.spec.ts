@@ -69,8 +69,24 @@ const einhovenTest = required || fs.existsSync(einhoven) ? test : test.skip;
 einhovenTest(
   'a model past the ceiling is reported as too large, not as unreachable',
   async ({ baseURL }) => {
-    const capPages = 256;
+    // The cap goes just above the memory the open holds when it begins reading partition streams, so the
+    // allocation that crosses it is inside that stage. That memory is the build's own (the 64-bit build holds
+    // 16.3 MiB there, the 32-bit one 15.2 MiB, because its pointers are twice as wide), so a fixed cap of 16
+    // MiB stopped the 64-bit open before the decoder had reported anything: the open is measured first, as
+    // the late-stop test below measures its own profile, and the cap is put 0.5 MiB above that report.
+    let atPartitions = 0;
+    await underCap(baseURL, 65_536, '', einhoven, async (page) => {
+      await expect(page.locator('#status')).toHaveText(/Loaded/, { timeout: 120_000 });
+      const reports = await decoderReports(page);
+      const decode = reports.findIndex((report) => report.stage === 'element-decode');
+      const partitions = reports.findIndex((report, i) => i > decode && report.stage === 'partition-scan');
+      expect(partitions, 'the open reports reading partition streams after decoding elements').toBeGreaterThan(decode);
+      atPartitions = reports[partitions].memoryBytes;
+    });
+    const capPages = Math.ceil((atPartitions + MIB / 2) / PAGE_BYTES);
     const capBytes = capPages * PAGE_BYTES;
+    // The page names the cap as it formats memory: one decimal, trimmed.
+    const capText = `${Number((capBytes / MIB).toFixed(1))} MiB`;
     await underCap(
       baseURL,
       capPages,
@@ -92,7 +108,7 @@ einhovenTest(
           /, while (reading partition streams|reading element records|building the model),/,
         );
         await expect(body).toContainText('needs more');
-        await expect(body).toContainText('16 MiB');
+        await expect(body).toContainText(capText);
         // What reads a larger file, as the code takes it: --large-model on the
         // two CLIs, and the two limits to raise in Python; not "any size".
         await expect(body).toContainText('rvt-ifc and rvt-gltf with --large-model');
