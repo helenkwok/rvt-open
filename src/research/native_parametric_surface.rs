@@ -302,25 +302,41 @@ impl Curve {
             } => add(mul(*x, -x_len * t.sin()), mul(*y, y_len * t.cos())),
         }
     }
-    /// How many equal parameter steps between `lo` and `hi` hold a spline's
-    /// chord error to `chord` feet (one for any other curve): by the largest
-    /// second difference of 64 samples, at most [`SPLINE_STEP_CAP`].
+    /// How many equal parameter steps between `lo` and `hi` aim to hold a
+    /// spline's chord error to `chord` feet (one for any other curve), at most
+    /// [`SPLINE_STEP_CAP`]: a spline too curved for the cap is cut into the cap
+    /// and holds the error only as far as that many steps do. The bound is the
+    /// greatest second derivative over every segment the range crosses (it is
+    /// linear within a segment, so greatest at a segment's ends), so a node
+    /// that bends the curve between two samples is not missed.
     pub fn spline_steps(&self, lo: f64, hi: f64, chord: f64) -> usize {
-        if !matches!(self, Self::Hermite { .. }) {
+        let Self::Hermite { nodes, .. } = self else {
             return 1;
-        }
-        const SAMPLES: usize = 64;
-        let h = (hi - lo) / SAMPLES as f64;
+        };
         let mut second = 0.0_f64;
-        for i in 1..SAMPLES {
-            let t = lo + h * i as f64;
-            let (a, b, c) = (self.eval(t - h), self.eval(t), self.eval(t + h));
-            second = second.max(len(sub(add(a, c), mul(b, 2.))));
+        for w in nodes.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let (from, to) = (lo.max(a.0), hi.min(b.0));
+            if to < from {
+                continue;
+            }
+            let h = b.0 - a.0;
+            for t in [from, to] {
+                let s = (t - a.0) / h;
+                let p2: Point = std::array::from_fn(|k| {
+                    ((12. * s - 6.) * a.1[k]
+                        + (6. * s - 4.) * h * a.2[k]
+                        + (-12. * s + 6.) * b.1[k]
+                        + (6. * s - 2.) * h * b.2[k])
+                        / (h * h)
+                });
+                second = second.max(len(p2));
+            }
         }
         if !second.is_finite() {
             return SPLINE_STEP_CAP;
         }
-        let steps = (SAMPLES as f64 * (second / (8. * chord)).sqrt()).ceil();
+        let steps = ((hi - lo).abs() * (second / (8. * chord)).sqrt()).ceil();
         (steps as usize).clamp(1, SPLINE_STEP_CAP)
     }
     /// The greatest length of the derivative at 65 equal steps from `lo` to

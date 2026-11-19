@@ -1,9 +1,11 @@
 //! A Hermite spline profile of a ruled surface or a surface of revolution is
-//! cut into the equal parameter steps its curvature asks for.
+//! cut into the equal parameter steps its curvature asks for, aiming at a chord
+//! error and capped.
 //!
 //! `Curve::spline_steps` gives the number of equal steps between two
-//! parameters that hold the chord error of the spline to a distance (one for a
-//! curve that is not a spline, at most 128), and `Curve::speed` the greatest
+//! parameters that aim to hold the chord error of the spline to a distance (one
+//! for a curve that is not a spline, at most 128, which holds the distance only
+//! as far as that many steps do), and `Curve::speed` the greatest
 //! length of its derivative. Built from nodes in memory, so it needs no model.
 
 use rvt::research::native_parametric_surface::Curve;
@@ -85,4 +87,23 @@ fn a_curve_that_is_not_a_spline_is_one_step() {
     let line = Curve::line([0., 0., 0.], [3., 4., 0.], [0., 2.]);
     assert_eq!(line.spline_steps(0., 2., CHORD), 1);
     assert!((line.speed(0., 2.) - 5.).abs() < 1e-9);
+}
+
+/// Every node of this spline lies on `x = 1` and the samples of a fixed grid
+/// fall on the nodes, but between two nodes `x` reaches 1.25: a bound taken at
+/// the samples alone would read it as straight.
+#[test]
+fn a_bend_between_two_nodes_is_not_missed() {
+    let nodes = (0..=64)
+        .map(|i| {
+            let t = i as f64 / 64.;
+            let tangent = if i % 2 == 0 { 64. } else { -64. };
+            (t, [1., 0., t], [tangent, 0., 1.])
+        })
+        .collect();
+    let curve = Curve::Hermite {
+        nodes,
+        range: [0., 1.],
+    };
+    assert_eq!(curve.spline_steps(0., 1., CHORD), 128);
 }
