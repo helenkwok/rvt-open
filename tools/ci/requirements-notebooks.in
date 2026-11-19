@@ -1,0 +1,7 @@
+# The example notebooks (examples/notebooks): marimo, which runs and exports them, and maturin, which builds
+# the Python bindings' wheel they import. marimo 0.25.2 comes from its own release workflow (PyPI provenance
+# attestation: marimo-team/marimo, release.yml), a pure Python wheel with no install-time scripts.
+# requirements-notebooks.txt pins this and every dependency with its hashes, and pip installs it with
+# --require-hashes; after changing a pin here, regenerate it with the uv command at its top.
+marimo==0.25.2
+maturin==1.16.0

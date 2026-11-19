@@ -457,6 +457,51 @@ jobs:
       - name: Sheet and plan view PDF (qpdf, poppler render, segments against the DXF)
         run: tools/ci/sheet-pdf-check.sh target/ci _samples/2024/racbasicsampleproject.rvt A102 "Level 1"
 
+  # The example notebooks (examples/notebooks, marimo): each runs top to bottom as a script on a public
+  # sample and fails on any error or failed assertion, then exports to static HTML for the artifact.
+  # They import the Python bindings from a wheel this job builds, and call rvt-schedule and rvt-sheet.
+  notebooks:
+    name: Example notebooks
+    needs: samples
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile, save-if: false }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
+      - name: Build the Python wheel and the two tools the notebooks call
+        run: |
+          python3 -m venv "$RUNNER_TEMP/nb"
+          "$RUNNER_TEMP/nb/bin/pip" install -q --require-hashes -r tools/ci/requirements-notebooks.txt
+          PATH="$RUNNER_TEMP/nb/bin:$PATH" maturin build --profile ci -o "$RUNNER_TEMP/wheel"
+          "$RUNNER_TEMP/nb/bin/pip" install -q --no-deps "$RUNNER_TEMP"/wheel/rvt_open-*.whl
+          cargo build --profile ci --features sqlite --bin rvt-schedule --bin rvt-sheet
+      - name: Run each notebook as a script and export it to HTML
+        env:
+          RVT_MODEL: ${{ github.workspace }}/_samples/2024/racbasicsampleproject.rvt
+          RVT_BIN_DIR: ${{ github.workspace }}/target/ci
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/notebooks-html"
+          cd "$RUNNER_TEMP" # not the source tree, so `import rvt_open` is the installed wheel
+          for nb in "$GITHUB_WORKSPACE"/examples/notebooks/*.py; do
+            echo "::group::$(basename "$nb")"
+            "$RUNNER_TEMP/nb/bin/python" "$nb"
+            "$RUNNER_TEMP/nb/bin/marimo" export html "$nb" -o "$RUNNER_TEMP/notebooks-html/$(basename "$nb" .py).html"
+            echo "::endgroup::"
+          done
+          ls -l "$RUNNER_TEMP/notebooks-html"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: example-notebooks-html
+          path: ${{ runner.temp }}/notebooks-html/*.html
+          if-no-files-found: error
+
   # The tiny reference models are exported in four parts side by side (each
   # model once: rvt-ifc writes the IFC4 and the IFCX, with --ifcx-unused-types
   # so the unused types are measured too, and rvt-schedule the element table),
