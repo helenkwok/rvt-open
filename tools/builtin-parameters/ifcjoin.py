@@ -98,7 +98,7 @@ for fn in sorted(os.listdir(ifcdir)):
     with open(f'{out}/{label}.names.tsv','w') as nf:
         nf.write('#kind\tname\n')
         for kind,nm in sorted(NAMES):
-            if nm and '\t' not in nm: nf.write(f'{kind}\t{nm}\n')
+            if nm: nf.write(f'{kind}\t{cl(nm)}\n')
     # element -> [(set,prop,type,val)]
     el=collections.defaultdict(list)
     def add(tag,sid):

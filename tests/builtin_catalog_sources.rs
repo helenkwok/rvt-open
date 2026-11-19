@@ -149,3 +149,69 @@ fn every_value_is_a_row_of_a_public_input() {
     }
     assert_eq!(terms, 12 * LOCALIZED);
 }
+
+/// A storey whose name holds a tab is written to `names.tsv` as the same name `ifcjoin.py` writes in
+/// the option texts (tab as a space), so `derive_ifc.py` drops `Up to level: A B`, not keeps it.
+#[test]
+fn a_model_name_with_a_tab_is_still_dropped_from_the_option_texts() {
+    use std::process::Command;
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipping: no python3");
+        return;
+    }
+    let tools = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/builtin-parameters");
+    let dir = std::env::temp_dir().join(format!("rvt-open-names-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ifc, census, pairs) = (dir.join("ifc"), dir.join("census"), dir.join("pairs"));
+    for d in [&ifc, &census, &pairs] {
+        std::fs::create_dir_all(d).expect("dir");
+    }
+    std::fs::write(
+        ifc.join("m.ifc"),
+        "ISO-10303-21;\nDATA;\n#1=IFCBUILDINGSTOREY('g',$,'A\\X2\\0009\\X0\\B',$,$,$,$,$,.ELEMENT.,0.);\nENDSEC;\n",
+    )
+    .expect("ifc");
+    std::fs::write(dir.join("bip.tsv"), "# name\tvalue\tlabel\n").expect("bip");
+    // An empty census file: gzip of nothing.
+    let gz = Command::new("python3")
+        .args([
+            "-c",
+            "import gzip,sys;sys.stdout.buffer.write(gzip.compress(b''))",
+        ])
+        .output()
+        .expect("gzip");
+    std::fs::write(census.join("2024__m.tsv.gz"), gz.stdout).expect("census");
+    let join = Command::new("python3")
+        .arg(tools.join("ifcjoin.py"))
+        .args([&ifc, &census, &pairs, &dir.join("bip.tsv")])
+        .output()
+        .expect("ifcjoin");
+    assert!(
+        join.status.success(),
+        "{}",
+        String::from_utf8_lossy(&join.stderr)
+    );
+    let names = std::fs::read_to_string(pairs.join("2024__m.names.tsv")).expect("names");
+    assert!(names.contains("storey\tA B\n"), "{names:?}");
+    // The sample's option text embeds that storey: it must be dropped.
+    std::fs::write(pairs.join("2024__m.props.tsv"), "#set\tprop\tifctype\tn\n").expect("props");
+    std::fs::write(
+        pairs.join("2024__m.pairs.tsv"),
+        "#tag\tset\tprop\tifctype\tifcvalue\tparam_id\torigin\tfiletype\tfilevalue\tmethod\n1\tc\tp\tIFCLABEL\tUp to level: A B\t-1001103\tS\tInteger\t-1\tL\n",
+    )
+    .expect("pairs");
+    let out = dir.join("out");
+    let derive = Command::new("python3")
+        .arg(tools.join("derive_ifc.py"))
+        .args([&pairs, &dir.join("bip.tsv"), &out])
+        .output()
+        .expect("derive_ifc");
+    assert!(
+        derive.status.success(),
+        "{}",
+        String::from_utf8_lossy(&derive.stderr)
+    );
+    let texts = std::fs::read_to_string(dir.join("out.enum-texts.tsv")).expect("texts");
+    assert!(!texts.contains("A B"), "{texts:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
