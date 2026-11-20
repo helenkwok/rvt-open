@@ -1,0 +1,10 @@
+{
+  "name": "rvt-open-pyodide-ci",
+  "private": true,
+  "description": "Test tools for the Pyodide wheel job: pyodide runs the wheel under Node, playwright opens the exported notebook site.",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.56.0",
+    "pyodide": "314.0.0"
+  }
+}

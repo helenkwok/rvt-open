@@ -325,7 +325,7 @@ fn extract_impl(
         control.report(Stage::SavedMeshes, *done, Some(total));
         element
     };
-    let workers = if cfg!(all(target_family = "wasm", target_os = "unknown")) {
+    let workers = if cfg!(target_family = "wasm") {
         1
     } else {
         std::thread::available_parallelism().map_or(1, |n| n.get())
