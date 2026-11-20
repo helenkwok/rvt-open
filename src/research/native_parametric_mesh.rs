@@ -545,9 +545,11 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
             // included) within the mesh budget.
             if curved {
                 let asked = (twist / (4. * CHORD * n)).ceil();
-                // the grid also holds every saved value of the trim, in each axis
-                let knots = trim.len() as f64;
-                let room = ((1_500_000. / (n + 1. + knots)).floor() - 1. - knots).max(1.);
+                // The grid also holds the saved values of the trim in each axis: a fixed
+                // allowance for them, so that every face of the component takes the
+                // same `v` steps and shares its generators' points.
+                const KNOTS: f64 = 1000.;
+                let room = ((1_500_000. / (n + 1. + KNOTS)).floor() - 1. - KNOTS).max(1.);
                 n_lines = n_lines.max(asked.min(2000.).min(room));
             }
             (1. / n, if curved { 1. / n_lines } else { 1. / n })
