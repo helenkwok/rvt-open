@@ -109,6 +109,8 @@ mod curtain_part_materials;
 mod curtain_wall_doors;
 #[path = "../curtain_walls.rs"]
 mod curtain_walls;
+#[path = "../cylinder_trim_loops.rs"]
+mod cylinder_trim_loops;
 #[path = "../data_outputs.rs"]
 mod data_outputs;
 #[path = "../decoder_diffs.rs"]

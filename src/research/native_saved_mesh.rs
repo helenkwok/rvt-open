@@ -1170,7 +1170,10 @@ pub fn cylinder_face(
             )
             .context("cylinder tessellation grid too large")?;
             let (uv, tris, _) = crate::native_parametric_mesh::conforming_strips(
-                &loops, &u_values, &v_lattice, &[],
+                &loops,
+                &u_values,
+                &v_lattice,
+                &[],
             )?;
             (uv, tris)
         } else {
