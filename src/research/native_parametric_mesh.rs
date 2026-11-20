@@ -541,10 +541,13 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
             // segments its twist asks for: a cell of the grid is two triangles, which
             // leave the surface by a quarter of the cell's mixed second derivative (the
             // change of the ruling per step along the profiles) times its two steps.
-            // Never more than keeps the grid's points within the mesh budget.
+            // Never more than keeps the grid's points (the saved values of the trim
+            // included) within the mesh budget.
             if curved {
                 let asked = (twist / (4. * CHORD * n)).ceil();
-                let room = (1_000_000. / n).floor().max(1.);
+                // the grid also holds every saved value of the trim, in each axis
+                let knots = trim.len() as f64;
+                let room = ((1_500_000. / (n + 1. + knots)).floor() - 1. - knots).max(1.);
                 n_lines = n_lines.max(asked.min(2000.).min(room));
             }
             (1. / n, if curved { 1. / n_lines } else { 1. / n })
