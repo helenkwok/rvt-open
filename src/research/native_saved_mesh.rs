@@ -1158,7 +1158,24 @@ pub fn cylinder_face(
             }
         }
     } else {
-        let (uv, tris) = uv_strip_triangles(&loops, &u_values, profile.max_v_edge)?;
+        // A face of several loops (a hole, two regions) is cut into strips on points its
+        // triangles share, as a parametric face is (`conforming_strips`), so the strips
+        // beside each other meet without a vertex of one lying on the side of the next.
+        let (uv, tris) = if loops.len() > 1 {
+            let v_lattice = tessellation_axis(
+                trim_min[1],
+                trim_max[1],
+                profile.max_v_edge,
+                loops.iter().flatten().map(|p| p[1]),
+            )
+            .context("cylinder tessellation grid too large")?;
+            let (uv, tris, _) = crate::native_parametric_mesh::conforming_strips(
+                &loops, &u_values, &v_lattice, &[],
+            )?;
+            (uv, tris)
+        } else {
+            uv_strip_triangles(&loops, &u_values, profile.max_v_edge)?
+        };
         ensure!(
             uv.len() <= MAX_GRID_VERTICES,
             "cylinder tessellation grid too large"
