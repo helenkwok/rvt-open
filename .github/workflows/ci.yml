@@ -527,7 +527,7 @@ jobs:
       - name: Python 3.14 environment (hash-pinned)
         run: |
           uv venv --python 3.14 "$RUNNER_TEMP/pw"
-          uv pip install --python "$RUNNER_TEMP/pw/bin/python" --require-hashes -r tools/ci/pyodide/requirements.txt
+          uv pip install --python "$RUNNER_TEMP/pw/bin/python" --require-hashes --only-binary :all: -r tools/ci/pyodide/requirements.txt
           echo "$RUNNER_TEMP/pw/bin" >> "$GITHUB_PATH"
           echo "VIRTUAL_ENV=$RUNNER_TEMP/pw" >> "$GITHUB_ENV"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

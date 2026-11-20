@@ -29,7 +29,7 @@ CI (the `Example notebooks` job) runs every notebook this way on the Revit 2024 
 Notebook 01 also runs in a browser: the Python bindings are built as a Pyodide wheel (Python in WebAssembly), and `marimo export html-wasm` turns the notebook into a static site that installs the wheel, fetches a Revit file and runs the notebook's cells in the page. One thread, so the first read of a large file takes several times as long as natively (the 19.7 MB basic sample's first read took about 8 s under Pyodide against 1.8 s natively).
 
 ```bash
-uv venv --python 3.14 .venv-pyodide && uv pip install --python .venv-pyodide/bin/python --require-hashes -r tools/ci/pyodide/requirements.txt
+uv venv --python 3.14 .venv-pyodide && uv pip install --python .venv-pyodide/bin/python --require-hashes --only-binary :all: -r tools/ci/pyodide/requirements.txt
 export PATH=$PWD/.venv-pyodide/bin:$PATH
 rustup target add wasm32-unknown-emscripten
 tools/ci/pyodide/build-wheel.sh dist-pyodide                      # pins emsdk 5.0.3 and the Pyodide cross-build environment
