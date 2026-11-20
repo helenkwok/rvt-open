@@ -540,3 +540,71 @@ fn a_monolithic_landing_has_its_type_object_on_every_release() {
         assert_eq!(types, 1, "{year}: IfcSlabType of the Monolithic Landing");
     }
 }
+
+/// The `PredefinedType` of every STEP entity named `entity` in `step`, counted.
+fn predefined_types(step: &str, entity: &str) -> BTreeMap<String, usize> {
+    let start = format!("={entity}(");
+    let mut counts = BTreeMap::new();
+    for line in step.lines().filter(|line| line.contains(&start)) {
+        let Some(tail) = line.trim_end().strip_suffix(".);") else {
+            continue;
+        };
+        if let Some((_, value)) = tail.rsplit_once(",.") {
+            *counts.entry(value.to_string()).or_default() += 1;
+        }
+    }
+    counts
+}
+
+/// A stair run is called spiral only where its treads lie about one centre: the
+/// spiral runs of the BIM4LCA office and of Snowdon Towers Architectural keep
+/// `SPIRAL` on their flights and `SPIRAL_STAIR` on their stairs, and every other
+/// flight there is `STRAIGHT` or `NOTDEFINED`. 34 straight flights and one
+/// spiral in the office (a stair with one spiral run), 2 spirals in Snowdon.
+#[test]
+fn a_spiral_run_keeps_its_type_and_no_other_run_is_one() {
+    let cases = [
+        (
+            NORDIC,
+            "ARK_NordicLCA_Office_Concrete_As-Built.rvt",
+            34,
+            1,
+            1,
+        ),
+        (SAMPLES, "Snowdon Towers Sample Architectural.rvt", 41, 2, 2),
+    ];
+    for (env, file, straight, spiral, spiral_stairs) in cases {
+        let Some(dir) = std::env::var_os(env).map(PathBuf::from) else {
+            eprintln!("skipping: {env} is not set");
+            continue;
+        };
+        let path = dir.join(file);
+        if !path.exists() {
+            eprintln!("skipping: {file} absent");
+            continue;
+        }
+        let mut rf = RevitFile::open(&path).expect("open");
+        let model = RvtDocExporter
+            .export_with_diagnostics(&mut rf)
+            .expect("export")
+            .model;
+        let step = rvt::ifc::write_step(&model);
+        let flights = predefined_types(&step, "IFCSTAIRFLIGHT");
+        let stairs = predefined_types(&step, "IFCSTAIR");
+        assert_eq!(
+            flights.get("STRAIGHT").copied().unwrap_or(0),
+            straight,
+            "{file}: straight flights {flights:?}"
+        );
+        assert_eq!(
+            flights.get("SPIRAL").copied().unwrap_or(0),
+            spiral,
+            "{file}: spiral flights {flights:?}"
+        );
+        assert_eq!(
+            stairs.get("SPIRAL_STAIR").copied().unwrap_or(0),
+            spiral_stairs,
+            "{file}: spiral stairs {stairs:?}"
+        );
+    }
+}

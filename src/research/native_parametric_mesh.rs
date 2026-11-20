@@ -318,7 +318,10 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
                         .map(|n| n.1[0].hypot(n.1[1]))
                         .fold(0., f64::max),
                 ),
-                (range[1] - range[0]) / (8 * nodes.len()) as f64,
+                // a spline profile is cut at least as finely as before and as
+                // its chord error asks for.
+                ((range[1] - range[0]) / (8 * nodes.len()) as f64)
+                    .min((max[1] - min[1]) / profile.spline_steps(min[1], max[1], CHORD) as f64),
             ),
             Curve::Arc { center, radius, .. } => (
                 angular(center[0].hypot(center[1]) + 2. * radius),
@@ -455,7 +458,15 @@ fn curve_segments(c: &crate::native_parametric_surface::Curve) -> f64 {
         let (p, q) = (c.eval(at(i)), c.eval(at(i + 1)));
         length += norm([q[0] - p[0], q[1] - p[1], q[2] - p[2]]);
     }
-    (turn / 0.1).max(length).ceil().clamp(1., 2000.)
+    // a spline is cut at least as finely as its chord error asks for (a ruled
+    // face's twist is bounded by the turning and length alone, so neither
+    // count replaces the other).
+    let splined = c.spline_steps(range[0], range[1], 0.001) as f64;
+    (turn / 0.1)
+        .max(length)
+        .max(splined)
+        .ceil()
+        .clamp(1., 2000.)
 }
 
 pub fn face(g: &ObjectGraph, fi: usize) -> Result<FaceMesh> {
