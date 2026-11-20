@@ -33,11 +33,12 @@ uv venv --python 3.14 .venv-pyodide && uv pip install --python .venv-pyodide/bin
 export PATH=$PWD/.venv-pyodide/bin:$PATH
 rustup target add wasm32-unknown-emscripten
 tools/ci/pyodide/build-wheel.sh dist-pyodide                      # pins emsdk 5.0.3 and the Pyodide cross-build environment
-tools/ci/pyodide/make-site.sh dist-pyodide/rvt_open-*.whl site https://example.org/model.rvt
+tools/ci/pyodide/make-site.sh dist-pyodide/rvt_open-*.whl site http://localhost:8000/model.rvt
+cp _samples/flat/2024-racbasicsampleproject.rvt site/model.rvt    # or any Revit file; a hosted file's URL works in place of localhost
 python3 -m http.server --directory site                           # then open http://localhost:8000
 ```
 
-- **The model comes from a URL** you give `make-site.sh`, fetched by the page, so that host must allow cross-origin reads (CORS) unless it serves the page too. Autodesk's sample download host does not send `Access-Control-Allow-Origin`, so its files cannot be fetched by a page from another host; raw GitHub file URLs do. For a quick try, copy the file next to the site and serve both from one host.
+- **The model comes from a URL** you give `make-site.sh`, fetched by the page, so that host must allow cross-origin reads (CORS) unless it serves the page too. Autodesk's sample download host does not send `Access-Control-Allow-Origin`, so its files cannot be fetched by a page from another host; raw GitHub file URLs do. For a quick try, serve the file from the same host as the site, as above.
 - **The page needs the network**: marimo's runtime and Pyodide load from a CDN (jsDelivr) when the page opens, unless you self-host them. Nothing you open leaves the page: the file is read in your browser.
 - Notebooks 02 and 03 call the `rvt-schedule` and `rvt-sheet` programs, which do not run in a browser, so only notebook 01 is exported.
 - CI (the `Pyodide wheel and notebook site` job) builds the wheel with pinned tools, runs notebook 01's calls under Node and Pyodide and requires the numbers the native wheel gives, then opens the exported site in Chromium, Firefox and WebKit and checks the counts the page shows. It uploads the wheel (`pyodide-wheel`), the site (`notebook-01-site`, which fetches its model from `http://127.0.0.1:8765/model.rvt`, the address the test serves it on) and the screenshots. Nothing is published.

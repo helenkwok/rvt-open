@@ -7,7 +7,8 @@
 # marimo must be on PATH (tools/ci/pyodide/requirements.txt). The notebook is the one CI runs, unchanged, plus one cell
 # first that fetches the model into the browser's file system at the path the notebook reads.
 set -euo pipefail
-wheel=$(cd "$(dirname "${1:?wheel}")" && pwd)/$(basename "$1"); out=${2:?out dir}; url=${3:?model url}
+wheel=$(cd "$(dirname "${1:?wheel}")" && pwd)/$(basename "$1"); url=${3:?model url}
+mkdir -p "${2:?out dir}"; out=$(cd "$2" && pwd)
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../../.." && pwd)
 nb=$root/examples/notebooks/01_open_a_model.py
 path=$(sed -n 's/.*os.environ.get("RVT_MODEL", "\([^"]*\)").*/\1/p' "$nb")
@@ -27,5 +28,5 @@ cell = '\n\n@app.cell\ndef _():\n    import rvt_boot\n    _ = rvt_boot.stage(%r,
 sys.stdout.write(s[:i] + cell + s[i:])
 PY
 } > "$w/notebook.py"
-(cd "$w" && marimo export html-wasm notebook.py -o "$out" --mode run -f)
+(cd "$w" && marimo export html-wasm --no-sandbox notebook.py -o "$out" --mode run -f)
 du -sh "$out"

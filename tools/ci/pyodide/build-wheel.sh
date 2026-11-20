@@ -12,7 +12,15 @@ EMSDK_REF=a620cf1d71c62dfdfbb0c01fe0a371e2af2dda6c # emscripten-core/emsdk, tag 
 EMSCRIPTEN=5.0.3
 root=$(cd "$(dirname "$0")/../../.." && pwd); mkdir -p "$out"; out=$(cd "$out" && pwd)
 
-pyodide xbuildenv install
+# The cross-build environment is fetched by its release asset and checked against its hash (Pyodide 314.0.8's
+# xbuildenv, built for the 314 runtime and the emscripten pinned above), not picked from remote metadata.
+XBUILDENV_URL=https://github.com/pyodide/pyodide/releases/download/314.0.8/xbuildenv-314.0.8.tar.bz2
+XBUILDENV_SHA256=4dc1904011077281827f607c59aa0547e08ad26f307a4c7ab7382d6c95ed3cd9
+xb=$(mktemp -d)
+curl -sSfL --retry 3 -o "$xb/xbuildenv.tar.bz2" "$XBUILDENV_URL"
+echo "$XBUILDENV_SHA256  $xb/xbuildenv.tar.bz2" | sha256sum -c -
+pyodide xbuildenv install --url "file://$xb/xbuildenv.tar.bz2"
+rm -rf "$xb"
 got=$(pyodide config get emscripten_version)
 [ "$got" = "$EMSCRIPTEN" ] || { echo "::error::the cross-build environment wants emscripten $got, this script pins $EMSCRIPTEN"; exit 1; }
 
