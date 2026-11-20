@@ -136,7 +136,7 @@ rust_xlsxwriter = { version = "=0.102.0", default-features = false }
 # the bundled SQLite natively, `sqlite-wasm-rs` (SQLite compiled for
 # wasm32-unknown-unknown) in the browser; `serialize` returns the database's
 # bytes.
-rusqlite = { version = "=0.41.1", default-features = false, features = ["bundled", "serialize", "ffi-sqlite-wasm-rs"], optional = true }
+rusqlite = { version = "=0.43.0", default-features = false, features = ["bundled", "serialize", "ffi-sqlite-wasm-rs"], optional = true }
 
 # The element table as a Parquet file (Apache-2.0, `arrow` only: no
 # compression codecs, no async). Pure Rust, in both browser builds.
