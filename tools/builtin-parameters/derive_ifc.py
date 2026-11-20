@@ -8,16 +8,19 @@ property sets) and `<m>.pairs.tsv` (an element's IFC property joined with a para
 stores on that element, by the property name equal to the parameter's Revit 2027 API reference label).
 Route 1 (label): a property name equal to the reference label of exactly one id gives that id its
 property set (group) and IFC value type. Route 2 (file and label): where the label is shared by
-several ids, the element's own stored parameter picks the id. Route 2 wins where both give one. Route 3 (category and label): where the label is shared by several
+several ids, the element's own stored parameter picks the id. Where both give one, the one whose votes come from the newer
+release wins, and route 2 where the release is the same. Route 3 (category and label): where the label is shared by several
 ids and exactly one of them has an enum name that starts with the singular of the element's category
 (`DOOR_HEIGHT` for the `Height` of a `Doors` element), that id gets the property set and value type
 of the property on elements of that category; it only fills an id neither route gave.
 The catalog is Revit 2027's, so a vote is counted only among the samples of the newest release that
 has one for the id: a group Revit renamed (`Mechanical` to `Mechanical - Flow`) takes its newest name.
 A property set whose name holds `Schedule` is a schedule Revit exported as a property set
-(`Door Schedule`), not a parameter group: its properties never vote.
+(`Door Schedule`), not a parameter group: its properties never vote. (A schedule titled in another language
+is not recognised; no count of samples separates it, since the sample projects repeat their schedules.)
 `--releases` lists `<sample>\t<release>` (without it, every sample counts as one release).
-Enumeration texts: an integer parameter whose IFC value is a text gives (id, stored integer) -> text,
+Enumeration texts: an integer parameter whose IFC value is a text gives (id, stored integer) -> text (the text of
+the newest release that has one),
 dropped when the part after its last `: ` is a storey or type name of the sample that wrote it
 (`*.names.tsv`).
 Writes OUT_PREFIX.group-spec.tsv (id, group, ifc_type, route) and OUT_PREFIX.enum-texts.tsv."""
@@ -88,13 +91,13 @@ def pick(c):
         sets[s] += k
         types[t] += k
     return sets.most_common(1)[0][0], types.most_common(1)[0][0]
-res = {}
+label_by = {}  # id -> release -> votes, for a label that names one id
 for n, by in props.items():
     ids = labels.get(n, ())
     if len(ids) == 1:
-        res[next(iter(ids))] = (*pick(newest(by)), 'label')
-file_votes = collections.defaultdict(lambda: collections.defaultdict(lambda: collections.defaultdict(collections.Counter)))
-enum = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
+        label_by[next(iter(ids))] = by
+file_by = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))  # id -> release -> (set, type)
+enum = collections.defaultdict(lambda: collections.defaultdict(lambda: collections.defaultdict(collections.Counter)))  # id -> raw -> release -> text
 enum_models = collections.defaultdict(set)  # (id, raw, text) -> samples that wrote it
 for fn in glob.glob(os.path.join(pairs, '*.pairs.tsv')):
     for l in open(fn, encoding='utf-8', errors='replace'):
@@ -104,29 +107,32 @@ for fn in glob.glob(os.path.join(pairs, '*.pairs.tsv')):
         if len(p) < 10 or 'L' not in p[9] or is_schedule(p[1]):
             continue
         pid = int(p[5])
-        file_votes[pid][rel(fn)][p[1]][p[3]] += 1
+        file_by[pid][rel(fn)][(p[1], p[3])] += 1
         if p[7] == 'Integer' and p[3] in ('IFCLABEL', 'IFCTEXT', 'IFCIDENTIFIER'):
-            enum[pid][p[8]][p[4]] += 1
+            enum[pid][p[8]][rel(fn)][p[4]] += 1
             enum_models[(pid, p[8], p[4])].add(sample(fn))
-for pid, by in file_votes.items():
-    c = collections.Counter()
-    for s, ty in newest(by).items():
-        for t, k in ty.items():
-            c[(s, t)] += k
-    res[pid] = (*pick(c), 'file+label')
+res = {}
+for i in set(label_by) | set(file_by):
+    # the newer release wins, route 2 (the file's own parameter) where the release is the same
+    cands = [(max(by), k, name, by) for k, name, by in ((2, 'file+label', file_by.get(i)), (1, 'label', label_by.get(i))) if by]
+    r, k, name, by = max(cands, key=lambda c: (c[0], c[1]))
+    res[i] = (*pick(by[r]), name)
 def category_ids(cat, ids):
     """The ids of a shared label whose enum name starts with the singular of the category (`DOOR_`)."""
     base = ''.join(ch if ch.isalnum() else '_' for ch in cat.upper()).strip('_')
     stems = {base, base[:-1] if base.endswith('S') else base, base[:-2] if base.endswith('ES') else base}
     return {i for i in ids if any(e.startswith(st + '_') for e in enums[i] for st in stems)}
-by_category = 0
-for (cat, n), by in sorted(cprops.items()):
+cat_by = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))  # id -> release -> (set, type), over every category key
+for (cat, n), by in cprops.items():
     ids = category_ids(cat, labels.get(n, ()))
     if len(labels.get(n, ())) > 1 and len(ids) == 1:
-        i = next(iter(ids))
-        if i not in res:
-            res[i] = (*pick(newest(by)), 'category+label')
-            by_category += 1
+        for r, c in by.items():
+            cat_by[next(iter(ids))][r].update(c)
+by_category = 0
+for i, by in sorted(cat_by.items()):
+    if i not in res:
+        res[i] = (*pick(newest(by)), 'category+label')
+        by_category += 1
 print(by_category, 'ids from a category and a label')
 # An option text never embeds a model's own element name (a level, a type: `Up to level: Roof`):
 # it is dropped when the part after its last `: ` is a storey or type name of the sample that wrote it.
@@ -142,7 +148,7 @@ dropped = []
 rows = []
 for i in sorted(enum):
     for raw in sorted(enum[i], key=lambda x: int(x) if x.lstrip('-').isdigit() else 0):
-        text = enum[i][raw].most_common(1)[0][0]
+        text = newest(enum[i][raw]).most_common(1)[0][0]
         models = enum_models[(i, raw, text)]
         if embeds_name(text, models):
             dropped.append((i, raw, text))

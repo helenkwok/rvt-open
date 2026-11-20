@@ -220,8 +220,8 @@ fn a_model_name_with_a_tab_is_still_dropped_from_the_option_texts() {
 }
 
 /// A label several ids share goes to the id whose enum name starts with the element's category
-/// (`DOOR_` for `Doors`), a property set of a schedule never votes, and the newest release's
-/// naming wins (`Mechanical` became `Mechanical - Flow`).
+/// (`DOOR_` for `Doors`), a property set that is a schedule never votes, and the
+/// newest release's naming wins (`Mechanical` became `Mechanical - Flow`).
 #[test]
 fn category_newest_release_and_schedules_decide_the_group_and_spec() {
     use std::process::Command;
@@ -235,27 +235,31 @@ fn category_newest_release_and_schedules_decide_the_group_and_spec() {
     let pairs = dir.join("pairs");
     std::fs::create_dir_all(&pairs).expect("dir");
     let write = |name: &str, text: &str| std::fs::write(pairs.join(name), text).expect(name);
-    for m in ["a", "b"] {
+    for m in ["a", "b", "c"] {
         write(&format!("{m}.pairs.tsv"), "#tag\n");
         write(&format!("{m}.names.tsv"), "#kind\tname\n");
     }
+    // a: release 2018; b and c: release 2024. `Door Schedule` is in the newest samples with more votes.
     write(
         "a.cprops.tsv",
         "#c\nDoors\tDimensions\tHeight\tIFCLENGTHMEASURE\t3\nDoors\tDoor Schedule\tHeight\tIFCREAL\t9\n",
     );
-    write(
-        "b.cprops.tsv",
-        "#c\nDoors\tDimensions\tHeight\tIFCLENGTHMEASURE\t1\n",
-    );
+    let newest = "#c\nDoors\tDimensions\tHeight\tIFCLENGTHMEASURE\t1\nDoors\tDoor Schedule\tHeight\tIFCREAL\t9\n";
+    write("b.cprops.tsv", newest);
+    write("c.cprops.tsv", newest);
     write(
         "a.props.tsv",
-        "#s\nMechanical\tThing\tIFCLENGTHMEASURE\t5\n",
+        "#s\nMechanical\tThing\tIFCLENGTHMEASURE\t5\nDimensions\tHeight\tIFCLENGTHMEASURE\t3\nDoor Schedule\tHeight\tIFCREAL\t9\n",
     );
     write(
         "b.props.tsv",
-        "#s\nMechanical - Flow\tThing\tIFCLENGTHMEASURE\t1\n",
+        "#s\nMechanical - Flow\tThing\tIFCLENGTHMEASURE\t1\nDimensions\tHeight\tIFCLENGTHMEASURE\t1\nDoor Schedule\tHeight\tIFCREAL\t9\n",
     );
-    std::fs::write(dir.join("releases.tsv"), "a\t2018\nb\t2024\n").expect("releases");
+    write(
+        "c.props.tsv",
+        "#s\nMechanical - Flow\tThing\tIFCLENGTHMEASURE\t1\nMechanical\tThing\tIFCLENGTHMEASURE\t1\nDimensions\tHeight\tIFCLENGTHMEASURE\t1\nDoor Schedule\tHeight\tIFCREAL\t9\n",
+    );
+    std::fs::write(dir.join("releases.tsv"), "a\t2018\nb\t2024\nc\t2024\n").expect("releases");
     std::fs::write(
         dir.join("bip.tsv"),
         "DOOR_HEIGHT\t-1001300\tHeight\nGENERIC_HEIGHT\t-1001301\tHeight\nWALL_THING\t-1001400\tThing\n",

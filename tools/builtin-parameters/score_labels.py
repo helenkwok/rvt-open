@@ -35,7 +35,10 @@ for fn in files:
                     key[p['id']].setdefault(lang, set()).add(p['name'])
 header, rows = [], []
 for l in open(args.terms, encoding='utf-8'):
-    (header if l.startswith('#') else rows).append(l.rstrip('\n'))
+    if l.startswith('#'):
+        header.append(l.rstrip('\n'))
+    elif l.strip():
+        rows.append(l.rstrip('\n'))
 stat = {l: collections.Counter() for l in LANGS}
 kept, dropped = [], []
 for r in rows:
@@ -51,7 +54,8 @@ for r in rows:
 print('language\tkey_ids\tmatch\tdiffer\tprecision')
 for l in LANGS:
     n = stat[l]['match'] + stat[l]['differ']
-    print(f"{l}\t{n}\t{stat[l]['match']}\t{stat[l]['differ']}\t{stat[l]['match'] / n:.4f}")
+    precision = f"{stat[l]['match'] / n:.4f}" if n else 'n/a'
+    print(f"{l}\t{n}\t{stat[l]['match']}\t{stat[l]['differ']}\t{precision}")
 print(f'{len(rows)} rows, {len(dropped)} shown wrong by the key')
 if args.write:
     sha = hashlib.sha256(b''.join(open(f, 'rb').read() for f in files)).hexdigest()[:16]

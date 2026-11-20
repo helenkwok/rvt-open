@@ -7,7 +7,7 @@
 // H = machine-matched: the term at the same place of the same Revit 2027 help topic in each of the 12
 // languages, cited per entry; - = no public source, the field is empty.
 //  - inputs: bip_enum.tsv 30fb56087a3ddbd2, bic_enum.tsv b27530a314bf49ca, storage.tsv 5d7db7d1ad93d53c,
-//    group-spec.tsv a223480e2b8fe5b6, enum-texts.tsv 76eae5ea8adf5c41, help-terms.tsv 3dd400df986174e7.
+//    group-spec.tsv afbcc3a6ff54077a, enum-texts.tsv 76eae5ea8adf5c41, help-terms.tsv 3dd400df986174e7.
 //  - ids: the reference's BuiltInParameter members plus 7 ids kept with no name (no public source names them).
 //  - category names: the `Category` property of Revit's IFC export of public samples, the most voted name of each category id (category-names.tsv 0e8fca40ad83e281); where it has none, the help term of `program_names`.
 //  - The Revit API dump of the public samples is the answer key only: tools/builtin-parameters/score.py.
@@ -6595,7 +6595,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "PIPE_INSULATION_THICKNESS",
         "",
         "autodesk.spec.aec:length-2.0.0",
-        "Mechanical",
+        "Insulation",
         "RR-EEH",
     ),
     (

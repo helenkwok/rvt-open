@@ -19,7 +19,7 @@
 -1155271	Dimensions	IFCLENGTHMEASURE	label
 -1155267	Sub-Division	IFCLABEL	file+label
 -1155266	Sub-division	IFCLENGTHMEASURE	file+label
--1155265	Sub-Division	IFCBOOLEAN	file+label
+-1155265	Sub-Division	IFCBOOLEAN	label
 -1155261	Dimensions	IFCLENGTHMEASURE	category+label
 -1155260	Dimensions	IFCLENGTHMEASURE	category+label
 -1155255	Constraints	IFCLENGTHMEASURE	file+label
@@ -130,7 +130,7 @@
 -1151105	Constraints	IFCLENGTHMEASURE	label
 -1150601	Dimensions	IFCLENGTHMEASURE	label
 -1150468	Mechanical	IFCTEXT	label
--1150437	Mechanical	IFCLENGTHMEASURE	category+label
+-1150437	Insulation	IFCLENGTHMEASURE	category+label
 -1150436	Insulation	IFCLENGTHMEASURE	category+label
 -1150435	Lining	IFCTEXT	label
 -1150434	Insulation	IFCTEXT	label
@@ -202,7 +202,7 @@
 -1140705	Structural	IFCBOOLEAN	label
 -1140704	Structural	IFCBOOLEAN	label
 -1140702	Identity Data	IFCTEXT	label
--1140422	Identity Data	IFCTEXT	file+label
+-1140422	Identity Data	IFCTEXT	label
 -1140363	Other	IFCLABEL	file+label
 -1140362	Other	IFCLABEL	file+label
 -1140324	Mechanical	IFCTEXT	label
@@ -250,7 +250,7 @@
 -1140110	Electrical - Lighting	IFCTEXT	file+label
 -1140103	Electrical - Loads	IFCTEXT	label
 -1140088	Electrical - Circuiting	IFCLABEL	file+label
--1140087	Electrical - Circuiting	IFCIDENTIFIER	file+label
+-1140087	Electrical - Circuiting	IFCLABEL	label
 -1140086	Electrical - Circuiting	IFCTEXT	file+label
 -1140085	Electrical - Circuiting	IFCTEXT	file+label
 -1140084	Electrical - Circuiting	IFCTEXT	label
@@ -265,7 +265,7 @@
 -1140055	Electrical - Loads	IFCPOWERMEASURE	label
 -1140054	Electrical - Loads	IFCPOWERMEASURE	label
 -1140053	Electrical - Loads	IFCPOWERMEASURE	label
--1140040	Electrical - Lighting	IFCBOOLEAN	file+label
+-1140040	Electrical - Lighting	IFCBOOLEAN	label
 -1140034	Photometrics	IFCTEXT	label
 -1140008	Electrical - Loads	IFCREAL	label
 -1140004	Electrical - Loads	IFCPOWERMEASURE	label
@@ -421,15 +421,15 @@
 -1010506	Photometrics	IFCPLANEANGLEMEASURE	label
 -1010505	Photometrics	IFCPLANEANGLEMEASURE	label
 -1010503	Photometrics	IFCLUMINOUSFLUXMEASURE	label
--1010501	Electrical	IFCTEXT	file+label
+-1010501	Electrical	IFCTEXT	label
 -1010500	Electrical	IFCTEXT	category+label
 -1010304	Dimensions	IFCLENGTHMEASURE	file+label
 -1010302	Constraints	IFCLENGTHMEASURE	file+label
 -1010109	Identity Data	IFCTEXT	file+label
--1010108	Identity Data	IFCTEXT	file+label
+-1010108	Identity Data	IFCTEXT	label
 -1010106	Identity Data	IFCTEXT	file+label
 -1010105	Identity Data	IFCTEXT	file+label
--1010104	Identity Data	IFCTEXT	file+label
+-1010104	Identity Data	IFCTEXT	label
 -1010103	Identity Data	IFCTEXT	file+label
 -1010003	Dimensions	IFCLENGTHMEASURE	category+label
 -1009523	Analytical Alignment	IFCLABEL	label
@@ -549,12 +549,12 @@
 -1005505	Structural Section Geometry	IFCLENGTHMEASURE	label
 -1005501	Structural	IFCINTEGER	label
 -1005500	Materials and Finishes	IFCLABEL	file+label
--1005439	Analytical Properties	IFCIDENTIFIER	file+label
+-1005439	Analytical Properties	IFCIDENTIFIER	label
 -1005437	Analytical Properties	IFCTEXT	file+label
 -1005435	Analytical Properties	IFCREAL	label
 -1005434	Analytical Properties	IFCREAL	label
--1005433	Analytical Properties	IFCREAL	file+label
--1005432	Analytical Properties	IFCREAL	file+label
+-1005433	Analytical Properties	IFCREAL	label
+-1005432	Analytical Properties	IFCREAL	label
 -1005431	Analytical Properties	IFCTHERMALRESISTANCEMEASURE	label
 -1005430	Analytical Properties	IFCTHERMALTRANSMITTANCEMEASURE	label
 -1005198	Visualization	IFCTEXT	label
@@ -573,7 +573,7 @@
 -1002556	Construction	IFCIDENTIFIER	label
 -1002555	Construction	IFCIDENTIFIER	label
 -1002502	Identity Data	IFCTEXT	label
--1002501	Identity Data	IFCTEXT	file+label
+-1002501	Identity Data	IFCTEXT	label
 -1002500	Identity Data	IFCTEXT	file+label
 -1002300	Constraints	IFCLENGTHMEASURE	file+label
 -1002112	Construction	IFCIDENTIFIER	label
@@ -646,11 +646,11 @@
 -1001300	Dimensions	IFCLENGTHMEASURE	category+label
 -1001211	Ikkunaluettelo (t\X\E4ysi)	IFCTEXT	label
 -1001210	Materials and Finishes	IFCTEXT	file+label
--1001209	Construction	IFCTEXT	file+label
+-1001209	Construction	IFCLABEL	label
 -1001208	Materials and Finishes	IFCTEXT	file+label
 -1001207	Construction	IFCTEXT	file+label
 -1001206	Identity Data	IFCTEXT	file+label
--1001205	Identity Data	IFCREAL	file+label
+-1001205	Identity Data	IFCREAL	label
 -1001203	Identity Data	IFCTEXT	file+label
 -1001124	Identity Data	IFCIDENTIFIER	label
 -1001123	Constraints	IFCLENGTHMEASURE	label
