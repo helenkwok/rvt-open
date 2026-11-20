@@ -120,6 +120,11 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
         settings = ifcopenshell.geom.settings()
         settings.set("use-world-coords", True)
     chosen = []
+    # Tag -> the representation-carrying parts already taken for it. A part an element
+    # aggregates is also an element of its own with the same Tag (Revit's IfcRamp holds its
+    # IfcRampFlight, and both carry the ramp's id as Tag), so it would be meshed once under
+    # each and the body counted twice: every ramp flight scored 0.5 of its volume by that alone.
+    taken = {}
     for element in model.by_type("IfcElement"):
         if element.is_a("IfcOpeningElement") or not element.Tag:
             continue
@@ -127,10 +132,16 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
             continue
         if source is not None and body_sources(element) != source:
             continue
-        chosen.append((element, shapes_of(element)))
-    shapes = mesh_parts(model, settings, [part for _, parts in chosen for part in parts], path)
+        seen = taken.setdefault(element.Tag, set())
+        every = shapes_of(element)
+        parts = [part for part in every if part.id() not in seen]
+        seen.update(part.id() for part in parts)
+        # An element whose parts were all taken still names the Tag (its class, ObjectType and
+        # curve flag), as the last element with the Tag always has: the flight, not the ramp.
+        chosen.append((element, parts, bool(every) and not parts))
+    shapes = mesh_parts(model, settings, [part for _, parts, _ in chosen for part in parts], path)
     out = {}
-    for element, parts in chosen:
+    for element, parts, repeated in chosen:
         triangles = []
         for part in parts:
             if part.id() not in shapes:
@@ -138,9 +149,9 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
             verts, faces = shapes[part.id()]
             if len(verts) and len(faces):
                 triangles.append(frame(verts)[faces])
-        if not triangles:
+        if not triangles and not (repeated and element.Tag in out):
             continue
-        triangles = np.concatenate(triangles)
+        triangles = np.concatenate(triangles) if triangles else np.zeros((0, 3, 3))
         if element.Tag in out:
             triangles = np.concatenate([out[element.Tag][2], triangles])
         out[element.Tag] = (element.is_a(), element.ObjectType or "", triangles)
@@ -514,8 +525,9 @@ def read_shells(scored, decided, ours, ref):
     polygon inscribed in the circle a saved mesh draws with more segments, so the two volumes differ
     by the ratio of the two polygons' areas with no body wrong, and the vertices of the two meshes lie
     the polygon's sagitta from each other's surface (0.134 of the radius for a hexagon, 0.29 for a
-    quadrilateral: the KAI-3 posts' are 0.06 ft); and it writes some bodies with every face twice, so
-    that their volume is twice the body's. A shell is `explained` only where Revit's end faces are such
+    quadrilateral: the KAI-3 posts' are 0.06 ft); and a body with every face twice has twice its
+    volume (the ramp flights that read 0.5000 were not such bodies: `meshes` counted a flight under
+    both the ramp that aggregates it and its own element). A shell is `explained` only where Revit's end faces are such
     polygons (to 0.001 ft) and its volume ratio is their area ratio, and `doubled` only where its
     volume is rvt-open's once Revit's repeated triangles count once; every other difference stays
     `other`, so no vertex-distance pre-filter is asked. Prints nothing for a file with no such body.

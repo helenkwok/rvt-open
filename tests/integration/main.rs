@@ -247,6 +247,8 @@ mod project_count_fixtures;
 mod proxy_ports;
 #[path = "../railing_type.rs"]
 mod railing_type;
+#[path = "../ramp_flight_volume.rs"]
+mod ramp_flight_volume;
 #[path = "../reference_values.rs"]
 mod reference_values;
 #[path = "../regression_fixes.rs"]
