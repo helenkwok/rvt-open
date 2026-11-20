@@ -158,10 +158,13 @@ fn profile_area(step: &Step, profile: u64, tag: &str) -> f64 {
     }
 }
 
+/// A mesh: its points (metres) and its triangles by their indices.
+type MeshData = (Vec<[f64; 3]>, Vec<[usize; 3]>);
+
 /// A body: its volume in cubic metres and, where it is a mesh, its points (metres) and triangles.
 struct Body {
     volume: f64,
-    mesh: Option<(Vec<[f64; 3]>, Vec<[usize; 3]>)>,
+    mesh: Option<MeshData>,
 }
 
 /// Tag -> the one `Body` of each element of the classes that has a tessellated one, in
@@ -315,7 +318,7 @@ fn unmatched_edges(points: &[[f64; 3]], triangles: &[[usize; 3]]) -> usize {
         .count()
 }
 
-type Mesh<'a> = &'a (Vec<[f64; 3]>, Vec<[usize; 3]>);
+type Mesh<'a> = &'a MeshData;
 
 /// The volume's centroid of a closed mesh, metres.
 fn centroid(mesh: Mesh) -> [f64; 3] {
