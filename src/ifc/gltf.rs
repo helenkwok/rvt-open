@@ -29,10 +29,10 @@
 //! [bin_chunk_length bytes binary buffer, padded to 4-byte with 0x00]
 //! ```
 
-use super::{IfcModel, MaterialInfo};
 use super::body_geometry::{self, Body, Placement, body_mesh};
 use super::entities::{IfcEntity, PropertyValue};
 use super::pbr::PbrMaterial;
+use super::{IfcModel, MaterialInfo};
 use serde::{Deserialize, Serialize};
 
 /// Top-level glTF 2.0 JSON document.
@@ -952,12 +952,12 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
                 material_profile_set_index: Some(set),
                 ..
             } => {
-                let Some(material) = model
-                    .material_profile_sets
-                    .get(*set)
-                    .and_then(|set| match set.profiles.as_slice() {
-                        [profile] => model.materials.get(profile.material_index),
-                        _ => None,
+                let Some(material) =
+                    model.material_profile_sets.get(*set).and_then(|set| {
+                        match set.profiles.as_slice() {
+                            [profile] => model.materials.get(profile.material_index),
+                            _ => None,
+                        }
                     })
                 else {
                     continue;
@@ -1259,49 +1259,50 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
         let drawn = drawn.filter(|(_, matrix)| matrix.iter().all(|v| v.is_finite()));
         let (mesh, matrix, children) = match drawn {
             Some((parts, matrix)) => {
-                let material = material_index
-                    .filter(|&index| index < model.materials.len())
-                    .or_else(|| single_material.get(&entity_index).copied())
-                    // A wall, floor or roof holds a layer set: its first
-                    // layer with a colour.
-                    .or_else(|| {
-                        material_layer_set_index
-                            .and_then(|i| model.material_layer_sets.get(i))
-                            .and_then(|set| {
-                                set.layers
-                                    .iter()
-                                    .filter_map(|l| l.material_index)
-                                    .find(|m| {
-                                        model
-                                            .materials
-                                            .get(*m)
-                                            .is_some_and(|i| i.color_packed.is_some())
-                                    })
-                            })
-                    })
-                    .or_else(|| {
-                        // Windows and curtain panels already draw in a translucent
-                        // category colour, and keep it, as rooms keep theirs.
-                        let alpha = element_alpha
-                            .get(&entity_index)
-                            .copied()
-                            .filter(|_| category_colour(ifc_type).1 >= 1.0);
-                        Some(match alpha {
-                            None => *category_materials
-                                .entry(ifc_type.clone())
-                                .or_insert_with(|| {
-                                    doc.materials.push(category_material(ifc_type));
-                                    doc.materials.len() - 1
-                                }),
-                            Some(alpha) => *category_alpha_materials
-                                .entry((ifc_type.clone(), alpha.to_bits()))
-                                .or_insert_with(|| {
-                                    doc.materials
-                                        .push(transparent_category_material(ifc_type, alpha));
-                                    doc.materials.len() - 1
-                                }),
+                let material =
+                    material_index
+                        .filter(|&index| index < model.materials.len())
+                        .or_else(|| single_material.get(&entity_index).copied())
+                        // A wall, floor or roof holds a layer set: its first
+                        // layer with a colour.
+                        .or_else(|| {
+                            material_layer_set_index
+                                .and_then(|i| model.material_layer_sets.get(i))
+                                .and_then(|set| {
+                                    set.layers
+                                        .iter()
+                                        .filter_map(|l| l.material_index)
+                                        .find(|m| {
+                                            model
+                                                .materials
+                                                .get(*m)
+                                                .is_some_and(|i| i.color_packed.is_some())
+                                        })
+                                })
                         })
-                    });
+                        .or_else(|| {
+                            // Windows and curtain panels already draw in a translucent
+                            // category colour, and keep it, as rooms keep theirs.
+                            let alpha = element_alpha
+                                .get(&entity_index)
+                                .copied()
+                                .filter(|_| category_colour(ifc_type).1 >= 1.0);
+                            Some(match alpha {
+                                None => *category_materials.entry(ifc_type.clone()).or_insert_with(
+                                    || {
+                                        doc.materials.push(category_material(ifc_type));
+                                        doc.materials.len() - 1
+                                    },
+                                ),
+                                Some(alpha) => *category_alpha_materials
+                                    .entry((ifc_type.clone(), alpha.to_bits()))
+                                    .or_insert_with(|| {
+                                        doc.materials
+                                            .push(transparent_category_material(ifc_type, alpha));
+                                        doc.materials.len() - 1
+                                    }),
+                            })
+                        });
                 if let (true, Some(map)) =
                     (opts.instancing && !hidden_room, representation_map_index)
                 {

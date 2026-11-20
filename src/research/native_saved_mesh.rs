@@ -775,7 +775,10 @@ fn bisect_cylinder_pair(
     if deviation <= CYLINDER_PAIR_SAGITTA {
         return Ok(());
     }
-    ensure!(depth < CYLINDER_PAIR_DEPTH, "edge refinement did not settle");
+    ensure!(
+        depth < CYLINDER_PAIR_DEPTH,
+        "edge refinement did not settle"
+    );
     ensure!(out.len() < CYLINDER_PAIR_POINTS, "edge refinement budget");
     bisect_cylinder_pair(c0, c1, a, exact, depth + 1, out)?;
     out.push(exact);
@@ -798,7 +801,9 @@ fn refined_cylinder_pair_edge(
     original: &[[f64; 2]],
 ) -> Result<Vec<[f64; 2]>> {
     let edge = &g.objects[edge_index];
-    let faces = edge.fields["m_pFace"].as_array().context("edge face pair")?;
+    let faces = edge.fields["m_pFace"]
+        .as_array()
+        .context("edge face pair")?;
     ensure!(faces.len() == 2, "edge face pair length");
     let Some(other) = index.resolve(edge_index, &faces[1 - side])? else {
         return Ok(original.to_vec());
