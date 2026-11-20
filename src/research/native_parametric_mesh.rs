@@ -40,6 +40,9 @@ pub(crate) struct FaceGrid {
     pub chord_edges: std::collections::BTreeSet<usize>,
     /// Each span between two saved points of those edges, in the surface's parameters.
     pub chords: Vec<[[f64; 2]; 2]>,
+    /// Points `[u, v]` a trimmed ruled face's strip sides at that `u` hold besides its own:
+    /// those a rectangular ruled neighbour draws on the edge they share.
+    pub at_u_extra: Vec<[f64; 2]>,
 }
 
 /// Whether a face on `surface` and a plane draw an edge they share, one that crosses both
@@ -240,12 +243,21 @@ fn ruled_surface_component(
 
 /// The grid of face `fi`'s surface, its trim one rectangle or loops.
 pub(crate) fn face_grid(g: &ObjectGraph, fi: usize) -> Result<FaceGrid> {
-    face_grid_impl(g, fi, true)
+    face_grid_impl(g, fi, true, true)
 }
 
 /// [`face_grid`]; with `allow_general` a trim that is not one rectangle
 /// (several loops, slanted or curved edges) is kept as its UV loops.
-fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<FaceGrid> {
+///
+/// With `exchange`, a ruled face also takes the points a ruled neighbour of the other kind
+/// (one trimmed to a rectangle, one not) draws along their shared edge (`seam_edge`); a
+/// neighbour's own grid is taken without that exchange.
+fn face_grid_impl(
+    g: &ObjectGraph,
+    fi: usize,
+    allow_general: bool,
+    exchange: bool,
+) -> Result<FaceGrid> {
     use crate::native_parametric_surface::Curve;
     use crate::native_saved_mesh::pointer;
     let f = g.objects.get(fi).context("face index")?;
@@ -441,6 +453,9 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
         ensure!((end - max[axis]).abs() < 1e-7, "incomplete trim perimeter");
     }
     const CHORD: f64 = 0.001;
+    /// How far, feet, a cell of a ruled face with curved profiles may leave the surface for
+    /// the change of its ruling along the profiles.
+    const TWIST_FEET: f64 = 0.007;
     let length = |p: [f64; 3]| p.iter().map(|x| x * x).sum::<f64>().sqrt();
     let angular = |r: f64| {
         (4. * (CHORD / (2. * r.max(CHORD))).min(1.).sqrt().asin()).min(std::f64::consts::FRAC_PI_2)
@@ -557,11 +572,14 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
             // The rulings are straight, so a curved profile adds u segments, and v the
             // segments its twist asks for: a cell of the grid is two triangles, which
             // leave the surface by a quarter of the cell's mixed second derivative (the
-            // change of the ruling per step along the profiles) times its two steps.
+            // change of the ruling per step along the profiles) times its two steps. The
+            // twist is held to `TWIST_FEET`, looser than the profile's chord error: Revit's
+            // vertices then lie within 0.0016 ft of a timber stair run, and the duct
+            // fittings, whose rulings turn little, are not cut finer for nothing.
             // Never more than keeps the grid's points (the saved values of the trim
             // included) within the mesh budget.
             if curved {
-                let asked = (twist / (4. * CHORD * n)).ceil();
+                let asked = (twist / (4. * TWIST_FEET * n)).ceil();
                 // The grid also holds the saved values of the trim in each axis: a fixed
                 // allowance for them, so that every face of the component takes the
                 // same `v` steps and shares its generators' points.
@@ -574,7 +592,10 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
     };
     // (the equal steps, and those with the trim's values)
     let axis = |k: usize, step: f64| -> Result<(Vec<f64>, Vec<f64>)> {
-        let count = ((max[k] - min[k]) / step).ceil().max(1.);
+        // a span a rounding step over a whole number of steps is that many (a trim end that
+        // reads 1.0000000000000029 would otherwise cost the face one more step than the
+        // face beside it, whose end is 1)
+        let count = (((max[k] - min[k]) / step) - 1e-9).ceil().max(1.);
         ensure!(
             count.is_finite() && count <= 10000.,
             "parametric axis budget exceeded"
@@ -589,8 +610,19 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
         a.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
         Ok((lattice, a))
     };
-    let (_, u_knots) = axis(0, du)?;
-    let (v_lattice, v_knots) = axis(1, dv)?;
+    let (_, mut u_knots) = axis(0, du)?;
+    let (v_lattice, mut v_knots) = axis(1, dv)?;
+    let mut at_u_extra = Vec::new();
+    if exchange && matches!(surface, ParametricSurface::RuledSurf { .. }) {
+        if let Ok(ex) = ruled_seam_extras(g, fi, rectangular) {
+            for (knots, extra) in [(&mut u_knots, ex.u), (&mut v_knots, ex.v)] {
+                knots.extend(extra);
+                knots.sort_by(f64::total_cmp);
+                knots.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+            }
+            at_u_extra = ex.at_u;
+        }
+    }
     let loops = if rectangular {
         None
     } else if let Some(all) = all_loops {
@@ -614,7 +646,151 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
         loops,
         chord_edges,
         chords,
+        at_u_extra,
     })
+}
+
+/// The points a ruled face takes from the ruled neighbours across its edges.
+#[derive(Default)]
+struct SeamExtras {
+    u: Vec<f64>,
+    v: Vec<f64>,
+    /// `[u, v]`: a point on the strip side at `u`.
+    at_u: Vec<[f64; 2]>,
+}
+
+/// The saved points of `edge` in the parameters of its face on `side`.
+fn edge_uv(g: &ObjectGraph, edge: usize, side: usize) -> Result<Vec<[f64; 2]>> {
+    let e = &g.objects[edge];
+    let ends = e.fields["m_firstAndLastEdgePnts"]
+        .as_array()
+        .context("edge endpoints")?;
+    ensure!(ends.len() == 2, "edge endpoint count");
+    let mut points = vec![uv_point(&ends[0]["uv"][side])?];
+    for p in e.fields["m_interiorEdgePnts"]
+        .as_array()
+        .context("edge interior points")?
+    {
+        points.push(uv_point(&p["uv"][side])?);
+    }
+    points.push(uv_point(&ends[1]["uv"][side])?);
+    Ok(points)
+}
+
+/// For ruled face `fi`, `rectangular` or not, what each ruled neighbour of the other kind
+/// draws along the edge it shares with it, in `fi`'s parameters. An edge that does not
+/// qualify is left as it was.
+fn ruled_seam_extras(g: &ObjectGraph, fi: usize, rectangular: bool) -> Result<SeamExtras> {
+    use crate::native_saved_mesh::pointer;
+    let mut ex = SeamExtras::default();
+    let f = g.objects.get(fi).context("face index")?;
+    let mut next_loop = pointer(g, fi, &f.fields["m_pFirstLoop"])?;
+    let mut seen_loops = std::collections::BTreeSet::new();
+    while let Some(li) = next_loop {
+        ensure!(seen_loops.insert(li), "loop-list cycle");
+        let l = &g.objects[li];
+        let mut cur = pointer(g, li, &l.fields["m_next"])?.context("empty trim")?;
+        let mut seen = std::collections::BTreeSet::new();
+        while cur != li {
+            ensure!(seen.insert(cur), "trim edge cycle");
+            let e = &g.objects[cur];
+            let faces = e.fields["m_pFace"].as_array().context("edge face pair")?;
+            ensure!(faces.len() == 2, "edge face pair length");
+            let mut side = None;
+            for (i, p) in faces.iter().enumerate() {
+                if pointer(g, cur, p)? == Some(fi) {
+                    side = Some(i);
+                }
+            }
+            let side = side.context("edge does not belong to face")?;
+            if let Some(other) = pointer(g, cur, &faces[1 - side]).ok().flatten() {
+                if other != fi {
+                    let _ = seam_edge(g, rectangular, cur, side, other, &mut ex);
+                }
+            }
+            cur = pointer(g, cur, &e.fields["m_next"][side])?.context("null trim next")?;
+        }
+        next_loop = pointer(g, li, &l.fields["m_nextLoop"])?;
+    }
+    Ok(ex)
+}
+
+/// One shared edge, along one `u` or one `v` in both faces: the points the neighbour `other`
+/// draws on it, mapped into this face's parameters by the edge's saved points. A
+/// rectangular face draws every knot of its grid there, a trimmed one the strips' breaks
+/// (along `u`) or the equal steps of `v` and the loops' own points at that `u`; each face
+/// takes the other's, so that both draw the union.
+fn seam_edge(
+    g: &ObjectGraph,
+    rectangular: bool,
+    edge: usize,
+    side: usize,
+    other: usize,
+    ex: &mut SeamExtras,
+) -> Result<()> {
+    use crate::native_saved_mesh::{isoparametric_axis, pointer};
+    let surface = g
+        .objects
+        .get(other)
+        .and_then(|face| face.fields.get("m_pSurf"))
+        .context("neighbour surface")?;
+    let surface = pointer(g, other, surface)?.context("neighbour surface")?;
+    ensure!(
+        g.objects[surface].class_name == "RuledSurf",
+        "neighbour is not ruled"
+    );
+    let og = face_grid_impl(g, other, true, false)?;
+    // only a trimmed face beside a rectangular one
+    ensure!(
+        og.loops.is_some() == rectangular,
+        "neighbour of the same kind"
+    );
+    let (mine, theirs) = (edge_uv(g, edge, side)?, edge_uv(g, edge, 1 - side)?);
+    ensure!(mine.len() == theirs.len(), "edge sample count");
+    let (ax, ay) = (
+        isoparametric_axis(&mine).context("edge across both parameters")?,
+        isoparametric_axis(&theirs).context("edge across both parameters")?,
+    );
+    let (first, last) = (theirs[0][ay], theirs[theirs.len() - 1][ay]);
+    let (lo, hi) = (first.min(last), first.max(last));
+    let fixed = theirs[0][1 - ay];
+    let mut values: Vec<f64> = match (&og.loops, ay) {
+        (None, 0) => og.u.clone(),
+        (None, _) => og.v.clone(),
+        (Some(loops), 0) => strip_breaks(loops, &og.u),
+        (Some(loops), _) => og
+            .v_lattice
+            .iter()
+            .copied()
+            .chain(
+                loops
+                    .iter()
+                    .flatten()
+                    .filter(|p| (p[0] - fixed).abs() < 1e-9)
+                    .map(|p| p[1]),
+            )
+            .collect(),
+    };
+    values.retain(|v| *v > lo + 1e-9 && *v < hi - 1e-9);
+    // the same edge in this face's parameters: the saved points must agree under one
+    // straight map
+    let (x0, x1) = (mine[0][ax], mine[mine.len() - 1][ax]);
+    ensure!((last - first).abs() > 1e-12, "collapsed edge");
+    let map = |y: f64| x0 + (y - first) / (last - first) * (x1 - x0);
+    ensure!(
+        mine.iter()
+            .zip(&theirs)
+            .all(|(a, b)| (map(b[ay]) - a[ax]).abs() < 1e-7),
+        "edge parameters differ"
+    );
+    let values: Vec<f64> = values.into_iter().map(map).collect();
+    let fixed_mine = mine[0][1 - ax];
+    match (rectangular, ax) {
+        (_, 0) => ex.u.extend(values),
+        (true, _) => ex.v.extend(values),
+        (false, _) => ex.at_u.extend(values.into_iter().map(|v| [fixed_mine, v])),
+    }
+    Ok(())
 }
 
 /// The greatest length of the change of a ruling per unit of `u` between two profiles
@@ -665,7 +841,7 @@ fn curve_segments(c: &crate::native_parametric_surface::Curve) -> f64 {
 }
 
 pub fn face(g: &ObjectGraph, fi: usize) -> Result<FaceMesh> {
-    let grid = face_grid_impl(g, fi, true)?;
+    let grid = face_grid_impl(g, fi, true, true)?;
     let f = &g.objects[fi];
     let flags = f.fields["m_faceFlags_v9"].as_u64().context("face flags")?;
     if let Some(loops) = &grid.loops {
@@ -747,6 +923,7 @@ fn conforming_strips(
     u_grid: &[f64],
     v_lattice: &[f64],
     chords: &[[[f64; 2]; 2]],
+    extra_at_u: &[[f64; 2]],
 ) -> Result<StripMesh> {
     let breaks = strip_breaks(loops, u_grid);
     ensure!(breaks.len() >= 2, "degenerate trim");
@@ -811,7 +988,7 @@ fn conforming_strips(
         };
     // The v of every loop point, by its u.
     let mut at_u: std::collections::HashMap<i64, Vec<f64>> = std::collections::HashMap::new();
-    for p in loops.iter().flatten() {
+    for p in loops.iter().flatten().chain(extra_at_u) {
         at_u.entry(key(p[0])).or_default().push(p[1]);
     }
     // The v values along one side at `u`, from `lo` to `hi`.
@@ -912,7 +1089,13 @@ fn tessellate_loops(
     loops: &[Vec<[f64; 2]>],
     orient: bool,
 ) -> Result<ParametricMesh> {
-    let (uv, tris, tags) = conforming_strips(loops, &grid.u, &grid.v_lattice, &grid.chords)?;
+    let (uv, tris, tags) = conforming_strips(
+        loops,
+        &grid.u,
+        &grid.v_lattice,
+        &grid.chords,
+        &grid.at_u_extra,
+    )?;
     ensure!(
         uv.len() <= 2_000_000,
         "parametric mesh vertex budget exceeded"

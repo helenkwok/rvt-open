@@ -19,6 +19,11 @@
 //! and Revit's vertices lie within 0.002 ft of the bodies' surfaces (the ramp
 //! flight's the other way too), where the faces drawn on the curve and the planes
 //! drawn between its saved points parted the ramp flight and Revit's by 0.013 ft.
+//!
+//! The twist bound that holds the stair runs and the ramp flight so is not tighter than they
+//! need: a duct fitting of the mechanical sample `rmebasicsampleproject.rvt`, whose rulings
+//! turn little, is drawn in under 1,500 triangles (5,532 at the twist bound of 0.001 ft), and
+//! meets itself. That file is read from `RVT_REVIT2024_SAMPLES_DIR`.
 
 use rvt::RevitFile;
 use rvt::convert::{ConvertOptions, export};
@@ -500,6 +505,76 @@ fn same_bodies(
             );
         }
     }
+}
+
+/// The bodies of the classes by Tag in rvt-open's export of `model` from the directory the
+/// environment variable `dir_var` names, in cubic metres; no Revit export is read.
+fn ours_only(
+    dir_var: &str,
+    model: &str,
+    classes: &[&str],
+    tags: &[&str],
+) -> Option<BTreeMap<String, Body>> {
+    let Some(dir) = std::env::var_os(dir_var).map(PathBuf::from) else {
+        eprintln!("skipping: {dir_var} is not set");
+        return None;
+    };
+    let rvt = dir.join(format!("{model}.rvt"));
+    if !rvt.exists() {
+        eprintln!("skipping: {model} absent");
+        return None;
+    }
+    let mut rf = RevitFile::open(&rvt).expect("open");
+    let options = ConvertOptions {
+        saved_meshes: true,
+        ..ConvertOptions::default()
+    };
+    let result = export(&mut rf, &options).expect("export");
+    Some(body_volumes(
+        &parse(&write_step(&result.model)),
+        classes,
+        tags,
+        1.0,
+    ))
+}
+
+#[test]
+fn duct_fitting_is_not_cut_finer_than_its_twist_asks() {
+    let Some(ours) = ours_only(
+        "RVT_REVIT2024_SAMPLES_DIR",
+        "rmebasicsampleproject",
+        &["IFCDUCTFITTING"],
+        &["419137"],
+    ) else {
+        return;
+    };
+    let mesh = ours["419137"].mesh.as_ref().expect("a mesh body");
+    eprintln!("419137: {} triangles", mesh.1.len());
+    assert!(mesh.1.len() < 1500, "{} triangles", mesh.1.len());
+    assert_eq!(unmatched_edges(&mesh.0, &mesh.1), 0);
+}
+
+#[test]
+fn ruled_faces_beside_a_rectangular_one_share_its_points() {
+    // A body of the Revit 2024 DACH sample whose ruled faces, some trimmed to a rectangle and
+    // some not, share edges: the faces take each other's points along them.
+    let Some(ours) = ours_only(
+        "RVT_REVIT2024_SAMPLES_DIR",
+        "DACHsampleproject",
+        &["IFCBUILDINGELEMENTPROXY"],
+        &["1633577"],
+    ) else {
+        return;
+    };
+    let mesh = ours["1633577"].mesh.as_ref().expect("a mesh body");
+    let open = unmatched_edges(&mesh.0, &mesh.1);
+    eprintln!(
+        "1633577: {} triangles, {open} directed edges without their reverse",
+        mesh.1.len()
+    );
+    // 2,783 of them, in 29,299 triangles, before the faces took each other's points and the
+    // lattice count ignored a rounding step
+    assert!(open < 2600, "{open} edges without their reverse");
 }
 
 #[test]
