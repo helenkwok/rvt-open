@@ -57,6 +57,23 @@ fn keeps_saved_chords(surface: &ParametricSurface) -> bool {
     }
 }
 
+/// Whether `surface` is a cone whose x, y and z axes are left-handed. `cone_face` turns
+/// such a cone's triangles to keep them outward; this mesher does not, so a cone like that
+/// is left to `cone_face` and its plane keeps its saved points.
+pub(crate) fn left_handed_cone(surface: &ParametricSurface) -> bool {
+    match surface {
+        ParametricSurface::ConeSurf { x, y, z, .. } => {
+            let cross = [
+                x[1] * y[2] - x[2] * y[1],
+                x[2] * y[0] - x[0] * y[2],
+                x[0] * y[1] - x[1] * y[0],
+            ];
+            cross[0] * z[0] + cross[1] * z[1] + cross[2] * z[2] < 0.
+        }
+        _ => false,
+    }
+}
+
 /// A span between two saved points, in a surface's parameters.
 pub(crate) type Chord = [[f64; 2]; 2];
 

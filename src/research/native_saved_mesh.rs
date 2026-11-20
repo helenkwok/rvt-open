@@ -295,7 +295,10 @@ fn refined_plane_edge(
         let grid = crate::native_parametric_mesh::face_grid(g, other)?;
         // A cone is meshed by its own code unless one of its edges is a chord: the
         // planes beside the other cones keep their saved points.
-        if kind == "ConeSurf" && grid.chord_edges.is_empty() {
+        if kind == "ConeSurf"
+            && (grid.chord_edges.is_empty()
+                || crate::native_parametric_mesh::left_handed_cone(&grid.surface))
+        {
             return Ok(original);
         }
         // Along an edge that crosses both parameters of a face that draws it straight
@@ -1216,9 +1219,10 @@ pub fn cone_face(
     ensure!(surface.class_name == "ConeSurf", "not a cone");
     // A cone with an edge it shares with a plane across both of its parameters is meshed
     // with the grid and the chords the plane beside it takes (`FaceGrid::chord_edges`).
-    if crate::native_parametric_mesh::face_grid(g, fi)
-        .is_ok_and(|grid| !grid.chord_edges.is_empty())
-    {
+    if crate::native_parametric_mesh::face_grid(g, fi).is_ok_and(|grid| {
+        !grid.chord_edges.is_empty()
+            && !crate::native_parametric_mesh::left_handed_cone(&grid.surface)
+    }) {
         return crate::native_parametric_mesh::face(g, fi);
     }
     let center = point::<3>(&surface.fields["m_center"])?;
