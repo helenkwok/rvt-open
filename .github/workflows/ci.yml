@@ -533,7 +533,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: ~/emsdk, key: "emsdk-5.0.3-a620cf1d71c62dfdfbb0c01fe0a371e2af2dda6c" }
       - name: Build the wheel
-        run: tools/ci/retry.sh 2 tools/ci/pyodide/build-wheel.sh "$RUNNER_TEMP/wheel"
+        run: tools/ci/pyodide/build-wheel.sh "$RUNNER_TEMP/wheel"
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
