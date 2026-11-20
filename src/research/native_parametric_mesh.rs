@@ -64,9 +64,6 @@ type ChordSpans = (std::collections::BTreeSet<usize>, Vec<Chord>);
 /// Points, triangles and beside each point the chord whose span it lies on.
 type StripMesh = (Vec<[f64; 2]>, Vec<[u32; 3]>, Vec<Option<Chord>>);
 
-/// Two points by their parameters rounded to 1e-9.
-type EndKeys = ([i64; 2], [i64; 2]);
-
 /// The edges of every loop of face `fi` that cross both of the surface's parameters and
 /// have a plane for their other face, and their spans between saved points in `fi`'s
 /// parameters.
@@ -330,7 +327,17 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
         }
     }
     ensure!(closes, "disconnected parametric trim in model coordinates");
-    let trim = segments.iter().flatten().copied().collect::<Vec<_>>();
+    let mut trim = segments.iter().flatten().copied().collect::<Vec<_>>();
+    // A face with several loops is gridded over all of them: a loop outside the first
+    // one's range would otherwise have no knots of its own.
+    let all_loops = if multiple_loops {
+        Some(crate::native_saved_mesh::face_loops_uv(g, fi)?)
+    } else {
+        None
+    };
+    for p in all_loops.iter().flatten().flatten() {
+        trim.push(std::array::from_fn(|k| p[k].clamp(env[0][k], env[1][k])));
+    }
     let min = std::array::from_fn(|k| trim.iter().map(|p| p[k]).fold(f64::INFINITY, f64::min));
     let max = std::array::from_fn(|k| trim.iter().map(|p| p[k]).fold(f64::NEG_INFINITY, f64::max));
     ensure!(
@@ -518,8 +525,11 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
             // segments its twist asks for: a cell of the grid is two triangles, which
             // leave the surface by a quarter of the cell's mixed second derivative (the
             // change of the ruling per step along the profiles) times its two steps.
+            // Never more than keeps the grid's points within the mesh budget.
             if curved {
-                n_lines = n_lines.max((twist / (4. * CHORD * n)).ceil()).min(2000.);
+                let asked = (twist / (4. * CHORD * n)).ceil();
+                let room = (1_000_000. / n).floor().max(1.);
+                n_lines = n_lines.max(asked.min(2000.).min(room));
             }
             (1. / n, if curved { 1. / n_lines } else { 1. / n })
         }
@@ -541,6 +551,8 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
     };
     let loops = if rectangular {
         None
+    } else if let Some(all) = all_loops {
+        Some(all)
     } else {
         Some(crate::native_saved_mesh::face_loops_uv(g, fi)?)
     };
@@ -659,7 +671,8 @@ pub(crate) fn strip_breaks(loops: &[Vec<[f64; 2]>], u_grid: &[f64]) -> Vec<f64> 
         });
     breaks.extend(u_grid.iter().copied().filter(|u| *u > lo && *u < hi));
     breaks.sort_by(f64::total_cmp);
-    breaks.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
+    // points a rounding step apart are one point (`key`), so are their breaks
+    breaks.dedup_by(|a, b| (*a - *b).abs() <= 1e-9);
     breaks
 }
 
@@ -693,17 +706,30 @@ fn conforming_strips(
 ) -> Result<StripMesh> {
     let breaks = strip_breaks(loops, u_grid);
     ensure!(breaks.len() >= 2, "degenerate trim");
-    let mut by_ends: std::collections::HashMap<EndKeys, Chord> = std::collections::HashMap::new();
-    let k2 = |p: [f64; 2]| [key(p[0]), key(p[1])];
-    for &[a, b] in chords {
-        by_ends.insert((k2(a), k2(b)), [a, b]);
-        by_ends.insert((k2(b), k2(a)), [a, b]);
+    // A loop joins nearly meeting edges at one of their ends, so a span's ends can be
+    // a hair from the saved points of the chord it is: find it by nearness.
+    let cell = |p: [f64; 2]| [(p[0] * 1e6).floor() as i64, (p[1] * 1e6).floor() as i64];
+    let mut cells: std::collections::HashMap<[i64; 2], Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, c) in chords.iter().enumerate() {
+        cells.entry(cell(c[0])).or_default().push(i);
+        cells.entry(cell(c[1])).or_default().push(i);
     }
+    let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-7;
+    let find_chord = |a: [f64; 2], b: [f64; 2]| -> Option<Chord> {
+        let c = cell(a);
+        (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dy| [c[0] + dx, c[1] + dy]))
+            .filter_map(|k| cells.get(&k))
+            .flatten()
+            .map(|&i| chords[i])
+            .find(|ch| (near(ch[0], a) && near(ch[1], b)) || (near(ch[1], a) && near(ch[0], b)))
+    };
     let spans: Vec<Span> = loops
         .iter()
         .flat_map(|l| l.iter().zip(l.iter().cycle().skip(1)).take(l.len()))
         .map(|(a, b)| {
-            let chord = by_ends.get(&(k2(*a), k2(*b))).copied();
+            let chord = find_chord(*a, *b);
             if a[0] <= b[0] {
                 Span {
                     a: *a,

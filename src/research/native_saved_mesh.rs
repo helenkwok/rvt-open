@@ -246,6 +246,8 @@ fn refined_plane_edge(
         Vec<f64>,
         crate::native_parametric_surface::ParametricSurface,
     )> = None;
+    // The `u` values a trimmed curved neighbour's strips are cut at, where it has loops.
+    let mut strip_u: Option<Vec<f64>> = None;
     let (u_values, v_values, evaluate): (Vec<f64>, Vec<f64>, SurfaceEval) = if kind == "CylSurf" {
         let profile = CylinderTessellationProfile::default();
         let mesh = cylinder_face(g, other, profile)?;
@@ -291,10 +293,13 @@ fn refined_plane_edge(
         // Along an edge that crosses both parameters of a face that draws it straight
         // between its saved points, the plane draws it so too, with a point wherever the
         // face's strips cross it: both faces then have the same points on it.
+        strip_u = grid
+            .loops
+            .as_ref()
+            .map(|loops| crate::native_parametric_mesh::strip_breaks(loops, &grid.u));
         if grid.chord_edges.contains(&edge_index) {
-            let loops = grid.loops.as_ref().context("chord edge without loops")?;
             chord_breaks = Some((
-                crate::native_parametric_mesh::strip_breaks(loops, &grid.u),
+                strip_u.clone().context("chord edge without loops")?,
                 grid.surface.clone(),
             ));
         }
@@ -372,46 +377,52 @@ fn refined_plane_edge(
         // The edge's saved points, and a point on each span between them wherever the
         // curved face's strips cross it.
         let (breaks, surface) = chord_breaks.context("chord breaks")?;
-        // (point, whether it is one of the edge's saved points)
-        let mut out: Vec<([f64; 2], bool)> = Vec::new();
+        let mut out: Vec<[f64; 2]> = Vec::new();
         for (i, a) in samples.iter().enumerate() {
-            out.push((project(*a)?, true));
+            out.push(project(*a)?);
             let Some(b) = samples.get(i + 1) else {
                 continue;
             };
+            if (a[0] - b[0]).abs() <= 1e-12 {
+                // A span along one `u`: the curved face's strip sides hold the grid's `v`
+                // values there, on the surface.
+                let (lo, hi) = (a[1].min(b[1]), a[1].max(b[1]));
+                let mut inside = v_values
+                    .iter()
+                    .copied()
+                    .filter(|v| *v > lo + 1e-9 && *v < hi - 1e-9)
+                    .collect::<Vec<_>>();
+                if a[1] > b[1] {
+                    inside.reverse();
+                }
+                for v in inside {
+                    out.push(project([a[0], v])?);
+                }
+                continue;
+            }
             let (lo, hi) = (a[0].min(b[0]), a[0].max(b[0]));
             let mut inside = breaks
                 .iter()
                 .copied()
-                .filter(|u| *u > lo + 1e-12 && *u < hi - 1e-12)
+                .filter(|u| *u > lo + 1e-9 && *u < hi - 1e-9)
                 .collect::<Vec<_>>();
             if a[0] > b[0] {
                 inside.reverse();
             }
             for u in inside {
                 let t = (u - a[0]) / (b[0] - a[0]);
-                out.push((
-                    project_point(crate::native_parametric_mesh::chord_point(
-                        &surface, *a, *b, t,
-                    )?)?,
-                    false,
-                ));
+                out.push(project_point(crate::native_parametric_mesh::chord_point(
+                    &surface, *a, *b, t,
+                )?)?);
             }
         }
-        // A strip break a hair from a saved point or from another break would leave a
-        // sliver of an edge in the plane that triangulation drops.
-        let saved: Vec<[f64; 2]> = out.iter().filter(|p| p.1).map(|p| p.0).collect();
-        let mut kept: Vec<[f64; 2]> = Vec::new();
-        for (p, is_saved) in out {
-            let near = |q: &[f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-6;
-            if is_saved || (!saved.iter().any(near) && !kept.last().is_some_and(near)) {
-                kept.push(p);
-            }
-        }
-        let out = kept;
         return Ok(out);
     };
-    let knots = if axis == 0 { u_values } else { v_values };
+    let knots = if axis == 0 {
+        strip_u.unwrap_or(u_values)
+    } else {
+        v_values
+    };
     let lo = start[axis].min(end[axis]);
     let hi = start[axis].max(end[axis]);
     let mut values = knots
@@ -471,14 +482,15 @@ fn ring(
     face: usize,
     li: usize,
 ) -> Result<Vec<[f64; 2]>> {
-    ring_impl(g, index, face, li, false)
+    ring_impl(g, index, face, li, false, false)
 }
 fn ring_impl(
     g: &ObjectGraph,
     index: &PointerIndex<'_>,
     face: usize,
     li: usize,
-    refine_plane: bool,
+    plane: bool,
+    refine: bool,
 ) -> Result<Vec<[f64; 2]>> {
     let l = &g.objects[li];
     ensure!(
@@ -524,7 +536,7 @@ fn ring_impl(
             pts.push(point::<2>(&p["uv"][side])?)
         }
         pts.push(point::<2>(&endpoints[1]["uv"][side])?);
-        if refine_plane {
+        if plane && refine {
             // where the curved neighbour's parameters do not give
             // the edge (a slanted or curved trim there), keep Revit's own
             // samples of the edge, which the neighbour's loop also uses.
@@ -546,11 +558,7 @@ fn ring_impl(
     // A plane's parameters are feet along its unit axes; a curved surface's
     // are not, and keep the exact joint.
     let meet = |a: [f64; 2], b: [f64; 2]| {
-        if refine_plane {
-            joined(a, b)
-        } else {
-            close(a, b)
-        }
+        if plane { joined(a, b) } else { close(a, b) }
     };
     let mut output = None;
     for reverse in [false, true] {
@@ -676,7 +684,7 @@ fn face_indexed(g: &ObjectGraph, index: &PointerIndex<'_>, fi: usize) -> Result<
         let mut seen = BTreeSet::new();
         loop {
             ensure!(seen.insert(li), "loop-list cycle");
-            loops.push(ring_impl(g, index, fi, li, refine)?);
+            loops.push(ring_impl(g, index, fi, li, true, refine)?);
             match index.resolve(li, &g.objects[li].fields["m_nextLoop"])? {
                 Some(next) => li = next,
                 None => break,

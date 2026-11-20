@@ -299,14 +299,43 @@ fn volumes(
     Some((ours, revit))
 }
 
-/// Directed edges of the triangles that no triangle has the reverse of, the points taken to
-/// 1e-5 ft (3.048e-6 m), as the body scorer counts them.
+/// Directed edges of the triangles that no triangle has the reverse of, points within 1e-5 ft
+/// (3.048e-6 m) of each other taken as one point, as the body scorer counts them (it rounds
+/// the points to 1e-5 ft; here two points that straddle a rounding step are still one).
 fn unmatched_edges(points: &[[f64; 3]], triangles: &[[usize; 3]]) -> usize {
-    let key = |i: usize| points[i].map(|x| (x / 0.3048 * 1e5).round() as i64);
+    const TOL: f64 = 0.3048e-5;
+    let cell = |p: [f64; 3]| p.map(|x| (x / TOL).floor() as i64);
+    let mut grid: std::collections::HashMap<[i64; 3], Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, p) in points.iter().enumerate() {
+        grid.entry(cell(*p)).or_default().push(i);
+    }
+    // each point is the lowest index of the points within TOL of it, and of theirs in turn
+    let mut root: Vec<usize> = (0..points.len()).collect();
+    fn find(root: &mut [usize], mut i: usize) -> usize {
+        while root[i] != i {
+            root[i] = root[root[i]];
+            i = root[i];
+        }
+        i
+    }
+    for (i, p) in points.iter().enumerate() {
+        let c = cell(*p);
+        for d in 0..27 {
+            let k = [c[0] + d / 9 - 1, c[1] + d / 3 % 3 - 1, c[2] + d % 3 - 1];
+            for &j in grid.get(&k).into_iter().flatten() {
+                let q = points[j];
+                if j != i && dot(sub(*p, q), sub(*p, q)).sqrt() < TOL {
+                    let (a, b) = (find(&mut root, i), find(&mut root, j));
+                    root[a.max(b)] = a.min(b);
+                }
+            }
+        }
+    }
     let mut edges = std::collections::HashSet::new();
     for t in triangles {
         for k in 0..3 {
-            let (a, b) = (key(t[k]), key(t[(k + 1) % 3]));
+            let (a, b) = (find(&mut root, t[k]), find(&mut root, t[(k + 1) % 3]));
             if a != b {
                 edges.insert((a, b));
             }
@@ -402,10 +431,16 @@ fn surface_gap(from: Mesh, to: Mesh) -> f64 {
 }
 
 /// Each body holds Revit's volume and, drawn as a mesh, meets itself: the volume within 0.01%,
-/// no directed edge without its reverse (where Revit's own bodies have none), and the vertices
+/// no directed edge without its reverse (where Revit's own bodies have none; points within
+/// 1e-5 ft are one), and the vertices
 /// of each within 0.002 ft of the other's surface once both are put at one centroid (the two
 /// files place the body in different frames, with the same turn).
-fn same_bodies(ours: &BTreeMap<String, Body>, revit: &BTreeMap<String, Body>, count: usize) {
+fn same_bodies(
+    ours: &BTreeMap<String, Body>,
+    revit: &BTreeMap<String, Body>,
+    count: usize,
+    meshed: &[&str],
+) {
     assert_eq!(ours.len(), count, "rvt-open's bodies: {:?}", ours.keys());
     assert_eq!(
         revit.keys().collect::<Vec<_>>(),
@@ -418,6 +453,12 @@ fn same_bodies(ours: &BTreeMap<String, Body>, revit: &BTreeMap<String, Body>, co
             body.volume, revit[tag].volume
         );
         assert!((ratio - 1.0).abs() < 1e-4, "{tag}: volume ratio {ratio}");
+        if meshed.contains(&tag.as_str()) {
+            assert!(
+                body.mesh.is_some() && revit[tag].mesh.is_some(),
+                "{tag}: both bodies are meshes"
+            );
+        }
         let Some(mesh) = &body.mesh else { continue };
         let open = unmatched_edges(&mesh.0, &mesh.1);
         eprintln!(
@@ -465,7 +506,7 @@ fn office_terrain_ramps_have_revits_volume() {
     };
     // 1386050 is the ruled flight with a Hermite spline profile.
     assert!(ours.contains_key("1386050"));
-    same_bodies(&ours, &revit, 6);
+    same_bodies(&ours, &revit, 6, &["1386050"]);
 }
 
 #[test]
@@ -479,5 +520,5 @@ fn office_timber_stair_flights_have_revits_volume() {
     ) else {
         return;
     };
-    same_bodies(&ours, &revit, 2);
+    same_bodies(&ours, &revit, 2, &tags);
 }
