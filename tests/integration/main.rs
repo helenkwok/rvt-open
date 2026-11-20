@@ -295,6 +295,8 @@ mod rvt_schedule_cli;
 mod samples;
 #[path = "../saved_mesh_budget.rs"]
 mod saved_mesh_budget;
+#[path = "../saved_symbol_refusal.rs"]
+mod saved_symbol_refusal;
 #[path = "../scan_limits.rs"]
 mod scan_limits;
 #[path = "../schema_bbox_marker.rs"]

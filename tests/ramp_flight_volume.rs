@@ -29,7 +29,7 @@ use std::path::PathBuf;
 /// A STEP file by instance id: the entity's name and the text between its outer parentheses.
 type Step = BTreeMap<u64, (String, String)>;
 
-fn parse(step: &str) -> Step {
+pub(crate) fn parse(step: &str) -> Step {
     let mut out = Step::new();
     for line in step.lines() {
         let Some((id, rest)) = line
@@ -170,7 +170,7 @@ pub(crate) struct Body {
 /// Tag -> the one `Body` of each element of the classes that has a tessellated one, in
 /// cubic metres. Each body counts once: Revit's flight and the ramp that aggregates it have the
 /// same Tag, and the ramp holds no body of its own.
-fn body_volumes(
+pub(crate) fn body_volumes(
     step: &Step,
     classes: &[&str],
     tags: &[&str],
