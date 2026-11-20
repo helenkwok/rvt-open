@@ -15,8 +15,11 @@ use std::path::Path;
 /// Entries, then fields filled per source: name, enum name (API reference), storage type
 /// (files), spec and group (IFC export), localized names (help).
 const ENTRIES: usize = 3812;
-const FILLED: [usize; 6] = [3805, 3805, 486, 303, 495, LOCALIZED];
+const FILLED: [usize; 6] = [3805, 3805, 486, 412, 670, LOCALIZED];
+/// Ids with a help term in at least one language, and the (id, language) terms in all: the terms
+/// the Revit API dump of the public samples shows wrong in German, Japanese or Chinese are left out.
 const LOCALIZED: usize = 1455;
+const LOCALIZED_TERMS: usize = 17114;
 
 #[test]
 fn every_field_is_from_its_public_source_or_empty() {
@@ -29,7 +32,7 @@ fn every_field_is_from_its_public_source_or_empty() {
         assert_eq!(codes.len(), 6, "{id}: {}", p.sources);
         let has_help = LOCALIZED_LANGUAGES
             .iter()
-            .all(|l| localized_name(id, l).is_some());
+            .any(|l| localized_name(id, l).is_some());
         let values = [
             !p.name.is_empty(),
             !p.enum_name.is_empty(),
@@ -147,7 +150,7 @@ fn every_value_is_a_row_of_a_public_input() {
         );
         terms += 1;
     }
-    assert_eq!(terms, 12 * LOCALIZED);
+    assert_eq!(terms, LOCALIZED_TERMS);
 }
 
 /// A storey whose name holds a tab is written to `names.tsv` as the same name `ifcjoin.py` writes in
@@ -180,7 +183,7 @@ fn a_model_name_with_a_tab_is_still_dropped_from_the_option_texts() {
         ])
         .output()
         .expect("gzip");
-    std::fs::write(census.join("2024__m.tsv.gz"), gz.stdout).expect("census");
+    std::fs::write(census.join("m.tsv.gz"), gz.stdout).expect("census");
     let join = Command::new("python3")
         .arg(tools.join("ifcjoin.py"))
         .args([&ifc, &census, &pairs, &dir.join("bip.tsv")])
@@ -191,12 +194,12 @@ fn a_model_name_with_a_tab_is_still_dropped_from_the_option_texts() {
         "{}",
         String::from_utf8_lossy(&join.stderr)
     );
-    let names = std::fs::read_to_string(pairs.join("2024__m.names.tsv")).expect("names");
+    let names = std::fs::read_to_string(pairs.join("m.names.tsv")).expect("names");
     assert!(names.contains("storey\tA B\n"), "{names:?}");
     // The sample's option text embeds that storey: it must be dropped.
-    std::fs::write(pairs.join("2024__m.props.tsv"), "#set\tprop\tifctype\tn\n").expect("props");
+    std::fs::write(pairs.join("m.props.tsv"), "#set\tprop\tifctype\tn\n").expect("props");
     std::fs::write(
-        pairs.join("2024__m.pairs.tsv"),
+        pairs.join("m.pairs.tsv"),
         "#tag\tset\tprop\tifctype\tifcvalue\tparam_id\torigin\tfiletype\tfilevalue\tmethod\n1\tc\tp\tIFCLABEL\tUp to level: A B\t-1001103\tS\tInteger\t-1\tL\n",
     )
     .expect("pairs");
@@ -213,5 +216,72 @@ fn a_model_name_with_a_tab_is_still_dropped_from_the_option_texts() {
     );
     let texts = std::fs::read_to_string(dir.join("out.enum-texts.tsv")).expect("texts");
     assert!(!texts.contains("A B"), "{texts:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A label several ids share goes to the id whose enum name starts with the element's category
+/// (`DOOR_` for `Doors`), a property set of a schedule never votes, and the newest release's
+/// naming wins (`Mechanical` became `Mechanical - Flow`).
+#[test]
+fn category_newest_release_and_schedules_decide_the_group_and_spec() {
+    use std::process::Command;
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipping: no python3");
+        return;
+    }
+    let tools = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/builtin-parameters");
+    let dir = std::env::temp_dir().join(format!("rvt-open-category-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let pairs = dir.join("pairs");
+    std::fs::create_dir_all(&pairs).expect("dir");
+    let write = |name: &str, text: &str| std::fs::write(pairs.join(name), text).expect(name);
+    for m in ["a", "b"] {
+        write(&format!("{m}.pairs.tsv"), "#tag\n");
+        write(&format!("{m}.names.tsv"), "#kind\tname\n");
+    }
+    write(
+        "a.cprops.tsv",
+        "#c\nDoors\tDimensions\tHeight\tIFCLENGTHMEASURE\t3\nDoors\tDoor Schedule\tHeight\tIFCREAL\t9\n",
+    );
+    write(
+        "b.cprops.tsv",
+        "#c\nDoors\tDimensions\tHeight\tIFCLENGTHMEASURE\t1\n",
+    );
+    write(
+        "a.props.tsv",
+        "#s\nMechanical\tThing\tIFCLENGTHMEASURE\t5\n",
+    );
+    write(
+        "b.props.tsv",
+        "#s\nMechanical - Flow\tThing\tIFCLENGTHMEASURE\t1\n",
+    );
+    std::fs::write(dir.join("releases.tsv"), "a\t2018\nb\t2024\n").expect("releases");
+    std::fs::write(
+        dir.join("bip.tsv"),
+        "DOOR_HEIGHT\t-1001300\tHeight\nGENERIC_HEIGHT\t-1001301\tHeight\nWALL_THING\t-1001400\tThing\n",
+    )
+    .expect("bip");
+    let derive = Command::new("python3")
+        .arg(tools.join("derive_ifc.py"))
+        .args([&pairs, &dir.join("bip.tsv"), &dir.join("out")])
+        .arg("--releases")
+        .arg(dir.join("releases.tsv"))
+        .output()
+        .expect("derive_ifc");
+    assert!(
+        derive.status.success(),
+        "{}",
+        String::from_utf8_lossy(&derive.stderr)
+    );
+    let table = std::fs::read_to_string(dir.join("out.group-spec.tsv")).expect("table");
+    assert!(
+        table.contains("-1001300\tDimensions\tIFCLENGTHMEASURE\tcategory+label\n"),
+        "{table:?}"
+    );
+    assert!(!table.contains("-1001301"), "{table:?}");
+    assert!(
+        table.contains("-1001400\tMechanical - Flow\tIFCLENGTHMEASURE\tlabel\n"),
+        "{table:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

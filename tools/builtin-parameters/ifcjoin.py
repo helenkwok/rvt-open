@@ -2,9 +2,11 @@
 
 usage: ifcjoin.py IFC_DIR CENSUS_DIR OUT_DIR BIP_ENUM.tsv
 
-IFC_DIR holds `<model>.ifc` (Revit's export with its property sets) and CENSUS_DIR `2024__<model>.tsv.gz`
-(`examples/param_census.rs`, all origins). For each model it writes OUT_DIR/<model>.props.tsv (set,
-property, IFC value type, count of Revit's own property sets) and OUT_DIR/<model>.pairs.tsv (an
+IFC_DIR holds `<model>.ifc` (Revit's export with its property sets) and CENSUS_DIR `<model>.tsv.gz`
+(`examples/param_census.rs` on the same sample as saved by the release that exported it, all origins;
+a sample with no census file gives only its property sets, for the label route). For each model it writes OUT_DIR/<model>.props.tsv (set,
+property, IFC value type, count of Revit's own property sets), OUT_DIR/<model>.cprops.tsv (the same
+counted per element category: the `Category` property of the element's `Other` set) and OUT_DIR/<model>.pairs.tsv (an
 element's IFC property with a parameter id the file stores on that element: `L` when the property's
 name is the parameter's Revit 2027 API reference label, `V` when the value is equal). derive_ifc.py
 reads them."""
@@ -91,9 +93,10 @@ def parse_val(v):
     except ValueError: return t,x
 for fn in sorted(os.listdir(ifcdir)):
     if not fn.endswith('.ifc'): continue
-    label='2024__'+fn[:-4]
+    label=fn[:-4]
     cf=f'{cdir}/{label}.tsv.gz'
-    if not os.path.exists(cf): print('no census',label); continue
+    has_census=os.path.exists(cf)
+    if not has_census: print('no census',label,'(label route only)')
     ents,tag_of,cls_other=ifc_props(os.path.join(ifcdir,fn))
     with open(f'{out}/{label}.names.tsv','w') as nf:
         nf.write('#kind\tname\n')
@@ -118,11 +121,20 @@ for fn in sorted(os.listdir(ifcdir)):
     pc=collections.Counter()
     for tag,props in el.items():
         for (st,pn,ity,iv) in props: pc[(st,pn,ity)]+=1
+    cp=collections.Counter()
+    for tag,props in el.items():
+        cat=next((iv for (st,pn,ity,iv) in props if st=='Other' and pn=='Category' and isinstance(iv,str)),None)
+        if cat:
+            for (st,pn,ity,iv) in props: cp[(cat,st,pn,ity)]+=1
+    with open(f'{out}/{label}.cprops.tsv','w') as cf_:
+        cf_.write('#category\tset\tprop\tifctype\tn\n')
+        for (cat,st,pn,ity),n in cp.items(): cf_.write(f'{cl(cat)}\t{cl(st)}\t{cl(pn)}\t{cl(ity)}\t{n}\n')
     with open(f'{out}/{label}.props.tsv','w') as pf:
         pf.write('#set\tprop\tifctype\tn\n')
         for (st,pn,ity),n in pc.items(): pf.write(f'{cl(st)}\t{cl(pn)}\t{cl(ity)}\t{n}\n')
     file=collections.defaultdict(list)
-    with gzip.open(cf,'rt',encoding='utf-8',errors='replace') as g:
+    if has_census:
+      with gzip.open(cf,'rt',encoding='utf-8',errors='replace') as g:
         for line in g:
             p=line.rstrip('\n').split('\t')
             if len(p)<5: continue

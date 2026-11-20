@@ -7,9 +7,9 @@
 // H = machine-matched: the term at the same place of the same Revit 2027 help topic in each of the 12
 // languages, cited per entry; - = no public source, the field is empty.
 //  - inputs: bip_enum.tsv 30fb56087a3ddbd2, bic_enum.tsv b27530a314bf49ca, storage.tsv 5d7db7d1ad93d53c,
-//    group-spec.tsv ac569a466f50bc6e, enum-texts.tsv f69ca6fe602012e1, help-terms.tsv ae3d493759810d93.
+//    group-spec.tsv a223480e2b8fe5b6, enum-texts.tsv 76eae5ea8adf5c41, help-terms.tsv 3dd400df986174e7.
 //  - ids: the reference's BuiltInParameter members plus 7 ids kept with no name (no public source names them).
-//  - category names: the `Category` property of Revit's IFC export of public samples, the most voted name of each category id (category-names.tsv df600f528b9958d9); where it has none, the help term of `program_names`.
+//  - category names: the `Category` property of Revit's IFC export of public samples, the most voted name of each category id (category-names.tsv 0e8fca40ad83e281); where it has none, the help term of `program_names`.
 //  - The Revit API dump of the public samples is the answer key only: tools/builtin-parameters/score.py.
 
 /// (id, name, BuiltInParameter enum name, storage type, spec type id, group label, source codes), by id.
@@ -19,9 +19,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Enable Auto-Calculation of Values",
         "STRUCTURAL_SECTION_COMPUTE_AUTOMATICALY_ANALYSIS_PROPERTIES",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Structural Analysis",
+        "RR-EE-",
     ),
     (
         -1612358,
@@ -110,8 +110,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_SPACING_DETAILED_SUMMARY",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1180451,
@@ -136,9 +136,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Distribution Length",
         "REBAR_ELEM_DISTRIBUTION_LENGTH",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Rebar Set",
+        "RR-EEH",
     ),
     (
         -1180448,
@@ -155,8 +155,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "SPACING_SUMMARY",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1180446,
@@ -209,8 +209,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_SHAPE_NAME",
         "",
         "",
-        "",
-        "RR---H",
+        "Construction",
+        "RR--EH",
     ),
     (
         -1180440,
@@ -245,8 +245,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_TYPE_AT_END",
         "",
         "",
-        "",
-        "RR---H",
+        "Construction",
+        "RR--EH",
     ),
     (
         -1180436,
@@ -254,8 +254,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_TYPE_AT_START",
         "",
         "",
-        "",
-        "RR---H",
+        "Construction",
+        "RR--EH",
     ),
     (
         -1180435,
@@ -415,9 +415,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Staggered Set",
         "REBAR_STAGGERED_SET",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Construction",
+        "RR-EE-",
     ),
     (
         -1180414,
@@ -425,8 +425,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_MAXIMUM_NUMBER",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1180413,
@@ -434,8 +434,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_MINIMUM_NUMBER",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1180412,
@@ -604,18 +604,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Excavation Volume on Toposolid",
         "EXCAVATION_VOLUME_ON_TOPOSOLID",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:volume-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1180307,
         "Total Excavation Volume",
         "TOTAL_EXCAVATION_VOLUME",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:volume-2.0.0",
+        "Other",
+        "RR-EE-",
     ),
     (
         -1180306,
@@ -668,8 +668,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_CONSTRAINTS_STATUS",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1180201,
@@ -1151,8 +1151,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_ALIGNMENT_OPTIONS",
         "",
         "",
-        "",
-        "RR---H",
+        "Construction",
+        "RR--EH",
     ),
     (
         -1155282,
@@ -1258,9 +1258,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Offset from Surface",
         "SSE_POINT_OFFSET_FROM_SURFACE",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1155270,
@@ -1295,26 +1295,26 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "TOPOSOLID_SUBDIVIDE_MATERIAL",
         "ElementId",
         "",
-        "",
-        "RRF---",
+        "Sub-Division",
+        "RRF-E-",
     ),
     (
         -1155266,
         "Sub-divide Offset",
         "TOPOSOLID_SUBDIVIDE_HEIGHT",
         "Double",
-        "",
-        "",
-        "RRF---",
+        "autodesk.spec.aec:length-2.0.0",
+        "Sub-division",
+        "RRFEE-",
     ),
     (
         -1155265,
         "Inherit Contours",
         "TOPOSOLID_INHERIT_CONTOURS",
         "Integer",
-        "",
-        "",
-        "RRF--H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Sub-Division",
+        "RRFEEH",
     ),
     (
         -1155264,
@@ -1339,18 +1339,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Elevation at Top",
         "TOPOSOLID_ELEVATION_AT_TOP",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1155260,
         "Elevation at Bottom",
         "TOPOSOLID_ELEVATION_AT_BOTTOM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1155259,
@@ -1393,27 +1393,27 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Height Offset From Level",
         "TOPOSOLID_HEIGHTABOVELEVEL_PARAM",
         "Double",
-        "",
-        "",
-        "RRF--H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Constraints",
+        "RRFEEH",
     ),
     (
         -1155254,
         "Thickness",
         "TOPOSOLID_ATTR_THICKNESS_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1155253,
         "Default Thickness",
         "TOPOSOLID_TYPE_DEFAULT_THICKNESS_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Construction",
+        "RR-EE-",
     ),
     (
         -1155252,
@@ -1727,7 +1727,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_HOOK_LENGTH_OVERRIDE",
         "",
         "autodesk.spec:spec.bool-1.0.0",
-        "Construction",
+        "Dimensions",
         "RR-EEH",
     ),
     (
@@ -2095,9 +2095,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Grip Length",
         "STEEL_ELEM_BOLT_GRIP_LENGTH",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Other",
+        "RR-EEH",
     ),
     (
         -1155117,
@@ -2159,27 +2159,27 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Feed Through Lugs Apparent Power Phase C",
         "RBS_ELEC_PANEL_FEED_THRU_LUGS_APPARENT_LOAD_PHASEC",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EE-",
     ),
     (
         -1155109,
         "Feed Through Lugs Apparent Power Phase B",
         "RBS_ELEC_PANEL_FEED_THRU_LUGS_APPARENT_LOAD_PHASEB",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EE-",
     ),
     (
         -1155108,
         "Feed Through Lugs Apparent Power Phase A",
         "RBS_ELEC_PANEL_FEED_THRU_LUGS_APPARENT_LOAD_PHASEA",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EE-",
     ),
     (
         -1155107,
@@ -2213,27 +2213,27 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Branch Circuit Apparent Power Phase C",
         "RBS_ELEC_PANEL_BRANCH_CIRCUIT_APPARENT_LOAD_PHASEC",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EEH",
     ),
     (
         -1155103,
         "Branch Circuit Apparent Power Phase B",
         "RBS_ELEC_PANEL_BRANCH_CIRCUIT_APPARENT_LOAD_PHASEB",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EEH",
     ),
     (
         -1155102,
         "Branch Circuit Apparent Power Phase A",
         "RBS_ELEC_PANEL_BRANCH_CIRCUIT_APPARENT_LOAD_PHASEA",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EEH",
     ),
     (
         -1155101,
@@ -2528,9 +2528,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Hole Depth",
         "STEEL_ELEM_HOLE_DEPTH",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1155064,
@@ -3087,8 +3087,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REBAR_WORKSHOP_INSTRUCTIONS",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1154694,
@@ -4017,18 +4017,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Ignore Flow Analysis",
         "MEP_IGNORE_FLOW_ANALYSIS",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Mechanical - Flow",
+        "RR-EE-",
     ),
     (
         -1153113,
         "Loop Boundary",
         "MEP_ANALYTICAL_LOOP_BOUNDARY_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Mechanical - Flow",
+        "RR-EE-",
     ),
     (
         -1153112,
@@ -4071,9 +4071,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Critical Path",
         "MEP_ANALYTICAL_CRITICALPATH_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Mechanical - Flow",
+        "RR-EE-",
     ),
     (
         -1153105,
@@ -4108,8 +4108,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "MEP_EQUIPMENT_CLASSIFICATION",
         "Integer",
         "",
-        "",
-        "RRF---",
+        "Mechanical",
+        "RRF-E-",
     ),
     (
         -1153004,
@@ -4180,8 +4180,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "ALL_MODEL_TYPE_IMAGE",
         "",
         "",
-        "",
-        "RR----",
+        "Identity Data",
+        "RR--E-",
     ),
     (
         -1152383,
@@ -4495,9 +4495,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Manually Adjusted",
         "ANALYTICAL_MODEL_MANUALLY_ADJUSTED",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Analytical Alignment",
+        "RR-EE-",
     ),
     (
         -1152342,
@@ -5217,8 +5217,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "STAIRS_SUPPORTTYPE_MATERIAL",
         "",
         "",
-        "",
-        "RR----",
+        "Materials and Finishes",
+        "RR--E-",
     ),
     (
         -1151807,
@@ -5324,9 +5324,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Vertical Offset",
         "STAIRS_SUPPORT_VERTICAL_OFFSET",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1151701,
@@ -5352,8 +5352,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "STAIRS_LANDINGTYPE_TREADRISER_TYPE",
         "",
         "",
-        "",
-        "RR----",
+        "Other",
+        "RR--E-",
     ),
     (
         -1151604,
@@ -5766,9 +5766,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Custom",
         "STAIRSTYPE_NOTCH_CUSTOM_WIDTH",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Data",
+        "RR-EE-",
     ),
     (
         -1151226,
@@ -6369,9 +6369,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Gap",
         "PARTMAKER_PARAM_DIVISION_GAP",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1150600,
@@ -6424,8 +6424,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_DUCT_PIPE_SYSTEM_ABBREVIATION_PARAM",
         "",
         "",
-        "",
-        "RR---H",
+        "Mechanical",
+        "RR--EH",
     ),
     (
         -1150467,
@@ -6594,18 +6594,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Insulation Thickness",
         "PIPE_INSULATION_THICKNESS",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Mechanical",
+        "RR-EEH",
     ),
     (
         -1150436,
         "Insulation Thickness",
         "DUCT_INSULATION_THICKNESS",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Insulation",
+        "RR-EEH",
     ),
     (
         -1150435,
@@ -6658,8 +6658,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_REFERENCE_INSULATION_TYPE",
         "",
         "",
-        "",
-        "RR---H",
+        "Insulation",
+        "RR--EH",
     ),
     (
         -1150427,
@@ -6667,17 +6667,17 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_PIPE_CALCULATED_SIZE",
         "",
         "",
-        "",
-        "RR---H",
+        "Dimensions",
+        "RR--EH",
     ),
     (
         -1150426,
         "Duct Size",
         "RBS_DUCT_CALCULATED_SIZE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Mechanical",
+        "RR-EEH",
     ),
     (
         -1150425,
@@ -6981,9 +6981,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Projection",
         "HANDRAIL_PROJECTION_PARAM",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Other",
+        "RR-EEH",
     ),
     (
         -1150340,
@@ -7369,8 +7369,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "STRUCTURAL_BEAM_END_ATTACHMENT_REFCOLUMN_END",
         "",
         "",
-        "",
-        "RR---H",
+        "Structural",
+        "RR--EH",
     ),
     (
         -1150218,
@@ -7378,8 +7378,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "STRUCTURAL_BEAM_START_ATTACHMENT_REFCOLUMN_END",
         "",
         "",
-        "",
-        "RR---H",
+        "Structural",
+        "RR--EH",
     ),
     (
         -1150217,
@@ -7476,18 +7476,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Base Extension",
         "SLANTED_COLUMN_BASE_EXTENSION",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1150206,
         "Top Extension",
         "SLANTED_COLUMN_TOP_EXTENSION",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Construction",
+        "RR-EEH",
     ),
     (
         -1150205,
@@ -7495,8 +7495,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "SLANTED_COLUMN_BASE_CUT_STYLE",
         "",
         "",
-        "",
-        "RR---H",
+        "Construction",
+        "RR--EH",
     ),
     (
         -1150204,
@@ -7504,8 +7504,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "SLANTED_COLUMN_TOP_CUT_STYLE",
         "",
         "",
-        "",
-        "RR---H",
+        "Construction",
+        "RR--EH",
     ),
     (
         -1150203,
@@ -7719,18 +7719,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Move Base With Grids",
         "INSTANCE_MOVE_BASE_WITH_GRIDS",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1150172,
         "Move Top With Grids",
         "INSTANCE_MOVE_TOP_WITH_GRIDS",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1150171,
@@ -8017,18 +8017,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Light Loss Factor",
         "FBX_LIGHT_LOSS_FACTOR_CTRL",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.int64-2.0.0",
+        "Photometrics",
+        "RR-EEH",
     ),
     (
         -1150138,
         "Initial Color",
         "FBX_LIGHT_INITIAL_COLOR_CTRL",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.int64-2.0.0",
+        "Photometrics",
+        "RR-EEH",
     ),
     (
         -1150137,
@@ -8071,9 +8071,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Light Source Symbol Length",
         "FBX_LIGHT_SOURCE_LENGTH",
         "Double",
-        "",
-        "",
-        "RRF--H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RRFEEH",
     ),
     (
         -1150130,
@@ -8251,9 +8251,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Initial Intensity",
         "FBX_LIGHT_INITIAL_INTENSITY",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.int64-2.0.0",
+        "Photometrics",
+        "RR-EEH",
     ),
     (
         -1150101,
@@ -9079,9 +9079,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Bottom Elevation",
         "FABRICATION_BOTTOM_ELEVATION_OF_PART",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1140990,
@@ -9097,9 +9097,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Top Elevation",
         "FABRICATION_TOP_ELEVATION_OF_PART",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1140988,
@@ -10070,8 +10070,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "TRUSS_ELEMENT_CLASS_PARAM",
         "",
         "",
-        "",
-        "RR---H",
+        "Identity Data",
+        "RR--EH",
     ),
     (
         -1140700,
@@ -10966,9 +10966,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Velocity Pressure",
         "PIPE_VELOCITY_PRESSURE",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec.hvac:pressure-2.0.0",
+        "Mechanical - Flow",
+        "RR-EE-",
     ),
     (
         -1140284,
@@ -11021,8 +11021,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_SEGMENT_DESCRIPTION_PARAM",
         "",
         "",
-        "",
-        "RR---H",
+        "Mechanical",
+        "RR--EH",
     ),
     (
         -1140278,
@@ -11348,8 +11348,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_PIPE_TYPE_FITTING_LOSS_METHOD_PARAM",
         "Integer",
         "",
-        "",
-        "RRF---",
+        "Mechanical",
+        "RRF-E-",
     ),
     (
         -1140233,
@@ -11357,8 +11357,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_PIPE_TYPE_FITTING_LOSS_TABLE_PARAM",
         "String",
         "",
-        "",
-        "RRF---",
+        "Mechanical",
+        "RRF-E-",
     ),
     (
         -1140232,
@@ -11599,9 +11599,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Roughness",
         "PIPE_ROUGHNESS",
         "Double",
-        "",
-        "",
-        "RRF---",
+        "autodesk.spec.aec:length-2.0.0",
+        "Mechanical",
+        "RRFEE-",
     ),
     (
         -1140202,
@@ -11981,8 +11981,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_ELEC_PANEL_SCHEDULE_HEADER_NOTES_PARAM",
         "String",
         "",
-        "",
-        "RRF--H",
+        "Electrical Engineering",
+        "RRF-EH",
     ),
     (
         -1140148,
@@ -12332,8 +12332,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_ELEC_SWITCH_ID_PARAM",
         "String",
         "",
-        "",
-        "RRF---",
+        "Electrical - Lighting",
+        "RRF-E-",
     ),
     (
         -1140109,
@@ -12504,7 +12504,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_FAMILY_CONTENT_SECONDARY_DISTRIBSYS",
         "ElementId",
         "",
-        "Electrical - Loads",
+        "Electrical - Circuiting",
         "RRF-E-",
     ),
     (
@@ -12522,8 +12522,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_ELEC_CIRCUIT_PREFIX_SEPARATOR",
         "String",
         "",
-        "",
-        "RRF--H",
+        "Electrical - Circuiting",
+        "RRF-EH",
     ),
     (
         -1140085,
@@ -12531,8 +12531,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_ELEC_CIRCUIT_PREFIX",
         "String",
         "",
-        "",
-        "RRF--H",
+        "Electrical - Circuiting",
+        "RRF-EH",
     ),
     (
         -1140084,
@@ -12540,8 +12540,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_ELEC_MODIFICATIONS",
         "",
         "",
-        "",
-        "RR----",
+        "Electrical - Circuiting",
+        "RR--E-",
     ),
     (
         -1140083,
@@ -12594,7 +12594,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_ELEC_PANEL_NAME",
         "String",
         "",
-        "Electrical Equipment Connection Schedule",
+        "General",
         "RRF-EH",
     ),
     (
@@ -12674,18 +12674,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Total Demand Apparent Power",
         "RBS_ELEC_PANEL_TOTALESTLOAD_PARAM",
         "Double",
-        "",
-        "",
-        "RRF--H",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RRFEEH",
     ),
     (
         -1140068,
         "Total Connected Apparent Power",
         "RBS_ELEC_PANEL_TOTALLOAD_PARAM",
         "Double",
-        "",
-        "",
-        "RRF--H",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RRFEEH",
     ),
     (
         -1140067,
@@ -12800,27 +12800,27 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Apparent Power Phase C",
         "RBS_ELEC_APPARENT_LOAD_PHASEC",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EEH",
     ),
     (
         -1140054,
         "Apparent Power Phase B",
         "RBS_ELEC_APPARENT_LOAD_PHASEB",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EEH",
     ),
     (
         -1140053,
         "Apparent Power Phase A",
         "RBS_ELEC_APPARENT_LOAD_PHASEA",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EEH",
     ),
     (
         -1140052,
@@ -13188,7 +13188,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_ELEC_POWER_FACTOR",
         "",
         "autodesk.spec.aec:number-2.0.0",
-        "Electrical",
+        "Electrical - Loads",
         "RR-EE-",
     ),
     (
@@ -13223,9 +13223,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Apparent Power",
         "RBS_ELEC_APPARENT_LOAD",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec.electrical:power-2.0.0",
+        "Electrical - Loads",
+        "RR-EE-",
     ),
     (
         -1140003,
@@ -13260,8 +13260,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RBS_CONNECTOR_DESCRIPTION",
         "",
         "",
-        "",
-        "RR----",
+        "Electrical - Lighting",
+        "RR--E-",
     ),
     (
         -1139999,
@@ -13582,9 +13582,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Keep Concentric",
         "ARC_ELEM_FIX_KEEP_CONCENTRIC",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1115974,
@@ -13592,8 +13592,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "PIPING_GENDER_TYPE",
         "String",
         "",
-        "",
-        "RRF---",
+        "Mechanical",
+        "RRF-E-",
     ),
     (
         -1115973,
@@ -13601,8 +13601,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "PIPING_CONNECTION_TYPE",
         "String",
         "",
-        "",
-        "RRF---",
+        "Mechanical",
+        "RRF-E-",
     ),
     (-1115958, "Part Type", "RBS_PART_TYPE", "", "", "", "RR----"),
     (
@@ -14484,9 +14484,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Window Area",
         "RBS_HVACLOAD_WINDOW_AREA_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:area-2.0.0",
+        "Analysis Results",
+        "RR-EE-",
     ),
     (
         -1114370,
@@ -15876,9 +15876,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Max Height",
         "RBS_CURVETYPE_MAX_HEIGHT_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Other",
+        "RR-EE-",
     ),
     (
         -1114118,
@@ -15904,9 +15904,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Roughness",
         "DUCT_ROUGHNESS",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Mechanical",
+        "RR-EE-",
     ),
     (
         -1114113,
@@ -16613,27 +16613,27 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Bottom Width",
         "WALL_TAPERED_WIDTH_AT_BOTTOM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1019120,
         "Top Width",
         "WALL_TAPERED_WIDTH_AT_TOP",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1019110,
         "Enable Angle Overrides",
         "WALL_TAPERED_USE_INSTANCE_ANGLES",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Cross-Section Definition",
+        "RR-EEH",
     ),
     (
         -1019107,
@@ -16641,53 +16641,53 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "WALL_TYPE_WIDTH_MEASURED_AT",
         "",
         "",
-        "",
-        "RR---H",
+        "Cross-Section Definition",
+        "RR--EH",
     ),
     (
         -1019106,
         "Default Interior Angle",
         "WALL_TYPE_DEFAULT_TAPERED_INTERIOR_INWARD_ANGLE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Cross-Section Definition",
+        "RR-EEH",
     ),
     (
         -1019105,
         "Default Exterior Angle",
         "WALL_TYPE_DEFAULT_TAPERED_EXTERIOR_INWARD_ANGLE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Cross-Section Definition",
+        "RR-EEH",
     ),
     (
         -1019103,
         "Interior Angle",
         "WALL_TAPERED_INTERIOR_INWARD_ANGLE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Cross-Section Definition",
+        "RR-EEH",
     ),
     (
         -1019102,
         "Exterior Angle",
         "WALL_TAPERED_EXTERIOR_INWARD_ANGLE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Cross-Section Definition",
+        "RR-EEH",
     ),
     (
         -1019101,
         "Angle From Vertical",
         "WALL_SINGLE_SLANT_ANGLE_FROM_VERTICAL",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Cross-Section Definition",
+        "RR-EEH",
     ),
     (
         -1019100,
@@ -16713,8 +16713,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "IFC_EXPORT_PREDEFINEDTYPE_TYPE",
         "String",
         "",
-        "",
-        "RRF---",
+        "IFC Parameters",
+        "RRF-E-",
     ),
     (
         -1019016,
@@ -16722,8 +16722,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "IFC_EXPORT_PREDEFINEDTYPE",
         "String",
         "",
-        "",
-        "RRF--H",
+        "Ikkunaluettelo (t\\X\\E4ysi)",
+        "RRF-EH",
     ),
     (
         -1019015,
@@ -16731,8 +16731,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "IFC_EXPORT_ELEMENT_TYPE_AS",
         "String",
         "",
-        "",
-        "RRF---",
+        "IFC Parameters",
+        "RRF-E-",
     ),
     (
         -1019014,
@@ -16749,8 +16749,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "IFC_EXPORT_ELEMENT_TYPE",
         "Integer",
         "",
-        "",
-        "RRF--H",
+        "IFC Parameters",
+        "RRF-EH",
     ),
     (
         -1019012,
@@ -16758,8 +16758,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "IFC_EXPORT_ELEMENT",
         "Integer",
         "",
-        "",
-        "RRF--H",
+        "IFC Parameters",
+        "RRF-EH",
     ),
     (
         -1019011,
@@ -16821,8 +16821,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "PROJECT_AUTHOR",
         "String",
         "",
-        "",
-        "RRF---",
+        "01_Luminaire Table (照明器具姿図)",
+        "RRF-E-",
     ),
     (
         -1019004,
@@ -16857,10 +16857,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "IFC_TYPE_GUID",
         "String",
         "",
-        "",
-        "RRF--H",
+        "IFC Parameters",
+        "RRF-EH",
     ),
-    (-1019000, "IfcGUID", "IFC_GUID", "String", "", "", "RRF--H"),
+    (
+        -1019000,
+        "IfcGUID",
+        "IFC_GUID",
+        "String",
+        "",
+        "IFC Parameters",
+        "RRF-EH",
+    ),
     (
         -1018850,
         "Name",
@@ -16958,8 +16966,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REINFORCEMENT_MASS",
         "",
         "",
-        "",
-        "RR---H",
+        "Structural",
+        "RR--EH",
     ),
     (
         -1018503,
@@ -18766,18 +18774,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Minimum Bar Length",
         "REBAR_MIN_LENGTH",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1017063,
         "Maximum Bar Length",
         "REBAR_MAX_LENGTH",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1017062,
@@ -20082,9 +20090,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Non-planar",
         "BEAM_SYSTEM_3D_PARAM",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1013419,
@@ -20729,7 +20737,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "SPACING_LENGTH_VERT",
         "",
         "autodesk.spec.aec:length-2.0.0",
-        "Vertical Grid",
+        "Horizontal Grid",
         "RR-EE-",
     ),
     (
@@ -20883,18 +20891,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Cuts Wall",
         "WALL_SWEEP_CUTS_WALL_PARAM",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1012838,
         "Cut by Inserts",
         "WALL_SWEEP_CUT_BY_INSERTS_PARAM",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1012837,
@@ -20902,8 +20910,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "SLAB_EDGE_PROFILE_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1012836,
@@ -21002,8 +21010,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "SLAB_EDGE_MATERIAL_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Materials and Finishes",
+        "RR--E-",
     ),
     (
         -1012823,
@@ -21020,8 +21028,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "FASCIA_MATERIAL_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Materials and Finishes",
+        "RR--E-",
     ),
     (
         -1012821,
@@ -21047,8 +21055,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "FASCIA_PROFILE_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1012818,
@@ -21103,8 +21111,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "WALL_SWEEP_WALL_SUBCATEGORY_ID",
         "",
         "",
-        "",
-        "RR---H",
+        "Identity Data",
+        "RR--EH",
     ),
     (
         -1012808,
@@ -21298,7 +21306,15 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "RR----",
     ),
-    (-1012611, "Net cut/fill", "VOLUME_NET", "", "", "", "RR---H"),
+    (
+        -1012611,
+        "Net cut/fill",
+        "VOLUME_NET",
+        "",
+        "autodesk.spec.aec:volume-2.0.0",
+        "Other",
+        "RR-EEH",
+    ),
     (
         -1012610,
         "Projected Area",
@@ -21336,8 +21352,24 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RR----",
     ),
     (-1012606, "Area", "PROPERTY_AREA_OPEN", "", "", "", "RR----"),
-    (-1012604, "Fill", "VOLUME_FILL", "", "", "", "RR---H"),
-    (-1012603, "Cut", "VOLUME_CUT", "", "", "", "RR---H"),
+    (
+        -1012604,
+        "Fill",
+        "VOLUME_FILL",
+        "",
+        "autodesk.spec.aec:volume-2.0.0",
+        "Other",
+        "RR-EEH",
+    ),
+    (
+        -1012603,
+        "Cut",
+        "VOLUME_CUT",
+        "",
+        "autodesk.spec.aec:volume-2.0.0",
+        "Other",
+        "RR-EEH",
+    ),
     (
         -1012602,
         "Perimeter",
@@ -22016,9 +22048,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Gross Volume",
         "MASS_GROSS_VOLUME",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:volume-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1012006,
@@ -22179,8 +22211,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "REVISION_CLOUD_REVISION",
         "",
         "",
-        "",
-        "RR---H",
+        "General",
+        "RR--EH",
     ),
     (
         -1011109,
@@ -22358,18 +22390,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Spot Field Angle",
         "FBX_LIGHT_SPOT_FIELD_ANGLE",
         "Double",
-        "",
-        "",
-        "RRF--H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Photometrics",
+        "RRFEEH",
     ),
     (
         -1010506,
         "Spot Beam Angle",
         "FBX_LIGHT_SPOT_BEAM_ANGLE",
         "Double",
-        "",
-        "",
-        "RRF--H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Photometrics",
+        "RRFEEH",
     ),
     (
         -1010505,
@@ -22404,8 +22436,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "LIGHTING_FIXTURE_WATTAGE",
         "String",
         "",
-        "",
-        "RRF--H",
+        "Electrical",
+        "RRF-EH",
     ),
     (
         -1010401,
@@ -22430,9 +22462,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Thickness",
         "CURTAIN_WALL_SYSPANEL_THICKNESS",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1010303,
@@ -22448,9 +22480,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Offset",
         "CURTAIN_WALL_SYSPANEL_OFFSET",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Constraints",
+        "RR-EE-",
     ),
     (
         -1010301,
@@ -22596,7 +22628,15 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "RR----",
     ),
-    (-1010003, "Depth", "CASEWORK_DEPTH", "", "", "", "RR----"),
+    (
+        -1010003,
+        "Depth",
+        "CASEWORK_DEPTH",
+        "",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
+    ),
     (
         -1009533,
         "Section Type",
@@ -22693,8 +22733,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "ANALYTICAL_MODEL_SKETCH_PROJECTION",
         "",
         "",
-        "",
-        "RR----",
+        "Analytical Alignment",
+        "RR--E-",
     ),
     (
         -1009522,
@@ -23178,9 +23218,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Text Size",
         "RAMP_ATTR_TEXT_SIZE",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:number-2.0.0",
+        "Graphics",
+        "RR-EE-",
     ),
     (
         -1008309,
@@ -23188,8 +23228,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RAMP_ATTR_TEXT_FONT",
         "",
         "",
-        "",
-        "RR----",
+        "Graphics",
+        "RR--E-",
     ),
     (
         -1008308,
@@ -23224,17 +23264,17 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RAMP_ATTR_SHAPE",
         "Integer",
         "",
-        "",
-        "RRF---",
+        "Construction",
+        "RRF-E-",
     ),
     (
         -1008304,
         "Thickness",
         "RAMP_ATTR_THICKNESS",
         "Double",
-        "",
-        "",
-        "RRF---",
+        "autodesk.spec.aec:length-2.0.0",
+        "Construction",
+        "RRFEE-",
     ),
     (
         -1008303,
@@ -24550,9 +24590,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Text Size",
         "STAIRS_ATTR_TEXT_SIZE",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:number-2.0.0",
+        "Graphics",
+        "RR-EE-",
     ),
     (
         -1007269,
@@ -24560,8 +24600,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "STAIRS_ATTR_TEXT_FONT",
         "",
         "",
-        "",
-        "RR----",
+        "Graphics",
+        "RR--E-",
     ),
     (
         -1007268,
@@ -27426,7 +27466,15 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "",
         "RR----",
     ),
-    (-1006016, "Slope", "ROOF_SLOPE", "", "", "", "RR----"),
+    (
+        -1006016,
+        "Slope",
+        "ROOF_SLOPE",
+        "",
+        "",
+        "Dimensions",
+        "RR--E-",
+    ),
     (
         -1006015,
         "Steel Cantilever",
@@ -27586,18 +27634,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Flange Thickness Location",
         "STRUCTURAL_SECTION_ISHAPE_FLANGETHICKNESS_LOCATION",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Structural Section Geometry",
+        "RR-EEH",
     ),
     (
         -1005565,
         "Top Web Fillet",
         "STRUCTURAL_SECTION_TOP_WEB_FILLET",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Structural Section Geometry",
+        "RR-EEH",
     ),
     (
         -1005564,
@@ -27613,9 +27661,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Sloped Flange Angle",
         "STRUCTURAL_SECTION_SLOPED_FLANGE_ANGLE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Structural Section Geometry",
+        "RR-EEH",
     ),
     (
         -1005562,
@@ -27775,27 +27823,27 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Bolt Spacing Shorter Flange",
         "STRUCTURAL_SECTION_LANGLE_BOLT_SPACING_SHORTER_FLANGE",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1005544,
         "Bolt Spacing 2 Longer Flange",
         "STRUCTURAL_SECTION_LANGLE_BOLT_SPACING_2_LONGER_FLANGE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1005543,
         "Bolt Spacing 1 Longer Flange",
         "STRUCTURAL_SECTION_LANGLE_BOLT_SPACING_1_LONGER_FLANGE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1005542,
@@ -27838,9 +27886,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Bolt Spacing",
         "STRUCTURAL_SECTION_ISHAPE_BOLT_SPACING",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1005537,
@@ -27865,9 +27913,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Clear Web Height",
         "STRUCTURAL_SECTION_ISHAPE_CLEAR_WEB_HEIGHT",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1005534,
@@ -27937,9 +27985,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Flange Fillet",
         "STRUCTURAL_SECTION_ISHAPE_FLANGEFILLET",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Structural Section Geometry",
+        "RR-EEH",
     ),
     (
         -1005526,
@@ -28090,9 +28138,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Principal Axes Angle",
         "STRUCTURAL_SECTION_COMMON_ALPHA",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:angle-2.0.0",
+        "Structural Analysis",
+        "RR-EEH",
     ),
     (
         -1005509,
@@ -28271,8 +28319,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "ANALYTICAL_THERMAL_TRANSMITTANCE",
         "Double",
         "",
-        "",
-        "RRF---",
+        "Analytical Properties",
+        "RRF-E-",
     ),
     (-1005394, "From", "CAMERA_FROM_LEVEL", "", "", "", "RR----"),
     (-1005393, "Offset", "CAMERA_OFFSET", "", "", "", "RR----"),
@@ -28922,7 +28970,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RENDER_RPC_PROPERTIES",
         "String",
         "",
-        "Identity Data",
+        "Visualization",
         "RRF-E-",
     ),
     (
@@ -28949,7 +28997,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RENDER_RPC_FILENAME",
         "String",
         "",
-        "Identity Data",
+        "Visualization",
         "RRF-E-",
     ),
     (
@@ -28976,8 +29024,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "RENDER_PLANT_NAME",
         "",
         "",
-        "Landscape Schedule",
-        "RR--E-",
+        "",
+        "RR----",
     ),
     (
         -1005184,
@@ -29218,9 +29266,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Cut Plane Height",
         "PLAN_VIEW_CUT_PLANE_HEIGHT",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Constraints",
+        "RR-EE-",
     ),
     (-1005154, "View Depth", "VIEW_DEPTH", "", "", "", "RR---H"),
     (
@@ -29909,27 +29957,27 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Base is Attached",
         "COLUMN_BASE_ATTACHED_PARAM",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1002559,
         "Top is Attached",
         "COLUMN_TOP_ATTACHED_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EE-",
     ),
     (
         -1002558,
         "Offset From Attachment At Base",
         "COLUMN_BASE_ATTACHMENT_OFFSET_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Construction",
+        "RR-EE-",
     ),
     (
         -1002557,
@@ -29946,8 +29994,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "COLUMN_BASE_ATTACH_JUSTIFICATION_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1002555,
@@ -30027,8 +30075,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "CLASSIFICATION_CODE",
         "",
         "",
-        "",
-        "RR---H",
+        "Identity Data",
+        "RR--EH",
     ),
     (
         -1002501,
@@ -30316,8 +30364,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "MATERIAL_ID_PARAM",
         "ElementId",
         "",
-        "",
-        "RRF---",
+        "Materials and Finishes",
+        "RRF-E-",
     ),
     (
         -1002106,
@@ -30566,18 +30614,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Default Thickness",
         "FLOOR_ATTR_DEFAULT_THICKNESS_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Construction",
+        "RR-EE-",
     ),
     (
         -1001900,
         "Thickness",
         "FLOOR_ATTR_THICKNESS_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1001834,
@@ -30921,8 +30969,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "ROOF_FACES_LOCATION",
         "",
         "",
-        "",
-        "RR----",
+        "Constraints",
+        "RR--E-",
     ),
     (
         -1001713,
@@ -30966,8 +31014,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "ROOF_BASE_LEVEL_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Constraints",
+        "RR--E-",
     ),
     (
         -1001707,
@@ -31082,9 +31130,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Level Offset",
         "ROOF_CONSTRAINT_OFFSET_PARAM",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1001651,
@@ -31092,8 +31140,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "ROOF_CONSTRAINT_LEVEL_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Constraints",
+        "RR--E-",
     ),
     (
         -1001603,
@@ -31109,18 +31157,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Thickness",
         "ROOF_ATTR_THICKNESS_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1001600,
         "Default Thickness",
         "ROOF_ATTR_DEFAULT_THICKNESS_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Construction",
+        "RR-EE-",
     ),
     (
         -1001598,
@@ -31325,18 +31373,18 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Length",
         "STRUCTURAL_FOUNDATION_LENGTH",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1001568,
         "Width",
         "STRUCTURAL_FOUNDATION_WIDTH",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1001567,
@@ -31460,9 +31508,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Enable Analytical Model",
         "STRUCTURAL_ANALYTICAL_MODEL",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Structural",
+        "RR-EE-",
     ),
     (
         -1001551,
@@ -32118,7 +32166,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "INSTANCE_HEAD_HEIGHT_PARAM",
         "",
         "autodesk.spec.aec:length-2.0.0",
-        "Other",
+        "Constraints",
         "RR-EEH",
     ),
     (
@@ -32270,12 +32318,28 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Thickness",
         "DOOR_THICKNESS",
         "Double",
-        "",
-        "",
-        "RRF---",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RRFEE-",
     ),
-    (-1001301, "Width", "CASEWORK_WIDTH", "", "", "", "RR----"),
-    (-1001300, "Height", "CASEWORK_HEIGHT", "", "", "", "RR----"),
+    (
+        -1001301,
+        "Width",
+        "CASEWORK_WIDTH",
+        "",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
+    ),
+    (
+        -1001300,
+        "Height",
+        "CASEWORK_HEIGHT",
+        "",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EE-",
+    ),
     (
         -1001212,
         "Exit Access",
@@ -32291,8 +32355,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "DOOR_OPERATION_TYPE",
         "String",
         "",
-        "",
-        "RRF--H",
+        "Ikkunaluettelo (t\\X\\E4ysi)",
+        "RRF-EH",
     ),
     (
         -1001210,
@@ -32309,8 +32373,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "DOOR_FRAME_TYPE",
         "String",
         "",
-        "",
-        "RRF--H",
+        "Construction",
+        "RRF-EH",
     ),
     (
         -1001208,
@@ -32327,8 +32391,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "CASEWORK_CONSTRUCTION_TYPE",
         "String",
         "",
-        "",
-        "RRF---",
+        "Construction",
+        "RRF-E-",
     ),
     (
         -1001206,
@@ -32566,15 +32630,23 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Constraints",
         "RR--EH",
     ),
-    (-1001121, "Hosted", "HOSTED", "", "", "", "RR---H"),
+    (
+        -1001121,
+        "Hosted",
+        "HOSTED",
+        "",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Reference",
+        "RR-EEH",
+    ),
     (
         -1001120,
         "Extend into wall (to core)",
         "MEASURE_FROM_STRUCTURE",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1001119,
@@ -32582,26 +32654,26 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "WALL_STRUCTURAL_USAGE_PARAM",
         "",
         "",
-        "",
-        "RR---H",
+        "Structural",
+        "RR--EH",
     ),
     (
         -1001118,
         "Base is Attached",
         "WALL_BOTTOM_IS_ATTACHED",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EEH",
     ),
     (
         -1001117,
         "Top is Attached",
         "WALL_TOP_IS_ATTACHED",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.bool-1.0.0",
+        "Constraints",
+        "RR-EE-",
     ),
     (
         -1001109,
@@ -32718,32 +32790,49 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Width",
         "WALL_ATTR_WIDTH_PARAM",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:length-2.0.0",
+        "Construction",
+        "RR-EE-",
     ),
 ];
 
 /// (parameter id, integer value, text) of enumerations, by id then value.
 pub(super) const ENUM_TEXTS: &[(i64, i64, &str)] = &[
+    (-1153100, 0, "None"),
     (-1152175, 0, "Front Only"),
+    (-1152175, 3, "Front, Left and Right"),
     (-1152161, 0, "Extend Riser Behind Tread"),
     (-1152161, 1, "Extend Tread Under Riser"),
     (-1151402, 1, "Smooth"),
     (-1151232, 0, "None"),
     (-1151232, 1, "Stringer (Closed)"),
+    (-1151232, 2, "Carriage (Open)"),
     (-1151231, 0, "None"),
     (-1151231, 1, "Stringer (Closed)"),
+    (-1151231, 2, "Carriage (Open)"),
     (-1151224, 1, "Notch"),
+    (-1140234, 1, "K Coefficient from Table"),
     (-1140129, 1, "Bend"),
     (-1140129, 2, "Fitting"),
+    (-1140087, 0, "Prefixed"),
+    (-1140087, 2, "Prefixed"),
+    (-1019100, 0, "Slanted"),
     (-1019100, 1, "Vertical"),
+    (-1019100, 2, "Tapered"),
+    (-1019012, 0, "By Type"),
     (-1008632, 0, "Trim"),
     (-1008632, 1, "Weld"),
     (-1008631, 0, "Add Vertical/Horizontal Segments"),
+    (-1008631, 1, "No Connector"),
+    (-1008630, 0, "Add Vertical/Horizontal Segments"),
+    (-1008630, 1, "No Connector"),
     (-1008630, 2, "Extend Rails to Meet"),
+    (-1008305, 0, "Thick"),
+    (-1008305, 1, "Solid"),
     (-1007395, 0, "Not Defined"),
     (-1007395, 1, "Vertical Grid Continuous"),
+    (-1007395, 2, "Horizontal Grid Continuous"),
+    (-1007395, 3, "Border and Vertical Grid Continuous"),
     (-1007395, 4, "Border and Horizontal Grid Continuous"),
     (-1007387, 0, "Not Defined"),
     (-1007277, 0, "Do not trim"),
@@ -32755,6 +32844,7 @@ pub(super) const ENUM_TEXTS: &[(i64, i64, &str)] = &[
     (-1007262, 1, "Extend Tread Under Riser"),
     (-1007256, 1, "Smooth"),
     (-1007243, 1, "Straight"),
+    (-1007243, 2, "Slanted"),
     (-1005439, 0, "Building Type"),
     (-1005439, 1, "Schematic Type"),
     (-1001710, 33615, "Plumb Cut"),
@@ -32774,6 +32864,8 @@ pub(super) const ENUM_TEXTS: &[(i64, i64, &str)] = &[
     (-1001006, 1, "Exterior"),
     (-1001006, 2, "Foundation"),
     (-1001006, 3, "Retaining"),
+    (-1001006, 4, "Soffit"),
+    (-1001006, 5, "Core-shaft"),
 ];
 
 /// (BuiltInCategory id, enum name from the API reference, name from the IFC export), by id.
@@ -33129,7 +33221,7 @@ pub(super) const CATEGORIES: &[(i64, &str, &str)] = &[
     (-2008125, "OST_RoutingPreferences", ""),
     (-2008124, "OST_DuctLinings", ""),
     (-2008123, "OST_DuctInsulations", ""),
-    (-2008122, "OST_PipeInsulations", ""),
+    (-2008122, "OST_PipeInsulations", "Pipe Insulations"),
     (-2008121, "OST_HVAC_Load_Schedules", ""),
     (-2008120, "OST_HVAC_Load_Building_Types", ""),
     (-2008119, "OST_HVAC_Load_Space_Types", ""),
@@ -33170,7 +33262,11 @@ pub(super) const CATEGORIES: &[(i64, &str, &str)] = &[
     (-2008084, "OST_DataDeviceTags", ""),
     (-2008083, "OST_DataDevices", "Data Devices"),
     (-2008082, "OST_CommunicationDeviceTags", ""),
-    (-2008081, "OST_CommunicationDevices", ""),
+    (
+        -2008081,
+        "OST_CommunicationDevices",
+        "Communication Devices",
+    ),
     (-2008080, "OST_SecurityDeviceTags", ""),
     (-2008079, "OST_SecurityDevices", ""),
     (-2008078, "OST_NurseCallDeviceTags", ""),
@@ -33201,7 +33297,7 @@ pub(super) const CATEGORIES: &[(i64, &str, &str)] = &[
     (-2008053, "OST_FlexPipeCurvesPattern", ""),
     (-2008052, "OST_FlexPipeCurvesContour", ""),
     (-2008051, "OST_FlexPipeCurvesCenterLine", ""),
-    (-2008050, "OST_FlexPipeCurves", ""),
+    (-2008050, "OST_FlexPipeCurves", "Flex Pipes"),
     (-2008049, "OST_PipeFitting", "Pipe Fittings"),
     (-2008048, "OST_FlexPipeTags", ""),
     (-2008047, "OST_PipeTags", ""),
@@ -33221,7 +33317,7 @@ pub(super) const CATEGORIES: &[(i64, &str, &str)] = &[
     (-2008021, "OST_FlexDuctCurvesCenterLine", ""),
     (-2008020, "OST_FlexDuctCurves", "Flex Ducts"),
     (-2008017, "OST_DuctAccessoryTags", ""),
-    (-2008016, "OST_DuctAccessory", ""),
+    (-2008016, "OST_DuctAccessory", "Duct Accessories"),
     (-2008015, "OST_DuctSystem", ""),
     (-2008014, "OST_DuctTerminalTags", ""),
     (-2008013, "OST_DuctTerminal", "Air Terminals"),
@@ -33512,7 +33608,7 @@ pub(super) const CATEGORIES: &[(i64, &str, &str)] = &[
     (-2001268, "OST_SitePropertyLineSegment", ""),
     (-2001267, "OST_SitePropertyTags", ""),
     (-2001266, "OST_SitePointBoundary", ""),
-    (-2001265, "OST_SiteProperty", ""),
+    (-2001265, "OST_SiteProperty", "Site: Property Lines"),
     (-2001263, "OST_BuildingPad", "Site: Pads"),
     (-2001262, "OST_SitePoint", ""),
     (-2001261, "OST_SiteSurface", ""),
@@ -33528,7 +33624,7 @@ pub(super) const CATEGORIES: &[(i64, &str, &str)] = &[
     (-2001126, "OST_RebarConcreteEdges", ""),
     (-2001125, "OST_MEPSystemZoneColorFill", ""),
     (-2001124, "OST_ViewPosition", ""),
-    (-2001122, "OST_Subdivision", ""),
+    (-2001122, "OST_Subdivision", "Toposolid: Sub-divisions"),
     (-2001121, "OST_LightingFixtureSource", ""),
     (-2001120, "OST_LightingFixtures", "Lighting Fixtures"),
     (-2001119, "OST_Cable", ""),
@@ -33592,7 +33688,7 @@ pub(super) const CATEGORIES: &[(i64, &str, &str)] = &[
     (-2001061, "OST_SignageTags", ""),
     (-2001060, "OST_ElectricalFixtures", "Electrical Fixtures"),
     (-2001059, "OST_SignageHiddenLines", ""),
-    (-2001058, "OST_Signage", ""),
+    (-2001058, "OST_Signage", "Signage"),
     (-2001057, "OST_AudioVisualDeviceTags", ""),
     (-2001056, "OST_AudioVisualDevicesHiddenLines", ""),
     (-2001055, "OST_AudioVisualDevices", ""),
@@ -34307,10 +34403,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "造型名稱",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
             ),
-            (
-                "造型名称",
-                "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
-            ),
+            ("", ""),
             (
                 "Název tvaru",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
@@ -34331,10 +34424,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Nome forma",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
             ),
-            (
-                "シェイプ名",
-                "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
-            ),
+            ("", ""),
             (
                 "Shape Name",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
@@ -34543,10 +34633,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Piega finale",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
             ),
-            (
-                "終端のクランク",
-                "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
-            ),
+            ("", ""),
             (
                 "끝에서 크랭크",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
@@ -34596,10 +34683,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Piega iniziale",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
             ),
-            (
-                "始端のクランク",
-                "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
-            ),
+            ("", ""),
             (
                 "시작에서 크랭크",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
@@ -34755,10 +34839,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Barre di spostamento",
                 "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
             ),
-            (
-                "鉄筋を移動する",
-                "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
-            ),
+            ("", ""),
             (
                 "철근 이동",
                 "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
@@ -34792,10 +34873,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Násobitel délky střídavého uspořádání",
                 "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
             ),
-            (
-                "Versetzt verlegte Länge – Multiplikator",
-                "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
-            ),
+            ("", ""),
             (
                 "Multiplicador de longitud de escalonamiento",
                 "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
@@ -34845,10 +34923,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Násobitel délky přesahu",
                 "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
             ),
-            (
-                "Übergreifungslänge – Multiplikator",
-                "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
-            ),
+            ("", ""),
             (
                 "Multiplicador de longitudes de solape",
                 "Revit-StructEng/GUID-6052EF7F-0C1D-4CBE-ADAE-555FD4CC6CE1",
@@ -35049,10 +35124,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "尺寸標註文字位置",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "标注文字位置",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Pozice textu kóty",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35102,10 +35174,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "不同的鋼筋集尺寸標註",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "不同钢筋集标注",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Kóty sad výztuží s proměnnou délkou",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35367,10 +35436,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "區段彎曲",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "段弯曲",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Ohyby segmentů",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35420,10 +35486,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "直徑尺寸標註型式",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "直径标注样式",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Styl kóty průměru",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35473,10 +35536,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "徑向尺寸標註型式",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "径向标注样式",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Styl kóty poloměru",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35526,10 +35586,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "彎曲直徑尺寸標註",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "弯曲直径标注",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Kóty průměru ohybu",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35579,10 +35636,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "角度尺寸標註偏移",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "角度标注偏移",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Odsazení úhlové kóty",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35685,10 +35739,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "角度尺寸標註型式",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "角度标注样式",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Styl úhlové kóty",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35738,10 +35789,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "角度尺寸標註",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "角度标注",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Úhlové kóty",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35791,10 +35839,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "其他尺寸標註",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "其他标注",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Ostatní kóty",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35897,10 +35942,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "尺寸標註偏移",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "标注偏移",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Odsazení kóty",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -35950,10 +35992,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "直線段長度",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "直段长度",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Délky přímých úseků",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -36056,10 +36095,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "線性尺寸標註型式",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "线性标注样式",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Styl lineární kóty",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -36109,10 +36145,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "區段長度尺寸標註",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
             ),
-            (
-                "段长度标注",
-                "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
-            ),
+            ("", ""),
             (
                 "Kóty délky úseků",
                 "Revit-DocumentPresent/GUID-D2971C09-40E7-47A9-8769-92362948DCD4",
@@ -36427,10 +36460,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "關聯的最低樓層",
                 "Revit-StructEng/GUID-2510F71C-8F99-4DBD-BFA9-1693F4A9EE08",
             ),
-            (
-                "最低关联标高",
-                "Revit-StructEng/GUID-2510F71C-8F99-4DBD-BFA9-1693F4A9EE08",
-            ),
+            ("", ""),
             (
                 "Nejnižší asociované podlaží",
                 "Revit-StructEng/GUID-2510F71C-8F99-4DBD-BFA9-1693F4A9EE08",
@@ -36480,10 +36510,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "關聯的最高樓層",
                 "Revit-StructEng/GUID-2510F71C-8F99-4DBD-BFA9-1693F4A9EE08",
             ),
-            (
-                "最高关联标高",
-                "Revit-StructEng/GUID-2510F71C-8F99-4DBD-BFA9-1693F4A9EE08",
-            ),
+            ("", ""),
             (
                 "Nejvyšší asociované podlaží",
                 "Revit-StructEng/GUID-2510F71C-8F99-4DBD-BFA9-1693F4A9EE08",
@@ -36912,10 +36939,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Zobrazit osnovy",
                 "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
             ),
-            (
-                "Raster zeigen",
-                "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
-            ),
+            ("", ""),
             (
                 "Mostrar rejillas",
                 "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
@@ -36928,10 +36952,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Mostra griglie",
                 "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
             ),
-            (
-                "グリッドを表示",
-                "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
-            ),
+            ("", ""),
             (
                 "그리드 표시",
                 "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
@@ -40932,10 +40953,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "單位面積外氣量",
                 "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
             ),
-            (
-                "单位面积新风量",
-                "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
-            ),
+            ("", ""),
             (
                 "Venkovní vzduch na plochu",
                 "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
@@ -40985,10 +41003,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "每人所需外氣量",
                 "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
             ),
-            (
-                "人均新风量",
-                "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
-            ),
+            ("", ""),
             (
                 "Venkovní vzduch na osobu",
                 "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
@@ -41197,10 +41212,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "外部直徑",
                 "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
             ),
-            (
-                "外径",
-                "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
-            ),
+            ("", ""),
             (
                 "Vnější průměr",
                 "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
@@ -41433,10 +41445,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Lunghezza totale",
                 "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
             ),
-            (
-                "長さの合計",
-                "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
-            ),
+            ("", ""),
             (
                 "전체 길이",
                 "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
@@ -41674,18 +41683,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "零件號碼",
                 "Revit-StructEng/GUID-AECC0E16-4DB7-4416-884B-D45E175DBC2F",
             ),
-            (
-                "零件代号",
-                "Revit-StructEng/GUID-AECC0E16-4DB7-4416-884B-D45E175DBC2F",
-            ),
+            ("", ""),
             (
                 "Číslo dílu",
                 "Revit-StructEng/GUID-AECC0E16-4DB7-4416-884B-D45E175DBC2F",
             ),
-            (
-                "Bauteilnummer",
-                "Revit-StructEng/GUID-AECC0E16-4DB7-4416-884B-D45E175DBC2F",
-            ),
+            ("", ""),
             (
                 "Número de pieza",
                 "Revit-StructEng/GUID-AECC0E16-4DB7-4416-884B-D45E175DBC2F",
@@ -41698,10 +41701,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Numero parte",
                 "Revit-StructEng/GUID-AECC0E16-4DB7-4416-884B-D45E175DBC2F",
             ),
-            (
-                "部品番号",
-                "Revit-StructEng/GUID-AECC0E16-4DB7-4416-884B-D45E175DBC2F",
-            ),
+            ("", ""),
             (
                 "부품 번호",
                 "Revit-StructEng/GUID-AECC0E16-4DB7-4416-884B-D45E175DBC2F",
@@ -41857,10 +41857,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Mostra linee nascoste",
                 "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
             ),
-            (
-                "隠線を表示する",
-                "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
-            ),
+            ("", ""),
             (
                 "은선 보이기",
                 "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
@@ -43023,10 +43020,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Elementi di input",
                 "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
             ),
-            (
-                "入力要素",
-                "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
-            ),
+            ("", ""),
             (
                 "입력 요소",
                 "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
@@ -43105,10 +43099,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "核准狀態",
                 "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
             ),
-            (
-                "审批状态",
-                "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
-            ),
+            ("", ""),
             (
                 "Stav schválení",
                 "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
@@ -43182,10 +43173,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Parametri dettagliati",
                 "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
             ),
-            (
-                "詳細パラメータ",
-                "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
-            ),
+            ("", ""),
             (
                 "상세 매개변수",
                 "Revit-StructEng/GUID-17800295-9F19-43FB-B756-E4E9D8D3EC37",
@@ -43741,10 +43729,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "終點接合削減",
                 "Revit-StructEng/GUID-035A3219-12A1-4978-9496-3B01728A2741",
             ),
-            (
-                "终点连接缩进",
-                "Revit-StructEng/GUID-035A3219-12A1-4978-9496-3B01728A2741",
-            ),
+            ("", ""),
             (
                 "Oříznutí koncového spoje",
                 "Revit-StructEng/GUID-035A3219-12A1-4978-9496-3B01728A2741",
@@ -43855,10 +43840,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Koncové prodloužení",
                 "Revit-StructEng/GUID-035A3219-12A1-4978-9496-3B01728A2741",
             ),
-            (
-                "Enderweiterung",
-                "Revit-StructEng/GUID-035A3219-12A1-4978-9496-3B01728A2741",
-            ),
+            ("", ""),
             (
                 "Extensión final",
                 "Revit-StructEng/GUID-035A3219-12A1-4978-9496-3B01728A2741",
@@ -44226,10 +44208,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Odrazivost",
                 "Revit-DocumentPresent/GUID-1F177E3C-6C6B-4D0D-BD5B-D1904EB3120D",
             ),
-            (
-                "Reflexionsvermögen",
-                "Revit-DocumentPresent/GUID-1F177E3C-6C6B-4D0D-BD5B-D1904EB3120D",
-            ),
+            ("", ""),
             (
                 "Reflectividad",
                 "Revit-DocumentPresent/GUID-1F177E3C-6C6B-4D0D-BD5B-D1904EB3120D",
@@ -44295,10 +44274,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Permeabilità",
                 "Revit-Customize/GUID-F09A2084-D202-47A2-AD26-5773E2D9C33D",
             ),
-            (
-                "透過率",
-                "Revit-Customize/GUID-F09A2084-D202-47A2-AD26-5773E2D9C33D",
-            ),
+            ("", ""),
             (
                 "투과성",
                 "Revit-Customize/GUID-F09A2084-D202-47A2-AD26-5773E2D9C33D",
@@ -44544,10 +44520,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Použít profil hrany stupně",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
             ),
-            (
-                "Überstandprofil anwenden",
-                "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
-            ),
+            ("", ""),
             (
                 "Aplicar perfil de mamperlán",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
@@ -44613,10 +44586,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Profilo alzata",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
             ),
-            (
-                "蹴込み板のプロファイル",
-                "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
-            ),
+            ("", ""),
             (
                 "챌판 프로파일",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
@@ -44756,10 +44726,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Materiál podstupnice",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
             ),
-            (
-                "Material Setzstufe",
-                "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
-            ),
+            ("", ""),
             (
                 "Material de contrahuella",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
@@ -44809,10 +44776,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Materiál stupnice",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
             ),
-            (
-                "Material Auftritt",
-                "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
-            ),
+            ("", ""),
             (
                 "Material de huella",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
@@ -44862,10 +44826,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Tloušťka podstupnice",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
             ),
-            (
-                "Setzstufendicke",
-                "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
-            ),
+            ("", ""),
             (
                 "Grosor de contrahuella",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
@@ -45490,10 +45451,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "翻轉剖面輪廓",
                 "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
             ),
-            (
-                "翻转剖面轮廓",
-                "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
-            ),
+            ("", ""),
             (
                 "Obrácení profilu řezu",
                 "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
@@ -45514,10 +45472,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Inverti profilo sezione",
                 "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
             ),
-            (
-                "[断面図をフリップ]プロファイル",
-                "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
-            ),
+            ("", ""),
             (
                 "단면 프로파일 반전",
                 "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
@@ -45702,10 +45657,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "剖面輪廓",
                 "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
             ),
-            (
-                "剖面轮廓",
-                "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
-            ),
+            ("", ""),
             (
                 "Profil řezu",
                 "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
@@ -45726,10 +45678,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Profilo sezione",
                 "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
             ),
-            (
-                "断面プロファイル",
-                "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
-            ),
+            ("", ""),
             (
                 "단면 프로파일",
                 "Revit-ArchDesign/GUID-BF94EBE3-209A-41AC-9D4C-FC3C4DEAE83D",
@@ -46044,10 +45993,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Materiale della scala monolitica",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
             ),
-            (
-                "一体式階段のマテリアル",
-                "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
-            ),
+            ("", ""),
             (
                 "일체형 재료",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
@@ -46362,10 +46308,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Materiale della scala monolitica",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
             ),
-            (
-                "一体式階段のマテリアル",
-                "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
-            ),
+            ("", ""),
             (
                 "일체형 재료",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
@@ -46497,18 +46440,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "底面",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
             ),
-            (
-                "表面下方",
-                "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
-            ),
+            ("", ""),
             (
                 "Spodní strana povrchu",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
             ),
-            (
-                "Oberfläche Unterseite",
-                "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
-            ),
+            ("", ""),
             (
                 "Superficie de parte inferior",
                 "Revit-ArchDesign/GUID-7189B9BD-8028-421B-967A-8DEA8B25BDC9",
@@ -47027,10 +46964,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "中間支撐",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "中间支撑",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Střední podpěra",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47080,10 +47014,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "左橫向偏移",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "左侧偏移",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Levé boční odsazení",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47133,10 +47064,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "右橫向偏移",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "右侧偏移",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Pravé boční odsazení",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47210,10 +47138,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Tipo contrassegno di taglio",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "切断マーク タイプ",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "절단 표시 유형",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47239,10 +47164,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "右側支撐",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "右支撑",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Pravá podpěra",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47292,10 +47214,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "左側支撐",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "左支撑",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Levá podpěra",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47345,10 +47264,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "垂直間隙距離",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "垂直间距",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Vertikální vzdálenost mezery",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47398,10 +47314,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "水平間隙距離",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "水平间距",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Horizontální vzdálenost mezery",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47610,10 +47523,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "中間支撐數目",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "中间支撑数量",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Číslo střední podpěry",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -47716,10 +47626,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "中間支撐類型",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "中间支撑类型",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Typ střední podpěry",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -48564,10 +48471,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "類別",
                 "Revit-Customize/GUID-7EA4E8B7-C0FD-4056-AFEF-E922EDED4E74",
             ),
-            (
-                "类",
-                "Revit-Customize/GUID-7EA4E8B7-C0FD-4056-AFEF-E922EDED4E74",
-            ),
+            ("", ""),
             (
                 "Třída",
                 "Revit-Customize/GUID-7EA4E8B7-C0FD-4056-AFEF-E922EDED4E74",
@@ -49102,10 +49006,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Dvoučárové zobrazení – symbol klesání",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
             ),
-            (
-                "Richtungshinweissymbol nach unten – zwei Linien",
-                "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
-            ),
+            ("", ""),
             (
                 "Símbolo de bajada de dos líneas",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
@@ -49155,10 +49056,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Dvoučárové zobrazení – symbol stoupání",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
             ),
-            (
-                "Richtungshinweissymbol nach oben – zwei Linien",
-                "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
-            ),
+            ("", ""),
             (
                 "Símbolo de subida de dos líneas",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
@@ -49208,10 +49106,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Jednočárové zobrazení – symbol klesání",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
             ),
-            (
-                "Richtungshinweissymbol – einzelne Linie",
-                "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
-            ),
+            ("", ""),
             (
                 "Símbolo de bajada de línea única",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
@@ -49261,10 +49156,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Jednočárové zobrazení – symbol stoupání",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
             ),
-            (
-                "Richtungshinweissymbol nach oben – einzelne Linie",
-                "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
-            ),
+            ("", ""),
             (
                 "Símbolo de subida de línea única",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
@@ -49314,10 +49206,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Jednočárové zobrazení – symbol T spoje – směr nahoru",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
             ),
-            (
-                "Richtungshinweissymbol T-Stück nach oben – einzelne Linie",
-                "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
-            ),
+            ("", ""),
             (
                 "Símbolo de T hacia arriba de línea única",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
@@ -49367,10 +49256,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Jednočárové zobrazení – symbol T spoje – směr dolů",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
             ),
-            (
-                "Richtungshinweissymbol T-Stück nach unten – einzelne Linie",
-                "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
-            ),
+            ("", ""),
             (
                 "Símbolo de T hacia abajo de línea única",
                 "Revit-MEPEng/GUID-01E59ECD-17C5-4390-87AE-92588A3FD9C3",
@@ -49701,10 +49587,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Terminazione inizio/parte inferiore",
                 "Revit-ArchDesign/GUID-B6A3CEF7-E14C-46DA-8F0C-61556908EB99",
             ),
-            (
-                "始端/下の端部処理",
-                "Revit-ArchDesign/GUID-B6A3CEF7-E14C-46DA-8F0C-61556908EB99",
-            ),
+            ("", ""),
             (
                 "시작/하단 말단",
                 "Revit-ArchDesign/GUID-B6A3CEF7-E14C-46DA-8F0C-61556908EB99",
@@ -49995,10 +49878,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "橫向偏移",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
             ),
-            (
-                "侧偏移",
-                "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
-            ),
+            ("", ""),
             (
                 "Boční odsazení",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
@@ -50048,10 +49928,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "橫向偏移",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
             ),
-            (
-                "侧偏移",
-                "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
-            ),
+            ("", ""),
             (
                 "Boční odsazení",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
@@ -50162,10 +50039,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Podlaží objemu",
                 "Revit-ArchDesign/GUID-72B5E327-3254-4603-97E1-938413EA6D76",
             ),
-            (
-                "Körpergeschossdecke",
-                "Revit-ArchDesign/GUID-72B5E327-3254-4603-97E1-938413EA6D76",
-            ),
+            ("", ""),
             (
                 "Suelo de masa",
                 "Revit-ArchDesign/GUID-72B5E327-3254-4603-97E1-938413EA6D76",
@@ -50215,10 +50089,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Zasklení objemu",
                 "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
             ),
-            (
-                "Körperverglasung",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
+            ("", ""),
             (
                 "Cristalera de masa",
                 "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
@@ -50313,10 +50184,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "分析網格儲存格大小",
                 "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
             ),
-            (
-                "分析网格单元大小",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
+            ("", ""),
             (
                 "Velikost buňky analytické osnovy",
                 "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
@@ -50366,10 +50234,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "建築外層",
                 "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
             ),
-            (
-                "建筑物围护结构",
-                "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
-            ),
+            ("", ""),
             (
                 "Plášť budovy",
                 "Revit-Analyze/GUID-36B2F66A-E423-4D9C-B266-3ABA57573F4A",
@@ -50427,10 +50292,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Pravé připojení",
                 "Revit-DocumentPresent/GUID-66B71640-3481-46D9-8322-9016EF940258",
             ),
-            (
-                "Zuordnung rechts",
-                "Revit-DocumentPresent/GUID-66B71640-3481-46D9-8322-9016EF940258",
-            ),
+            ("", ""),
             (
                 "Enlace derecho",
                 "Revit-DocumentPresent/GUID-66B71640-3481-46D9-8322-9016EF940258",
@@ -50480,10 +50342,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Levé připojení",
                 "Revit-DocumentPresent/GUID-66B71640-3481-46D9-8322-9016EF940258",
             ),
-            (
-                "Zuordnung links",
-                "Revit-DocumentPresent/GUID-66B71640-3481-46D9-8322-9016EF940258",
-            ),
+            ("", ""),
             (
                 "Enlace izquierdo",
                 "Revit-DocumentPresent/GUID-66B71640-3481-46D9-8322-9016EF940258",
@@ -50525,10 +50384,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "測量自",
                 "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
             ),
-            (
-                "测量自",
-                "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
-            ),
+            ("", ""),
             (
                 "Měřit od",
                 "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
@@ -50549,10 +50405,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Misura da",
                 "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
             ),
-            (
-                "測定の始点",
-                "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
-            ),
+            ("", ""),
             (
                 "측정 위치",
                 "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
@@ -50814,10 +50667,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Parametro curva normalizzata",
                 "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
             ),
-            (
-                "正規化曲線パラメータ",
-                "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
-            ),
+            ("", ""),
             (
                 "정규화된 곡선 매개변수",
                 "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
@@ -50904,10 +50754,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Typ měření",
                 "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
             ),
-            (
-                "Messtyp",
-                "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
-            ),
+            ("", ""),
             (
                 "Tipo de medida",
                 "Revit-ArchDesign/GUID-89A2F8EE-7AE1-40CB-905B-711EB646151E",
@@ -51002,18 +50849,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "開始貼附至參考柱",
                 "Revit-StructEng/GUID-89D4AB0D-4D2E-4391-802E-F8AF478637FC",
             ),
-            (
-                "参照柱的附着起点",
-                "Revit-StructEng/GUID-89D4AB0D-4D2E-4391-802E-F8AF478637FC",
-            ),
+            ("", ""),
             (
                 "Začátek připojení k referenčnímu sloupu",
                 "Revit-StructEng/GUID-89D4AB0D-4D2E-4391-802E-F8AF478637FC",
             ),
-            (
-                "Anfang der Verbindung mit referenzierter Stütze",
-                "Revit-StructEng/GUID-89D4AB0D-4D2E-4391-802E-F8AF478637FC",
-            ),
+            ("", ""),
             (
                 "Inicio del enlace a la columna de referencia",
                 "Revit-StructEng/GUID-89D4AB0D-4D2E-4391-802E-F8AF478637FC",
@@ -51222,10 +51063,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Zaokrouhlení délky rámové konstrukce",
                 "Revit-StructEng/GUID-97DE744A-CDC8-45D3-9963-BAA7C721F1CD",
             ),
-            (
-                "Skelettbau - Längenabrundung",
-                "Revit-StructEng/GUID-97DE744A-CDC8-45D3-9963-BAA7C721F1CD",
-            ),
+            ("", ""),
             (
                 "Redondeo de longitud de armazón estructural",
                 "Revit-StructEng/GUID-97DE744A-CDC8-45D3-9963-BAA7C721F1CD",
@@ -51275,10 +51113,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Prodloužení základny",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
             ),
-            (
-                "Tragschicht Verlängerung",
-                "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
-            ),
+            ("", ""),
             (
                 "Extensión base",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
@@ -51291,10 +51126,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Estensione Base",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
             ),
-            (
-                "基層の延長",
-                "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
-            ),
+            ("", ""),
             (
                 "베이스 확장",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
@@ -51699,10 +51531,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Příspěvek k osvětlení volného prostoru",
                 "Revit-Analyze/GUID-151D513A-09C1-418C-BCF7-005F51A1D111",
             ),
-            (
-                "Beitrag der Luftraumbeleuchtung",
-                "Revit-Analyze/GUID-151D513A-09C1-418C-BCF7-005F51A1D111",
-            ),
+            ("", ""),
             (
                 "Contribución de iluminación de plénum",
                 "Revit-Analyze/GUID-151D513A-09C1-418C-BCF7-005F51A1D111",
@@ -52176,10 +52005,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Posunout spodní část s osnovami",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
             ),
-            (
-                "Basis mit Raster verschieben",
-                "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
-            ),
+            ("", ""),
             (
                 "Mover base con rejillas",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
@@ -52229,10 +52055,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Přesun vrcholu pomocí uzlů",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
             ),
-            (
-                "Mit Raster nach oben verschieben",
-                "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
-            ),
+            ("", ""),
             (
                 "Mover parte superior con rejillas",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
@@ -52298,10 +52121,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Stile pilastro",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
             ),
-            (
-                "柱スタイル",
-                "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
-            ),
+            ("", ""),
             (
                 "기둥 스타일",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
@@ -52600,10 +52420,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Třída těsnosti budovy:",
                 "Revit-Analyze/GUID-51D0EBC0-77FF-445D-BC5C-AC81BA28F762",
             ),
-            (
-                "Luftdichtigkeitsklasse",
-                "Revit-Analyze/GUID-51D0EBC0-77FF-445D-BC5C-AC81BA28F762",
-            ),
+            ("", ""),
             (
                 "Clase de infiltración de edificio",
                 "Revit-Analyze/GUID-51D0EBC0-77FF-445D-BC5C-AC81BA28F762",
@@ -52865,10 +52682,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Formát jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Lineare/radiale Einheiten, Format",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Formato de unidades",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -53175,10 +52989,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "替用單位格式",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "换算单位格式",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Formát alternativních jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -57227,10 +57038,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Proiezione analitica verticale",
                 "Revit-StructEng/GUID-E7B2427C-AD5A-4973-88E6-B5D30271D597",
             ),
-            (
-                "解析垂直投影",
-                "Revit-StructEng/GUID-E7B2427C-AD5A-4973-88E6-B5D30271D597",
-            ),
+            ("", ""),
             (
                 "해석 수직 투영",
                 "Revit-StructEng/GUID-E7B2427C-AD5A-4973-88E6-B5D30271D597",
@@ -57264,10 +57072,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Počáteční uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Anfang",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace inicial",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -57317,10 +57122,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Koncové uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Ende",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace final",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -57598,10 +57400,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Proiezione analitica verticale",
                 "Revit-StructEng/GUID-E7B2427C-AD5A-4973-88E6-B5D30271D597",
             ),
-            (
-                "解析垂直投影",
-                "Revit-StructEng/GUID-E7B2427C-AD5A-4973-88E6-B5D30271D597",
-            ),
+            ("", ""),
             (
                 "해석 수직 투영",
                 "Revit-StructEng/GUID-E7B2427C-AD5A-4973-88E6-B5D30271D597",
@@ -57635,10 +57434,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Počáteční uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Anfang",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace inicial",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -57688,10 +57484,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Koncové uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Ende",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace final",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -57847,10 +57640,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Počáteční uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Anfang",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace inicial",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -57900,10 +57690,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Koncové uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Ende",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace final",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -58059,10 +57846,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Počáteční uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Anfang",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace inicial",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -58112,10 +57896,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Koncové uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Ende",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace final",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -59588,10 +59369,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "區段描述",
                 "Revit-MEPEng/GUID-E1B58934-E7FB-4762-837F-75F9106401B7",
             ),
-            (
-                "段说明",
-                "Revit-MEPEng/GUID-E1B58934-E7FB-4762-837F-75F9106401B7",
-            ),
+            ("", ""),
             (
                 "Popis segmentu",
                 "Revit-MEPEng/GUID-E1B58934-E7FB-4762-837F-75F9106401B7",
@@ -60444,10 +60222,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Typ kapaliny",
                 "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
             ),
-            (
-                "Medientyp",
-                "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
-            ),
+            ("", ""),
             (
                 "Tipo de fluido",
                 "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
@@ -60513,10 +60288,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Viscosità dinamica del fluido",
                 "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
             ),
-            (
-                "流体の動粘度",
-                "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
-            ),
+            ("", ""),
             (
                 "유체 역학 점도",
                 "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
@@ -60550,10 +60322,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Objemová hmotnost kapaliny",
                 "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
             ),
-            (
-                "Mediendichte",
-                "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
-            ),
+            ("", ""),
             (
                 "Densidad de fluido",
                 "Revit-MEPEng/GUID-0C146DC3-BA3D-4D63-BCAE-7A35144562FE",
@@ -60701,10 +60470,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "明細表/類型",
                 "Revit-MEPEng/GUID-E1B58934-E7FB-4762-837F-75F9106401B7",
             ),
-            (
-                "明细表/类型",
-                "Revit-MEPEng/GUID-E1B58934-E7FB-4762-837F-75F9106401B7",
-            ),
+            ("", ""),
             (
                 "Výkaz/typ",
                 "Revit-MEPEng/GUID-E1B58934-E7FB-4762-837F-75F9106401B7",
@@ -63889,10 +63655,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Směr pohledu",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
             ),
-            (
-                "Ansichtsdarstellung",
-                "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
-            ),
+            ("", ""),
             (
                 "Línea de mira",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
@@ -65206,10 +64969,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "彎曲",
                 "Revit-StructEng/GUID-054A2971-BA2D-46BF-A508-3D805F1C2666",
             ),
-            (
-                "弯曲",
-                "Revit-StructEng/GUID-054A2971-BA2D-46BF-A508-3D805F1C2666",
-            ),
+            ("", ""),
             (
                 "Ohnutá:",
                 "Revit-StructEng/GUID-054A2971-BA2D-46BF-A508-3D805F1C2666",
@@ -66001,10 +65761,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "單位面積外氣量",
                 "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
             ),
-            (
-                "单位面积新风量",
-                "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
-            ),
+            ("", ""),
             (
                 "Venkovní vzduch na plochu",
                 "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
@@ -66054,10 +65811,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "每人所需外氣量",
                 "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
             ),
-            (
-                "人均新风量",
-                "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
-            ),
+            ("", ""),
             (
                 "Venkovní vzduch na osobu",
                 "Revit-MEPEng/GUID-C46C43CC-8CBA-4D70-9E5A-4A69E0A75362",
@@ -68598,10 +68352,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "十字接頭",
                 "Revit-Customize/GUID-4DA88E95-5397-4FA6-8ADD-2DBC6AB4759C",
             ),
-            (
-                "四通",
-                "Revit-Customize/GUID-4DA88E95-5397-4FA6-8ADD-2DBC6AB4759C",
-            ),
+            ("", ""),
             (
                 "Křížení",
                 "Revit-Customize/GUID-4DA88E95-5397-4FA6-8ADD-2DBC6AB4759C",
@@ -70355,10 +70106,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Místo měření šířky",
                 "Revit-ArchDesign/GUID-C6A3DD86-FFAF-4781-8E50-5714965C24BE",
             ),
-            (
-                "Breite gemessen an",
-                "Revit-ArchDesign/GUID-C6A3DD86-FFAF-4781-8E50-5714965C24BE",
-            ),
+            ("", ""),
             (
                 "Anchura medida en",
                 "Revit-ArchDesign/GUID-C6A3DD86-FFAF-4781-8E50-5714965C24BE",
@@ -70832,10 +70580,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Export do IFC",
                 "Revit-Model/GUID-03955E27-EFD7-4ED2-8DC7-FC321FE43F12",
             ),
-            (
-                "In IFC exportieren",
-                "Revit-Model/GUID-03955E27-EFD7-4ED2-8DC7-FC321FE43F12",
-            ),
+            ("", ""),
             (
                 "Exportar a IFC",
                 "Revit-Model/GUID-03955E27-EFD7-4ED2-8DC7-FC321FE43F12",
@@ -74171,10 +73916,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Průměr ohybu",
                 "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
             ),
-            (
-                "Biegeradius",
-                "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
-            ),
+            ("", ""),
             (
                 "Diámetro de curvatura",
                 "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
@@ -74216,10 +73958,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "每單位面積的片材質量",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "每单位面积的网片体量",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Objem sítě na jednotku plochy",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74269,18 +74008,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "次要鋼筋區域",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "副钢筋面积",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Vedlejší plocha výztuže",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "Fläche Querbewehrung",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Área de refuerzo secundaria",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74322,18 +74055,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "主要鋼筋區域",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主钢筋面积",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Hlavní plocha výztuže",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "Fläche Hauptbewehrung",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Área de refuerzo principal",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74375,10 +74102,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "片材質量",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "网片体量",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Objem sítě",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74428,18 +74152,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "次要間距",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "副间距",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Vedlejší rozteč",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "Abstände Querbewehrung",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Espaciado secundario",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74452,10 +74170,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Spaziatura minore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "配力筋方向のワイヤ間隔",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "배력근 간격",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74481,18 +74196,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "次要線材數目",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "副网线的数量",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Vedlejší počet drátů",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "Anzahl Drähte Querbewehrung",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Número de alambres en dirección secundaria",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74505,10 +74214,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Numero di barre minore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "配力筋方向のワイヤ数",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "배력근 와이어 수",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74534,10 +74240,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "次要配置樣式",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "副布局模式",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Vedlejší vzor rozvržení",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74558,10 +74261,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Motivo di layout minore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "配力筋方向レイアウト パターン",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "배력근 배치 패턴",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74587,10 +74287,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "次要結束挑簷",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "副终点悬挑",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Vedlejší koncový přesah",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74611,10 +74308,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sporgenza finale minore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "配力筋方向 終端オーバーハング",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "배력근 끝 돌출부",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74640,10 +74334,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "次要起始挑簷",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "副起点悬挑",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Vedlejší počáteční přesah",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74664,10 +74355,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sporgenza iniziale minore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "配力筋方向 始端オーバーハング",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "배력근 시작 돌출부",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74746,18 +74434,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "主要間距",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主间距",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Hlavní rozteč",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "Hauptbewehrung: Abstand",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Espaciado principal",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74770,10 +74452,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Spaziatura maggiore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "ワイヤ間隔",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "주근 간격",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74799,18 +74478,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "主要線材數目",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主要网线的数量",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Hlavní počet drátů",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "Anzahl Drähte Hauptbewehrung",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Número de alambres en dirección principal",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74823,10 +74496,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Numero di barre maggiore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "ワイヤの本数",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "주근 와이어 수",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74852,10 +74522,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "主要配置樣式",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主布局模式",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Hlavní vzor rozvržení",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74876,10 +74543,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Motivo di layout maggiore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主筋方向レイアウト パターン",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "주근 배치 패턴",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74905,10 +74569,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "主要結束挑簷",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主终点悬挑",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Hlavní koncový přesah",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74929,10 +74590,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sporgenza finale maggiore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主筋方向 終端オーバーハング",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "주근 끝 돌출부",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74958,10 +74616,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "主要起始挑簷",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主起点悬挑",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Hlavní počáteční přesah",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -74982,10 +74637,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sporgenza iniziale maggiore",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主筋方向 始端オーバーハング",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "주근 시작 돌출부",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -75064,18 +74716,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "副筋方向線材類型",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "副筋方向网线类型",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Typ drátu ve vedlejším směru",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "Drahttyp Querbewehrung",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Tipo de alambre de dirección secundaria",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -75117,18 +74763,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "主筋方向線材類型",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "主筋方向网线类型",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Typ drátu v hlavním směru",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
             ),
-            (
-                "Drahttyp Hauptrichtung",
-                "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
-            ),
+            ("", ""),
             (
                 "Tipo de alambre de dirección principal",
                 "Revit-StructEng/GUID-16482CB5-0344-40C4-970D-B403C29FA723",
@@ -75443,10 +75083,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Horní dokončující otáčky",
                 "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
             ),
-            (
-                "Obere Abschlusswindungen.",
-                "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
-            ),
+            ("", ""),
             (
                 "Giros de acabado de parte superior",
                 "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
@@ -75496,10 +75133,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Standardní průměr ohybu s hákem",
                 "Revit-StructEng/GUID-53CB16D8-A0CD-4A53-B920-85B96DF48CF5",
             ),
-            (
-                "Standardhaken – Biegedurchmesser",
-                "Revit-StructEng/GUID-53CB16D8-A0CD-4A53-B920-85B96DF48CF5",
-            ),
+            ("", ""),
             (
                 "Diámetro de curvatura de gancho estándar",
                 "Revit-StructEng/GUID-53CB16D8-A0CD-4A53-B920-85B96DF48CF5",
@@ -75549,10 +75183,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Průměr ohybu",
                 "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
             ),
-            (
-                "Biegeradius",
-                "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
-            ),
+            ("", ""),
             (
                 "Diámetro de curvatura",
                 "Revit-StructEng/GUID-F1B12E14-41A7-46A3-8BF2-DE4889ECA48F",
@@ -76042,10 +75673,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Diametro curvatura staffa/tirante",
                 "Revit-StructEng/GUID-53CB16D8-A0CD-4A53-B920-85B96DF48CF5",
             ),
-            (
-                "スターラップ/フープ内法直径",
-                "Revit-StructEng/GUID-53CB16D8-A0CD-4A53-B920-85B96DF48CF5",
-            ),
+            ("", ""),
             (
                 "스트럽/타이 구부림 지름",
                 "Revit-StructEng/GUID-53CB16D8-A0CD-4A53-B920-85B96DF48CF5",
@@ -76254,10 +75882,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Quantità",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
             ),
-            (
-                "数量",
-                "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
-            ),
+            ("", ""),
             (
                 "수량",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
@@ -76344,10 +75969,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Celková délka tyčí",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
             ),
-            (
-                "Gesamtstablänge",
-                "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
-            ),
+            ("", ""),
             (
                 "Longitud total de barra",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
@@ -76360,10 +75982,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Lunghezza totale barra",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
             ),
-            (
-                "鉄筋の長さの合計",
-                "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
-            ),
+            ("", ""),
             (
                 "전체 철근 길이",
                 "Revit-StructEng/GUID-A1D6AB67-B60F-4A15-913C-FD534C94D491",
@@ -78517,10 +78136,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "krytí výztuže,",
                 "Revit-StructEng/GUID-3270A249-31BF-427A-960E-B1292ECFE8F5",
             ),
-            (
-                "Bewehrungsüberdeckung",
-                "Revit-StructEng/GUID-3270A249-31BF-427A-960E-B1292ECFE8F5",
-            ),
+            ("", ""),
             (
                 "Recubrimiento de armadura",
                 "Revit-StructEng/GUID-3270A249-31BF-427A-960E-B1292ECFE8F5",
@@ -78570,10 +78186,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Krytí výztuže – vnitřní plocha",
                 "Revit-StructEng/GUID-F1AD4E4F-3505-4B3F-8096-61BAC86B7ACC",
             ),
-            (
-                "Bewehrungsüberdeckung - Innenfläche",
-                "Revit-StructEng/GUID-F1AD4E4F-3505-4B3F-8096-61BAC86B7ACC",
-            ),
+            ("", ""),
             (
                 "Recubrimiento de armadura - Cara interior",
                 "Revit-StructEng/GUID-F1AD4E4F-3505-4B3F-8096-61BAC86B7ACC",
@@ -78623,10 +78236,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Krytí výztuže – vnější plocha",
                 "Revit-StructEng/GUID-F1AD4E4F-3505-4B3F-8096-61BAC86B7ACC",
             ),
-            (
-                "Bewehrungsüberdeckung - Außenfläche",
-                "Revit-StructEng/GUID-F1AD4E4F-3505-4B3F-8096-61BAC86B7ACC",
-            ),
+            ("", ""),
             (
                 "Recubrimiento de armadura - Cara exterior",
                 "Revit-StructEng/GUID-F1AD4E4F-3505-4B3F-8096-61BAC86B7ACC",
@@ -79752,10 +79362,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Ancoraggio vista",
                 "Revit-DocumentPresent/GUID-D8D3BAF0-587E-4D08-885C-FFC3504F056D",
             ),
-            (
-                "[ビューのアンカー]",
-                "Revit-DocumentPresent/GUID-D8D3BAF0-587E-4D08-885C-FFC3504F056D",
-            ),
+            ("", ""),
             (
                 "뷰 앵커",
                 "Revit-DocumentPresent/GUID-D8D3BAF0-587E-4D08-885C-FFC3504F056D",
@@ -80001,10 +79608,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Oříznutí pomocí vložených objektů",
                 "Revit-ArchDesign/GUID-61B98A58-B03B-48D7-B2D9-99A564FC55D0",
             ),
-            (
-                "Wird geschnitten durch eingefügte Elemente",
-                "Revit-ArchDesign/GUID-61B98A58-B03B-48D7-B2D9-99A564FC55D0",
-            ),
+            ("", ""),
             (
                 "Cortar por inserciones",
                 "Revit-ArchDesign/GUID-61B98A58-B03B-48D7-B2D9-99A564FC55D0",
@@ -80017,10 +79621,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Tagliata da inserti",
                 "Revit-ArchDesign/GUID-61B98A58-B03B-48D7-B2D9-99A564FC55D0",
             ),
-            (
-                "挿入して切り取る",
-                "Revit-ArchDesign/GUID-61B98A58-B03B-48D7-B2D9-99A564FC55D0",
-            ),
+            ("", ""),
             (
                 "삽입물로 절단",
                 "Revit-ArchDesign/GUID-61B98A58-B03B-48D7-B2D9-99A564FC55D0",
@@ -80107,10 +79708,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Délka dolního přesahu",
                 "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
             ),
-            (
-                "Unterer Verlängerungsabstand",
-                "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
-            ),
+            ("", ""),
             (
                 "Distancia de extensión base",
                 "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
@@ -80123,10 +79721,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Distanza estensione base",
                 "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
             ),
-            (
-                "下部の延長距離",
-                "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
-            ),
+            ("", ""),
             (
                 "베이스 확장 거리",
                 "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
@@ -80160,10 +79755,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Délka horního přesahu",
                 "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
             ),
-            (
-                "Oberer Verlängerungsabstand",
-                "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
-            ),
+            ("", ""),
             (
                 "Distancia de extensión superior",
                 "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
@@ -80637,10 +80229,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Formát jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Lineare/radiale Einheiten, Format",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Formato de unidades",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -80743,10 +80332,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Formát jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Lineare/radiale Einheiten, Format",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Formato de unidades",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -82227,10 +81813,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Číslo revize",
                 "Revit-DocumentPresent/GUID-8D28AD5A-5217-47C5-AF5E-42A8BD3A235F",
             ),
-            (
-                "Versionsnummer",
-                "Revit-DocumentPresent/GUID-8D28AD5A-5217-47C5-AF5E-42A8BD3A235F",
-            ),
+            ("", ""),
             (
                 "Número de revisión",
                 "Revit-DocumentPresent/GUID-8D28AD5A-5217-47C5-AF5E-42A8BD3A235F",
@@ -82802,10 +82385,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "剖面類型",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Section Type",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Typ Průřezu",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -82855,18 +82435,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Z 旋轉",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "Z 轴旋转",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Otočení Z",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "z-Drehung",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Rotación Z",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
@@ -82908,18 +82482,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Y 旋轉",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "Y 轴旋转",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Otočení Y",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "y-Drehung",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Rotación Y",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
@@ -82961,18 +82529,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "X 旋轉",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "X 轴旋转",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Otočení X",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "x-Drehung",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Rotación X",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
@@ -83014,18 +82576,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Z 轉換",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "Z 轴转换",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Posun Z",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "z-Translation",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Translación Z",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
@@ -83067,18 +82623,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Y 轉換",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "Y 轴转换",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Posun Y",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "y-Translation",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Translación Y",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
@@ -83120,18 +82670,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "X 轉換",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "X 轴转换",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Posun X",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
             ),
-            (
-                "x-Translation",
-                "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
-            ),
+            ("", ""),
             (
                 "Translación X",
                 "Revit-StructEng/GUID-48A5C678-76D5-4F45-9CB0-2142BC6892D1",
@@ -83552,10 +83096,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Šikmá připojení",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
             ),
-            (
-                "Winkelige Verbindungen",
-                "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
-            ),
+            ("", ""),
             (
                 "Uniones en ángulo",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
@@ -83568,10 +83109,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Giunti ad angolo",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
             ),
-            (
-                "角度を付けて結合",
-                "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
-            ),
+            ("", ""),
             (
                 "각도 결합",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
@@ -83968,10 +83506,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "扶手結構 (非連續)",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
             ),
-            (
-                "扶栏结构（非连续）",
-                "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
-            ),
+            ("", ""),
             (
                 "Stavba zábradlí (nespojité)",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
@@ -84045,10 +83580,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Altezza ringhiera",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
             ),
-            (
-                "手摺の高さ",
-                "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
-            ),
+            ("", ""),
             (
                 "난간 높이",
                 "Revit-ArchDesign/GUID-6385104B-4295-4659-855F-BA7DD2793CD5",
@@ -84180,10 +83712,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "坡道最大斜度 (1/x)",
                 "Revit-ArchDesign/GUID-D0A28BE6-BDD0-43D3-A2A5-3F0C867C55E5",
             ),
-            (
-                "坡道最大坡度 (1/x)",
-                "Revit-ArchDesign/GUID-D0A28BE6-BDD0-43D3-A2A5-3F0C867C55E5",
-            ),
+            ("", ""),
             (
                 "Maximální sklon rampy (1/x)",
                 "Revit-ArchDesign/GUID-D0A28BE6-BDD0-43D3-A2A5-3F0C867C55E5",
@@ -84204,10 +83733,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Inclinazione massima della rampa inclinata (1/x)",
                 "Revit-ArchDesign/GUID-D0A28BE6-BDD0-43D3-A2A5-3F0C867C55E5",
             ),
-            (
-                "最大勾配(1/x)",
-                "Revit-ArchDesign/GUID-D0A28BE6-BDD0-43D3-A2A5-3F0C867C55E5",
-            ),
+            ("", ""),
             (
                 "경사로 최대 경사 (1/x)",
                 "Revit-ArchDesign/GUID-D0A28BE6-BDD0-43D3-A2A5-3F0C867C55E5",
@@ -84233,10 +83759,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "新視圖取決於樣板",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
             ),
-            (
-                "新视图依赖于样板",
-                "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
-            ),
+            ("", ""),
             (
                 "Nové pohledy závisejí na šabloně",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
@@ -84286,10 +83809,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "套用到新視圖的視圖樣板",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
             ),
-            (
-                "应用于新视图的视图样板",
-                "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
-            ),
+            ("", ""),
             (
                 "Šablona pohledu použitá pro nové pohledy",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
@@ -84347,10 +83867,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Směr pohledu",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
             ),
-            (
-                "Ansichtsdarstellung",
-                "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
-            ),
+            ("", ""),
             (
                 "Línea de mira",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
@@ -84392,18 +83909,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "粗糙材料",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
             ),
-            (
-                "粗略土层材质",
-                "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
-            ),
+            ("", ""),
             (
                 "Materiál pro hrubé zobrazení",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
             ),
-            (
-                "3D-Schnittmaterial für grobe Detaillierung",
-                "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
-            ),
+            ("", ""),
             (
                 "Relleno en detalle bajo",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
@@ -84416,10 +83927,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Materiale poche a dettaglio basso",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
             ),
-            (
-                "簡略時のポシェ マテリアル",
-                "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
-            ),
+            ("", ""),
             (
                 "거친 Poche 소재",
                 "Revit-DocumentPresent/GUID-7A68686B-2DA4-4ED0-AEF5-6BFBCDA93C89",
@@ -84612,10 +84120,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Symboly půdorysného pohledu – konec 2 (Výchozí)",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
             ),
-            (
-                "Draufsichtsymbole Ende 2 (Standard)",
-                "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
-            ),
+            ("", ""),
             (
                 "Extremo 2 Símbolos de vista de plano (por defecto)",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
@@ -84665,10 +84170,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Symboly půdorysného pohledu – konec 1 (Výchozí)",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
             ),
-            (
-                "Draufsichtsymbole Ende 1 (Standard)",
-                "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
-            ),
+            ("", ""),
             (
                 "Extremo 1 Símbolos de vista de plano (por defecto)",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
@@ -84710,18 +84212,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "非平面視圖符號 (預設)",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
             ),
-            (
-                "非平面视图轴号(默认)",
-                "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
-            ),
+            ("", ""),
             (
                 "Symboly nepůdorysného pohledu (Výchozí)",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
             ),
-            (
-                "Symbole in Nicht-Draufsicht (Standard)",
-                "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
-            ),
+            ("", ""),
             (
                 "Símbolos de vista no de plano (por defecto)",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
@@ -85028,10 +84524,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "中心標記可見",
                 "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
             ),
-            (
-                "使中心标记可见",
-                "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
-            ),
+            ("", ""),
             (
                 "Viditelná středová značka",
                 "Revit-ArchDesign/GUID-ED2045E5-90BF-418F-AAD6-3BB1544F34F5",
@@ -85187,10 +84680,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "排序/組成群組",
                 "Revit-DocumentPresent/GUID-A1BCDD2F-0258-459B-9378-9C23BFE330D8",
             ),
-            (
-                "排序/成组",
-                "Revit-DocumentPresent/GUID-A1BCDD2F-0258-459B-9378-9C23BFE330D8",
-            ),
+            ("", ""),
             (
                 "Seřazení/Seskupování",
                 "Revit-DocumentPresent/GUID-A1BCDD2F-0258-459B-9378-9C23BFE330D8",
@@ -85248,10 +84738,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Povolit uchopení",
                 "Revit-Model/GUID-E5961972-C598-480E-B048-170448A07646",
             ),
-            (
-                "Objektfang aktivieren",
-                "Revit-Model/GUID-E5961972-C598-480E-B048-170448A07646",
-            ),
+            ("", ""),
             (
                 "Activar forzados de cursor",
                 "Revit-Model/GUID-E5961972-C598-480E-B048-170448A07646",
@@ -85293,18 +84780,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "頁碼",
                 "Revit-Model/GUID-6374E4CC-5BF5-4494-877F-F40C4A5638A1",
             ),
-            (
-                "页码",
-                "Revit-Model/GUID-6374E4CC-5BF5-4494-877F-F40C4A5638A1",
-            ),
+            ("", ""),
             (
                 "Číslo stránky",
                 "Revit-Model/GUID-6374E4CC-5BF5-4494-877F-F40C4A5638A1",
             ),
-            (
-                "Seitennummer",
-                "Revit-Model/GUID-6374E4CC-5BF5-4494-877F-F40C4A5638A1",
-            ),
+            ("", ""),
             (
                 "Número de página",
                 "Revit-Model/GUID-6374E4CC-5BF5-4494-877F-F40C4A5638A1",
@@ -85529,10 +85010,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Caricato dal file",
                 "Revit-Model/GUID-6374E4CC-5BF5-4494-877F-F40C4A5638A1",
             ),
-            (
-                "ロード元のファイル",
-                "Revit-Model/GUID-6374E4CC-5BF5-4494-877F-F40C4A5638A1",
-            ),
+            ("", ""),
             (
                 "파일로부터 로드됩니다",
                 "Revit-Model/GUID-6374E4CC-5BF5-4494-877F-F40C4A5638A1",
@@ -86149,10 +85627,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Značka pohledu",
                 "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
             ),
-            (
-                "Ansichtsmarkierung",
-                "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
-            ),
+            ("", ""),
             (
                 "Marca de alzado",
                 "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
@@ -86165,10 +85640,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Contrassegno di prospetto",
                 "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
             ),
-            (
-                "立面図マーク",
-                "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
-            ),
+            ("", ""),
             (
                 "입면도 표시",
                 "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
@@ -86459,10 +85931,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "導引網格",
                 "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
             ),
-            (
-                "轴网向导",
-                "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
-            ),
+            ("", ""),
             (
                 "Vodicí osnova",
                 "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
@@ -86573,10 +86042,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Revize na výkresu",
                 "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
             ),
-            (
-                "Änderungen in Plan",
-                "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
-            ),
+            ("", ""),
             (
                 "Revisiones en plano",
                 "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
@@ -86748,10 +86214,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Approvato da",
                 "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
             ),
-            (
-                "承認者",
-                "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
-            ),
+            ("", ""),
             (
                 "승인자",
                 "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
@@ -86907,10 +86370,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Disegnato da",
                 "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
             ),
-            (
-                "製図作成者",
-                "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
-            ),
+            ("", ""),
             (
                 "그리기",
                 "Revit-DocumentPresent/GUID-AAD676E4-B98A-414C-829E-59143BB958DC",
@@ -87914,10 +87374,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Profondità 2",
                 "Revit-ArchDesign/GUID-68BA473F-E6F8-45BB-A946-2D0BD70A3AAA",
             ),
-            (
-                "奥行 2",
-                "Revit-ArchDesign/GUID-68BA473F-E6F8-45BB-A946-2D0BD70A3AAA",
-            ),
+            ("", ""),
             (
                 "깊이 2",
                 "Revit-ArchDesign/GUID-68BA473F-E6F8-45BB-A946-2D0BD70A3AAA",
@@ -87967,10 +87424,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Profondità 1",
                 "Revit-ArchDesign/GUID-68BA473F-E6F8-45BB-A946-2D0BD70A3AAA",
             ),
-            (
-                "奥行 1",
-                "Revit-ArchDesign/GUID-68BA473F-E6F8-45BB-A946-2D0BD70A3AAA",
-            ),
+            ("", ""),
             (
                 "깊이 1",
                 "Revit-ArchDesign/GUID-68BA473F-E6F8-45BB-A946-2D0BD70A3AAA",
@@ -87996,10 +87450,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "長度 2",
                 "Revit-ArchDesign/GUID-ED3E0C39-21F0-4E46-9618-B2958051C23E",
             ),
-            (
-                "支脚 2",
-                "Revit-ArchDesign/GUID-ED3E0C39-21F0-4E46-9618-B2958051C23E",
-            ),
+            ("", ""),
             (
                 "Konec 2",
                 "Revit-ArchDesign/GUID-ED3E0C39-21F0-4E46-9618-B2958051C23E",
@@ -88049,10 +87500,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "長度 1",
                 "Revit-ArchDesign/GUID-ED3E0C39-21F0-4E46-9618-B2958051C23E",
             ),
-            (
-                "支脚 1",
-                "Revit-ArchDesign/GUID-ED3E0C39-21F0-4E46-9618-B2958051C23E",
-            ),
+            ("", ""),
             (
                 "Konec 1",
                 "Revit-ArchDesign/GUID-ED3E0C39-21F0-4E46-9618-B2958051C23E",
@@ -88656,10 +88104,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Materiale della scala monolitica",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
             ),
-            (
-                "一体式階段のマテリアル",
-                "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
-            ),
+            ("", ""),
             (
                 "일체형 재료",
                 "Revit-ArchDesign/GUID-68BBA40A-64F9-4F93-BE5A-E4AD8417BAA7",
@@ -89586,18 +89031,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "最小踏板深度",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "踏板深度最小值",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Minimální hloubka stupnice",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "Minimale Auftrittsbreite",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "Profundidad de huella mínima",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -89663,10 +89102,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Altezza massima alzata",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
             ),
-            (
-                "蹴上げの最大高",
-                "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
-            ),
+            ("", ""),
             (
                 "최대 챌판 높이",
                 "Revit-ArchDesign/GUID-E36AE889-D507-4288-90BE-FCE2F120C2B6",
@@ -89859,10 +89295,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Zobrazit text kóty",
                 "Revit-DocumentPresent/GUID-7853026A-5BD4-402D-AB25-B551E9ED9EAD",
             ),
-            (
-                "Anzeigen von Bemaßungstext",
-                "Revit-DocumentPresent/GUID-7853026A-5BD4-402D-AB25-B551E9ED9EAD",
-            ),
+            ("", ""),
             (
                 "Mostrar texto de cota",
                 "Revit-DocumentPresent/GUID-7853026A-5BD4-402D-AB25-B551E9ED9EAD",
@@ -89875,10 +89308,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Mostra testo quota",
                 "Revit-DocumentPresent/GUID-7853026A-5BD4-402D-AB25-B551E9ED9EAD",
             ),
-            (
-                "寸法テキストを表示",
-                "Revit-DocumentPresent/GUID-7853026A-5BD4-402D-AB25-B551E9ED9EAD",
-            ),
+            ("", ""),
             (
                 "치수 문자 표시",
                 "Revit-DocumentPresent/GUID-7853026A-5BD4-402D-AB25-B551E9ED9EAD",
@@ -90601,10 +90031,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Umístění značky průměru",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Position von Durchmessersymbol",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Ubicación de símbolo de diámetro",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -90776,10 +90203,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sostituzioni visibilità/grafica - Modello analitico",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "V/G は解析モデルに優先",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "V/G 재지정 해석 모델",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -90866,10 +90290,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "V/G přepisuje filtry",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "V/G setzt Filter außer Kraft",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "Filtro de modificaciones de v/g",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -90882,10 +90303,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sostituzioni visibilità/grafica - Filtri",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "フィルタの V/G を上書き",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "V/G 재지정 필터",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -90935,10 +90353,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sostituzioni visibilità/grafica - Importazione",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "V/G は読み込みに優先",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "V/G 재지정 가져오기",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -90988,10 +90403,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sostituzioni visibilità/grafica [- Annotazione]",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "V/G は注釈に優先",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "V/G 재지정 주석",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -91041,10 +90453,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Sostituzioni visibilità/grafica - Modello",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "モデルの V/G を上書き",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "V/G 재지정 모델",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -91836,10 +91245,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Lunghezza segmento finale",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
             ),
-            (
-                "端部セグメントの長さ",
-                "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
-            ),
+            ("", ""),
             (
                 "끝 세그먼트 길이",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
@@ -91889,10 +91295,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Motivo segmento finale",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
             ),
-            (
-                "端部セグメントのパターン",
-                "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
-            ),
+            ("", ""),
             (
                 "끝 세그먼트 패턴",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
@@ -91942,10 +91345,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Colore segmento finale",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
             ),
-            (
-                "端部セグメントの色",
-                "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
-            ),
+            ("", ""),
             (
                 "끝 세그먼트 색상",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
@@ -91995,10 +91395,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Spessore segmento finale",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
             ),
-            (
-                "端部セグメントの太さ",
-                "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
-            ),
+            ("", ""),
             (
                 "끝 세그먼트 두께",
                 "Revit-Model/GUID-B439B9FB-E672-4A26-B239-F254610A690B",
@@ -92244,10 +91641,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Šipka úplného kroku",
                 "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
             ),
-            (
-                "Pfeil für ganzen Schritt",
-                "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
-            ),
+            ("", ""),
             (
                 "Flecha de peldaño completo",
                 "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
@@ -92925,10 +92319,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "平台轉角處的線造型",
                 "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
             ),
-            (
-                "平台拐角处的线形",
-                "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
-            ),
+            ("", ""),
             (
                 "Tvar čáry v rohu podesty",
                 "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
@@ -93031,10 +92422,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "起始符號類型",
                 "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
             ),
-            (
-                "起点符号类型",
-                "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
-            ),
+            ("", ""),
             (
                 "Typ symbolu počátku",
                 "Revit-ArchDesign/GUID-C9CEE41B-067E-4F2F-9F79-ED8EC8ABCB4A",
@@ -93084,10 +92472,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "切割標記符號大小",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
             ),
-            (
-                "剪切标记符号大小",
-                "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
-            ),
+            ("", ""),
             (
                 "Velikost symbolu označení řezu",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
@@ -93137,10 +92522,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "切割線類型",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
             ),
-            (
-                "剖面线型",
-                "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
-            ),
+            ("", ""),
             (
                 "Typ čáry řezu",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
@@ -93190,10 +92572,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "切割線角度",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
             ),
-            (
-                "剖面线角度",
-                "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
-            ),
+            ("", ""),
             (
                 "Úhel čáry řezu",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
@@ -93243,10 +92622,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "切割線延伸",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
             ),
-            (
-                "剖面线延伸",
-                "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
-            ),
+            ("", ""),
             (
                 "Přesah čáry řezu",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
@@ -93296,10 +92672,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "切割線距離",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
             ),
-            (
-                "剖面线距离",
-                "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
-            ),
+            ("", ""),
             (
                 "Mezera mezi čarami řezu",
                 "Revit-ArchDesign/GUID-E333BFA9-1624-4EC0-BBD8-E56173230F40",
@@ -93426,10 +92799,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Stile di visualizzazione sezione spezzata",
                 "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
             ),
-            (
-                "分断された切断線の表示スタイル",
-                "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
-            ),
+            ("", ""),
             (
                 "단속 단면 표시 스타일",
                 "Revit-DocumentPresent/GUID-92BCB59B-F7BE-4A7B-977D-EC064975BA2D",
@@ -93826,10 +93196,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "輔助線短斜線標記",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "尺寸界线的记号标记",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Značka zaškrtnutí vynášecí čáry",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -93903,10 +93270,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Lunghezza totale",
                 "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
             ),
-            (
-                "長さの合計",
-                "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
-            ),
+            ("", ""),
             (
                 "전체 길이",
                 "Revit-StructEng/GUID-0251B6D6-BD31-49D6-BCE2-7FE6F7493A5C",
@@ -93932,10 +93296,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "替用單位字尾",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "换算单位后缀",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Přípona alternativních jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -93985,10 +93346,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "替用單位字首",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "换算单位前缀",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Předpona alternativních jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -94144,10 +93502,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "引線短斜線標記",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "引线的记号",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Odkazová šipka",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -94327,10 +93682,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Posizione testo",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "文字の場所",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "문자 위치",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -94364,10 +93716,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Zobrazit odkazovou čáru, když je text posunut",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Führungslinie bei verschobenem Text",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Mostrar directriz al desplazarse el texto",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -94433,10 +93782,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Lunghezza spalla",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "折り曲げの長さ",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "보조선 길이",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -94470,10 +93816,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Typ odkazu",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Führungslinientyp",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Tipo de directriz",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -94486,10 +93829,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Tipo di direttrice",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "引出線の種類",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "지시선 유형",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -94629,10 +93969,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Odsazení odkazu/hranice",
                 "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
             ),
-            (
-                "Führungs-/Rand-Versatz",
-                "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
-            ),
+            ("", ""),
             (
                 "Desfase de directriz/borde",
                 "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
@@ -94804,10 +94141,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Direzione inclinazione",
                 "Revit-DocumentPresent/GUID-5CBE67A3-67E2-4351-971D-96F2CA6D9BE5",
             ),
-            (
-                "勾配の向き",
-                "Revit-DocumentPresent/GUID-5CBE67A3-67E2-4351-971D-96F2CA6D9BE5",
-            ),
+            ("", ""),
             (
                 "경사 방향",
                 "Revit-DocumentPresent/GUID-5CBE67A3-67E2-4351-971D-96F2CA6D9BE5",
@@ -94857,10 +94191,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Valore inferiore",
                 "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
             ),
-            (
-                "下面の高さ値",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
+            ("", ""),
             (
                 "하한 값",
                 "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
@@ -94963,10 +94294,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indicatore quota altimetrica come prefisso/suffisso",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "指定点高さ標示の接頭辞/接尾辞",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "고도 표시기 접두어/접미어 선택",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95069,10 +94397,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Suffisso valore inferiore",
                 "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
             ),
-            (
-                "下面の高さ値の接尾辞",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
+            ("", ""),
             (
                 "하한 값 접미어",
                 "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
@@ -95122,10 +94447,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Prefisso valore inferiore",
                 "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
             ),
-            (
-                "下面の高さ値の接頭辞",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
+            ("", ""),
             (
                 "하한 값 접두어",
                 "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
@@ -95318,10 +94640,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indikátor dolní plochy jako Předpona/Přípona",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "Anzeige für unten als Präfix/Suffix",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "Indicador inferior como prefijo/sufijo",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95334,10 +94653,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indicatore base come prefisso/suffisso",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "下面標示の接頭辞/接尾辞",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "하단 표시기 접두어/접미어 선택",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95371,10 +94687,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indikátor horní plochy jako Předpona/Přípona",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "Anzeige für oben als Präfix/Suffix",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "Indicador superior como prefijo/sufijo",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95387,10 +94700,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indicatore parte superiore come prefisso/suffisso",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "上面標示の接頭辞/接尾辞",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "상단 표시기 접두어/접미어 선택",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95424,10 +94734,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indikátor dolní plochy",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "Anzeige für unten",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "Indicador inferior",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95440,10 +94747,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indicatore base",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "下面標示",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "하단 표시기",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95477,10 +94781,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indikátor horní plochy",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "Anzeige für oben",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "Indicador superior",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95493,10 +94794,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indicatore parte superiore",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
             ),
-            (
-                "上面標示",
-                "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
-            ),
+            ("", ""),
             (
                 "상단 표시기",
                 "Revit-DocumentPresent/GUID-7FD921FB-4B58-4D8B-9F43-545657447220",
@@ -95546,10 +94844,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Posizione testo",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "文字の場所",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "문자 위치",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -95652,10 +94947,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Visualizza quote altimetriche",
                 "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
             ),
-            (
-                "表示高さ",
-                "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
-            ),
+            ("", ""),
             (
                 "고도 표시",
                 "Revit-DocumentPresent/GUID-1D61B704-1BBB-4831-8C71-00BD6A5615BF",
@@ -95734,10 +95026,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "標註字串類型",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "尺寸标注字符串类型",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Typ řetězce kóty",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -95840,10 +95129,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "內部短斜線標記",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "内部记号标记",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Vnitřní šipka",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -95893,10 +95179,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "自引線算起的文字偏移量",
                 "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
             ),
-            (
-                "文字距引线的偏移",
-                "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
-            ),
+            ("", ""),
             (
                 "Odsazení textu od odkazové čáry",
                 "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
@@ -95946,10 +95229,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "替用單位格式",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "换算单位格式",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Formát alternativních jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -96052,10 +95332,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "替用單位",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "换算单位",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Alternativní jednotky",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -96105,10 +95382,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "替用單位格式",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "换算单位格式",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Formát alternativních jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -96235,10 +95509,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Indicatore quota altimetrica",
                 "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
             ),
-            (
-                "指定点高さ標示",
-                "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
-            ),
+            ("", ""),
             (
                 "고도 표시기",
                 "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
@@ -96378,10 +95649,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Šipka u osy",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Mittelachse Häkchen",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Marca de eje",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -96582,10 +95850,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "符號的文字偏移",
                 "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
             ),
-            (
-                "文字与符号的偏移",
-                "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
-            ),
+            ("", ""),
             (
                 "Odsazení textu od symbolu",
                 "Revit-DocumentPresent/GUID-41B37358-D0B0-4789-BAF6-72F4D0CBF086",
@@ -96900,10 +96165,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "標註線延伸",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "尺寸标注延长线",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Protažení kótovací čáry",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -97067,10 +96329,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Formát jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Lineare/radiale Einheiten, Format",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Formato de unidades",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -97120,10 +96379,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Formát jednotek",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Lineare/radiale Einheiten, Format",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Formato de unidades",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -97348,10 +96604,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Stile di freccia",
                 "Revit-DocumentPresent/GUID-F45D546A-B43C-44A1-BA0E-B916126CA44C",
             ),
-            (
-                "矢印スタイル",
-                "Revit-DocumentPresent/GUID-F45D546A-B43C-44A1-BA0E-B916126CA44C",
-            ),
+            ("", ""),
             (
                 "화살표 스타일",
                 "Revit-DocumentPresent/GUID-F45D546A-B43C-44A1-BA0E-B916126CA44C",
@@ -97642,10 +96895,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "輔助線到元素的間隙",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "到图元的尺寸界线间隙",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Odsazení vynášecí čáry od prvku",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -98013,10 +97263,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "頁籤大小",
                 "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
             ),
-            (
-                "选项卡尺寸",
-                "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
-            ),
+            ("", ""),
             (
                 "Velikost tabulátoru",
                 "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
@@ -98037,10 +97284,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Dimensioni tabulazione",
                 "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
             ),
-            (
-                "タブサイズ",
-                "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
-            ),
+            ("", ""),
             (
                 "탭 크기",
                 "Revit-Customize/GUID-49F90FAC-BDF3-4D4E-968F-73F06BB2C1D3",
@@ -98119,18 +97363,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "短斜線標記",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "记号标记",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Šipka",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
             ),
-            (
-                "Kennzeichen",
-                "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
-            ),
+            ("", ""),
             (
                 "Marca",
                 "Revit-DocumentPresent/GUID-0AD483DF-3721-4F5E-96DB-720A80231620",
@@ -98445,10 +97683,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Horizontální zarovnání",
                 "Revit-ArchDesign/GUID-1D4FBEBA-B4FB-465C-9CD6-E882D05D7A34",
             ),
-            (
-                "Horizontal ausrichten",
-                "Revit-ArchDesign/GUID-1D4FBEBA-B4FB-465C-9CD6-E882D05D7A34",
-            ),
+            ("", ""),
             (
                 "Alineación horizontal",
                 "Revit-ArchDesign/GUID-1D4FBEBA-B4FB-465C-9CD6-E882D05D7A34",
@@ -99020,10 +98255,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "頂部腹板圓角",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "顶部腹板圆角",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Zaoblení horní části stojiny",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -99126,10 +98358,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "斜凸緣角度",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "倾斜翼缘角度",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Úhel skloněné příruby",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -99921,10 +99150,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "螺栓直徑較短凸緣",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "较短翼缘的螺栓直径",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Průměr šroubu kratší příruby",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -100769,10 +99995,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "腹板圓角",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "腹板圆角",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Zaoblení stojiny",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -100822,10 +100045,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "凸緣圓角",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "翼缘圆角",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Zaoblení příruby",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -100928,10 +100148,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "腹板厚度",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "腹板厚度",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Tloušťka stojiny",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -100952,10 +100169,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Spessore anima",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "ウェブ厚",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "웹 두께",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -100981,10 +100195,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "凸緣厚度",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "翼缘厚度",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Tloušťka příruby",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101005,10 +100216,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Spessore ala",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "フランジ厚",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "플랜지 두께",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101201,10 +100409,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Plastický modul průřezu k vedlejší ose",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "Plastizitätsmodul schwache Achse",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Módulo plástico en el eje débil",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101254,10 +100459,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Plastický modul průřezu k hlavní ose",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "Plastizitätsmodul starke Achse",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Módulo plástico en el eje fuerte",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101307,10 +100509,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Pružný modul průřezu k vedlejší ose",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "Elastizitätsmodul schwache Achse",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Módulo elástico en el eje débil",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101323,10 +100522,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Modulo di elasticità asse debole",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "弾性断面係数の弱軸",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "탄성 계수 약한 축",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101360,10 +100556,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Pružný modul průřezu k hlavní ose",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "Elastizitätsmodul starke Achse",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Módulo elástico en el eje fuerte",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101376,10 +100569,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Modulo di elasticità asse forte",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "弾性断面係数(強軸)",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "탄성 계수 강한 축",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101641,10 +100831,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Baricentro verticale",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "垂直方向の図心",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "중심 수직",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101694,10 +100881,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Baricentro orizzontale",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "水平方向の図心",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "중심 수평",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101723,10 +100907,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "剖面面積",
                 "Revit-Customize/GUID-CCD6FCC1-C321-4526-A391-4AF12D9954A4",
             ),
-            (
-                "剖面面积",
-                "Revit-Customize/GUID-CCD6FCC1-C321-4526-A391-4AF12D9954A4",
-            ),
+            ("", ""),
             (
                 "Plocha průřezu",
                 "Revit-Customize/GUID-CCD6FCC1-C321-4526-A391-4AF12D9954A4",
@@ -101882,10 +101063,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "剖面造型",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
             ),
-            (
-                "剖面形状",
-                "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
-            ),
+            ("", ""),
             (
                 "Tvar řezu",
                 "Revit-StructEng/GUID-090A395D-6EB1-4155-9A1B-9AFABA19D17D",
@@ -101988,10 +101166,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "可見光透射率",
                 "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
             ),
-            (
-                "可见光透射比",
-                "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
-            ),
+            ("", ""),
             (
                 "Propustnost viditelného světla",
                 "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
@@ -102012,10 +101187,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Trasmittanza luminosa",
                 "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
             ),
-            (
-                "可視光透過率",
-                "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
-            ),
+            ("", ""),
             (
                 "가시 광선 투과율",
                 "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
@@ -102041,10 +101213,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "日光熱增量係數",
                 "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
             ),
-            (
-                "太阳得热系数",
-                "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
-            ),
+            ("", ""),
             (
                 "Koeficient slunečního tepelného zisku",
                 "Revit-ArchDesign/GUID-29905EE0-3D7D-422E-A627-5A7A8AC34D7B",
@@ -102094,18 +101263,12 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "熱阻 (R)",
                 "Revit-ArchDesign/GUID-0075FD89-34FB-464D-9523-6FAAC05AC3AE",
             ),
-            (
-                "热阻 (R)",
-                "Revit-ArchDesign/GUID-0075FD89-34FB-464D-9523-6FAAC05AC3AE",
-            ),
+            ("", ""),
             (
                 "Tepelný odpor (R)",
                 "Revit-ArchDesign/GUID-0075FD89-34FB-464D-9523-6FAAC05AC3AE",
             ),
-            (
-                "Wärmewiderstand (R)",
-                "Revit-ArchDesign/GUID-0075FD89-34FB-464D-9523-6FAAC05AC3AE",
-            ),
+            ("", ""),
             (
                 "Resistencia térmica (R)",
                 "Revit-ArchDesign/GUID-0075FD89-34FB-464D-9523-6FAAC05AC3AE",
@@ -103268,10 +102431,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Symbolická reprezentace",
                 "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
             ),
-            (
-                "Symbolische Darstellung",
-                "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
-            ),
+            ("", ""),
             (
                 "Representación simbólica",
                 "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
@@ -103337,10 +102497,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Orientamento bloccato",
                 "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
             ),
-            (
-                "ロックされた方向",
-                "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
-            ),
+            ("", ""),
             (
                 "잠긴 방향",
                 "Revit-DocumentPresent/GUID-5492CCEA-EDE1-4C2E-B828-6D7077465441",
@@ -103443,10 +102600,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Ritaglio verticale",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "下方クリップ",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "깊게 자르기",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -103602,10 +102756,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Dettaglio di riferimento",
                 "Revit-DocumentPresent/GUID-8BEBCEF0-CE2C-4635-8C7C-9D03503C0B79",
             ),
-            (
-                "詳細を参照",
-                "Revit-DocumentPresent/GUID-8BEBCEF0-CE2C-4635-8C7C-9D03503C0B79",
-            ),
+            ("", ""),
             (
                 "참조 상세",
                 "Revit-DocumentPresent/GUID-8BEBCEF0-CE2C-4635-8C7C-9D03503C0B79",
@@ -103761,10 +102912,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Visualizza modello",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "表示するモデル",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "모델 표시",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -103949,10 +103097,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "比例值 1：",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "比例值 1：",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "Hodnota měřítka 1:",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -103973,10 +103118,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Valore scala 1:",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "スケール値 1:",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "축척 값 1:",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -104079,10 +103221,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Impostazioni di rendering",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
             ),
-            (
-                "レンダリング設定",
-                "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
-            ),
+            ("", ""),
             (
                 "렌더링 설정",
                 "Revit-Customize/GUID-66D789A8-AB92-4AF0-B884-DF3A3302E117",
@@ -104585,10 +103724,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "相等顯示",
                 "Revit-DocumentPresent/GUID-46D6AD78-A6D6-4A6C-B9B8-58876AA87C05",
             ),
-            (
-                "相等显示",
-                "Revit-DocumentPresent/GUID-46D6AD78-A6D6-4A6C-B9B8-58876AA87C05",
-            ),
+            ("", ""),
             (
                 "Zobrazení rovnosti",
                 "Revit-DocumentPresent/GUID-46D6AD78-A6D6-4A6C-B9B8-58876AA87C05",
@@ -104609,10 +103745,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Visualizzazione uguaglianza",
                 "Revit-DocumentPresent/GUID-46D6AD78-A6D6-4A6C-B9B8-58876AA87C05",
             ),
-            (
-                "EQ 表示",
-                "Revit-DocumentPresent/GUID-46D6AD78-A6D6-4A6C-B9B8-58876AA87C05",
-            ),
+            ("", ""),
             (
                 "동일 화면표시",
                 "Revit-DocumentPresent/GUID-46D6AD78-A6D6-4A6C-B9B8-58876AA87C05",
@@ -105115,10 +104248,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "柱位置標記",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
             ),
-            (
-                "柱定位轴线",
-                "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
-            ),
+            ("", ""),
             (
                 "Značka umístění sloupu",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
@@ -105139,10 +104269,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Contrassegno di posizione dei pilastri",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
             ),
-            (
-                "柱の位置マーク",
-                "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
-            ),
+            ("", ""),
             (
                 "기둥 위치 표시",
                 "Revit-StructEng/GUID-5EBA5016-4E9C-4131-BD5B-36FC99A92846",
@@ -106040,10 +105167,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Nome del tipo",
                 "Revit-Customize/GUID-7C0C2F22-8E85-4576-BD84-D710AC6D4B6F",
             ),
-            (
-                "[タイプ名]",
-                "Revit-Customize/GUID-7C0C2F22-8E85-4576-BD84-D710AC6D4B6F",
-            ),
+            ("", ""),
             (
                 "유형 이름",
                 "Revit-Customize/GUID-7C0C2F22-8E85-4576-BD84-D710AC6D4B6F",
@@ -106069,10 +105193,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "類型 ID",
                 "Revit-DocumentPresent/GUID-7BDE03A7-0B79-473D-A3AE-00E313CC3786",
             ),
-            (
-                "类型 Id",
-                "Revit-DocumentPresent/GUID-7BDE03A7-0B79-473D-A3AE-00E313CC3786",
-            ),
+            ("", ""),
             (
                 "ID typu",
                 "Revit-DocumentPresent/GUID-7BDE03A7-0B79-473D-A3AE-00E313CC3786",
@@ -106093,10 +105214,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "ID tipo",
                 "Revit-DocumentPresent/GUID-7BDE03A7-0B79-473D-A3AE-00E313CC3786",
             ),
-            (
-                "タイプ Id",
-                "Revit-DocumentPresent/GUID-7BDE03A7-0B79-473D-A3AE-00E313CC3786",
-            ),
+            ("", ""),
             (
                 "유형 ID",
                 "Revit-DocumentPresent/GUID-7BDE03A7-0B79-473D-A3AE-00E313CC3786",
@@ -106175,10 +105293,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "距樓層的高度偏移",
                 "Revit-ArchDesign/GUID-3A26F511-C3E7-4561-820C-62AD520F1358",
             ),
-            (
-                "相对标高",
-                "Revit-ArchDesign/GUID-3A26F511-C3E7-4561-820C-62AD520F1358",
-            ),
+            ("", ""),
             (
                 "Výškové odsazení od podlaží",
                 "Revit-ArchDesign/GUID-3A26F511-C3E7-4561-820C-62AD520F1358",
@@ -106199,10 +105314,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Offset di altezza",
                 "Revit-ArchDesign/GUID-3A26F511-C3E7-4561-820C-62AD520F1358",
             ),
-            (
-                "レベルからの高さオフセット",
-                "Revit-ArchDesign/GUID-3A26F511-C3E7-4561-820C-62AD520F1358",
-            ),
+            ("", ""),
             (
                 "레벨로부터 높이 간격띄우기",
                 "Revit-ArchDesign/GUID-3A26F511-C3E7-4561-820C-62AD520F1358",
@@ -107500,10 +106612,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "插入處不斷開",
                 "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
             ),
-            (
-                "不在嵌入对象处打断",
-                "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
-            ),
+            ("", ""),
             (
                 "Nepřerušit u vložených objektů",
                 "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
@@ -107553,10 +106662,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "預設端點延伸長度",
                 "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
             ),
-            (
-                "默认端点延伸长度",
-                "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
-            ),
+            ("", ""),
             (
                 "Výchozí délka koncového prodloužení",
                 "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
@@ -107577,10 +106683,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Lunghezza di default estensione finale",
                 "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
             ),
-            (
-                "既定の端部の延長長さ",
-                "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
-            ),
+            ("", ""),
             (
                 "기본 끝 확장 길이",
                 "Revit-StructEng/GUID-BA5CCD13-82D2-421B-A3FA-B7155A916E4C",
@@ -107720,10 +106823,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Omezení nosníku v půdorysu",
                 "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
             ),
-            (
-                "Trägerkürzung in Grundriss",
-                "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
-            ),
+            ("", ""),
             (
                 "Reducción de viga en plano",
                 "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
@@ -107789,10 +106889,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Offset livello iniziale",
                 "Revit-StructEng/GUID-3BB898A5-CD06-4091-AB37-908686B1A807",
             ),
-            (
-                "開始レベル オフセット",
-                "Revit-StructEng/GUID-3BB898A5-CD06-4091-AB37-908686B1A807",
-            ),
+            ("", ""),
             (
                 "시작 레벨 간격띄우기",
                 "Revit-StructEng/GUID-3BB898A5-CD06-4091-AB37-908686B1A807",
@@ -107842,10 +106939,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Esporta sempre come geometria",
                 "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
             ),
-            (
-                "常にジオメトリとして書き出す",
-                "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
-            ),
+            ("", ""),
             (
                 "항상 형상으로 내보내기",
                 "Revit-StructEng/GUID-14405018-2947-4E3B-B5CA-4CD500C0A71D",
@@ -108833,10 +107927,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Koncové uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Ende",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace final",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -108886,10 +107977,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Počáteční uvolnění",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
             ),
-            (
-                "Auflagerbedingung Anfang",
-                "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
-            ),
+            ("", ""),
             (
                 "Enlace inicial",
                 "Revit-StructEng/GUID-8455AFFA-4035-4D5F-A8A8-533F917D994D",
@@ -109061,10 +108149,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Posizione simbolo bacchetta",
                 "Revit-StructEng/GUID-3BB898A5-CD06-4091-AB37-908686B1A807",
             ),
-            (
-                "記号の位置を貼り付け",
-                "Revit-StructEng/GUID-3BB898A5-CD06-4091-AB37-908686B1A807",
-            ),
+            ("", ""),
             (
                 "기호 부착 위치",
                 "Revit-StructEng/GUID-3BB898A5-CD06-4091-AB37-908686B1A807",
@@ -109432,10 +108517,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Chiusura muro",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
             ),
-            (
-                "壁の納まり",
-                "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
-            ),
+            ("", ""),
             (
                 "벽 마무리",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
@@ -110211,10 +109293,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Hrubá šířka",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
             ),
-            (
-                "Ungefähre Breite",
-                "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
-            ),
+            ("", ""),
             (
                 "Anchura aproximada",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
@@ -110264,10 +109343,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Hrubá výška",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
             ),
-            (
-                "Ungefähre Höhe",
-                "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
-            ),
+            ("", ""),
             (
                 "Altura aproximada",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
@@ -110317,10 +109393,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Funkce",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
             ),
-            (
-                "Operation",
-                "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
-            ),
+            ("", ""),
             (
                 "Operación",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
@@ -110333,10 +109406,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Operazione",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
             ),
-            (
-                "操作",
-                "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
-            ),
+            ("", ""),
             (
                 "작동",
                 "Revit-ArchDesign/GUID-1C03B7DF-89EE-48B1-B501-571745B1D513",
@@ -110945,10 +110015,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "主體",
                 "Revit-Customize/GUID-6EA8BEC0-4E78-4E68-BDD4-3E9AA2672F07",
             ),
-            (
-                "基于主体",
-                "Revit-Customize/GUID-6EA8BEC0-4E78-4E68-BDD4-3E9AA2672F07",
-            ),
+            ("", ""),
             (
                 "Hostované",
                 "Revit-Customize/GUID-6EA8BEC0-4E78-4E68-BDD4-3E9AA2672F07",
@@ -110969,10 +110036,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Ospitata",
                 "Revit-Customize/GUID-6EA8BEC0-4E78-4E68-BDD4-3E9AA2672F07",
             ),
-            (
-                "ホストされる",
-                "Revit-Customize/GUID-6EA8BEC0-4E78-4E68-BDD4-3E9AA2672F07",
-            ),
+            ("", ""),
             (
                 "호스트됨",
                 "Revit-Customize/GUID-6EA8BEC0-4E78-4E68-BDD4-3E9AA2672F07",
@@ -111022,10 +110086,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Prolunga nel muro (al nucleo)",
                 "Revit-ArchDesign/GUID-682B3B19-A4F7-4EE7-B994-F3EA3154BB08",
             ),
-            (
-                "壁(芯材)まで延長",
-                "Revit-ArchDesign/GUID-682B3B19-A4F7-4EE7-B994-F3EA3154BB08",
-            ),
+            ("", ""),
             (
                 "벽(구조체)으로 확장",
                 "Revit-ArchDesign/GUID-682B3B19-A4F7-4EE7-B994-F3EA3154BB08",
@@ -111181,10 +110242,7 @@ pub(super) const LOCALIZED: &[(i64, [(&str, &str); 12])] = &[
                 "Incorpora automaticamente",
                 "Revit-ArchDesign/GUID-B9263125-74EA-4C78-AAAA-F40916EFE2DB",
             ),
-            (
-                "自動的に埋め込む",
-                "Revit-ArchDesign/GUID-B9263125-74EA-4C78-AAAA-F40916EFE2DB",
-            ),
+            ("", ""),
             (
                 "자동으로 내장",
                 "Revit-ArchDesign/GUID-B9263125-74EA-4C78-AAAA-F40916EFE2DB",
