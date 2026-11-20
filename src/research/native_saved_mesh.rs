@@ -107,6 +107,22 @@ fn point<const N: usize>(v: &Fv) -> Result<[f64; N]> {
     }
     Ok(p)
 }
+/// The parameter an edge's samples change, where they hold the other fixed: `Some(0)` for
+/// an interval of `u`, `Some(1)` for one of `v`, `None` for an edge across both.
+pub(crate) fn isoparametric_axis(samples: &[[f64; 2]]) -> Option<usize> {
+    let (start, end) = (*samples.first()?, *samples.last()?);
+    let axis = if (start[1] - end[1]).abs() < 1e-7 && (start[0] - end[0]).abs() > 1e-7 {
+        0
+    } else if (start[0] - end[0]).abs() < 1e-7 && (start[1] - end[1]).abs() > 1e-7 {
+        1
+    } else {
+        return None;
+    };
+    samples
+        .iter()
+        .all(|uv| (uv[1 - axis] - start[1 - axis]).abs() < 1e-7)
+        .then_some(axis)
+}
 fn close(a: [f64; 2], b: [f64; 2]) -> bool {
     (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7
 }
@@ -222,10 +238,19 @@ fn refined_plane_edge(
         .resolve(other, &g.objects[other].fields["m_pSurf"])?
         .context("shared edge surface missing")?;
     let kind = g.objects[other_surface].class_name.as_str();
-    if !matches!(kind, "CylSurf" | "SurfRev" | "RuledSurf") {
+    if !matches!(kind, "CylSurf" | "SurfRev" | "RuledSurf" | "ConeSurf") {
         return Ok(original);
     }
     type SurfaceEval = Box<dyn Fn([f64; 2]) -> Result<[f64; 3]>>;
+    // How near two knots of the neighbour's grid, or a knot and an end of the edge, are one
+    // point: a trimmed face's strip sides merge at 1e-9 (`conforming_strips`).
+    let mut knot_tol = 1e-12;
+    let mut chord_breaks: Option<(
+        Vec<f64>,
+        crate::native_parametric_surface::ParametricSurface,
+    )> = None;
+    // The `u` values a trimmed curved neighbour's strips are cut at, where it has loops.
+    let mut strip_u: Option<Vec<f64>> = None;
     let (u_values, v_values, evaluate): (Vec<f64>, Vec<f64>, SurfaceEval) = if kind == "CylSurf" {
         let profile = CylinderTessellationProfile::default();
         let mesh = cylinder_face(g, other, profile)?;
@@ -268,9 +293,40 @@ fn refined_plane_edge(
         (us, vs, eval)
     } else {
         let grid = crate::native_parametric_mesh::face_grid(g, other)?;
+        // A cone is meshed by its own code unless one of its edges is a chord: the
+        // planes beside the other cones keep their saved points.
+        if kind == "ConeSurf"
+            && (grid.chord_edges.is_empty()
+                || crate::native_parametric_mesh::left_handed_cone(&grid.surface))
+        {
+            return Ok(original);
+        }
+        // Along an edge that crosses both parameters of a face that draws it straight
+        // between its saved points, the plane draws it so too, with a point wherever the
+        // face's strips cross it: both faces then have the same points on it.
+        strip_u = grid
+            .loops
+            .as_ref()
+            .map(|loops| crate::native_parametric_mesh::strip_breaks(loops, &grid.u));
+        if grid.chord_edges.contains(&edge_index) {
+            chord_breaks = Some((
+                strip_u.clone().context("chord edge without loops")?,
+                grid.surface.clone(),
+            ));
+        }
+        // A trimmed face's strip sides hold the equal steps of `v` and the saved points,
+        // a rectangular one's grid every saved value.
+        if grid.loops.is_some() {
+            knot_tol = 1e-9;
+        }
+        let v = if grid.loops.is_some() {
+            grid.v_lattice
+        } else {
+            grid.v
+        };
         (
             grid.u,
-            grid.v,
+            v,
             Box::new(move |uv: [f64; 2]| grid.surface.evaluate(uv[0], uv[1])),
         )
     };
@@ -288,19 +344,11 @@ fn refined_plane_edge(
     samples.push(point::<2>(&ends[1]["uv"][other_side])?);
     let start = samples[0];
     let end = *samples.last().unwrap();
-    let axis = if (start[1] - end[1]).abs() < 1e-7 && (start[0] - end[0]).abs() > 1e-7 {
-        0
-    } else if (start[0] - end[0]).abs() < 1e-7 && (start[1] - end[1]).abs() > 1e-7 {
-        1
-    } else {
-        bail!("shared curved edge is not an isoparametric interval")
+    let axis = match (isoparametric_axis(&samples), &chord_breaks) {
+        (Some(axis), _) => Some(axis),
+        (None, Some(_)) => None,
+        (None, None) => bail!("shared curved edge is not an isoparametric interval"),
     };
-    ensure!(
-        samples
-            .iter()
-            .all(|uv| (uv[1 - axis] - start[1 - axis]).abs() < 1e-7),
-        "shared curved edge changes its fixed parameter"
-    );
     let plane_index = index
         .resolve(face, &g.objects[face].fields["m_pSurf"])?
         .context("plane surface missing")?;
@@ -321,8 +369,7 @@ fn refined_plane_edge(
         det.is_finite() && det > 1e-24,
         "singular shared plane basis"
     );
-    let project = |uv: [f64; 2]| -> Result<[f64; 2]> {
-        let q = evaluate(uv)?;
+    let project_point = |q: [f64; 3]| -> Result<[f64; 2]> {
         let d = std::array::from_fn(|k| q[k] - origin[k]);
         let dx = dot(d, x);
         let dy = dot(d, y);
@@ -336,6 +383,7 @@ fn refined_plane_edge(
         );
         Ok(p)
     };
+    let project = |uv: [f64; 2]| -> Result<[f64; 2]> { project_point(evaluate(uv)?) };
     ensure!(
         samples.len() == original.len(),
         "shared edge sample count mismatch"
@@ -346,13 +394,73 @@ fn refined_plane_edge(
             "shared edge surface samples disagree"
         );
     }
-    let knots = if axis == 0 { u_values } else { v_values };
+    let Some(axis) = axis else {
+        // The edge's saved points, and a point on each span between them wherever the
+        // curved face's strips cross it.
+        let (breaks, surface) = chord_breaks.context("chord breaks")?;
+        let mut out: Vec<[f64; 2]> = Vec::new();
+        for (i, a) in samples.iter().enumerate() {
+            out.push(project(*a)?);
+            let Some(b) = samples.get(i + 1) else {
+                continue;
+            };
+            if (a[0] - b[0]).abs() <= 1e-12 {
+                // A span along one `u`: the curved face's strip sides hold the grid's `v`
+                // values there, on the surface.
+                let (lo, hi) = (a[1].min(b[1]), a[1].max(b[1]));
+                let mut inside = v_values
+                    .iter()
+                    .copied()
+                    .filter(|v| *v > lo + 1e-9 && *v < hi - 1e-9)
+                    .collect::<Vec<_>>();
+                if a[1] > b[1] {
+                    inside.reverse();
+                }
+                for v in inside {
+                    out.push(project([a[0], v])?);
+                }
+                continue;
+            }
+            let (lo, hi) = (a[0].min(b[0]), a[0].max(b[0]));
+            let mut inside = breaks
+                .iter()
+                .copied()
+                .filter(|u| *u > lo + 1e-9 && *u < hi - 1e-9)
+                .collect::<Vec<_>>();
+            if a[0] > b[0] {
+                inside.reverse();
+            }
+            let (first, last) = (project(*a)?, project(*b)?);
+            for u in inside {
+                let t = (u - a[0]) / (b[0] - a[0]);
+                let p = project_point(crate::native_parametric_mesh::chord_point(
+                    &surface, *a, *b, t,
+                )?)?;
+                // a point that is an end of the span (`CHORD_SNAP_FEET`) is the end's
+                let same = |q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9;
+                if !same(first) && !same(last) {
+                    out.push(p);
+                }
+            }
+        }
+        return Ok(out);
+    };
+    let knots = if axis == 0 {
+        strip_u.unwrap_or(u_values)
+    } else {
+        v_values
+    };
     let lo = start[axis].min(end[axis]);
     let hi = start[axis].max(end[axis]);
+    // the edge's own saved points are knots too: a trimmed curved face's strip sides hold
+    // them with the equal steps
     let mut values = knots
         .into_iter()
-        .filter(|v| *v > lo + 1e-12 && *v < hi - 1e-12)
+        .chain(samples.iter().map(|sample| sample[axis]))
+        .filter(|v| *v > lo + knot_tol && *v < hi - knot_tol)
         .collect::<Vec<_>>();
+    values.sort_by(f64::total_cmp);
+    values.dedup_by(|a, b| (*a - *b).abs() <= knot_tol);
     values.insert(0, lo);
     values.push(hi);
     if start[axis] > end[axis] {
@@ -406,14 +514,15 @@ fn ring(
     face: usize,
     li: usize,
 ) -> Result<Vec<[f64; 2]>> {
-    ring_impl(g, index, face, li, false)
+    ring_impl(g, index, face, li, false, false)
 }
 fn ring_impl(
     g: &ObjectGraph,
     index: &PointerIndex<'_>,
     face: usize,
     li: usize,
-    refine_plane: bool,
+    plane: bool,
+    refine: bool,
 ) -> Result<Vec<[f64; 2]>> {
     let l = &g.objects[li];
     ensure!(
@@ -459,7 +568,7 @@ fn ring_impl(
             pts.push(point::<2>(&p["uv"][side])?)
         }
         pts.push(point::<2>(&endpoints[1]["uv"][side])?);
-        if refine_plane {
+        if plane && refine {
             // where the curved neighbour's parameters do not give
             // the edge (a slanted or curved trim there), keep Revit's own
             // samples of the edge, which the neighbour's loop also uses.
@@ -481,11 +590,7 @@ fn ring_impl(
     // A plane's parameters are feet along its unit axes; a curved surface's
     // are not, and keep the exact joint.
     let meet = |a: [f64; 2], b: [f64; 2]| {
-        if refine_plane {
-            joined(a, b)
-        } else {
-            close(a, b)
-        }
+        if plane { joined(a, b) } else { close(a, b) }
     };
     let mut output = None;
     for reverse in [false, true] {
@@ -552,7 +657,7 @@ pub fn face(g: &ObjectGraph, fi: usize) -> Result<Option<FaceMesh>> {
 fn face_indexed(g: &ObjectGraph, index: &PointerIndex<'_>, fi: usize) -> Result<Option<FaceMesh>> {
     let f = g.objects.get(fi).context("face index")?;
     ensure!(f.class_name == "Face", "not Face");
-    let Some(mut li) = index.resolve(fi, &f.fields["m_pFirstLoop"])? else {
+    let Some(li) = index.resolve(fi, &f.fields["m_pFirstLoop"])? else {
         return Ok(None);
     };
     // a face split into regions (Revit's Split Face) keeps its
@@ -604,123 +709,131 @@ fn face_indexed(g: &ObjectGraph, index: &PointerIndex<'_>, fi: usize) -> Result<
     for v in &mut normal {
         *v /= if orient { norm } else { -norm }
     }
-    let mut loops = Vec::new();
-    let mut seen = BTreeSet::new();
-    loop {
-        ensure!(seen.insert(li), "loop-list cycle");
-        loops.push(ring_impl(g, index, fi, li, true)?);
-        match index.resolve(li, &g.objects[li].fields["m_nextLoop"])? {
-            Some(next) => li = next,
-            None => break,
-        }
-    }
-    // A face can contain multiple disconnected outer rings, with nested holes.
-    let depths: Vec<_> = loops
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            loops
-                .iter()
-                .enumerate()
-                .filter(|(j, s)| *j != i && inside(r[0], s))
-                .count()
-        })
-        .collect();
-    let mut vertices = Vec::new();
-    let mut triangles = Vec::new();
-    for (i, outer) in loops
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| depths[*i] % 2 == 0)
-    {
-        let mut pts = outer.clone();
-        let mut holes = Vec::new();
-        let mut boundary_edges = BTreeSet::new();
-        let mut add_boundary_edges = |start: usize, end: usize| {
-            for k in start..end {
-                let a = k as u32;
-                let b = (if k + 1 == end { start } else { k + 1 }) as u32;
-                boundary_edges.insert((a.min(b), a.max(b)));
-            }
-        };
-        add_boundary_edges(0, pts.len());
-        let mut expected = area(outer).abs();
-        for (j, h) in loops.iter().enumerate() {
-            if depths[j] == depths[i] + 1 && inside(h[0], outer) {
-                holes.push(pts.len() as u32);
-                let start = pts.len();
-                pts.extend_from_slice(h);
-                add_boundary_edges(start, pts.len());
-                expected -= area(h).abs()
+    let first_loop = li;
+    let build = |refine: bool| -> Result<Option<FaceMesh>> {
+        let mut li = first_loop;
+        let mut loops = Vec::new();
+        let mut seen = BTreeSet::new();
+        loop {
+            ensure!(seen.insert(li), "loop-list cycle");
+            loops.push(ring_impl(g, index, fi, li, true, refine)?);
+            match index.resolve(li, &g.objects[li].fields["m_nextLoop"])? {
+                Some(next) => li = next,
+                None => break,
             }
         }
-        let mut ts = Vec::<u32>::new();
-        earcut::Earcut::new().earcut(pts.iter().copied(), &holes, &mut ts);
-        ensure!(
-            !ts.is_empty() && ts.len().is_multiple_of(3),
-            "triangulation failed"
-        );
-        let mut earcut_triangles = ts
-            .chunks_exact(3)
-            .map(|t| [t[0], t[1], t[2]])
-            .collect::<Vec<_>>();
-        ensure!(
-            earcut_triangles
-                .iter()
-                .flatten()
-                .all(|i| (*i as usize) < pts.len()),
-            "triangle bounds"
-        );
-        // Earcut can retain collinear points only in zero-area triangles. Drop
-        // those first so boundary restoration does not mistake them for usable
-        // incident triangles and subsequently leave a T-junction behind.
-        earcut_triangles.retain(|t| {
-            cross(pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]).abs() > 1e-12
-        });
-        retain_boundary_points(&pts, &boundary_edges, &mut earcut_triangles)?;
-        let mut sum = 0.;
-        let base = vertices.len() as u32;
-        for t in &mut earcut_triangles {
+        // A face can contain multiple disconnected outer rings, with nested holes.
+        let depths: Vec<_> = loops
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                loops
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, s)| *j != i && inside(r[0], s))
+                    .count()
+            })
+            .collect();
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for (i, outer) in loops
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| depths[*i] % 2 == 0)
+        {
+            let mut pts = outer.clone();
+            let mut holes = Vec::new();
+            let mut boundary_edges = BTreeSet::new();
+            let mut add_boundary_edges = |start: usize, end: usize| {
+                for k in start..end {
+                    let a = k as u32;
+                    let b = (if k + 1 == end { start } else { k + 1 }) as u32;
+                    boundary_edges.insert((a.min(b), a.max(b)));
+                }
+            };
+            add_boundary_edges(0, pts.len());
+            let mut expected = area(outer).abs();
+            for (j, h) in loops.iter().enumerate() {
+                if depths[j] == depths[i] + 1 && inside(h[0], outer) {
+                    holes.push(pts.len() as u32);
+                    let start = pts.len();
+                    pts.extend_from_slice(h);
+                    add_boundary_edges(start, pts.len());
+                    expected -= area(h).abs()
+                }
+            }
+            let mut ts = Vec::<u32>::new();
+            earcut::Earcut::new().earcut(pts.iter().copied(), &holes, &mut ts);
             ensure!(
-                t.iter().all(|v| (*v as usize) < pts.len()),
+                !ts.is_empty() && ts.len().is_multiple_of(3),
+                "triangulation failed"
+            );
+            let mut earcut_triangles = ts
+                .chunks_exact(3)
+                .map(|t| [t[0], t[1], t[2]])
+                .collect::<Vec<_>>();
+            ensure!(
+                earcut_triangles
+                    .iter()
+                    .flatten()
+                    .all(|i| (*i as usize) < pts.len()),
                 "triangle bounds"
             );
-            let a = cross(pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]);
-            sum += a.abs() / 2.;
-            if a.abs() <= 1e-12 {
-                continue;
+            // Earcut can retain collinear points only in zero-area triangles. Drop
+            // those first so boundary restoration does not mistake them for usable
+            // incident triangles and subsequently leave a T-junction behind.
+            earcut_triangles.retain(|t| {
+                cross(pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]).abs() > 1e-12
+            });
+            retain_boundary_points(&pts, &boundary_edges, &mut earcut_triangles)?;
+            let mut sum = 0.;
+            let base = vertices.len() as u32;
+            for t in &mut earcut_triangles {
+                ensure!(
+                    t.iter().all(|v| (*v as usize) < pts.len()),
+                    "triangle bounds"
+                );
+                let a = cross(pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]);
+                sum += a.abs() / 2.;
+                if a.abs() <= 1e-12 {
+                    continue;
+                }
+                if (a > 0.) != orient {
+                    t.swap(1, 2)
+                }
+                triangles.push([base + t[0], base + t[1], base + t[2]])
             }
-            if (a > 0.) != orient {
-                t.swap(1, 2)
+            ensure!(
+                (sum - expected).abs() <= 1e-7 * expected.max(1.),
+                "triangulated area mismatch: {sum} vs {expected}"
+            );
+            for uv in pts {
+                vertices.push(std::array::from_fn(|k| {
+                    origin[k] + uv[0] * x[k] + uv[1] * y[k]
+                }))
             }
-            triangles.push([base + t[0], base + t[1], base + t[2]])
         }
-        ensure!(
-            (sum - expected).abs() <= 1e-7 * expected.max(1.),
-            "triangulated area mismatch: {sum} vs {expected}"
-        );
-        for uv in pts {
-            vertices.push(std::array::from_fn(|k| {
-                origin[k] + uv[0] * x[k] + uv[1] * y[k]
-            }))
+        if triangles.is_empty() {
+            bail!("no bounded triangles")
         }
-    }
-    if triangles.is_empty() {
-        bail!("no bounded triangles")
-    }
-    let vertex_count = vertices.len();
-    Ok(Some(FaceMesh {
-        face_index: fi,
-        face_tag: f.fields["m_GInfo"]["m_tag"].as_i64().unwrap_or(-1),
-        render_style_id: crate::native_metadata::identifier(&f.fields["m_renderStyleId"])
-            .context("render style id")?,
-        vertices,
-        triangles,
-        normal,
-        normals: vec![normal; vertex_count],
-        analytic_surface: None,
-        trim_uv: Vec::new(),
-    }))
+        let vertex_count = vertices.len();
+        Ok(Some(FaceMesh {
+            face_index: fi,
+            face_tag: f.fields["m_GInfo"]["m_tag"].as_i64().unwrap_or(-1),
+            render_style_id: crate::native_metadata::identifier(&f.fields["m_renderStyleId"])
+                .context("render style id")?,
+            vertices,
+            triangles,
+            normal,
+            normals: vec![normal; vertex_count],
+            analytic_surface: None,
+            trim_uv: Vec::new(),
+        }))
+    };
+    // The plane's edges are refined to meet the curved faces beside it; a face the
+    // refinement leaves unable to be triangulated is drawn from the saved points, as
+    // it was without it.
+    build(true).or_else(|_| build(false))
 }
 
 /// for a convex trim polygon in (u, v), the span of v it covers at
@@ -1104,6 +1217,14 @@ pub fn cone_face(
         .context("face surface")?;
     let surface = &g.objects[surface_index];
     ensure!(surface.class_name == "ConeSurf", "not a cone");
+    // A cone with an edge it shares with a plane across both of its parameters is meshed
+    // with the grid and the chords the plane beside it takes (`FaceGrid::chord_edges`).
+    if crate::native_parametric_mesh::face_grid(g, fi).is_ok_and(|grid| {
+        !grid.chord_edges.is_empty()
+            && !crate::native_parametric_mesh::left_handed_cone(&grid.surface)
+    }) {
+        return crate::native_parametric_mesh::face(g, fi);
+    }
     let center = point::<3>(&surface.fields["m_center"])?;
     let x = point::<3>(&surface.fields["m_xVec"])?;
     let y = point::<3>(&surface.fields["m_yVec"])?;
