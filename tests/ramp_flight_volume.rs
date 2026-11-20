@@ -29,7 +29,7 @@ use std::path::PathBuf;
 /// A STEP file by instance id: the entity's name and the text between its outer parentheses.
 type Step = BTreeMap<u64, (String, String)>;
 
-fn parse(step: &str) -> Step {
+pub(crate) fn parse(step: &str) -> Step {
     let mut out = Step::new();
     for line in step.lines() {
         let Some((id, rest)) = line
@@ -162,15 +162,15 @@ fn profile_area(step: &Step, profile: u64, tag: &str) -> f64 {
 type MeshData = (Vec<[f64; 3]>, Vec<[usize; 3]>);
 
 /// A body: its volume in cubic metres and, where it is a mesh, its points (metres) and triangles.
-struct Body {
+pub(crate) struct Body {
     volume: f64,
-    mesh: Option<MeshData>,
+    pub(crate) mesh: Option<MeshData>,
 }
 
 /// Tag -> the one `Body` of each element of the classes that has a tessellated one, in
 /// cubic metres. Each body counts once: Revit's flight and the ramp that aggregates it have the
 /// same Tag, and the ramp holds no body of its own.
-fn body_volumes(
+pub(crate) fn body_volumes(
     step: &Step,
     classes: &[&str],
     tags: &[&str],
@@ -197,7 +197,23 @@ fn body_volumes(
             .map(|r| &step[&r])
             .find(|(_, a)| fields(a)[1] == "'Body'")
             .expect("a Body representation");
-        let item = reference(fields(&body.1)[3].trim_matches(|c| c == '(' || c == ')'));
+        let mut item = reference(fields(&body.1)[3].trim_matches(|c| c == '(' || c == ')'));
+        // A mapped item is the one item of its source's representation, placed by a
+        // transform that keeps volume and edges; a source of several items is not read.
+        while step[&item].0 == "IFCMAPPEDITEM" {
+            let (_, map) = &step[&reference(fields(&step[&item].1)[0])];
+            let (_, shape) = &step[&reference(fields(map)[1])];
+            let items: Vec<&str> = fields(shape)[3]
+                .trim_matches(|c| c == '(' || c == ')')
+                .split(',')
+                .collect();
+            assert_eq!(
+                items.len(),
+                1,
+                "tag {tag}: a mapped representation of several items"
+            );
+            item = reference(items[0]);
+        }
         let (kind, a) = &step[&item];
         let f = fields(a);
         let mut mesh = None;

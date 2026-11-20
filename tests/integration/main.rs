@@ -109,6 +109,8 @@ mod curtain_part_materials;
 mod curtain_wall_doors;
 #[path = "../curtain_walls.rs"]
 mod curtain_walls;
+#[path = "../cylinder_trim_loops.rs"]
+mod cylinder_trim_loops;
 #[path = "../data_outputs.rs"]
 mod data_outputs;
 #[path = "../decoder_diffs.rs"]
@@ -293,6 +295,8 @@ mod rvt_schedule_cli;
 mod samples;
 #[path = "../saved_mesh_budget.rs"]
 mod saved_mesh_budget;
+#[path = "../saved_symbol_refusal.rs"]
+mod saved_symbol_refusal;
 #[path = "../scan_limits.rs"]
 mod scan_limits;
 #[path = "../schema_bbox_marker.rs"]

@@ -125,6 +125,7 @@ real      project_corpus_smoke
 real      proxy_ports
 real      railing_type
 real      ramp_flight_volume
+real      cylinder_trim_loops
 real      geometry_invariants
 real      door_window_wall_negative
 real      reference_values
@@ -138,6 +139,7 @@ real      roof_extrusion_holes
 real      shaft_sketch_loops
 real      samples
 real      saved_mesh_budget
+real      saved_symbol_refusal
 real      scan_limits
 real      revit_property_sets
 real      schema_bbox_marker
