@@ -1,7 +1,7 @@
 //! A body whose shared symbol is read but not decoded says why.
 //!
-//! Real file: the BIM4LCA / Nordic LCA concrete housing as built,
-//! `ARK_NordicLCA_Housing_Concrete_As-Built.rvt` (Revit 2024; VTT, Granlund, Gravicon,
+//! Real file: the BIM4LCA / Nordic LCA concrete housing at building permit,
+//! `ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt` (Revit 2024; VTT, Granlund, Gravicon,
 //! Insinööritoimisto Kallinen; CC BY-SA 4.0,
 //! <https://cris.vtt.fi/en/publications/bim-files-to-download/>), from
 //! `RVT_NORDIC_LCA_DIR`. Skips when absent.
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 #[test]
 fn concrete_housing_names_the_refusal_of_a_symbol_it_holds() {
-    const NAME: &str = "ARK_NordicLCA_Housing_Concrete_As-Built.rvt";
+    const NAME: &str = "ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt";
     let Some(dir) = std::env::var_os("RVT_NORDIC_LCA_DIR").map(PathBuf::from) else {
         eprintln!("skipping: RVT_NORDIC_LCA_DIR is not set");
         return;
