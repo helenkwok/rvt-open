@@ -490,8 +490,9 @@ fn same_bodies(
             "{tag}: Revit's vertices {to_ours} m from ours"
         );
         // Revit's export draws the timber stair runs' curved faces in far fewer triangles
-        // than rvt-open (610 against 10,904), so rvt-open's vertices on the true surface
-        // stand 0.0095 ft off its facets: the other way holds only where Revit's body is as fine.
+        // than rvt-open (610 against 6,892), so rvt-open's vertices on the true surface
+        // stand up to 0.0095 ft off its facets: the other way holds only where Revit's body
+        // is as fine, as the ramp flight's is.
         if both_ways.contains(&tag.as_str()) {
             assert!(
                 to_revit / 0.3048 < 0.002,
