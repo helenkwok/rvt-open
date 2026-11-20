@@ -742,7 +742,7 @@ struct Span {
 /// `native_saved_mesh::refined_plane_edge`), have the same points along it; the
 /// two sides are joined by a zipper of triangles. A point on a chord's span is tagged
 /// with the chord's ends.
-pub(crate) fn conforming_strips(
+fn conforming_strips(
     loops: &[Vec<[f64; 2]>],
     u_grid: &[f64],
     v_lattice: &[f64],

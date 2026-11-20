@@ -163,7 +163,7 @@ type MeshData = (Vec<[f64; 3]>, Vec<[usize; 3]>);
 
 /// A body: its volume in cubic metres and, where it is a mesh, its points (metres) and triangles.
 pub(crate) struct Body {
-    pub(crate) volume: f64,
+    volume: f64,
     pub(crate) mesh: Option<MeshData>,
 }
 
@@ -274,7 +274,7 @@ pub(crate) fn body_volumes(
 
 /// Both exports of `model` (and Revit's `_Revit.ifc` beside it), from `RVT_NORDIC_LCA_DIR`:
 /// the volume of each body of the classes by Tag, rvt-open's and Revit's, in cubic metres.
-pub(crate) fn volumes(
+fn volumes(
     model: &str,
     classes: &[&str],
     tags: &[&str],
@@ -310,7 +310,7 @@ pub(crate) fn volumes(
 /// Directed edges of the triangles that no triangle has the reverse of, points within 1e-5 ft
 /// (3.048e-6 m) of each other taken as one point, as the body scorer counts them (it rounds
 /// the points to 1e-5 ft; here two points that straddle a rounding step are still one).
-pub(crate) fn unmatched_edges(points: &[[f64; 3]], triangles: &[[usize; 3]]) -> usize {
+fn unmatched_edges(points: &[[f64; 3]], triangles: &[[usize; 3]]) -> usize {
     const TOL: f64 = 0.3048e-5;
     let cell = |p: [f64; 3]| p.map(|x| (x / TOL).floor() as i64);
     let mut grid: std::collections::HashMap<[i64; 3], Vec<usize>> =
