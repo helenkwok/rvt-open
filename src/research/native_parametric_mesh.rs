@@ -55,13 +55,22 @@ fn keeps_saved_chords(surface: &ParametricSurface) -> bool {
     }
 }
 
+/// A span between two saved points, in a surface's parameters.
+pub(crate) type Chord = [[f64; 2]; 2];
+
+/// The edges that are chords and their spans.
+type ChordSpans = (std::collections::BTreeSet<usize>, Vec<Chord>);
+
+/// Points, triangles and beside each point the chord whose span it lies on.
+type StripMesh = (Vec<[f64; 2]>, Vec<[u32; 3]>, Vec<Option<Chord>>);
+
+/// Two points by their parameters rounded to 1e-9.
+type EndKeys = ([i64; 2], [i64; 2]);
+
 /// The edges of every loop of face `fi` that cross both of the surface's parameters and
 /// have a plane for their other face, and their spans between saved points in `fi`'s
 /// parameters.
-fn chord_spans(
-    g: &ObjectGraph,
-    fi: usize,
-) -> Result<(std::collections::BTreeSet<usize>, Vec<[[f64; 2]; 2]>)> {
+fn chord_spans(g: &ObjectGraph, fi: usize) -> Result<ChordSpans> {
     use crate::native_saved_mesh::pointer;
     let mut edges = std::collections::BTreeSet::new();
     let mut chords = Vec::new();
@@ -199,12 +208,8 @@ fn ruled_surface_component(
     Ok(component)
 }
 
+/// The grid of face `fi`'s surface, its trim one rectangle or loops.
 pub(crate) fn face_grid(g: &ObjectGraph, fi: usize) -> Result<FaceGrid> {
-    face_grid_impl(g, fi, false)
-}
-
-/// [`face_grid`] for a trim that need not be one rectangle.
-pub(crate) fn face_grid_general(g: &ObjectGraph, fi: usize) -> Result<FaceGrid> {
     face_grid_impl(g, fi, true)
 }
 
@@ -685,11 +690,10 @@ fn conforming_strips(
     u_grid: &[f64],
     v_grid: &[f64],
     chords: &[[[f64; 2]; 2]],
-) -> Result<(Vec<[f64; 2]>, Vec<[u32; 3]>, Vec<Option<[[f64; 2]; 2]>>)> {
+) -> Result<StripMesh> {
     let breaks = strip_breaks(loops, u_grid);
     ensure!(breaks.len() >= 2, "degenerate trim");
-    let mut by_ends: std::collections::HashMap<([i64; 2], [i64; 2]), [[f64; 2]; 2]> =
-        std::collections::HashMap::new();
+    let mut by_ends: std::collections::HashMap<EndKeys, Chord> = std::collections::HashMap::new();
     let k2 = |p: [f64; 2]| [key(p[0]), key(p[1])];
     for &[a, b] in chords {
         by_ends.insert((k2(a), k2(b)), [a, b]);

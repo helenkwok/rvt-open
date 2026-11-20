@@ -287,7 +287,7 @@ fn refined_plane_edge(
         });
         (us, vs, eval)
     } else {
-        let grid = crate::native_parametric_mesh::face_grid_general(g, other)?;
+        let grid = crate::native_parametric_mesh::face_grid(g, other)?;
         // Along an edge that crosses both parameters of a face that draws it straight
         // between its saved points, the plane draws it so too, with a point wherever the
         // face's strips cross it: both faces then have the same points on it.

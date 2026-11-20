@@ -337,8 +337,8 @@ fn centroid(mesh: Mesh) -> [f64; 3] {
             + a[2] * (b[0] * d[1] - b[1] * d[0]))
             / 6.0;
         total += v;
-        for k in 0..3 {
-            moment[k] += v * (a[k] + b[k] + d[k]) / 4.0;
+        for (k, m) in moment.iter_mut().enumerate() {
+            *m += v * (a[k] + b[k] + d[k]) / 4.0;
         }
     }
     std::array::from_fn(|k| c[k] + moment[k] / total)
