@@ -1,6 +1,6 @@
 // The compiled viewer wasm imports no network primitive.
 //
-// wasm-bindgen gives every import a shim in its glue (pkg/rvt.js), keyed by
+// wasm-bindgen gives every import a shim in its glue (pkg/rvt_open.js and pkg/rvt_open64.js, one pair per build), keyed by
 // the import's name, `__wbg_<js name>_<hash>`. A binding of `fetch` or
 // `sendBeacon` shows in the name; a constructor (`new WebSocket(...)`) or a
 // method (`xhr.open(...)`) imports as `__wbg_new_<hash>` or
@@ -10,7 +10,7 @@
 // function, outside every shim, and is not an import.
 //
 // The audit fails, rather than passing, when:
-//   - pkg/rvt_bg.wasm or pkg/rvt.js is missing;
+//   - a build's pkg/<name>_bg.wasm or pkg/<name>.js is missing (both builds are audited);
 //   - an import has no shim in the glue: a layout this script cannot read;
 //   - its canary is not caught. The canary is a module importing
 //     `__wbg_fetch_0`, `__wbg_new_1` and `__wbg_now_2`, whose shims call
@@ -27,6 +27,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+/** The two builds in the package: 32-bit and memory64. */
+export const BUILDS = ['rvt_open', 'rvt_open64'];
 
 const NETWORK_NAME = /fetch|xmlhttprequest|websocket|eventsource|sendbeacon|webtransport|rtcpeerconnection/i;
 const NETWORK_CALL =
@@ -118,14 +121,22 @@ function main() {
   const json = process.argv.includes('--json');
   const pkg = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../pkg');
   const report = { canary: canaryFailure() ?? 'caught', imports: 0, hits: [], unread: [] };
-  const wasm = path.join(pkg, 'rvt_bg.wasm');
-  const glue = path.join(pkg, 'rvt.js');
-  const missing = [wasm, glue].filter((file) => !fs.existsSync(file));
-  if (missing.length > 0) {
-    report.missing = missing;
-  } else {
-    Object.assign(report, auditWasmImports(fs.readFileSync(wasm), fs.readFileSync(glue, 'utf8')));
+  const missing = [];
+  for (const name of BUILDS) {
+    const wasm = path.join(pkg, `${name}_bg.wasm`);
+    const glue = path.join(pkg, `${name}.js`);
+    const absent = [wasm, glue].filter((file) => !fs.existsSync(file));
+    if (absent.length > 0) {
+      missing.push(...absent);
+      continue;
+    }
+    const one = auditWasmImports(fs.readFileSync(wasm), fs.readFileSync(glue, 'utf8'));
+    report.imports += one.imports;
+    if (one.imports === 0) report.unread.push(`${name}: no imports to read`);
+    report.hits.push(...one.hits.map((hit) => `${name}: ${hit}`));
+    report.unread.push(...one.unread.map((label) => `${name}: ${label}`));
   }
+  if (missing.length > 0) report.missing = missing;
   const ok =
     report.canary === 'caught' && !report.missing && report.hits.length === 0 && report.unread.length === 0;
   if (json) {

@@ -22,7 +22,7 @@ have=$(wasm-bindgen --version | awk '{ print $2 }')
 RUSTUP_TOOLCHAIN="$nightly" cargo build -p rvt-wasm --release --locked --target wasm64-unknown-unknown -Z build-std=std,panic_abort
 wasm-bindgen --target web --out-dir "$out" --out-name rvt_open64 \
     "${CARGO_TARGET_DIR:-target}/wasm64-unknown-unknown/release/rvt_wasm.wasm"
-cp rvt-wasm/js/rvt_open_auto.js "$out/"
+cp rvt-wasm/js/rvt_open_auto.js rvt-wasm/js/rvt_open_auto.d.ts "$out/"
 command -v node >/dev/null || { echo "FAIL: node is needed to patch and check the package" >&2; exit 1; }
 # wasm-bindgen 0.2.130 bug on wasm64: an export that returns through a stack slot takes that slot's pointer as an
 # i64 (the .d.ts says `a: bigint`), but the generated JS passes the Number it got from

@@ -446,7 +446,8 @@ thread_local! {
     /// The model the last open's exporter built before the later passes (the base of the one the 3D
     /// view shows), kept with the file's size and
     /// digest for the first drawing of the same file, which draws from it instead of exporting
-    /// the file again. Only an open at the default phase, mode and limits is kept.
+    /// the file again. Only an open at the default phase and mode is kept, and only one whose limits
+    /// are the defaults or did not bind (no stream left unread, no limit event) during the open.
     static OPENED_MODEL: RefCell<Option<(u32, u64, IfcModel)>> = const { RefCell::new(None) };
 }
 
@@ -471,11 +472,12 @@ fn export_with_control(
 ) -> Result<JsValue, JsValue> {
     let quality_mode = ExportQualityMode::parse(mode).map_err(err_str)?;
     // The first drawing exports the file at the default phase, mode and limits when this copy is
-    // absent, so only an open under those is kept for it (`OpenLimits` has no equality: its debug
-    // text is compared).
-    let drawing_equivalent = phase.is_none()
-        && quality_mode == ExportQualityMode::Scaffold
-        && walker_limits == rvt::walker::WalkerLimits::default()
+    // absent. An open at another phase or mode is never kept for it. One at the default phase and
+    // mode is built with the copy, and kept if its limits are the defaults (`OpenLimits` has no
+    // equality: its debug text is compared) or, whatever they are, did not bind during the open
+    // (checked below), because then the model is the one the default limits give.
+    let same_phase_and_mode = phase.is_none() && quality_mode == ExportQualityMode::Scaffold;
+    let default_limits = walker_limits == rvt::walker::WalkerLimits::default()
         && format!("{open_limits:?}") == format!("{:?}", OpenLimits::default());
     OPENED_MODEL.with(|cell| cell.borrow_mut().take());
     let mut rf = RevitFile::open_bytes_with_limits(bytes.to_vec(), open_limits).map_err(err_str)?;
@@ -490,7 +492,7 @@ fn export_with_control(
             SavedMeshChoice::Off
         })
         .with_phase(phase)
-        .with_keep_base(drawing_equivalent);
+        .with_keep_base(same_phase_and_mode);
     let run = run_export_with_limits_and_control(&mut rf, &options, walker_limits, control)
         .map_err(err_str)?;
     let ExportRun {
@@ -517,13 +519,19 @@ fn export_with_control(
         record_unread_streams(&mut diagnostics, &unread);
     }
     let phases = rf.project_phases();
+    // Whether the base copy can be reused is known now: drop it here if not, so it is not held while the
+    // result is serialised.
+    let limits_bound = !unread.is_empty() || !rf.limit_events().is_empty();
+    let eligible = default_limits || !limits_bound;
+    let base_model = base_model.filter(|_| eligible);
     let value = serde_wasm_bindgen::to_value(&ExportJson {
         model: &model,
         diagnostics,
         phases,
     })
     .map_err(err_str)?;
-    // `base_model` is only built for an open that is eligible, so it is `None` for any other.
+    // `base_model` is `None` unless the phase and mode matched and the limits are the defaults or did not
+    // bind (a stream left unread, or a limit event recorded, during the open).
     let kept = u32::try_from(bytes.len())
         .ok()
         .and_then(|size| base_model.map(|base| (size, slice_digest(bytes), base)));
@@ -2145,11 +2153,17 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
             // The model the 3D view was built from, when that open was of this file; else
             // the file is exported now.
             let opened = OPENED_MODEL.with(|c| c.borrow_mut().take());
+            let mut reused = false;
             let model = match opened {
-                Some((s, d, model)) if s == size && d == digest => model,
+                Some((s, d, model)) if s == size && d == digest => {
+                    reused = true;
+                    model
+                }
                 _ => RvtDocExporter.export(&mut rf).map_err(err_str)?,
             };
             lap(&mut times, "model");
+            // Not a time: 1 when the open's kept model was taken, 0 when the file was exported again.
+            times.insert("modelKept".into(), serde_json::json!(u8::from(reused)));
             // The views the list read, or read now.
             let listed = LISTED_VIEWS.with(|c| c.borrow_mut().take());
             let facts = match listed {

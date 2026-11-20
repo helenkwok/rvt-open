@@ -28,10 +28,12 @@ memory diagnostics.
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version <the wasm-bindgen version in Cargo.lock>
 
-cargo build -p rvt-wasm --release --target wasm32-unknown-unknown
-wasm-bindgen --target web --out-dir viewer/pkg --out-name rvt \
-    target/wasm32-unknown-unknown/release/rvt_wasm.wasm
-# -> viewer/pkg/rvt_bg.wasm, rvt.js, rvt.d.ts
+# both builds, and the loader, into viewer/pkg. Needs Node (the script patches and
+# checks the 64-bit package with it) and the nightly the 64-bit build uses, with rust-src:
+rustup toolchain install nightly-2026-10-30 --profile minimal -c rust-src
+tools/ci/wasm-package.sh viewer/pkg
+# -> viewer/pkg/rvt_open.js, rvt_open_bg.wasm (32-bit), rvt_open64.js, rvt_open64_bg.wasm
+#    (64-bit, memory64), rvt_open_auto.js, their .d.ts files, LICENSE and NOTICE
 ```
 
 The `wasm-bindgen` CLI must match the `wasm-bindgen` crate version in
@@ -43,7 +45,12 @@ The `wasm` job in `.github/workflows/ci.yml` runs clippy on `rvt-wasm`,
 builds the wasm32 package (with `rvt-wasm/js/rvt_open_auto.js` copied
 beside it) and a wasm64 package (`tools/ci/wasm64-build.sh`) into one folder
 with `tools/ci/wasm-package.sh`, and uploads it as the `wasm-pkg` artifact.
-The release ships the same folder.
+The release ships the same folder, and the viewer is built and tested from it
+(`viewer/pkg`): the `viewer` job runs the whole Playwright suite once per
+build, with `RVT_VIEWER_BITS` set to `32` or `64` when the viewer is built,
+and `viewer/tests/wasm-build.spec.ts` checks that each leg ran the build it
+was told to. The Pages workflow builds the same package, so the deployed
+viewer carries both builds.
 
 The no-network invariant of
 [`docs/viewer-privacy-posture.md`](viewer-privacy-posture.md) is checked
@@ -56,9 +63,11 @@ compiled `.wasm`, by name and by its shim in the glue, through
 ## JavaScript usage
 
 ```ts
-import init, { openRvtBytesWithDiagnosticsMode, buildSceneGraph, modelToGlb } from '../pkg/rvt.js';
+import { load } from '../pkg/rvt_open_auto.js';
 
-await init();  // load the .wasm
+// the 64-bit build where the browser accepts memory64, else the 32-bit one
+const { module: wasm } = await load();
+const { openRvtBytesWithDiagnosticsMode, buildSceneGraph, modelToGlb } = wasm;
 
 const bytes = new Uint8Array(await file.arrayBuffer());
 const { model } = openRvtBytesWithDiagnosticsMode(bytes, 'scaffold');
@@ -157,9 +166,11 @@ client-side-only posture.
 in `site/` plus the viewer at `/viewer/`. Pull requests build only; pushes
 to `main` and manual runs also deploy to GitHub Pages. The build job:
 
-1. installs the pinned Rust toolchain with the wasm32 target and the
-   matching `wasm-bindgen` CLI;
-2. builds `rvt-wasm` and runs `wasm-bindgen` into `viewer/pkg`, as above;
+1. installs the pinned Rust toolchain with the wasm32 target, the
+   `nightly-2026-10-30` toolchain with `rust-src` for the 64-bit build, and
+   the matching `wasm-bindgen` CLI (Node comes with the runner);
+2. runs `tools/ci/wasm-package.sh viewer/pkg`, which builds both decoders and
+   the loader, as above;
 3. fetches the demo samples: `magnetar-io/revit-test-datasets` into
    `_project_corpus/` and `phi-ag/rvt` into `_corpus/`, through
    `.github/actions/fetch-corpus`;

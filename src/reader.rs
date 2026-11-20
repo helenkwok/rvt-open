@@ -2189,8 +2189,16 @@ impl RevitFile {
             return Ok(None);
         }
         let bytes = self.read_stream(PROJECT_INFORMATION)?;
-        crate::project_information::parse(&bytes, self.limits.inflate_limits.max_output_bytes)
-            .map(Some)
+        let parsed =
+            crate::project_information::parse(&bytes, self.limits.inflate_limits.max_output_bytes);
+        // A cap that stops this entry leaves the site and building names unset: a limit event,
+        // so that a model built without them is not taken for the default limits' model.
+        if let Err(Error::DecompressLimitExceeded(message)) = &parsed {
+            self.note_limit_event(format!(
+                "inflate-member-max-bytes: {PROJECT_INFORMATION}: {message}"
+            ));
+        }
+        parsed.map(Some)
     }
 
     /// The document's Atom entry, whichever stream carries it: `PartAtom`

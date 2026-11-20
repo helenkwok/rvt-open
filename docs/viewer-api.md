@@ -219,7 +219,7 @@ module is not allowed), so there is no chunk or wasm to fetch. A page taken
 offline after it has loaded still reads, exports and opens the file again
 (`viewer/tests/parameters-row.spec.ts`, `no-network.spec.ts`). Every lazy load in
 `viewer/src` that could run after the open is therefore gone: the main thread's
-`import('../pkg/rvt.js')` is static, the workers' scripts are inlined, and the
+the glue imports (`../pkg/rvt_open.js` and `../pkg/rvt_open64.js`) are static, the workers' scripts are inlined, and the
 wasm's `new URL(..., import.meta.url)` is resolved once by the page. What still
 fetches is opening a gallery demo, which is an open, and the catalog and
 thumbnails the page loads to show the gallery.
@@ -514,6 +514,12 @@ is what the card says until the first report.
 
 ## Models too large for the browser
 
+The viewer carries two builds of the decoder and runs one of them (the section
+after this one). On the 32-bit build, which is what this section describes, an
+instance addresses at most 4 GiB; the 64-bit build lifts that to the 16 GiB a
+browser gives a 64-bit memory, and the page's messages name the limit of the
+build that ran.
+
 A wasm32 instance addresses at most 4 GiB, and a single `Vec` cannot pass
 2 GiB (`isize::MAX`). A `Vec` growing past that panics with `capacity overflow`,
 which the panic hook writes to `console.error`; an allocation that
@@ -613,7 +619,47 @@ notes cited, and none is built:
 | Read fewer streams | Leave `Partitions/*` streams unread | The streams are the model: `stream_not_read_resource_limit` already leaves a model empty of what they hold |
 | One copy of the file | A binding that takes the file as an owned `Vec<u8>` saves one copy of the file (a tenth of the peak at ten times) | Not done: retyping `bytes` is a breaking change to the stable wasm API (`tools/ci/wasm-api.py`), so it needs a new binding or a `!` PR |
 | Stream partitions | Inflate, use and drop one partition at a time | A library change: `RevitFile::inflated_partition` keeps every partition for the handle's lifetime on purpose (took Core Interior from 26 s to 1.7 s natively by inflating each once), and a dozen passes read them |
-| wasm64 (memory64) | Raise the ceiling past 4 GiB | Chrome 133 and Firefox 134 ship memory64; Safari has it in Technology Preview, and an iOS Safari 27 report says a 64-bit `Memory` is accepted but a memory64 module does not compile ([wllama#297](https://github.com/ngxson/wllama/issues/297)). wasm-bindgen supports the `wasm64-unknown-unknown` target since 0.2.120 ([release notes](https://github.com/wasm-bindgen/wasm-bindgen/releases), 2026-04-28; the lock has 0.2.118). The target is tier 3 (nightly and `build-std`). It would be a second wasm build chosen by feature detection, with the 32-bit build kept for Safari |
+| wasm64 (memory64) | Raise the ceiling past 4 GiB | Shipped: the package holds a second build (`rvt_open64`), and the viewer loads it where the browser accepts memory64 and the 32-bit build elsewhere ([Decoder builds and browser support](#decoder-builds-and-browser-support)). The target is tier 3 (nightly and `build-std`) |
+
+## Decoder builds and browser support
+
+The browser package holds two builds of the same decoder (`tools/ci/wasm-package.sh`):
+`rvt_open`, 32-bit, whose memory is at most 4 GiB, and `rvt_open64`, built for
+`wasm64-unknown-unknown` (memory64), whose memory a browser caps at 16 GiB. Both
+export the same functions, and `rvt-wasm/js/rvt_open_auto.js` chooses between them.
+The viewer's workers use that loader:
+
+- Where `WebAssembly.validate` accepts a module with a 64-bit memory, the 64-bit
+  build is used; where it does not, the 32-bit one is. The test is the engine's
+  own, not a version number.
+- If the 64-bit build is chosen but will not instantiate, the worker falls back to
+  the 32-bit build.
+- `?bits=32` or `?bits=64` in the address asks for one build, which then is an
+  error where it does not load (no fallback); `?bits=auto` is the choice above.
+- The page shows the build in the About line ("64-bit decoder · up to 16 GiB") and
+  as `data-wasm-bits` on `#status`; `stats.bits` of the load statistics carries it
+  too. The memory limit in the messages above (the warning before the decode, "Too
+  large for the browser", the retry note) is the running build's: 4 GiB or 16 GiB.
+  `?memoryCeilingBytes=` still overrides it.
+
+Which engines accept memory64, from MDN's browser-compat-data for
+`webassembly.memory64` (the [data](https://github.com/mdn/browser-compat-data/blob/main/webassembly/memory64.json),
+as of 2026-11-18, and the [specification](https://webassembly.github.io/memory64/core/bikeshed/)):
+
+| Engine | First version with memory64 | Viewer build |
+|---|---|---|
+| Chrome and Edge (every Chromium-based browser, on desktop and Android) | 133 | 64-bit |
+| Firefox (desktop and Android) | 134 | 64-bit |
+| Safari, and every iOS browser (WebKit) | 27.3, which is a beta on that date; the current release, 27.2, does not have it | 32-bit until 27.3 ships |
+| Node.js | 24.0.0 | 64-bit |
+
+A browser not in the table, or an older version of one that is, fails the
+`WebAssembly.validate` test and gets the 32-bit build, which opens what it always did.
+Which build opened a file is shown on the page, so a report says which it was.
+
+A file that fits the 4 GiB of the 32-bit build opens on either one, with the same
+output; the 64-bit build can be slower (the figures are in the pull request that
+added it).
 
 Where an open's time goes is in the second table of
 `tests/saved-meshes-measure.spec.ts`, built from the reports the page receives,

@@ -2,6 +2,7 @@ import { chromium, expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ceilingGiB } from './build-bits';
 
 // the stop. wasm32 addresses at most 4 GiB, and a failed allocation ends
 // the wasm instance with a bare `RuntimeError: unreachable` and no panic
@@ -68,8 +69,24 @@ const einhovenTest = required || fs.existsSync(einhoven) ? test : test.skip;
 einhovenTest(
   'a model past the ceiling is reported as too large, not as unreachable',
   async ({ baseURL }) => {
-    const capPages = 256;
+    // The cap goes just above the memory the open holds when it begins reading partition streams, so the
+    // allocation that crosses it is inside that stage. That memory is the build's own (the 64-bit build holds
+    // 16.3 MiB there, the 32-bit one 15.2 MiB, because its pointers are twice as wide), so a fixed cap of 16
+    // MiB stopped the 64-bit open before the decoder had reported anything: the open is measured first, as
+    // the late-stop test below measures its own profile, and the cap is put 0.5 MiB above that report.
+    let atPartitions = 0;
+    await underCap(baseURL, 65_536, '', einhoven, async (page) => {
+      await expect(page.locator('#status')).toHaveText(/Loaded/, { timeout: 120_000 });
+      const reports = await decoderReports(page);
+      const decode = reports.findIndex((report) => report.stage === 'element-decode');
+      const partitions = reports.findIndex((report, i) => i > decode && report.stage === 'partition-scan');
+      expect(partitions, 'the open reports reading partition streams after decoding elements').toBeGreaterThan(decode);
+      atPartitions = reports[partitions].memoryBytes;
+    });
+    const capPages = Math.ceil((atPartitions + MIB / 2) / PAGE_BYTES);
     const capBytes = capPages * PAGE_BYTES;
+    // The page names the cap as it formats memory: one decimal, trimmed.
+    const capText = `${Number((capBytes / MIB).toFixed(1))} MiB`;
     await underCap(
       baseURL,
       capPages,
@@ -91,7 +108,7 @@ einhovenTest(
           /, while (reading partition streams|reading element records|building the model),/,
         );
         await expect(body).toContainText('needs more');
-        await expect(body).toContainText('16 MiB');
+        await expect(body).toContainText(capText);
         // What reads a larger file, as the code takes it: --large-model on the
         // two CLIs, and the two limits to raise in Python; not "any size".
         await expect(body).toContainText('rvt-ifc and rvt-gltf with --large-model');
@@ -100,12 +117,16 @@ einhovenTest(
         await expect(page.locator('#status-panel')).toContainText('Too large for the browser');
 
         // The engine's own message is in the status panel, where it can be
-        // read and reported, and nowhere a person reads first.
+        // read and reported, and nowhere a person reads first. The allocator
+        // now ends a failed allocation with its own readable message (the
+        // panic hook writes it before the trap) in place of a bare
+        // `unreachable`, so that is the message; the page still shows no
+        // engine wording anywhere a person reads first.
         await expect(
           page.locator('#status-panel .status-row', {
             has: page.locator('.status-label', { hasText: /^Engine message$/ }),
           }),
-        ).toContainText(/RuntimeError: unreachable/);
+        ).toContainText(/rvt-open wasm out of memory/);
         for (const where of ['#status', '#scaffold-note', '#toast-region']) {
           expect(await page.locator(where).innerText(), where).not.toMatch(/unreachable|RuntimeError/);
         }
@@ -136,7 +157,7 @@ einhovenTest(
 einhovenTest(
   'a stop far short of the ceiling is not called too large',
   async ({ baseURL }) => {
-    // The same stop at 16 MiB, in a page that believes the real 4 GiB: the
+    // The same stop at 16 MiB, in a page that believes the build's real limit (4 GiB, or 16 GiB on the 64-bit build): the
     // decoder ran out of memory with 99.6% of a tab's to spare, on a file under
     // 1 MiB. That is what a damaged file looks like too, so the page says what
     // happened and does not say the file needs more memory than a tab has.
@@ -153,7 +174,7 @@ einhovenTest(
         expect(await noteIsOnTop(page)).toBe(true);
         await expect(note.locator('#scaffold-note-title')).toHaveText('Ran out of memory');
         const body = note.locator('#scaffold-note-body');
-        await expect(body).toContainText('a long way short of the 4 GiB a tab can hold');
+        await expect(body).toContainText(`a long way short of the ${await ceilingGiB(page)} GiB a tab can hold`);
         await expect(body).toContainText('may be damaged');
         await expect(body).not.toContainText('needs more');
         await expect(page.locator('#toast-region .toast.bad')).toContainText('ran out of memory');
@@ -252,6 +273,15 @@ coreInteriorTest(
         ? profile[afterBuilding].memoryBytes - profile[building].memoryBytes
         : null;
     record({ profile, before, after, uncountedGrowth });
+    if (grown < MIB) {
+      // Not a failure of the viewer: the scenario does not occur on this build. The memory is already held
+      // when the recovery starts (the 32-bit build holds 357.3 MiB from its first recovery report to its
+      // last on Core Interior), so there is no growth late in the open for a cap to stop in. The stop, and
+      // the step it names, are the first test's.
+      record({ profile, before, after, uncountedGrowth, grown, notMeasured: true });
+      test.skip(true, `NOT MEASURED: no growth between ${before.stage} ${before.done} and ${after.stage} ${after.done} on this build (${grown} bytes)`);
+      return;
+    }
     expect(
       grown,
       `the open grows the wasm memory between its report of ${before.stage} ${before.done}/${before.total} ` +

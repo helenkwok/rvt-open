@@ -5,13 +5,17 @@
  *
  * Protocol:
  *   main → worker: { type: 'parse', bytes: Uint8Array, mode?: string,
- *                    limits?: OpenLimitsOptions, wasmUrl: string,
- *                    wasmModule?: WebAssembly.Module }
+ *                    limits?: OpenLimitsOptions, wasmUrls: WasmUrls,
+ *                    bits?: 32 | 64, wasmModule?: WebAssembly.Module,
+ *                    wasmBits?: 32 | 64 }
  *                  The worker is bundled into the page and starts from a blob
  *                  URL (`?worker&inline`), so it fetches no script and resolves
- *                  no URL itself: `wasmUrl` is where the page says the wasm is,
- *                  fetched only when `wasmModule` (the page's, from an earlier
- *                  open) is absent.
+ *                  no URL itself: `wasmUrls` is where the page says the two
+ *                  builds' wasm are (wasm-build.ts), fetched only when
+ *                  `wasmModule` (the page's, from an earlier open, the build
+ *                  `wasmBits`) is absent. `bits` asks for a build; absent, the
+ *                  64-bit one is used where the engine accepts memory64, with
+ *                  the 32-bit one as the fallback (rvt_open_auto.js).
  *                  `limits` are the reader's resource limits; absent means the
  *                  defaults (the large-model retry sends `largeModel: true`).
  *                  `limits.phase` (a phase's name or ElementId) exports that
@@ -19,9 +23,10 @@
  *                  project's last.
  *   main → worker: { type: 'info', index: number }
  *   worker → main: { type: 'progress', step: string }
- *   worker → main: { type: 'wasm', module } the decoder's compiled wasm, which
- *                  the page hands to the workers that read saved parameters,
- *                  so that selecting an element fetches nothing
+ *   worker → main: { type: 'wasm', module?, bits } which build is running, and, when
+ *                  this worker compiled it (the first open), the decoder's compiled wasm, which the page hands to the workers that
+ *                  read saved parameters, so that selecting an element fetches
+ *                  nothing
  * worker → main: { type: 'stage', stage, done, total, wasmMemoryBytes } 
  *                  the decoder's own progress, as `rvt-gltf --progress` prints
  *                  it: `stage` is schema-parse, candidate-scan, element-decode,
@@ -37,23 +42,28 @@
  *                  `phases` is the project's phases in order, `{ id, name? }`,
  *                  the last being the default export's; empty where the export
  *                  applies no phase.
- *                  `stats` is { openMs, workerMs, wasmMemoryBytes }: the
+ *                  `stats` is { openMs, workerMs, wasmMemoryBytes, bits }: the
  *                  milliseconds spent in the wasm open (saved meshes included)
- *                  and in the whole parse, and the wasm linear memory after it,
- *                  which only grows, so it is the peak against the 4 GiB a tab
- *                  can hold.
+ *                  and in the whole parse, the wasm linear memory after it,
+ *                  which only grows, so it is the peak against the 4 GiB (32-bit
+ *                  build) or 16 GiB (64-bit) a tab can hold, and the build.
  *   worker → main: { type: 'info', index, panel }
- *   worker → main: { type: 'error', message: string, tooLarge?: TooLarge }
+ *   worker → main: { type: 'error', message: string, tooLarge?: TooLarge,
+ *                    startup?: true }
+ *                  `startup` is set when the decoder itself did not start (the file
+ *                  was not read): a build asked for with `bits` that will not load.
  *                  `tooLarge` is set when the failure is the wasm instance
  *                  running out of memory (see `outOfMemory`), with what the
  *                  worker knew when it stopped: the wasm memory reached, the
  *                  last decoder report (or null once the open call returned),
- *                  the worker step it was in, and the engine's own message.
+ *                  the worker step it was in, the engine's own message, and
+ *                  the build it ran (`bits`).
  *
  * DWG / DXF (the 2D pane, src/drawing.ts). The worker keeps the open drawing
  * in its wasm instance, so later requests do not resend the file:
- *   main → worker: { type: 'dwg-open', bytes: Uint8Array, wasmUrl: string }
+ *   main → worker: { type: 'dwg-open', bytes: Uint8Array, wasmUrls: WasmUrls, bits?: 32 | 64 }
  *   worker → main: { type: 'dwg-ready', summary, svg }
+ *                  `bits` is the build that ran.
  *                  `summary` is dwgOpen's { version, units, layouts, layers,
  *                  notes, counts }; `svg` is dwgSvg(null)'s { svg, layers,
  *                  notDrawn, truncated } for model space.
@@ -89,24 +99,10 @@
  *   clock), so the page can time a request end to end.
  */
 
-import init, {
-  elementInfoPanel,
-  openRvtBytesWithDiagnosticsModeAndOpenLimits,
-  buildSceneGraph,
-  modelToGlb,
-  distinctIfcTypes,
-  buildSchedule,
-  fileMetadata,
-  quickSummary,
-  dwgOpen,
-  dwgSvg,
-  dwgEntity,
-  dwgTable,
-  dwgSave,
-  drawingList,
-  drawingOpen,
-  drawingSave,
-} from '../pkg/rvt.js';
+import * as glue32 from '../pkg/rvt_open.js';
+import * as glue64 from '../pkg/rvt_open64.js';
+import { load } from '../pkg/rvt_open_auto.js';
+import { wasmName, type Bits, type WasmName, type WasmUrls } from './wasm-build';
 import { PANIC_PREFIX, outOfMemory } from './wasm-failure';
 
 interface OpenLimitsOptions {
@@ -136,10 +132,12 @@ interface TooLarge {
   step: string | null;
   /** The engine's own message (the panic's, when there was one), shown in the status panel. */
   detail: string;
+  /** The build that ran out: its memory limit is 4 GiB (32) or 16 GiB (64). */
+  bits: Bits | null;
 }
 
 type DwgMsg =
-  | { type: 'dwg-open'; bytes: Uint8Array; wasmUrl: string }
+  | { type: 'dwg-open'; bytes: Uint8Array; wasmUrls: WasmUrls; bits?: Bits }
   | { type: 'dwg-svg'; layout: string | null }
   | { type: 'dwg-entity'; handle: string }
   | { type: 'dwg-table'; name: string }
@@ -151,10 +149,13 @@ type ParseMsg =
       bytes: Uint8Array;
       mode?: string;
       limits?: OpenLimitsOptions;
-      /** Where the wasm is, as the page resolved it: this worker's own base is a blob URL. */
-      wasmUrl: string;
-      /** The compiled wasm, once the page has one: then nothing is fetched. */
+      /** Where the two builds' wasm are, as the page resolved them: this worker's own base is a blob URL. */
+      wasmUrls: WasmUrls;
+      /** The build the page asks for; absent lets the engine decide, with the 32-bit build as the fallback. */
+      bits?: Bits;
+      /** The compiled wasm, once the page has one (the build `wasmBits`): then nothing is fetched. */
       wasmModule?: WebAssembly.Module;
+      wasmBits?: Bits;
     }
   | { type: 'info'; index: number }
   | DwgMsg
@@ -181,27 +182,86 @@ function plain(v: unknown): unknown {
   return v;
 }
 
+type Glue = typeof glue32;
+
+/** The glue of the build the worker is running, set by `startWasm`. */
+let running: { glue: Glue; memory: WebAssembly.Memory; bits: Bits } | null = null;
+function api(): Glue {
+  if (!running) throw new Error('the decoder is not loaded');
+  return running.glue;
+}
+
+/**
+ * Loads the decoder once, through rvt_open_auto.js (the loader the browser package ships):
+ * the build asked for, else the 64-bit one where the engine accepts memory64 and the 32-bit
+ * one otherwise or if the 64-bit one will not instantiate. The two glue files are bundled
+ * into this worker, so the loader is given them (`glue`) and the compiled wasm (`wasm`).
+ * Returns the module compiled here, when it was, for the page to keep.
+ */
+async function startWasm(o: {
+  urls: WasmUrls;
+  bits?: Bits;
+  module?: WebAssembly.Module;
+  moduleBits?: Bits;
+}): Promise<{ bits: Bits; compiled: WebAssembly.Module | null }> {
+  if (running) return { bits: running.bits, compiled: null };
+  const compiled: Partial<Record<WasmName, WebAssembly.Module>> = {};
+  const attempt = (bits: Bits | undefined, module?: WebAssembly.Module, moduleBits?: Bits) =>
+    load<Glue>({
+      bits,
+      glue: (name) => (name === 'rvt_open64' ? glue64 : glue32) as Glue,
+      wasm: async (name) => {
+        if (module && name === wasmName(moduleBits ?? 32)) return module;
+        return (compiled[name] = await compileWasm(o.urls[name]));
+      },
+    });
+  let loaded;
+  try {
+    // A module handed over is for one build: no other is tried with it.
+    loaded = o.module ? await attempt(o.moduleBits, o.module, o.moduleBits) : await attempt(o.bits);
+  } catch (err) {
+    // Not asked for a build, and the page's 64-bit module will not start in this worker: the 32-bit
+    // build, as for a first open (the page then keeps the module compiled here).
+    if (!(o.module && o.moduleBits === 64 && o.bits === undefined)) throw err;
+    loaded = await attempt(32);
+  }
+  running = { glue: loaded.module, memory: loaded.memory, bits: loaded.bits };
+  instanceMemory = loaded.memory;
+  return { bits: loaded.bits, compiled: compiled[wasmName(loaded.bits)] ?? null };
+}
+
 async function handleDwg(msg: DwgMsg): Promise<void> {
   // Started from a blob URL, the worker has no base to find the wasm from:
   // the open names it, and later messages reuse the instance.
-  await init(msg.type === 'dwg-open' ? { module_or_path: msg.wasmUrl } : undefined);
+  if (msg.type === 'dwg-open') {
+    try {
+      await startWasm({ urls: msg.wasmUrls, bits: msg.bits });
+    } catch (err) {
+      // The decoder did not start: nothing was read of the file.
+      throw new Error(
+        `${err instanceof Error ? err.message : String(err)} (the decoder did not start; try ?bits=auto or ?bits=32 in the address)`,
+      );
+    }
+  }
+  // (a DWG reply's `bits` is what the pane shows; the page's cached RVT module is unchanged)
+  const wasm = api();
   switch (msg.type) {
     case 'dwg-open': {
-      const summary = plain(dwgOpen(msg.bytes));
-      send({ type: 'dwg-ready', summary, svg: plain(dwgSvg(null)) });
+      const summary = plain(wasm.dwgOpen(msg.bytes));
+      send({ type: 'dwg-ready', summary, svg: plain(wasm.dwgSvg(null)), bits: running?.bits });
       return;
     }
     case 'dwg-svg':
-      send({ type: 'dwg-svg', layout: msg.layout, svg: plain(dwgSvg(msg.layout)) });
+      send({ type: 'dwg-svg', layout: msg.layout, svg: plain(wasm.dwgSvg(msg.layout)) });
       return;
     case 'dwg-entity':
-      send({ type: 'dwg-entity', handle: msg.handle, row: plain(dwgEntity(msg.handle)) ?? null });
+      send({ type: 'dwg-entity', handle: msg.handle, row: plain(wasm.dwgEntity(msg.handle)) ?? null });
       return;
     case 'dwg-table':
-      send({ type: 'dwg-table', name: msg.name, text: dwgTable(msg.name) });
+      send({ type: 'dwg-table', name: msg.name, text: wasm.dwgTable(msg.name) });
       return;
     case 'dwg-save': {
-      const bytes = dwgSave(msg.format, msg.version);
+      const bytes = wasm.dwgSave(msg.format, msg.version);
       send({ type: 'dwg-save', format: msg.format, version: msg.version, bytes }, [
         bytes.buffer as ArrayBuffer,
       ]);
@@ -284,7 +344,7 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
         case 'drawing-list':
           at.wasmStart = clock();
           {
-            const list = drawingList(m.bytes, parsedModel);
+            const list = api().drawingList(m.bytes, parsedModel);
             at.wasmEnd = clock();
             reply({ type: 'drawing-list', list: plain(list) });
           }
@@ -292,13 +352,13 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
         case 'drawing-open':
           at.wasmStart = clock();
           {
-            const drawn = drawingOpen(m.bytes, m.kind, m.id);
+            const drawn = api().drawingOpen(m.bytes, m.kind, m.id);
             at.wasmEnd = clock();
             reply({ type: 'drawing-open', kind: m.kind, id: m.id, req: m.req, drawn: plain(drawn) });
           }
           return;
         case 'drawing-save': {
-          const bytes = drawingSave(m.format);
+          const bytes = api().drawingSave(m.format);
           reply({ type: 'drawing-save', format: m.format, bytes }, [bytes.buffer as ArrayBuffer]);
           return;
         }
@@ -316,7 +376,7 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
   if (msg.type === 'info') {
     let panel: unknown = null;
     try {
-      if (parsedModel !== null) panel = elementInfoPanel(parsedModel, msg.index);
+      if (parsedModel !== null) panel = api().elementInfoPanel(parsedModel, msg.index);
     } catch {
       // A panel we cannot build is a missing relationship section,
       // not a failed load — reply with null rather than throwing.
@@ -338,12 +398,25 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
   try {
     step('Initializing wasm');
     const startedAt = performance.now();
-    const wasmModule = msg.wasmModule ?? (await compileWasm(msg.wasmUrl));
-    const wasm = await init({ module_or_path: wasmModule });
+    let started;
+    try {
+      started = await startWasm({
+        urls: msg.wasmUrls,
+        bits: msg.bits,
+        module: msg.wasmModule,
+        moduleBits: msg.wasmBits,
+      });
+    } catch (err) {
+      // The decoder did not start: nothing was read of the file, so the page must not call it unreadable.
+      send({ type: 'error', message: err instanceof Error ? err.message : String(err), startup: true });
+      return;
+    }
+    const wasm = running!;
+    const glue = wasm.glue;
     wasmMemory = wasm.memory;
-    instanceMemory = wasm.memory;
     // The first open's module is the page's from here on.
-    if (!msg.wasmModule) send({ type: 'wasm', module: wasmModule });
+    // The build every start, the module only when this worker compiled it.
+    send({ type: 'wasm', module: started.compiled ?? undefined, bits: started.bits });
 
     // Progressive streaming. Emit the cheap metadata
     // first (sub-second even on hundreds-of-MB files) so the UI
@@ -354,13 +427,13 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
     // BasicFileInfo text block is unreadable still parses.
     let document: unknown = null;
     try {
-      document = fileMetadata(msg.bytes);
+      document = glue.fileMetadata(msg.bytes);
     } catch {
       document = null;
       // A panic this swallowed is not the one a later stop is judged by.
       lastPanic = null;
     }
-    send({ type: 'summary', summary: quickSummary(msg.bytes), document });
+    send({ type: 'summary', summary: glue.quickSummary(msg.bytes), document });
 
     const qualityMode = (msg.mode ?? 'scaffold').trim() || 'scaffold';
     const limitsNote = msg.limits?.largeModel ? ' · large-model limits' : '';
@@ -374,7 +447,7 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
     };
     // Only a panic from the open call itself bears on how it stopped.
     lastPanic = null;
-    const exportResult = openRvtBytesWithDiagnosticsModeAndOpenLimits(
+    const exportResult = glue.openRvtBytesWithDiagnosticsModeAndOpenLimits(
       msg.bytes,
       qualityMode,
       msg.limits ?? null,
@@ -391,20 +464,21 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
     parsedModel = model;
 
     step('Building scene graph');
-    const scene = buildSceneGraph(model);
-    const types = distinctIfcTypes(scene);
+    const scene = glue.buildSceneGraph(model);
+    const types = glue.distinctIfcTypes(scene);
 
     step('Rendering glTF');
-    const glb = modelToGlb(model);
+    const glb = glue.modelToGlb(model);
 
     step('Building schedule');
-    const schedule = buildSchedule(model);
+    const schedule = glue.buildSchedule(model);
 
     // Read last, so the memory is what the whole pipeline needed.
     const stats = {
       openMs,
       workerMs: performance.now() - startedAt,
       wasmMemoryBytes: wasm.memory.buffer.byteLength,
+      bits: wasm.bits,
     };
 
     send(
@@ -432,6 +506,7 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
         report,
         step: report ? null : currentStep,
         detail: lastPanic ?? (err instanceof Error ? `${err.name}: ${err.message}` : message),
+        bits: running?.bits ?? null,
       };
       send({ type: 'error', message, tooLarge });
       return;

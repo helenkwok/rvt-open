@@ -5,12 +5,17 @@
  * image/svg+xml, stripped of anything active or external, and imported as DOM.
  */
 import { drawnBox } from './drawn-box';
+import type { Bits, WasmUrls } from './wasm-build';
 
 /** What the pane needs from main.ts; passed in so this module has no import cycle. */
 export interface DrawingHost {
   resetWorker(): Worker;
-  /** Where the wasm is: a worker started from a blob URL cannot resolve it. */
-  wasmUrl: string;
+  /** Where the two decoder builds' wasm are: a worker started from a blob URL cannot resolve them. */
+  wasmUrls: WasmUrls;
+  /** The build the page asks for, if it does (`?bits=`). */
+  bits?: Bits;
+  /** Shows which decoder build ran (the About line). */
+  showBuild(bits: Bits): void;
   setStatus(text: string): void;
   setStatusBusy(busy: boolean): void;
   toast(message: string, kind?: 'ok' | 'bad' | 'info'): void;
@@ -37,7 +42,7 @@ interface DwgSvg {
   truncated: boolean;
 }
 type DwgReply =
-  | { type: 'dwg-ready'; summary: DwgSummary; svg: DwgSvg }
+  | { type: 'dwg-ready'; summary: DwgSummary; svg: DwgSvg; bits?: Bits }
   | { type: 'dwg-svg'; layout: string | null; svg: DwgSvg }
   | { type: 'dwg-entity'; handle: string; row: Record<string, unknown> | null }
   | { type: 'dwg-table'; name: string; text: string }
@@ -354,6 +359,7 @@ export function initDrawing(host: DrawingHost, view: SvgView): {
     const msg = ev.data;
     switch (msg.type) {
       case 'dwg-ready': {
+        if (msg.bits) host.showBuild(msg.bits);
         summary = msg.summary;
         hidden.clear();
         layoutSel.replaceChildren();
@@ -487,7 +493,7 @@ export function initDrawing(host: DrawingHost, view: SvgView): {
     worker = host.resetWorker();
     worker.addEventListener('message', onMessage as EventListener);
     host.setStatus('Opening drawing');
-    post({ type: 'dwg-open', bytes, wasmUrl: host.wasmUrl }, [bytes.buffer as ArrayBuffer]);
+    post({ type: 'dwg-open', bytes, wasmUrls: host.wasmUrls, bits: host.bits }, [bytes.buffer as ArrayBuffer]);
   }
 
   return { open, close, isOpen: () => app.dataset.mode === 'drawing', pick: pickEntity };

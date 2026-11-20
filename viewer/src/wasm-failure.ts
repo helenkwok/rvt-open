@@ -18,8 +18,9 @@ export const OUT_OF_MEMORY_MESSAGE =
 
 /**
  * True when `err` is the wasm instance, or the engine around it, running out
- * of memory. wasm32 holds at most 4 GiB, a `Vec` at most 2 GiB, and a failed
- * allocation aborts without a message, so the evidence is: a bare
+ * of memory. The 32-bit build holds at most 4 GiB, a `Vec` at most 2 GiB, and
+ * the 64-bit build (memory64) at most the 16 GiB a browser gives a 64-bit memory
+ * (wasm-build.ts); a failed allocation aborts without a message, so the evidence is: a bare
  * `unreachable` trap with no panic message before it, or a message that names
  * an allocation. Any other panic is a bug and keeps its message.
  */

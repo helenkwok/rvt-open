@@ -17,5 +17,5 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitReturns": true
   },
-  "include": ["src/**/*", "pkg/**/*.d.ts"]
+  "include": ["src/**/*", "typecheck/**/*", "pkg/**/*.d.ts"]
 }

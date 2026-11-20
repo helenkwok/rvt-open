@@ -1059,7 +1059,9 @@ fn projected_edges(body: Body<'_>, placement: &Placement, cut: f64) -> (Segments
         let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
         (l > 1e-12).then(|| n.map(|x| x / l))
     };
-    let mut faces: std::collections::HashMap<EdgeKey, EdgeFaces> = Default::default();
+    // A BTreeMap, not a HashMap: the edges are walked in key order, so the segments (their order, and
+    // which of two edges that coincide is the one kept) are the same every run and on every build.
+    let mut faces: std::collections::BTreeMap<EdgeKey, EdgeFaces> = Default::default();
     for t in &mesh.triangles {
         let Some(n) = normal(t) else { continue };
         for k in 0..3 {
