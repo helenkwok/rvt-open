@@ -33,6 +33,102 @@ pub(crate) struct FaceGrid {
     /// Every trim loop in UV when the trim is not one rectangle;
     /// `None` for a rectangular trim, tessellated as a grid.
     pub loops: Option<Vec<Vec<[f64; 2]>>>,
+    /// The edges, by object index, that this face and the plane beside it both draw
+    /// straight between the edge's saved points (`keeps_saved_chords`).
+    pub chord_edges: std::collections::BTreeSet<usize>,
+    /// Each span between two saved points of those edges, in the surface's parameters.
+    pub chords: Vec<[[f64; 2]; 2]>,
+}
+
+/// Whether a face on `surface` and a plane draw an edge they share, one that crosses both
+/// of the surface's parameters, straight between the edge's saved points, so that the two
+/// meet. Each drawing it its own way parts them by the edge's bow, which is what Revit's
+/// export of the BIM4LCA timber office's flights and ramps does not: its plane's vertices
+/// lie on those lines. A ruled face between plain curves is left out.
+fn keeps_saved_chords(surface: &ParametricSurface) -> bool {
+    use crate::native_parametric_surface::Curve;
+    match surface {
+        ParametricSurface::RuledSurf {
+            profile1, profile2, ..
+        } => matches!(profile1, Curve::Hermite { .. }) || matches!(profile2, Curve::Hermite { .. }),
+        ParametricSurface::SurfRev { .. } | ParametricSurface::ConeSurf { .. } => true,
+    }
+}
+
+/// The edges of every loop of face `fi` that cross both of the surface's parameters and
+/// have a plane for their other face, and their spans between saved points in `fi`'s
+/// parameters.
+fn chord_spans(
+    g: &ObjectGraph,
+    fi: usize,
+) -> Result<(std::collections::BTreeSet<usize>, Vec<[[f64; 2]; 2]>)> {
+    use crate::native_saved_mesh::pointer;
+    let mut edges = std::collections::BTreeSet::new();
+    let mut chords = Vec::new();
+    let f = g.objects.get(fi).context("face index")?;
+    let mut next_loop = pointer(g, fi, &f.fields["m_pFirstLoop"])?;
+    let mut seen_loops = std::collections::BTreeSet::new();
+    while let Some(li) = next_loop {
+        ensure!(seen_loops.insert(li), "loop-list cycle");
+        let l = &g.objects[li];
+        let mut cur = pointer(g, li, &l.fields["m_next"])?.context("empty trim")?;
+        let mut seen = std::collections::BTreeSet::new();
+        while cur != li {
+            ensure!(seen.insert(cur), "trim edge cycle");
+            let e = &g.objects[cur];
+            let faces = e.fields["m_pFace"].as_array().context("edge face pair")?;
+            ensure!(faces.len() == 2, "edge face pair length");
+            let mut side = None;
+            for (i, p) in faces.iter().enumerate() {
+                if pointer(g, cur, p)? == Some(fi) {
+                    side = Some(i);
+                }
+            }
+            let side = side.context("edge does not belong to face")?;
+            let ends = e.fields["m_firstAndLastEdgePnts"]
+                .as_array()
+                .context("edge endpoints")?;
+            ensure!(ends.len() == 2, "edge endpoint count");
+            let mut points = vec![uv_point(&ends[0]["uv"][side])?];
+            for p in e.fields["m_interiorEdgePnts"]
+                .as_array()
+                .context("edge interior points")?
+            {
+                points.push(uv_point(&p["uv"][side])?);
+            }
+            points.push(uv_point(&ends[1]["uv"][side])?);
+            let other_is_plane = pointer(g, cur, &faces[1 - side])
+                .ok()
+                .flatten()
+                .and_then(|other| {
+                    let surface = g.objects.get(other)?.fields.get("m_pSurf")?;
+                    pointer(g, other, surface).ok().flatten()
+                })
+                .is_some_and(|si| g.objects.get(si).is_some_and(|s| s.class_name == "Plane"));
+            if other_is_plane && crate::native_saved_mesh::isoparametric_axis(&points).is_none() {
+                edges.insert(cur);
+                chords.extend(points.windows(2).map(|w| [w[0], w[1]]));
+            }
+            cur = pointer(g, cur, &e.fields["m_next"][side])?.context("null trim next")?;
+        }
+        next_loop = pointer(g, li, &l.fields["m_nextLoop"])?;
+    }
+    Ok((edges, chords))
+}
+
+/// The point at fraction `t` of the straight line between the surface's points at `a`
+/// and `b`: where a chord's span lays a vertex of either face.
+pub(crate) fn chord_point(
+    surface: &ParametricSurface,
+    a: [f64; 2],
+    b: [f64; 2],
+    t: f64,
+) -> Result<[f64; 3]> {
+    let e = surface.bounds();
+    let at =
+        |p: [f64; 2]| surface.evaluate(p[0].clamp(e[0][0], e[1][0]), p[1].clamp(e[0][1], e[1][1]));
+    let (from, to) = (at(a)?, at(b)?);
+    Ok(std::array::from_fn(|k| from[k] + t * (to[k] - from[k])))
 }
 
 // Only complete rectangular boundaries (including analytic collapsed poles)
@@ -105,6 +201,11 @@ fn ruled_surface_component(
 
 pub(crate) fn face_grid(g: &ObjectGraph, fi: usize) -> Result<FaceGrid> {
     face_grid_impl(g, fi, false)
+}
+
+/// [`face_grid`] for a trim that need not be one rectangle.
+pub(crate) fn face_grid_general(g: &ObjectGraph, fi: usize) -> Result<FaceGrid> {
+    face_grid_impl(g, fi, true)
 }
 
 /// [`face_grid`]; with `allow_general` a trim that is not one rectangle
@@ -353,6 +454,7 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
             let mut n = 1.0_f64;
             let mut n_lines = 1.0_f64;
             let mut curved = false;
+            let mut twist = 0.0_f64;
             let component = ruled_surface_component(g, fi)?;
             for i in component.into_iter().filter(|i| {
                 g.objects
@@ -393,6 +495,7 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
                         n = n
                             .max(curve_segments(profile1))
                             .max(curve_segments(profile2));
+                        twist = twist.max(profile_twist(profile1, profile2));
                     }
                     curved = true;
                     continue;
@@ -406,8 +509,13 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
                     .max(length(db).ceil());
                 n_lines = n_lines.max(n);
             }
-            // The rulings are straight: curved profiles add u segments only;
-            // v keeps what straight profiles need.
+            // The rulings are straight, so a curved profile adds u segments, and v the
+            // segments its twist asks for: a cell of the grid is two triangles, which
+            // leave the surface by a quarter of the cell's mixed second derivative (the
+            // change of the ruling per step along the profiles) times its two steps.
+            if curved {
+                n_lines = n_lines.max((twist / (4. * CHORD * n)).ceil()).min(2000.);
+            }
             (1. / n, if curved { 1. / n_lines } else { 1. / n })
         }
     };
@@ -431,6 +539,12 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
     } else {
         Some(crate::native_saved_mesh::face_loops_uv(g, fi)?)
     };
+    // Only a trim that is not one rectangle has an edge across both parameters.
+    let (chord_edges, chords) = if loops.is_some() && keeps_saved_chords(&surface) {
+        chord_spans(g, fi)?
+    } else {
+        Default::default()
+    };
     Ok(FaceGrid {
         u: axis(0, du)?,
         v: axis(1, dv)?,
@@ -438,7 +552,28 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
         trim,
         bounds: [min, max],
         loops,
+        chord_edges,
+        chords,
     })
+}
+
+/// The greatest length of the change of a ruling per unit of `u` between two profiles
+/// (the mixed second derivative of the ruled surface), at 65 equal steps of `u`.
+fn profile_twist(
+    a: &crate::native_parametric_surface::Curve,
+    b: &crate::native_parametric_surface::Curve,
+) -> f64 {
+    let (ra, rb) = (a.range(), b.range());
+    (0..=64)
+        .map(|i| {
+            let u = f64::from(i) / 64.;
+            let da = a.derivative(ra[0] + u * (ra[1] - ra[0]));
+            let db = b.derivative(rb[0] + u * (rb[1] - rb[0]));
+            let d: [f64; 3] =
+                std::array::from_fn(|k| db[k] * (rb[1] - rb[0]) - da[k] * (ra[1] - ra[0]));
+            d.iter().map(|x| x * x).sum::<f64>().sqrt()
+        })
+        .fold(0., f64::max)
 }
 
 /// Segments a curved profile needs: its turning in 0.1 rad steps or its
@@ -508,17 +643,188 @@ pub fn face(g: &ObjectGraph, fi: usize) -> Result<FaceMesh> {
     })
 }
 
+/// The `u` values a trimmed face is cut into strips at: every loop point's, and the grid's
+/// between the loops' least and greatest.
+pub(crate) fn strip_breaks(loops: &[Vec<[f64; 2]>], u_grid: &[f64]) -> Vec<f64> {
+    let mut breaks: Vec<f64> = loops.iter().flatten().map(|p| p[0]).collect();
+    let (lo, hi) = breaks
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &u| {
+            (a.min(u), b.max(u))
+        });
+    breaks.extend(u_grid.iter().copied().filter(|u| *u > lo && *u < hi));
+    breaks.sort_by(f64::total_cmp);
+    breaks.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
+    breaks
+}
+
+/// A parameter rounded to 1e-9, as the strips number their points.
+fn key(x: f64) -> i64 {
+    (x * 1e9).round() as i64
+}
+
+/// One span of a trim loop between two saved points, the end of lower `u` first.
+struct Span {
+    a: [f64; 2],
+    b: [f64; 2],
+    /// Where the span is one of the chords (`FaceGrid::chords`), its two ends as saved.
+    chord: Option<[[f64; 2]; 2]>,
+}
+
+/// Triangles covering the region the closed `loops` bound (even-odd), counter-clockwise in
+/// (u, v), on points shared between the triangles that use them. The region is cut into
+/// strips at the `strip_breaks`; inside a strip each crossing span is straight, and the
+/// area between the 1st and 2nd, 3rd and 4th... of them is a trapezoid. A side of a
+/// trapezoid, at one `u`, holds the `v_grid` values between its ends, so that the strips
+/// beside each other, and a plane beside a vertical edge of the trim (which takes the same
+/// values, `native_saved_mesh::refined_plane_edge`), have the same points along it; the
+/// two sides are joined by a zipper of triangles. A point on a chord's span is tagged
+/// with the chord's ends.
+fn conforming_strips(
+    loops: &[Vec<[f64; 2]>],
+    u_grid: &[f64],
+    v_grid: &[f64],
+    chords: &[[[f64; 2]; 2]],
+) -> Result<(Vec<[f64; 2]>, Vec<[u32; 3]>, Vec<Option<[[f64; 2]; 2]>>)> {
+    let breaks = strip_breaks(loops, u_grid);
+    ensure!(breaks.len() >= 2, "degenerate trim");
+    let mut by_ends: std::collections::HashMap<([i64; 2], [i64; 2]), [[f64; 2]; 2]> =
+        std::collections::HashMap::new();
+    let k2 = |p: [f64; 2]| [key(p[0]), key(p[1])];
+    for &[a, b] in chords {
+        by_ends.insert((k2(a), k2(b)), [a, b]);
+        by_ends.insert((k2(b), k2(a)), [a, b]);
+    }
+    let spans: Vec<Span> = loops
+        .iter()
+        .flat_map(|l| l.iter().zip(l.iter().cycle().skip(1)).take(l.len()))
+        .map(|(a, b)| {
+            let chord = by_ends.get(&(k2(*a), k2(*b))).copied();
+            if a[0] <= b[0] {
+                Span {
+                    a: *a,
+                    b: *b,
+                    chord,
+                }
+            } else {
+                Span {
+                    a: *b,
+                    b: *a,
+                    chord,
+                }
+            }
+        })
+        .filter(|s| s.b[0] - s.a[0] > 1e-12)
+        .collect();
+    let at = |s: &Span, u: f64| s.a[1] + (s.b[1] - s.a[1]) * (u - s.a[0]) / (s.b[0] - s.a[0]);
+    let mut uv: Vec<[f64; 2]> = Vec::new();
+    let mut tags: Vec<Option<[[f64; 2]; 2]>> = Vec::new();
+    let mut tris: Vec<[u32; 3]> = Vec::new();
+    let mut index: std::collections::HashMap<(i64, i64), u32> = std::collections::HashMap::new();
+    let mut vertex =
+        |p: [f64; 2], tag: Option<[[f64; 2]; 2]>, uv: &mut Vec<[f64; 2]>| -> Result<u32> {
+            if let Some(&i) = index.get(&(key(p[0]), key(p[1]))) {
+                if tags[i as usize].is_none() {
+                    tags[i as usize] = tag;
+                }
+                return Ok(i);
+            }
+            let i = u32::try_from(uv.len()).context("trim vertex count overflow")?;
+            uv.push(p);
+            tags.push(tag);
+            index.insert((key(p[0]), key(p[1])), i);
+            Ok(i)
+        };
+    // The v values along one side at `u`, from `lo` to `hi`.
+    let chain = |lo: f64, hi: f64| -> Vec<f64> {
+        let mut c = vec![lo];
+        if hi - lo > 1e-9 {
+            c.extend(
+                v_grid
+                    .iter()
+                    .copied()
+                    .filter(|v| *v > lo + 1e-9 && *v < hi - 1e-9),
+            );
+            c.push(hi);
+        }
+        c
+    };
+    for w in breaks.windows(2) {
+        let (u0, u1) = (w[0], w[1]);
+        let um = 0.5 * (u0 + u1);
+        let mut cross: Vec<(f64, &Span)> = spans
+            .iter()
+            .filter(|s| s.a[0] < um && s.b[0] > um)
+            .map(|s| (at(s, um), s))
+            .collect();
+        ensure!(cross.len().is_multiple_of(2), "open trim loop");
+        cross.sort_by(|x, y| x.0.total_cmp(&y.0));
+        for pair in cross.chunks(2) {
+            let (bottom, top) = (pair[0].1, pair[1].1);
+            let left = chain(at(bottom, u0), at(top, u0));
+            let right = chain(at(bottom, u1), at(top, u1));
+            ensure!(
+                tris.len() + 2 * (left.len() + right.len()) <= 4_000_000,
+                "trim tessellation too large"
+            );
+            let frac = |c: &[f64], i: usize| {
+                let (lo, hi) = (c[0], c[c.len() - 1]);
+                if hi - lo > 0. {
+                    (c[i] - lo) / (hi - lo)
+                } else {
+                    0.
+                }
+            };
+            let mut ids = |c: &[f64], u: f64, uv: &mut Vec<[f64; 2]>| -> Result<Vec<u32>> {
+                let last = c.len() - 1;
+                (0..c.len())
+                    .map(|i| {
+                        let tag = if i == 0 {
+                            bottom.chord
+                        } else if i == last {
+                            top.chord
+                        } else {
+                            None
+                        };
+                        vertex([u, c[i]], tag, uv)
+                    })
+                    .collect()
+            };
+            let (l, r) = (ids(&left, u0, &mut uv)?, ids(&right, u1, &mut uv)?);
+            let (mut i, mut j) = (0, 0);
+            while i + 1 < l.len() || j + 1 < r.len() {
+                let advance_left = i + 1 < l.len()
+                    && (j + 1 == r.len() || frac(&left, i + 1) <= frac(&right, j + 1));
+                let t = if advance_left {
+                    let t = [l[i], r[j], l[i + 1]];
+                    i += 1;
+                    t
+                } else {
+                    let t = [l[i], r[j], r[j + 1]];
+                    j += 1;
+                    t
+                };
+                let (p, q, s) = (uv[t[0] as usize], uv[t[1] as usize], uv[t[2] as usize]);
+                if (q[0] - p[0]) * (s[1] - p[1]) - (q[1] - p[1]) * (s[0] - p[0]) > 1e-18 {
+                    tris.push(t);
+                }
+            }
+        }
+    }
+    Ok((uv, tris, tags))
+}
+
 /// A parametric face whose trim is not one rectangle: the UV region its
 /// loops bound, cut into strips at the grid's u values and split along v at
-/// the grid's v spacing, evaluated on the surface.
+/// the grid's v values (`conforming_strips`), evaluated on the surface, with a vertex on a
+/// chord's span (`FaceGrid::chords`) laid on the straight line between the span's
+/// two points.
 fn tessellate_loops(
     grid: &FaceGrid,
     loops: &[Vec<[f64; 2]>],
     orient: bool,
 ) -> Result<ParametricMesh> {
-    let span = grid.bounds[1][1] - grid.bounds[0][1];
-    let max_v = span / (grid.v.len().saturating_sub(1).max(1) as f64);
-    let (uv, tris) = crate::native_saved_mesh::uv_strip_triangles(loops, &grid.u, max_v)?;
+    let (uv, tris, tags) = conforming_strips(loops, &grid.u, &grid.v, &grid.chords)?;
     ensure!(
         uv.len() <= 2_000_000,
         "parametric mesh vertex budget exceeded"
@@ -527,8 +833,17 @@ fn tessellate_loops(
     let winding = surface_orient == orient;
     let mut vertices = Vec::with_capacity(uv.len());
     let mut normals = Vec::with_capacity(uv.len());
-    for p in &uv {
-        vertices.push(grid.surface.evaluate(p[0], p[1])?);
+    for (p, tag) in uv.iter().zip(&tags) {
+        let mut v = grid.surface.evaluate(p[0], p[1])?;
+        if let Some([a, b]) = tag {
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let length = d[0] * d[0] + d[1] * d[1];
+            let t = ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / length;
+            if length > 0. && t > 0. && t < 1. {
+                v = chord_point(&grid.surface, *a, *b, t)?;
+            }
+        }
+        vertices.push(v);
         let mut n = grid.surface.normal(p[0], p[1])?;
         if !orient {
             for value in &mut n {

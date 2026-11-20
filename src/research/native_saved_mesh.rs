@@ -107,6 +107,22 @@ fn point<const N: usize>(v: &Fv) -> Result<[f64; N]> {
     }
     Ok(p)
 }
+/// The parameter an edge's samples change, where they hold the other fixed: `Some(0)` for
+/// an interval of `u`, `Some(1)` for one of `v`, `None` for an edge across both.
+pub(crate) fn isoparametric_axis(samples: &[[f64; 2]]) -> Option<usize> {
+    let (start, end) = (*samples.first()?, *samples.last()?);
+    let axis = if (start[1] - end[1]).abs() < 1e-7 && (start[0] - end[0]).abs() > 1e-7 {
+        0
+    } else if (start[0] - end[0]).abs() < 1e-7 && (start[1] - end[1]).abs() > 1e-7 {
+        1
+    } else {
+        return None;
+    };
+    samples
+        .iter()
+        .all(|uv| (uv[1 - axis] - start[1 - axis]).abs() < 1e-7)
+        .then_some(axis)
+}
 fn close(a: [f64; 2], b: [f64; 2]) -> bool {
     (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-7
 }
@@ -226,6 +242,10 @@ fn refined_plane_edge(
         return Ok(original);
     }
     type SurfaceEval = Box<dyn Fn([f64; 2]) -> Result<[f64; 3]>>;
+    let mut chord_breaks: Option<(
+        Vec<f64>,
+        crate::native_parametric_surface::ParametricSurface,
+    )> = None;
     let (u_values, v_values, evaluate): (Vec<f64>, Vec<f64>, SurfaceEval) = if kind == "CylSurf" {
         let profile = CylinderTessellationProfile::default();
         let mesh = cylinder_face(g, other, profile)?;
@@ -267,7 +287,17 @@ fn refined_plane_edge(
         });
         (us, vs, eval)
     } else {
-        let grid = crate::native_parametric_mesh::face_grid(g, other)?;
+        let grid = crate::native_parametric_mesh::face_grid_general(g, other)?;
+        // Along an edge that crosses both parameters of a face that draws it straight
+        // between its saved points, the plane draws it so too, with a point wherever the
+        // face's strips cross it: both faces then have the same points on it.
+        if grid.chord_edges.contains(&edge_index) {
+            let loops = grid.loops.as_ref().context("chord edge without loops")?;
+            chord_breaks = Some((
+                crate::native_parametric_mesh::strip_breaks(loops, &grid.u),
+                grid.surface.clone(),
+            ));
+        }
         (
             grid.u,
             grid.v,
@@ -288,19 +318,11 @@ fn refined_plane_edge(
     samples.push(point::<2>(&ends[1]["uv"][other_side])?);
     let start = samples[0];
     let end = *samples.last().unwrap();
-    let axis = if (start[1] - end[1]).abs() < 1e-7 && (start[0] - end[0]).abs() > 1e-7 {
-        0
-    } else if (start[0] - end[0]).abs() < 1e-7 && (start[1] - end[1]).abs() > 1e-7 {
-        1
-    } else {
-        bail!("shared curved edge is not an isoparametric interval")
+    let axis = match (isoparametric_axis(&samples), &chord_breaks) {
+        (Some(axis), _) => Some(axis),
+        (None, Some(_)) => None,
+        (None, None) => bail!("shared curved edge is not an isoparametric interval"),
     };
-    ensure!(
-        samples
-            .iter()
-            .all(|uv| (uv[1 - axis] - start[1 - axis]).abs() < 1e-7),
-        "shared curved edge changes its fixed parameter"
-    );
     let plane_index = index
         .resolve(face, &g.objects[face].fields["m_pSurf"])?
         .context("plane surface missing")?;
@@ -321,8 +343,7 @@ fn refined_plane_edge(
         det.is_finite() && det > 1e-24,
         "singular shared plane basis"
     );
-    let project = |uv: [f64; 2]| -> Result<[f64; 2]> {
-        let q = evaluate(uv)?;
+    let project_point = |q: [f64; 3]| -> Result<[f64; 2]> {
         let d = std::array::from_fn(|k| q[k] - origin[k]);
         let dx = dot(d, x);
         let dy = dot(d, y);
@@ -336,6 +357,7 @@ fn refined_plane_edge(
         );
         Ok(p)
     };
+    let project = |uv: [f64; 2]| -> Result<[f64; 2]> { project_point(evaluate(uv)?) };
     ensure!(
         samples.len() == original.len(),
         "shared edge sample count mismatch"
@@ -346,6 +368,49 @@ fn refined_plane_edge(
             "shared edge surface samples disagree"
         );
     }
+    let Some(axis) = axis else {
+        // The edge's saved points, and a point on each span between them wherever the
+        // curved face's strips cross it.
+        let (breaks, surface) = chord_breaks.context("chord breaks")?;
+        // (point, whether it is one of the edge's saved points)
+        let mut out: Vec<([f64; 2], bool)> = Vec::new();
+        for (i, a) in samples.iter().enumerate() {
+            out.push((project(*a)?, true));
+            let Some(b) = samples.get(i + 1) else {
+                continue;
+            };
+            let (lo, hi) = (a[0].min(b[0]), a[0].max(b[0]));
+            let mut inside = breaks
+                .iter()
+                .copied()
+                .filter(|u| *u > lo + 1e-12 && *u < hi - 1e-12)
+                .collect::<Vec<_>>();
+            if a[0] > b[0] {
+                inside.reverse();
+            }
+            for u in inside {
+                let t = (u - a[0]) / (b[0] - a[0]);
+                out.push((
+                    project_point(crate::native_parametric_mesh::chord_point(
+                        &surface, *a, *b, t,
+                    )?)?,
+                    false,
+                ));
+            }
+        }
+        // A strip break a hair from a saved point or from another break would leave a
+        // sliver of an edge in the plane that triangulation drops.
+        let saved: Vec<[f64; 2]> = out.iter().filter(|p| p.1).map(|p| p.0).collect();
+        let mut kept: Vec<[f64; 2]> = Vec::new();
+        for (p, is_saved) in out {
+            let near = |q: &[f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-6;
+            if is_saved || (!saved.iter().any(near) && !kept.last().is_some_and(near)) {
+                kept.push(p);
+            }
+        }
+        let out = kept;
+        return Ok(out);
+    };
     let knots = if axis == 0 { u_values } else { v_values };
     let lo = start[axis].min(end[axis]);
     let hi = start[axis].max(end[axis]);
@@ -552,7 +617,7 @@ pub fn face(g: &ObjectGraph, fi: usize) -> Result<Option<FaceMesh>> {
 fn face_indexed(g: &ObjectGraph, index: &PointerIndex<'_>, fi: usize) -> Result<Option<FaceMesh>> {
     let f = g.objects.get(fi).context("face index")?;
     ensure!(f.class_name == "Face", "not Face");
-    let Some(mut li) = index.resolve(fi, &f.fields["m_pFirstLoop"])? else {
+    let Some(li) = index.resolve(fi, &f.fields["m_pFirstLoop"])? else {
         return Ok(None);
     };
     // a face split into regions (Revit's Split Face) keeps its
@@ -604,123 +669,131 @@ fn face_indexed(g: &ObjectGraph, index: &PointerIndex<'_>, fi: usize) -> Result<
     for v in &mut normal {
         *v /= if orient { norm } else { -norm }
     }
-    let mut loops = Vec::new();
-    let mut seen = BTreeSet::new();
-    loop {
-        ensure!(seen.insert(li), "loop-list cycle");
-        loops.push(ring_impl(g, index, fi, li, true)?);
-        match index.resolve(li, &g.objects[li].fields["m_nextLoop"])? {
-            Some(next) => li = next,
-            None => break,
-        }
-    }
-    // A face can contain multiple disconnected outer rings, with nested holes.
-    let depths: Vec<_> = loops
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            loops
-                .iter()
-                .enumerate()
-                .filter(|(j, s)| *j != i && inside(r[0], s))
-                .count()
-        })
-        .collect();
-    let mut vertices = Vec::new();
-    let mut triangles = Vec::new();
-    for (i, outer) in loops
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| depths[*i] % 2 == 0)
-    {
-        let mut pts = outer.clone();
-        let mut holes = Vec::new();
-        let mut boundary_edges = BTreeSet::new();
-        let mut add_boundary_edges = |start: usize, end: usize| {
-            for k in start..end {
-                let a = k as u32;
-                let b = (if k + 1 == end { start } else { k + 1 }) as u32;
-                boundary_edges.insert((a.min(b), a.max(b)));
-            }
-        };
-        add_boundary_edges(0, pts.len());
-        let mut expected = area(outer).abs();
-        for (j, h) in loops.iter().enumerate() {
-            if depths[j] == depths[i] + 1 && inside(h[0], outer) {
-                holes.push(pts.len() as u32);
-                let start = pts.len();
-                pts.extend_from_slice(h);
-                add_boundary_edges(start, pts.len());
-                expected -= area(h).abs()
+    let first_loop = li;
+    let build = |refine: bool| -> Result<Option<FaceMesh>> {
+        let mut li = first_loop;
+        let mut loops = Vec::new();
+        let mut seen = BTreeSet::new();
+        loop {
+            ensure!(seen.insert(li), "loop-list cycle");
+            loops.push(ring_impl(g, index, fi, li, refine)?);
+            match index.resolve(li, &g.objects[li].fields["m_nextLoop"])? {
+                Some(next) => li = next,
+                None => break,
             }
         }
-        let mut ts = Vec::<u32>::new();
-        earcut::Earcut::new().earcut(pts.iter().copied(), &holes, &mut ts);
-        ensure!(
-            !ts.is_empty() && ts.len().is_multiple_of(3),
-            "triangulation failed"
-        );
-        let mut earcut_triangles = ts
-            .chunks_exact(3)
-            .map(|t| [t[0], t[1], t[2]])
-            .collect::<Vec<_>>();
-        ensure!(
-            earcut_triangles
-                .iter()
-                .flatten()
-                .all(|i| (*i as usize) < pts.len()),
-            "triangle bounds"
-        );
-        // Earcut can retain collinear points only in zero-area triangles. Drop
-        // those first so boundary restoration does not mistake them for usable
-        // incident triangles and subsequently leave a T-junction behind.
-        earcut_triangles.retain(|t| {
-            cross(pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]).abs() > 1e-12
-        });
-        retain_boundary_points(&pts, &boundary_edges, &mut earcut_triangles)?;
-        let mut sum = 0.;
-        let base = vertices.len() as u32;
-        for t in &mut earcut_triangles {
+        // A face can contain multiple disconnected outer rings, with nested holes.
+        let depths: Vec<_> = loops
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                loops
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, s)| *j != i && inside(r[0], s))
+                    .count()
+            })
+            .collect();
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for (i, outer) in loops
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| depths[*i] % 2 == 0)
+        {
+            let mut pts = outer.clone();
+            let mut holes = Vec::new();
+            let mut boundary_edges = BTreeSet::new();
+            let mut add_boundary_edges = |start: usize, end: usize| {
+                for k in start..end {
+                    let a = k as u32;
+                    let b = (if k + 1 == end { start } else { k + 1 }) as u32;
+                    boundary_edges.insert((a.min(b), a.max(b)));
+                }
+            };
+            add_boundary_edges(0, pts.len());
+            let mut expected = area(outer).abs();
+            for (j, h) in loops.iter().enumerate() {
+                if depths[j] == depths[i] + 1 && inside(h[0], outer) {
+                    holes.push(pts.len() as u32);
+                    let start = pts.len();
+                    pts.extend_from_slice(h);
+                    add_boundary_edges(start, pts.len());
+                    expected -= area(h).abs()
+                }
+            }
+            let mut ts = Vec::<u32>::new();
+            earcut::Earcut::new().earcut(pts.iter().copied(), &holes, &mut ts);
             ensure!(
-                t.iter().all(|v| (*v as usize) < pts.len()),
+                !ts.is_empty() && ts.len().is_multiple_of(3),
+                "triangulation failed"
+            );
+            let mut earcut_triangles = ts
+                .chunks_exact(3)
+                .map(|t| [t[0], t[1], t[2]])
+                .collect::<Vec<_>>();
+            ensure!(
+                earcut_triangles
+                    .iter()
+                    .flatten()
+                    .all(|i| (*i as usize) < pts.len()),
                 "triangle bounds"
             );
-            let a = cross(pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]);
-            sum += a.abs() / 2.;
-            if a.abs() <= 1e-12 {
-                continue;
+            // Earcut can retain collinear points only in zero-area triangles. Drop
+            // those first so boundary restoration does not mistake them for usable
+            // incident triangles and subsequently leave a T-junction behind.
+            earcut_triangles.retain(|t| {
+                cross(pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]).abs() > 1e-12
+            });
+            retain_boundary_points(&pts, &boundary_edges, &mut earcut_triangles)?;
+            let mut sum = 0.;
+            let base = vertices.len() as u32;
+            for t in &mut earcut_triangles {
+                ensure!(
+                    t.iter().all(|v| (*v as usize) < pts.len()),
+                    "triangle bounds"
+                );
+                let a = cross(pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]);
+                sum += a.abs() / 2.;
+                if a.abs() <= 1e-12 {
+                    continue;
+                }
+                if (a > 0.) != orient {
+                    t.swap(1, 2)
+                }
+                triangles.push([base + t[0], base + t[1], base + t[2]])
             }
-            if (a > 0.) != orient {
-                t.swap(1, 2)
+            ensure!(
+                (sum - expected).abs() <= 1e-7 * expected.max(1.),
+                "triangulated area mismatch: {sum} vs {expected}"
+            );
+            for uv in pts {
+                vertices.push(std::array::from_fn(|k| {
+                    origin[k] + uv[0] * x[k] + uv[1] * y[k]
+                }))
             }
-            triangles.push([base + t[0], base + t[1], base + t[2]])
         }
-        ensure!(
-            (sum - expected).abs() <= 1e-7 * expected.max(1.),
-            "triangulated area mismatch: {sum} vs {expected}"
-        );
-        for uv in pts {
-            vertices.push(std::array::from_fn(|k| {
-                origin[k] + uv[0] * x[k] + uv[1] * y[k]
-            }))
+        if triangles.is_empty() {
+            bail!("no bounded triangles")
         }
-    }
-    if triangles.is_empty() {
-        bail!("no bounded triangles")
-    }
-    let vertex_count = vertices.len();
-    Ok(Some(FaceMesh {
-        face_index: fi,
-        face_tag: f.fields["m_GInfo"]["m_tag"].as_i64().unwrap_or(-1),
-        render_style_id: crate::native_metadata::identifier(&f.fields["m_renderStyleId"])
-            .context("render style id")?,
-        vertices,
-        triangles,
-        normal,
-        normals: vec![normal; vertex_count],
-        analytic_surface: None,
-        trim_uv: Vec::new(),
-    }))
+        let vertex_count = vertices.len();
+        Ok(Some(FaceMesh {
+            face_index: fi,
+            face_tag: f.fields["m_GInfo"]["m_tag"].as_i64().unwrap_or(-1),
+            render_style_id: crate::native_metadata::identifier(&f.fields["m_renderStyleId"])
+                .context("render style id")?,
+            vertices,
+            triangles,
+            normal,
+            normals: vec![normal; vertex_count],
+            analytic_surface: None,
+            trim_uv: Vec::new(),
+        }))
+    };
+    // The plane's edges are refined to meet the curved faces beside it; a face the
+    // refinement leaves unable to be triangulated is drawn from the saved points, as
+    // it was without it.
+    build(true).or_else(|_| build(false))
 }
 
 /// for a convex trim polygon in (u, v), the span of v it covers at
