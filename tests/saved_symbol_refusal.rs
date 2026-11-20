@@ -54,4 +54,9 @@ fn concrete_housing_names_the_refusal_of_a_symbol_it_holds() {
         12,
         "each says the reader's own reason: {refusals:?}"
     );
+    assert_eq!(
+        count("native field value budget exceeded"),
+        12,
+        "each names the budget the reader ran out of: {refusals:?}"
+    );
 }

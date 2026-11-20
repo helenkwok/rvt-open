@@ -198,13 +198,21 @@ pub(crate) fn body_volumes(
             .find(|(_, a)| fields(a)[1] == "'Body'")
             .expect("a Body representation");
         let mut item = reference(fields(&body.1)[3].trim_matches(|c| c == '(' || c == ')'));
-        // A mapped item is the first item of its source's representation, placed by a
-        // transform that keeps volume and edges.
+        // A mapped item is the one item of its source's representation, placed by a
+        // transform that keeps volume and edges; a source of several items is not read.
         while step[&item].0 == "IFCMAPPEDITEM" {
             let (_, map) = &step[&reference(fields(&step[&item].1)[0])];
             let (_, shape) = &step[&reference(fields(map)[1])];
-            let items = fields(shape)[3].trim_matches(|c| c == '(' || c == ')');
-            item = reference(items.split(',').next().expect("a mapped item"));
+            let items: Vec<&str> = fields(shape)[3]
+                .trim_matches(|c| c == '(' || c == ')')
+                .split(',')
+                .collect();
+            assert_eq!(
+                items.len(),
+                1,
+                "tag {tag}: a mapped representation of several items"
+            );
+            item = reference(items[0]);
         }
         let (kind, a) = &step[&item];
         let f = fields(a);
