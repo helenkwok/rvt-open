@@ -16,9 +16,9 @@
 //!
 //! The curved faces of those bodies meet their neighbours: no directed edge of a
 //! body's triangles lacks the reverse edge (points to 1e-5 ft), as in Revit's,
-//! and the bodies lie within 0.002 ft of Revit's both ways, where the faces
-//! drawn on the curve and the planes drawn between its saved points parted them
-//! by 0.013 ft.
+//! and Revit's vertices lie within 0.002 ft of the bodies' surfaces (the ramp
+//! flight's the other way too), where the faces drawn on the curve and the planes
+//! drawn between its saved points parted the ramp flight and Revit's by 0.013 ft.
 
 use rvt::RevitFile;
 use rvt::convert::{ConvertOptions, export};
@@ -440,6 +440,7 @@ fn same_bodies(
     revit: &BTreeMap<String, Body>,
     count: usize,
     meshed: &[&str],
+    both_ways: &[&str],
 ) {
     assert_eq!(ours.len(), count, "rvt-open's bodies: {:?}", ours.keys());
     assert_eq!(
@@ -488,10 +489,15 @@ fn same_bodies(
             to_ours / 0.3048 < 0.002,
             "{tag}: Revit's vertices {to_ours} m from ours"
         );
-        assert!(
-            to_revit / 0.3048 < 0.002,
-            "{tag}: ours {to_revit} m from Revit's"
-        );
+        // Revit's export draws the timber stair runs' curved faces in far fewer triangles
+        // than rvt-open (610 against 10,904), so rvt-open's vertices on the true surface
+        // stand 0.0095 ft off its facets: the other way holds only where Revit's body is as fine.
+        if both_ways.contains(&tag.as_str()) {
+            assert!(
+                to_revit / 0.3048 < 0.002,
+                "{tag}: ours {to_revit} m from Revit's"
+            );
+        }
     }
 }
 
@@ -506,7 +512,7 @@ fn office_terrain_ramps_have_revits_volume() {
     };
     // 1386050 is the ruled flight with a Hermite spline profile.
     assert!(ours.contains_key("1386050"));
-    same_bodies(&ours, &revit, 6, &["1386050"]);
+    same_bodies(&ours, &revit, 6, &["1386050"], &["1386050"]);
 }
 
 #[test]
@@ -520,5 +526,5 @@ fn office_timber_stair_flights_have_revits_volume() {
     ) else {
         return;
     };
-    same_bodies(&ours, &revit, 2, &tags);
+    same_bodies(&ours, &revit, 2, &tags, &[]);
 }

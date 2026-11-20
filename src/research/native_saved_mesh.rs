@@ -238,7 +238,7 @@ fn refined_plane_edge(
         .resolve(other, &g.objects[other].fields["m_pSurf"])?
         .context("shared edge surface missing")?;
     let kind = g.objects[other_surface].class_name.as_str();
-    if !matches!(kind, "CylSurf" | "SurfRev" | "RuledSurf") {
+    if !matches!(kind, "CylSurf" | "SurfRev" | "RuledSurf" | "ConeSurf") {
         return Ok(original);
     }
     type SurfaceEval = Box<dyn Fn([f64; 2]) -> Result<[f64; 3]>>;
@@ -290,6 +290,11 @@ fn refined_plane_edge(
         (us, vs, eval)
     } else {
         let grid = crate::native_parametric_mesh::face_grid(g, other)?;
+        // A cone is meshed by its own code unless one of its edges is a chord: the
+        // planes beside the other cones keep their saved points.
+        if kind == "ConeSurf" && grid.chord_edges.is_empty() {
+            return Ok(original);
+        }
         // Along an edge that crosses both parameters of a face that draws it straight
         // between its saved points, the plane draws it so too, with a point wherever the
         // face's strips cross it: both faces then have the same points on it.
@@ -303,9 +308,16 @@ fn refined_plane_edge(
                 grid.surface.clone(),
             ));
         }
+        // A trimmed face's strip sides hold the equal steps of `v` and the saved points,
+        // a rectangular one's grid every saved value.
+        let v = if grid.loops.is_some() {
+            grid.v_lattice
+        } else {
+            grid.v
+        };
         (
             grid.u,
-            grid.v,
+            v,
             Box::new(move |uv: [f64; 2]| grid.surface.evaluate(uv[0], uv[1])),
         )
     };
@@ -409,11 +421,17 @@ fn refined_plane_edge(
             if a[0] > b[0] {
                 inside.reverse();
             }
+            let (first, last) = (project(*a)?, project(*b)?);
             for u in inside {
                 let t = (u - a[0]) / (b[0] - a[0]);
-                out.push(project_point(crate::native_parametric_mesh::chord_point(
+                let p = project_point(crate::native_parametric_mesh::chord_point(
                     &surface, *a, *b, t,
-                )?)?);
+                )?)?;
+                // a point that is an end of the span (`CHORD_SNAP_FEET`) is the end's
+                let same = |q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-9;
+                if !same(first) && !same(last) {
+                    out.push(p);
+                }
             }
         }
         return Ok(out);
@@ -425,10 +443,15 @@ fn refined_plane_edge(
     };
     let lo = start[axis].min(end[axis]);
     let hi = start[axis].max(end[axis]);
+    // the edge's own saved points are knots too: a trimmed curved face's strip sides hold
+    // them with the equal steps
     let mut values = knots
         .into_iter()
+        .chain(samples.iter().map(|sample| sample[axis]))
         .filter(|v| *v > lo + 1e-12 && *v < hi - 1e-12)
         .collect::<Vec<_>>();
+    values.sort_by(f64::total_cmp);
+    values.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
     values.insert(0, lo);
     values.push(hi);
     if start[axis] > end[axis] {
@@ -1185,6 +1208,13 @@ pub fn cone_face(
         .context("face surface")?;
     let surface = &g.objects[surface_index];
     ensure!(surface.class_name == "ConeSurf", "not a cone");
+    // A cone with an edge it shares with a plane across both of its parameters is meshed
+    // with the grid and the chords the plane beside it takes (`FaceGrid::chord_edges`).
+    if crate::native_parametric_mesh::face_grid(g, fi)
+        .is_ok_and(|grid| !grid.chord_edges.is_empty())
+    {
+        return crate::native_parametric_mesh::face(g, fi);
+    }
     let center = point::<3>(&surface.fields["m_center"])?;
     let x = point::<3>(&surface.fields["m_xVec"])?;
     let y = point::<3>(&surface.fields["m_yVec"])?;

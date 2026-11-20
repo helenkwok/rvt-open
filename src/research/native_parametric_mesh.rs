@@ -28,6 +28,8 @@ pub(crate) struct FaceGrid {
     pub surface: ParametricSurface,
     pub u: Vec<f64>,
     pub v: Vec<f64>,
+    /// `v` without the trim's own values: the equal steps alone.
+    pub v_lattice: Vec<f64>,
     pub trim: Vec<[f64; 2]>,
     pub bounds: [[f64; 2]; 2],
     /// Every trim loop in UV when the trim is not one rectangle;
@@ -122,8 +124,14 @@ fn chord_spans(g: &ObjectGraph, fi: usize) -> Result<ChordSpans> {
     Ok((edges, chords))
 }
 
+/// How near a point on a chord must lie to an end of the chord, feet, to be that end: a
+/// triangle with a side so short cannot be told from the point, and the plane beside the
+/// face would have to leave the point out of its boundary, as the face does by taking it.
+pub(crate) const CHORD_SNAP_FEET: f64 = 1e-6;
+
 /// The point at fraction `t` of the straight line between the surface's points at `a`
-/// and `b`: where a chord's span lays a vertex of either face.
+/// and `b`: where a chord's span lays a vertex of either face. A point within
+/// `CHORD_SNAP_FEET` of either end is that end.
 pub(crate) fn chord_point(
     surface: &ParametricSurface,
     a: [f64; 2],
@@ -134,7 +142,15 @@ pub(crate) fn chord_point(
     let at =
         |p: [f64; 2]| surface.evaluate(p[0].clamp(e[0][0], e[1][0]), p[1].clamp(e[0][1], e[1][1]));
     let (from, to) = (at(a)?, at(b)?);
-    Ok(std::array::from_fn(|k| from[k] + t * (to[k] - from[k])))
+    let p: [f64; 3] = std::array::from_fn(|k| from[k] + t * (to[k] - from[k]));
+    let far = |q: [f64; 3]| (0..3).map(|k| (p[k] - q[k]).powi(2)).sum::<f64>().sqrt();
+    Ok(if far(from) < CHORD_SNAP_FEET {
+        from
+    } else if far(to) < CHORD_SNAP_FEET {
+        to
+    } else {
+        p
+    })
 }
 
 // Only complete rectangular boundaries (including analytic collapsed poles)
@@ -534,21 +550,25 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
             (1. / n, if curved { 1. / n_lines } else { 1. / n })
         }
     };
-    let axis = |k: usize, step: f64| -> Result<Vec<f64>> {
+    // (the equal steps, and those with the trim's values)
+    let axis = |k: usize, step: f64| -> Result<(Vec<f64>, Vec<f64>)> {
         let count = ((max[k] - min[k]) / step).ceil().max(1.);
         ensure!(
             count.is_finite() && count <= 10000.,
             "parametric axis budget exceeded"
         );
         let count = count as usize;
-        let mut a = (0..=count)
+        let lattice = (0..=count)
             .map(|i| min[k] + (max[k] - min[k]) * i as f64 / count as f64)
             .collect::<Vec<_>>();
+        let mut a = lattice.clone();
         a.extend(trim.iter().map(|p| p[k]));
         a.sort_by(f64::total_cmp);
         a.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
-        Ok(a)
+        Ok((lattice, a))
     };
+    let (_, u_knots) = axis(0, du)?;
+    let (v_lattice, v_knots) = axis(1, dv)?;
     let loops = if rectangular {
         None
     } else if let Some(all) = all_loops {
@@ -563,8 +583,9 @@ fn face_grid_impl(g: &ObjectGraph, fi: usize, allow_general: bool) -> Result<Fac
         Default::default()
     };
     Ok(FaceGrid {
-        u: axis(0, du)?,
-        v: axis(1, dv)?,
+        u: u_knots,
+        v: v_knots,
+        v_lattice,
         surface,
         trim,
         bounds: [min, max],
@@ -693,15 +714,16 @@ struct Span {
 /// (u, v), on points shared between the triangles that use them. The region is cut into
 /// strips at the `strip_breaks`; inside a strip each crossing span is straight, and the
 /// area between the 1st and 2nd, 3rd and 4th... of them is a trapezoid. A side of a
-/// trapezoid, at one `u`, holds the `v_grid` values between its ends, so that the strips
-/// beside each other, and a plane beside a vertical edge of the trim (which takes the same
-/// values, `native_saved_mesh::refined_plane_edge`), have the same points along it; the
+/// trapezoid, at one `u`, holds the `v_lattice` values between its ends and the `v` of every
+/// point of the loops at that `u`, so that the strips beside each other, and a plane beside
+/// a vertical edge of the trim (which takes the same values,
+/// `native_saved_mesh::refined_plane_edge`), have the same points along it; the
 /// two sides are joined by a zipper of triangles. A point on a chord's span is tagged
 /// with the chord's ends.
 fn conforming_strips(
     loops: &[Vec<[f64; 2]>],
     u_grid: &[f64],
-    v_grid: &[f64],
+    v_lattice: &[f64],
     chords: &[[[f64; 2]; 2]],
 ) -> Result<StripMesh> {
     let breaks = strip_breaks(loops, u_grid);
@@ -765,16 +787,30 @@ fn conforming_strips(
             index.insert((key(p[0]), key(p[1])), i);
             Ok(i)
         };
+    // The v of every loop point, by its u.
+    let mut at_u: std::collections::HashMap<i64, Vec<f64>> = std::collections::HashMap::new();
+    for p in loops.iter().flatten() {
+        at_u.entry(key(p[0])).or_default().push(p[1]);
+    }
     // The v values along one side at `u`, from `lo` to `hi`.
-    let chain = |lo: f64, hi: f64| -> Vec<f64> {
+    let chain = |u: f64, lo: f64, hi: f64| -> Vec<f64> {
         let mut c = vec![lo];
         if hi - lo > 1e-9 {
-            c.extend(
-                v_grid
-                    .iter()
-                    .copied()
-                    .filter(|v| *v > lo + 1e-9 && *v < hi - 1e-9),
-            );
+            let k = key(u);
+            let mut inside: Vec<f64> = v_lattice
+                .iter()
+                .copied()
+                .chain(
+                    (k - 1..=k + 1)
+                        .filter_map(|k| at_u.get(&k))
+                        .flatten()
+                        .copied(),
+                )
+                .filter(|v| *v > lo + 1e-9 && *v < hi - 1e-9)
+                .collect();
+            inside.sort_by(f64::total_cmp);
+            inside.dedup_by(|a, b| (*a - *b).abs() <= 1e-9);
+            c.extend(inside);
             c.push(hi);
         }
         c
@@ -791,8 +827,8 @@ fn conforming_strips(
         cross.sort_by(|x, y| x.0.total_cmp(&y.0));
         for pair in cross.chunks(2) {
             let (bottom, top) = (pair[0].1, pair[1].1);
-            let left = chain(at(bottom, u0), at(top, u0));
-            let right = chain(at(bottom, u1), at(top, u1));
+            let left = chain(u0, at(bottom, u0), at(top, u0));
+            let right = chain(u1, at(bottom, u1), at(top, u1));
             ensure!(
                 tris.len() + 2 * (left.len() + right.len()) <= 4_000_000,
                 "trim tessellation too large"
@@ -854,7 +890,7 @@ fn tessellate_loops(
     loops: &[Vec<[f64; 2]>],
     orient: bool,
 ) -> Result<ParametricMesh> {
-    let (uv, tris, tags) = conforming_strips(loops, &grid.u, &grid.v, &grid.chords)?;
+    let (uv, tris, tags) = conforming_strips(loops, &grid.u, &grid.v_lattice, &grid.chords)?;
     ensure!(
         uv.len() <= 2_000_000,
         "parametric mesh vertex budget exceeded"
