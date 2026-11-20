@@ -492,11 +492,87 @@ jobs:
             echo "::endgroup::"
           done
           ls -l "$RUNNER_TEMP/notebooks-html"
+      # The same numbers the Pyodide job checks, from the native wheel: both read tools/ci/pyodide/expected-basic-sample.json.
+      - name: Native counts for the Pyodide comparison
+        env:
+          RVT_MODEL: ${{ github.workspace }}/_samples/2024/racbasicsampleproject.rvt
+        run: |
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/nb/bin/python" "$GITHUB_WORKSPACE/tools/ci/pyodide/ops.py" "$RVT_MODEL" native \
+            | "$RUNNER_TEMP/nb/bin/python" "$GITHUB_WORKSPACE/tools/ci/pyodide/compare.py"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: example-notebooks-html
           path: ${{ runner.temp }}/notebooks-html/*.html
           if-no-files-found: error
+
+  # The Python bindings as a Pyodide wheel (wasm32-unknown-emscripten), so the example notebooks run in a browser
+  # with no install: the wheel is built with pinned tools (tools/ci/pyodide), notebook 01's calls run under Node and
+  # Pyodide and must give the native numbers, and the notebook exported as a static site (marimo html-wasm) is
+  # opened in Chromium, Firefox and WebKit. The wheel and the site are artifacts; nothing is published.
+  pyodide:
+    name: Pyodide wheel and notebook site
+    needs: [scope, samples]
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal -t wasm32-unknown-emscripten && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: pyodide }
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with: { tool: "uv@0.13.5" }
+      - name: Python 3.14 environment (hash-pinned)
+        run: |
+          uv venv --python 3.14 "$RUNNER_TEMP/pw"
+          uv pip install --python "$RUNNER_TEMP/pw/bin/python" --require-hashes -r tools/ci/pyodide/requirements.txt
+          echo "$RUNNER_TEMP/pw/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/pw" >> "$GITHUB_ENV"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: ~/emsdk, key: "emsdk-5.0.3-a620cf1d71c62dfdfbb0c01fe0a371e2af2dda6c" }
+      - name: Build the wheel
+        run: tools/ci/retry.sh 2 tools/ci/pyodide/build-wheel.sh "$RUNNER_TEMP/wheel"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24.22.1" }
+      - name: Notebook 01's calls under Node and Pyodide, against the native numbers
+        working-directory: tools/ci/pyodide
+        run: |
+          npm ci --ignore-scripts
+          wheel=$(ls "$RUNNER_TEMP"/wheel/rvt_open-*.whl)
+          ls -l "$wheel"
+          node node-check.mjs "$wheel" "$GITHUB_WORKSPACE/_samples/2024/racbasicsampleproject.rvt" | tee "$RUNNER_TEMP/node.out"
+          python3 compare.py < "$RUNNER_TEMP/node.out"
+      - name: Export notebook 01 as a static site
+        run: |
+          wheel=$(ls "$RUNNER_TEMP"/wheel/rvt_open-*.whl)
+          tools/ci/pyodide/make-site.sh "$wheel" "$RUNNER_TEMP/site" http://127.0.0.1:8765/model.rvt
+      - name: The site in Chromium, Firefox and WebKit
+        working-directory: tools/ci/pyodide
+        run: |
+          ../retry.sh 3 npx playwright install --with-deps chromium firefox webkit
+          node site-check.mjs "$RUNNER_TEMP/site" "$GITHUB_WORKSPACE/_samples/2024/racbasicsampleproject.rvt" chromium firefox webkit
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pyodide-wheel
+          path: ${{ runner.temp }}/wheel/*.whl
+          if-no-files-found: ignore
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notebook-01-site
+          path: ${{ runner.temp }}/site
+          if-no-files-found: ignore
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notebook-01-site-shots
+          path: tools/ci/pyodide/site-shots
+          if-no-files-found: ignore
 
   # The tiny reference models are exported in four parts side by side (each
   # model once: rvt-ifc writes the IFC4 and the IFCX, with --ifcx-unused-types

@@ -189,7 +189,7 @@ pub fn stage(label: &str) {
 /// How many threads [`map_in_order`] uses: one in the browser build, else
 /// the machine's available parallelism.
 pub(crate) fn workers() -> usize {
-    if cfg!(all(target_family = "wasm", target_os = "unknown")) {
+    if cfg!(target_family = "wasm") {
         1
     } else {
         std::thread::available_parallelism().map_or(1, |n| n.get())

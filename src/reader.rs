@@ -410,14 +410,14 @@ type CachedArcWallScan = (
 /// What a [`RevitFile`] reads its container from: any `Read + Seek`
 /// (`Send + Sync` on hosts with threads, so a handle can be shared; the
 /// browser build's JS-backed sources are not).
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub trait ByteSource: Read + Seek + Send + Sync {}
-#[cfg(not(target_family = "wasm"))]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 impl<T: Read + Seek + Send + Sync> ByteSource for T {}
 /// What a [`RevitFile`] reads its container from: any `Read + Seek`.
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
 pub trait ByteSource: Read + Seek {}
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
 impl<T: Read + Seek> ByteSource for T {}
 
 /// Random access to `len` bytes by `read_at(offset, buf)`, which fills `buf`

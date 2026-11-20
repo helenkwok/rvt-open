@@ -143,3 +143,7 @@ _project_corpus/
 
 # Docker build context staged by docker/stage.sh from release archives.
 /docker/context/
+
+# ---- Pyodide job test tools (tools/ci/pyodide) ----
+tools/ci/pyodide/node_modules/
+tools/ci/pyodide/site-shots/

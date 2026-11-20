@@ -1,0 +1,9 @@
+# The Pyodide wheel job (tools/ci/pyodide): pyodide-build builds rvt-py for Pyodide, maturin is its backend,
+# marimo exports the example notebook to a static site. pyodide-build 0.39.4 and marimo 0.25.2 come from their
+# own release workflows (PyPI provenance attestations: pyodide/pyodide-build release.yml, marimo-team/marimo
+# release.yml); pure Python wheels, no install-time scripts. requirements.txt pins every dependency with its
+# hashes (Python 3.14, the version Pyodide 314 runs), and pip installs it with --require-hashes; after changing a
+# pin here, regenerate it with the uv command at its top.
+pyodide-build==0.39.4
+maturin==1.16.0
+marimo==0.25.2
