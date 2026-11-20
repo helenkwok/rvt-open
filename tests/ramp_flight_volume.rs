@@ -197,7 +197,15 @@ fn body_volumes(
             .map(|r| &step[&r])
             .find(|(_, a)| fields(a)[1] == "'Body'")
             .expect("a Body representation");
-        let item = reference(fields(&body.1)[3].trim_matches(|c| c == '(' || c == ')'));
+        let mut item = reference(fields(&body.1)[3].trim_matches(|c| c == '(' || c == ')'));
+        // A mapped item is the first item of its source's representation, placed by a
+        // transform that keeps volume and edges.
+        while step[&item].0 == "IFCMAPPEDITEM" {
+            let (_, map) = &step[&reference(fields(&step[&item].1)[0])];
+            let (_, shape) = &step[&reference(fields(map)[1])];
+            let items = fields(shape)[3].trim_matches(|c| c == '(' || c == ')');
+            item = reference(items.split(',').next().expect("a mapped item"));
+        }
         let (kind, a) = &step[&item];
         let f = fields(a);
         let mut mesh = None;
