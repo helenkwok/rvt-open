@@ -179,6 +179,8 @@ mod geometry_invariants;
 mod georeference;
 #[path = "../gltf_normals.rs"]
 mod gltf_normals;
+#[path = "../gltf_element_alpha.rs"]
+mod gltf_element_alpha;
 #[path = "../guid_namespace.rs"]
 mod guid_namespace;
 #[path = "../ifc_export_overrides.rs"]

@@ -29,7 +29,7 @@
 //! [bin_chunk_length bytes binary buffer, padded to 4-byte with 0x00]
 //! ```
 
-use super::IfcModel;
+use super::{IfcModel, MaterialInfo};
 use super::body_geometry::{self, Body, Placement, body_mesh};
 use super::entities::{IfcEntity, PropertyValue};
 use super::pbr::PbrMaterial;
@@ -915,6 +915,82 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
         )
         .collect();
 
+    // The same, for a body that keeps its category's colour but takes its alpha
+    // from the materials it is made of, every one of them transparent. Keyed by
+    // category and alpha bits so two elements in one category cannot overwrite
+    // each other.
+    let mut category_alpha_materials: std::collections::BTreeMap<(String, u32), usize> =
+        Default::default();
+    // A body drawn whole cannot show one material per part. One made only of
+    // transparent materials, a glass panel, keeps its category's colour and takes
+    // their alpha; one that also holds an opaque material, or a material whose
+    // transparency was not read, keeps its category's alpha, as drawn at its
+    // glass's a door with a glass panel would look all glass.
+    let mut element_alpha: std::collections::BTreeMap<usize, f32> = Default::default();
+    for set in &model.material_constituent_sets {
+        let Some(materials) = set
+            .material_indices
+            .iter()
+            .map(|index| model.materials.get(*index))
+            .collect::<Option<Vec<&MaterialInfo>>>()
+        else {
+            continue;
+        };
+        // One material whose colour was read is used outright by `single_material`.
+        if matches!(materials.as_slice(), [m] if m.color_packed.is_some()) {
+            continue;
+        }
+        if let Some(alpha) = all_transparent_alpha(materials) {
+            for &element in &set.elements {
+                element_alpha.insert(element, alpha);
+            }
+        }
+    }
+    for (index, entity) in model.entities.iter().enumerate() {
+        match entity {
+            IfcEntity::BuildingElement {
+                material_profile_set_index: Some(set),
+                ..
+            } => {
+                let Some(material) = model
+                    .material_profile_sets
+                    .get(*set)
+                    .and_then(|set| match set.profiles.as_slice() {
+                        [profile] => model.materials.get(profile.material_index),
+                        _ => None,
+                    })
+                else {
+                    continue;
+                };
+                if material.color_packed.is_none() {
+                    if let Some(alpha) = all_transparent_alpha([material]) {
+                        element_alpha.entry(index).or_insert(alpha);
+                    }
+                }
+            }
+            IfcEntity::BuildingElement {
+                material_layer_set_index: Some(set),
+                ..
+            } => {
+                let Some(set) = model.material_layer_sets.get(*set) else {
+                    continue;
+                };
+                let Some(materials) = set
+                    .layers
+                    .iter()
+                    .map(|l| l.material_index.and_then(|i| model.materials.get(i)))
+                    .collect::<Option<Vec<&MaterialInfo>>>()
+                else {
+                    continue;
+                };
+                if let Some(alpha) = all_transparent_alpha(materials) {
+                    element_alpha.entry(index).or_insert(alpha);
+                }
+            }
+            _ => {}
+        }
+    }
+
     // one primitive per face material (`None`: the element's).
     #[allow(clippy::type_complexity)]
     let mut shared_meshes: std::collections::BTreeMap<usize, Vec<(Accessors, Option<usize>)>> =
@@ -1204,14 +1280,27 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
                             })
                     })
                     .or_else(|| {
-                        Some(
-                            *category_materials
+                        // Windows and curtain panels already draw in a translucent
+                        // category colour, and keep it, as rooms keep theirs.
+                        let alpha = element_alpha
+                            .get(&entity_index)
+                            .copied()
+                            .filter(|_| category_colour(ifc_type).1 >= 1.0);
+                        Some(match alpha {
+                            None => *category_materials
                                 .entry(ifc_type.clone())
                                 .or_insert_with(|| {
                                     doc.materials.push(category_material(ifc_type));
                                     doc.materials.len() - 1
                                 }),
-                        )
+                            Some(alpha) => *category_alpha_materials
+                                .entry((ifc_type.clone(), alpha.to_bits()))
+                                .or_insert_with(|| {
+                                    doc.materials
+                                        .push(transparent_category_material(ifc_type, alpha));
+                                    doc.materials.len() - 1
+                                }),
+                        })
                     });
                 if let (true, Some(map)) =
                     (opts.instancing && !hidden_room, representation_map_index)
@@ -1485,6 +1574,39 @@ pub fn category_colour(ifc_type: &str) -> (u32, f32) {
 fn category_material(ifc_type: &str) -> Material {
     let (rgb, alpha) = category_colour(ifc_type);
     colour_material(format!("Category {ifc_type}"), rgb, alpha, SOURCE_RVT_OPEN)
+}
+
+/// The alpha a body drawn whole takes from the materials it is made of, where
+/// every one was read as transparent: the least transparent one's, so no part is
+/// drawn fainter than it is. `None` for no material, for one whose transparency
+/// was not read or lies outside 0 to 1, and for one read as opaque: that body
+/// keeps its category's alpha.
+fn all_transparent_alpha<'a>(materials: impl IntoIterator<Item = &'a MaterialInfo>) -> Option<f32> {
+    let mut alpha: Option<f32> = None;
+    for material in materials {
+        let transparency = material.transparency.filter(|t| (0.0..=1.0).contains(t))?;
+        if transparency <= 0.0 {
+            return None;
+        }
+        let candidate = PbrMaterial::from_material_info(material).alpha;
+        alpha = Some(alpha.map_or(candidate, |current: f32| current.max(candidate)));
+    }
+    alpha.filter(|alpha| *alpha < 1.0)
+}
+
+/// A category's colour at the alpha of the transparent materials an element is
+/// made of: the colour is rvt-open's, the alpha one minus a Revit material's own
+/// transparency, so the two are marked apart.
+fn transparent_category_material(ifc_type: &str, alpha: f32) -> Material {
+    let (rgb, _) = category_colour(ifc_type);
+    let mut material = colour_material(
+        format!("Category {ifc_type} transparent"),
+        rgb,
+        alpha,
+        SOURCE_RVT_OPEN,
+    );
+    material.extras = sources(SOURCE_RVT_OPEN, SOURCE_FILE);
+    material
 }
 
 /// A material of one sRGB colour (`0xRRGGBB`) and alpha, both from `source`.
