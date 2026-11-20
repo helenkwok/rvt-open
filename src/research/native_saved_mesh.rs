@@ -242,6 +242,9 @@ fn refined_plane_edge(
         return Ok(original);
     }
     type SurfaceEval = Box<dyn Fn([f64; 2]) -> Result<[f64; 3]>>;
+    // How near two knots of the neighbour's grid, or a knot and an end of the edge, are one
+    // point: a trimmed face's strip sides merge at 1e-9 (`conforming_strips`).
+    let mut knot_tol = 1e-12;
     let mut chord_breaks: Option<(
         Vec<f64>,
         crate::native_parametric_surface::ParametricSurface,
@@ -310,6 +313,9 @@ fn refined_plane_edge(
         }
         // A trimmed face's strip sides hold the equal steps of `v` and the saved points,
         // a rectangular one's grid every saved value.
+        if grid.loops.is_some() {
+            knot_tol = 1e-9;
+        }
         let v = if grid.loops.is_some() {
             grid.v_lattice
         } else {
@@ -448,10 +454,10 @@ fn refined_plane_edge(
     let mut values = knots
         .into_iter()
         .chain(samples.iter().map(|sample| sample[axis]))
-        .filter(|v| *v > lo + 1e-12 && *v < hi - 1e-12)
+        .filter(|v| *v > lo + knot_tol && *v < hi - knot_tol)
         .collect::<Vec<_>>();
     values.sort_by(f64::total_cmp);
-    values.dedup_by(|a, b| (*a - *b).abs() <= 1e-12);
+    values.dedup_by(|a, b| (*a - *b).abs() <= knot_tol);
     values.insert(0, lo);
     values.push(hi);
     if start[axis] > end[axis] {
