@@ -677,3 +677,26 @@ fn revolution_beside_a_ruled_face_shares_its_points() {
     );
     assert!(open < 400, "{open} edges without their reverse");
 }
+
+#[test]
+fn revolutions_of_one_group_share_their_edge_points() {
+    // A flow terminal of the Revit 2024 basic architectural sample drawn from surfaces of
+    // revolution that meet each other and ruled faces: the points each face takes from a
+    // neighbour reach the faces beyond it, so every shared edge is drawn through the same
+    // points (11,684 directed edges without their reverse before, none after).
+    let Some(ours) = ours_only(
+        "RVT_REVIT2024_SAMPLES_DIR",
+        "racbasicsampleproject",
+        &["IFCFLOWTERMINAL"],
+        &["778575"],
+    ) else {
+        return;
+    };
+    let mesh = ours["778575"].mesh.as_ref().expect("a mesh body");
+    let open = unmatched_edges(&mesh.0, &mesh.1);
+    eprintln!(
+        "778575: {} triangles, {open} edges without their reverse",
+        mesh.1.len()
+    );
+    assert_eq!(open, 0, "edges without their reverse");
+}
