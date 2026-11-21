@@ -6,7 +6,7 @@
 |---|---|---|---|
 | name, enum name | the Revit 2027 API reference, `BuiltInParameter` page (label and enum name of each member) and `BuiltInCategory` page | `bip_enum.tsv`, `bic_enum.tsv` | the page's HTML, first quoted text of each member's description |
 | storage type | the type of the values public sample files store: the element's own value sets and the other parameter sets of its objects (not what `field_parameters` derives from fields) | `storage.tsv` | `derive_storage.py` over the output of `examples/param_census.rs` on each file (origins S and N only) |
-| spec, group, enumeration texts | Revit's own IFC export of public samples (Revit property sets on): the value type and property set of the property whose name is the parameter's reference label; where several ids share a label, the id the element stores | `group-spec.tsv`, `enum-texts.tsv` | `ifcjoin.py` (the IFC export joined to the file census), then `derive_ifc.py` (it drops an enumeration text that embeds a sample's own storey or type name) |
+| spec, group, enumeration texts | Revit's own IFC export of public samples of the releases 2018 to 2027 (Revit property sets on; 110 exports, `ifcjoin.py` takes a directory of them): the value type and property set of the property whose name is the parameter's reference label; where several ids share a label, the id the element stores | `group-spec.tsv`, `enum-texts.tsv` | `ifcjoin.py` (the IFC export joined to the file census and counted per element category), then `derive_ifc.py`: the newest release's votes decide, the properties of schedules never vote, a label several ids share goes to the id whose enum name starts with the element's category (`DOOR_` for `Doors`), and an enumeration text that embeds a sample's own storey or type name is dropped; `ifc-releases.tsv` gives the release of each export |
 | names in the 12 other languages | Revit 2027 help: the term at the same place of the same topic in each language, for a name found as an exact structured term of an English topic; only names with one term on every topic, in all 12 languages | `help-terms.tsv` | `derive_help.py` (the topic list is the first column of `help-terms.tsv`; the match is by machine) |
 | category names | the `Category` property of Revit's own IFC export of public samples, joined to the category id the exporter reads for each element (`element_categories`); the most voted name of an id. Where it has none, the term of `program_names` (Revit's help) | `category-names.tsv` | `derive_categories.py` over the output of `examples/header_categories.rs` |
 
@@ -21,6 +21,12 @@ python3 tools/builtin-parameters/score.py <dir with the dump's builtin_parameter
 ```
 
 For each field it counts, over the ids the key has, how many the table fills, how many match the key, how many differ and how many are empty, and exits 1 when a match count falls below or a differ count rises above `expected-score.tsv`. The key is not in the repository (only the hash of each key file, in `expected-score.tsv`), so CI cannot run it; it runs wherever the key is. `tests/builtin_catalog_sources.rs` runs in CI: it pins how many fields each public source fills, so a field filled from anywhere else changes a count.
+
+```
+python3 tools/builtin-parameters/score_labels.py <dir with the 2027 dump in ENU, DEU, JPN, CHS: <model>__<LANG>.params.ndjson.gz>
+```
+
+It counts, over the ids the dump has, the help terms of DEU, JPN and CHS that equal the name Revit shows in that language (match) and those that do not (differ), and with `--write` removes the ones that differ from `inputs/help-terms.tsv`; without it, it exits 1 while one remains.
 
 ## Rebuilding
 

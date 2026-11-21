@@ -2,7 +2,7 @@
 field	key_ids	filled	match	differ	empty
 name	2342	2335	2292	43	7
 storage	2342	439	439	0	1903
-spec	1106	266	240	26	840
-group	716	445	444	1	271
-enum_text	1239	48	48	0	1191
-category_name	361	134	127	7	227
+spec	1106	356	317	39	750
+group	716	493	487	6	223
+enum_text	1239	67	67	0	1172
+category_name	361	138	131	7	223
