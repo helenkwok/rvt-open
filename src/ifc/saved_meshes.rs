@@ -232,33 +232,35 @@ fn drop_repeated_primitives(
         vec![BTreeMap::new(); rails.len()];
     for (k, rail) in rails.iter_mut().enumerate() {
         let old = std::mem::take(&mut rail.meshes.primitives);
+        // a rail is compared with the body and the rails before it, not with itself: its own
+        // repeats stay
+        let mut own: Vec<(Key, (usize, usize))> = Vec::new();
         for (i, p) in old.into_iter().enumerate() {
             let material = rail.render_materials.get(&i);
-            match seen.entry(key(&p)) {
-                std::collections::btree_map::Entry::Occupied(twin) => {
-                    let (owner, at) = *twin.get();
-                    let has = if owner == 0 {
-                        element.render_materials.contains_key(&at)
+            let key = key(&p);
+            if let Some(&(owner, at)) = seen.get(&key) {
+                let has = if owner == 0 {
+                    element.render_materials.contains_key(&at)
+                } else {
+                    kept[owner - 1].contains_key(&at)
+                };
+                if let (false, Some(m)) = (has, material) {
+                    if owner == 0 {
+                        element.render_materials.insert(at, m.clone());
                     } else {
-                        kept[owner - 1].contains_key(&at)
-                    };
-                    if let (false, Some(m)) = (has, material) {
-                        if owner == 0 {
-                            element.render_materials.insert(at, m.clone());
-                        } else {
-                            kept[owner - 1].insert(at, m.clone());
-                        }
+                        kept[owner - 1].insert(at, m.clone());
                     }
-                    continue;
                 }
-                std::collections::btree_map::Entry::Vacant(slot) => {
-                    slot.insert((k + 1, rail.meshes.primitives.len()));
-                }
+                continue;
             }
+            own.push((key, (k + 1, rail.meshes.primitives.len())));
             if let Some(m) = material {
                 kept[k].insert(rail.meshes.primitives.len(), m.clone());
             }
             rail.meshes.primitives.push(p);
+        }
+        for (key, at) in own {
+            seen.entry(key).or_insert(at);
         }
     }
     for (rail, materials) in rails.iter_mut().zip(kept) {
