@@ -191,8 +191,8 @@ fn continuous_rails(rf: &mut crate::RevitFile) -> BTreeMap<u64, Vec<u64>> {
 /// hold (a road-striping railing and its rail: the same 1,176 triangles twice, so the body
 /// read twice Revit's volume). A primitive of a rail that is the same node of the same
 /// graph under the same face tag and placement as one the body already has, with the same
-/// points and triangles, is left out; no other primitive is touched. Where the body's copy
-/// resolved to no material and the rail's copy did, the body's copy takes the rail's.
+/// points and triangles, is left out; no other primitive is touched. Where the copy kept
+/// resolved to no material and the one left out did, the copy kept takes its material.
 fn drop_repeated_primitives(
     element: &mut crate::native_saved_scene::SavedElement,
     rails: &mut [&mut crate::native_saved_scene::SavedElement],
@@ -219,36 +219,49 @@ fn drop_repeated_primitives(
             p.triangles.clone(),
         )
     };
-    // each kept primitive's key, and the index in the body's own primitives where it is one
-    let mut seen: BTreeMap<Key, Option<usize>> = element
+    // each kept primitive's key and where it is kept: `(0, index)` in the body's own
+    // primitives, `(k + 1, index)` in rail `k`'s
+    let mut seen: BTreeMap<Key, (usize, usize)> = element
         .meshes
         .primitives
         .iter()
         .enumerate()
-        .map(|(i, p)| (key(p), Some(i)))
+        .map(|(i, p)| (key(p), (0, i)))
         .collect();
-    for rail in rails.iter_mut() {
+    let mut kept: Vec<BTreeMap<usize, crate::native_saved_materials::RenderMaterial>> =
+        vec![BTreeMap::new(); rails.len()];
+    for (k, rail) in rails.iter_mut().enumerate() {
         let old = std::mem::take(&mut rail.meshes.primitives);
-        let mut materials = BTreeMap::new();
         for (i, p) in old.into_iter().enumerate() {
+            let material = rail.render_materials.get(&i);
             match seen.entry(key(&p)) {
                 std::collections::btree_map::Entry::Occupied(twin) => {
-                    if let (Some(own), Some(m)) = (*twin.get(), rail.render_materials.get(&i))
-                        && !element.render_materials.contains_key(&own)
-                    {
-                        element.render_materials.insert(own, m.clone());
+                    let (owner, at) = *twin.get();
+                    let has = if owner == 0 {
+                        element.render_materials.contains_key(&at)
+                    } else {
+                        kept[owner - 1].contains_key(&at)
+                    };
+                    if let (false, Some(m)) = (has, material) {
+                        if owner == 0 {
+                            element.render_materials.insert(at, m.clone());
+                        } else {
+                            kept[owner - 1].insert(at, m.clone());
+                        }
                     }
                     continue;
                 }
                 std::collections::btree_map::Entry::Vacant(slot) => {
-                    slot.insert(None);
+                    slot.insert((k + 1, rail.meshes.primitives.len()));
                 }
             }
-            if let Some(m) = rail.render_materials.get(&i) {
-                materials.insert(rail.meshes.primitives.len(), m.clone());
+            if let Some(m) = material {
+                kept[k].insert(rail.meshes.primitives.len(), m.clone());
             }
             rail.meshes.primitives.push(p);
         }
+    }
+    for (rail, materials) in rails.iter_mut().zip(kept) {
         rail.render_materials = materials;
     }
 }
