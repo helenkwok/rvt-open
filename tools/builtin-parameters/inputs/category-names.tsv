@@ -1,70 +1,77 @@
 # id	name	votes	models	other names
--2009030	Structural Connections	298	3	
--2009016	Structural Fabric Reinforcement	54	2	
--2009000	Structural Rebar	1066	7	
--2008234	Plumbing Equipment	35	1	
--2008132	Conduits	608	5	
--2008130	Cable Trays	34	2	
--2008128	Conduit Fittings	390	5	
--2008126	Cable Tray Fittings	36	2	
--2008099	Sprinklers	28	4	
--2008087	Lighting Devices	456	5	
--2008083	Data Devices	52	1	
--2008055	Pipe Accessories	126	1	
--2008049	Pipe Fittings	4760	7	
--2008044	Pipes	5026	7	
--2008020	Flex Ducts	483	5	
--2008013	Air Terminals	1804	6	
--2008010	Duct Fittings	4940	6	
--2008000	Ducts	4138	6	
--2003400	Mass	70	13	
--2001393	Roofs: Roof Soffits	6	2	
--2001392	Floors: Slab Edges	76	6	
--2001391	Roofs: Gutters	2	2	
--2001390	Roofs: Fascias	4	2	
--2001370	Entourage	72	9	
--2001360	Planting	311	7	
--2001354	Structural Stiffeners	4	2	
--2001350	Specialty Equipment	353	9	
--2001336	Structural Trusses	4	2	
--2001330	Structural Columns	2070	17	
--2001327	Structural Beam Systems	142	11	
--2001320	Structural Framing	3360	11	
--2001300	Structural Foundations	846	9	
--2001263	Site: Pads	8	6	
--2001260	Site	10	1	
--2001180	Parking	203	8	
--2001160	Plumbing Fixtures	459	10	
--2001140	Mechanical Equipment	289	7	
--2001120	Lighting Fixtures	2997	14	
--2001100	Furniture Systems	12	2	
--2001079	Toposolid	10	1	
--2001060	Electrical Fixtures	2246	5	
--2001052	Vertical Circulation	2	1	
--2001043	Food Service Equipment	26	1	
--2001040	Electrical Equipment	422	9	
--2001036	Hardscape	10	1	
--2001000	Casework	209	5	
--2000997	Walls: Rectangular Straight Wall Opening	17	7	
--2000996	Shaft Openings	16	9	
--2000920	Stairs: Landings	41	7	
--2000919	Stairs: Runs	105	9	
--2000182	Walls: Reveals	32	4	
--2000181	Walls: Wall Sweeps	382	6	
--2000180	Ramps	6	3	
--2000171	Curtain Wall Mullions	21483	13	
--2000170	Curtain Panels	8974	13	
--2000151	Generic Models	1302	16	
--2000126	Railings	379	14	
--2000123	Stairs: Supports	246	5	
--2000120	Stairs	111	15	
--2000100	Columns	157	6	
--2000080	Furniture	1109	9	
--2000051	Lines	194	8	
--2000045	Lines: <Sketch>	635	11	
--2000038	Ceilings	576	13	
--2000035	Roofs	88	9	
--2000032	Floors	609	21	
--2000023	Doors	1239	13	
--2000014	Windows	338	10	
--2000011	Walls	3669	21	
+-2009030	Structural Connections	351	8	
+-2009016	Structural Fabric Reinforcement	27	1	
+-2009000	Structural Rebar	1996	14	
+-2008234	Plumbing Equipment	112	4	
+-2008132	Conduits	1795	18	
+-2008130	Cable Trays	332	11	
+-2008128	Conduit Fittings	1134	13	
+-2008126	Cable Tray Fittings	304	11	
+-2008122	Pipe Insulations	751	1	
+-2008099	Sprinklers	93	15	
+-2008087	Lighting Devices	1358	14	
+-2008083	Data Devices	188	4	
+-2008081	Communication Devices	11	1	
+-2008055	Pipe Accessories	797	9	
+-2008050	Flex Pipes	1	1	
+-2008049	Pipe Fittings	21397	20	
+-2008044	Pipes	22267	24	
+-2008020	Flex Ducts	1228	14	
+-2008016	Duct Accessories	149	6	
+-2008013	Air Terminals	5748	27	
+-2008010	Duct Fittings	17555	22	
+-2008000	Ducts	15095	22	
+-2003400	Mass	178	37	
+-2001393	Roofs: Roof Soffits	3	1	
+-2001392	Floors: Slab Edges	283	26	Slab Edges:10
+-2001391	Roofs: Gutters	26	6	
+-2001390	Roofs: Fascias	14	2	
+-2001370	Entourage	223	31	
+-2001360	Planting	1265	34	
+-2001354	Structural Stiffeners	10	5	
+-2001350	Specialty Equipment	2024	42	
+-2001336	Structural Trusses	10	5	
+-2001330	Structural Columns	7975	52	
+-2001327	Structural Beam Systems	382	28	
+-2001320	Structural Framing	13757	43	
+-2001300	Structural Foundations	2744	24	
+-2001265	Site: Property Lines	7	5	
+-2001263	Site: Pads	14	19	Pads:10
+-2001260	Site	486	15	
+-2001180	Parking	656	33	
+-2001160	Plumbing Fixtures	2931	43	
+-2001140	Mechanical Equipment	3393	21	
+-2001122	Toposolid: Sub-divisions	17	3	
+-2001120	Lighting Fixtures	16598	53	
+-2001100	Furniture Systems	30	5	
+-2001079	Toposolid	99	8	
+-2001060	Electrical Fixtures	6275	15	
+-2001058	Signage	6	1	
+-2001052	Vertical Circulation	9	4	
+-2001043	Food Service Equipment	122	4	
+-2001040	Electrical Equipment	1637	34	
+-2001036	Hardscape	47	5	
+-2001000	Casework	2885	28	
+-2000997	Walls: Rectangular Straight Wall Opening	228	23	
+-2000996	Shaft Openings	39	20	
+-2000920	Stairs: Landings	255	26	Landings:2
+-2000919	Stairs: Runs	480	34	Runs:8
+-2000182	Walls: Reveals	136	13	
+-2000181	Walls: Wall Sweeps	2950	30	Wall Sweeps:48
+-2000180	Ramps	48	17	
+-2000171	Curtain Wall Mullions	110034	49	
+-2000170	Curtain Panels	30029	48	Doors:1
+-2000151	Generic Models	4070	65	
+-2000126	Railings	1638	55	
+-2000123	Stairs: Supports	1359	21	Supports:4
+-2000120	Stairs	408	55	
+-2000100	Columns	764	26	
+-2000080	Furniture	3284	35	
+-2000051	Lines	458	13	
+-2000045	Lines: <Sketch>	1121	32	
+-2000038	Ceilings	2316	48	
+-2000035	Roofs	309	39	
+-2000032	Floors	5053	77	
+-2000023	Doors	5902	48	
+-2000014	Windows	3234	40	
+-2000011	Walls	19842	79	

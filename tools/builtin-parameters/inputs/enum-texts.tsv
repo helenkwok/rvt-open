@@ -1,22 +1,39 @@
 # id	value	text
+-1153100	0	None
 -1152175	0	Front Only
+-1152175	3	Front, Left and Right
 -1152161	0	Extend Riser Behind Tread
 -1152161	1	Extend Tread Under Riser
 -1151402	1	Smooth
 -1151232	0	None
 -1151232	1	Stringer (Closed)
+-1151232	2	Carriage (Open)
 -1151231	0	None
 -1151231	1	Stringer (Closed)
+-1151231	2	Carriage (Open)
 -1151224	1	Notch
+-1140234	1	K Coefficient from Table
 -1140129	1	Bend
 -1140129	2	Fitting
+-1140087	0	Prefixed
+-1140087	2	Prefixed
+-1019100	0	Slanted
 -1019100	1	Vertical
+-1019100	2	Tapered
+-1019012	0	By Type
 -1008632	0	Trim
 -1008632	1	Weld
 -1008631	0	Add Vertical/Horizontal Segments
+-1008631	1	No Connector
+-1008630	0	Add Vertical/Horizontal Segments
+-1008630	1	No Connector
 -1008630	2	Extend Rails to Meet
+-1008305	0	Thick
+-1008305	1	Solid
 -1007395	0	Not Defined
 -1007395	1	Vertical Grid Continuous
+-1007395	2	Horizontal Grid Continuous
+-1007395	3	Border and Vertical Grid Continuous
 -1007395	4	Border and Horizontal Grid Continuous
 -1007387	0	Not Defined
 -1007277	0	Do not trim
@@ -28,6 +45,7 @@
 -1007262	1	Extend Tread Under Riser
 -1007256	1	Smooth
 -1007243	1	Straight
+-1007243	2	Slanted
 -1005439	0	Building Type
 -1005439	1	Schematic Type
 -1001710	33615	Plumb Cut
@@ -47,3 +65,5 @@
 -1001006	1	Exterior
 -1001006	2	Foundation
 -1001006	3	Retaining
+-1001006	4	Soffit
+-1001006	5	Core-shaft

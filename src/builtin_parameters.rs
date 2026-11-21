@@ -69,8 +69,11 @@ pub fn parameter(id: i64) -> Option<BuiltInParameter> {
 /// from [`LOCALIZED_LANGUAGES`]) and the help topic (`<component>/<topic>`,
 /// help.autodesk.com Revit 2027) the term was taken from. Only parameters
 /// whose term is the same on every help topic that carries their name, in
-/// all 12 languages, have one. The match is by machine: the term at the same
-/// place of the same topic as the English name.
+/// all 12 languages, have one, and a term the Revit API dump of the public
+/// samples shows differs from the name Revit shows (German, Japanese,
+/// Chinese) is left out, so a language can be missing for a parameter that
+/// has the others. The match is by machine: the term at the same place of
+/// the same topic as the English name.
 pub fn localized_name(id: i64, language: &str) -> Option<(&'static str, &'static str)> {
     let col = LOCALIZED_LANGUAGES
         .iter()

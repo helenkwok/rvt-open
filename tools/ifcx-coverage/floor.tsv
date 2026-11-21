@@ -3,7 +3,7 @@ set	kind	what	ifcx
 1	element instances	objects	240
 1	element instances	parameters	4264
 1	type objects	objects	90
-1	type objects	parameters	621
+1	type objects	parameters	633
 1	unused type objects	objects	31045
 1	levels and grids	objects	100
 1	levels and grids	parameters	1150
@@ -22,7 +22,7 @@ set	kind	what	ifcx
 2	element instances	objects	1327
 2	element instances	parameters	13483
 2	type objects	objects	312
-2	type objects	parameters	1982
+2	type objects	parameters	2000
 2	unused type objects	objects	105810
 2	levels and grids	objects	400
 2	levels and grids	parameters	4450
