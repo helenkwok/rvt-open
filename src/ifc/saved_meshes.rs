@@ -190,12 +190,16 @@ fn continuous_rails(rf: &mut crate::RevitFile) -> BTreeMap<u64, Vec<u64>> {
 /// A railing's continuous rail can draw a graphics node the railing's own graphics already
 /// hold (a road-striping railing and its rail: the same 1,176 triangles twice, so the body
 /// read twice Revit's volume). A primitive of a rail that is the same node of the same
-/// graph under the same face tag and placement as one the body already has, with the same points and triangles, is left out; no
-/// other primitive is touched.
+/// graph under the same face tag and placement as one the body already has, with the same
+/// points and triangles, is left out; no other primitive is touched. Where the body's copy
+/// resolved to no material and the rail's copy did, the body's copy takes the rail's.
 fn drop_repeated_primitives(
-    element: &crate::native_saved_scene::SavedElement,
+    element: &mut crate::native_saved_scene::SavedElement,
     rails: &mut [&mut crate::native_saved_scene::SavedElement],
 ) {
+    if rails.is_empty() {
+        return;
+    }
     type Key = (Option<u64>, usize, i64, Vec<u64>, Vec<u64>, Vec<[u32; 3]>);
     let key = |p: &Primitive| -> Key {
         let frame = p
@@ -215,13 +219,30 @@ fn drop_repeated_primitives(
             p.triangles.clone(),
         )
     };
-    let mut seen: BTreeSet<Key> = element.meshes.primitives.iter().map(key).collect();
+    // each kept primitive's key, and the index in the body's own primitives where it is one
+    let mut seen: BTreeMap<Key, Option<usize>> = element
+        .meshes
+        .primitives
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (key(p), Some(i)))
+        .collect();
     for rail in rails.iter_mut() {
         let old = std::mem::take(&mut rail.meshes.primitives);
         let mut materials = BTreeMap::new();
         for (i, p) in old.into_iter().enumerate() {
-            if !seen.insert(key(&p)) {
-                continue;
+            match seen.entry(key(&p)) {
+                std::collections::btree_map::Entry::Occupied(twin) => {
+                    if let (Some(own), Some(m)) = (*twin.get(), rail.render_materials.get(&i))
+                        && !element.render_materials.contains_key(&own)
+                    {
+                        element.render_materials.insert(own, m.clone());
+                    }
+                    continue;
+                }
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(None);
+                }
             }
             if let Some(m) = rail.render_materials.get(&i) {
                 materials.insert(rail.meshes.primitives.len(), m.clone());
@@ -865,7 +886,7 @@ pub fn attach_scoped_in_batches(
         }
         // By value: each element's saved mesh is freed once its body is built,
         // so the scene shrinks as the model grows.
-        for element in elements {
+        for mut element in elements {
             let element_id = element.identity.element_id;
             if by_id.contains_key(&element_id) {
                 seen.insert(element_id);
@@ -1053,7 +1074,7 @@ pub fn attach_scoped_in_batches(
                 // railing keeps its own body (the box check counts it).
                 .filter(|r| !is_partial(r))
                 .collect();
-            drop_repeated_primitives(&element, &mut own_rails);
+            drop_repeated_primitives(&mut element, &mut own_rails);
             let partial = partial_refusal(&element.meshes);
             if element.meshes.primitives.is_empty() {
                 refusals.push((
