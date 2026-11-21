@@ -1560,6 +1560,7 @@ mod wall_ends_tests {
             ],
             edges: Vec::new(),
             lookup: Default::default(),
+            seams: Default::default(),
         };
         let ends = wall_ends(&graph, 4).unwrap();
         assert_eq!(ends.curve, [[3.0, 4.0], [3.0, 0.0]]);

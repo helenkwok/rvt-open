@@ -61,6 +61,10 @@ pub struct ObjectGraph {
     /// Pointer lookup tables, built once on first use.
     #[serde(skip)]
     pub(crate) lookup: std::sync::OnceLock<PointerLookup>,
+    /// The points each ruled face or surface of revolution takes from its neighbours,
+    /// computed once per group of faces.
+    #[serde(skip)]
+    pub(crate) seams: crate::native_parametric_mesh::SeamCache,
 }
 /// Edges by (source object, pointer offset) and objects by token.
 #[derive(Clone, Default)]
@@ -390,6 +394,7 @@ fn decode_graph_in(
             objects,
             edges,
             lookup: Default::default(),
+            seams: Default::default(),
         },
         usage,
     ))

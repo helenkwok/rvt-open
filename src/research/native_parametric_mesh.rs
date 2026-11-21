@@ -40,8 +40,8 @@ pub(crate) struct FaceGrid {
     pub chord_edges: std::collections::BTreeSet<usize>,
     /// Each span between two saved points of those edges, in the surface's parameters.
     pub chords: Vec<[[f64; 2]; 2]>,
-    /// Points `[u, v]` a trimmed ruled face's strip sides at that `u` hold besides its own:
-    /// those a rectangular ruled neighbour draws on the edge they share.
+    /// Points `[u, v]` a trimmed face's strip sides at that `u` hold besides its own: those
+    /// its neighbours draw on the edges they share (`seam_group`).
     pub at_u_extra: Vec<[f64; 2]>,
 }
 
@@ -249,9 +249,8 @@ pub(crate) fn face_grid(g: &ObjectGraph, fi: usize) -> Result<FaceGrid> {
 /// [`face_grid`]; with `allow_general` a trim that is not one rectangle
 /// (several loops, slanted or curved edges) is kept as its UV loops.
 ///
-/// With `exchange`, a ruled face also takes the points a ruled neighbour of the other kind
-/// (one trimmed to a rectangle, one not) draws along their shared edge (`seam_edge`); a
-/// neighbour's own grid is taken without that exchange.
+/// With `exchange`, a ruled face or a surface of revolution also takes the points the faces
+/// of its group draw along the edges they share (`seam_group`).
 fn face_grid_impl(
     g: &ObjectGraph,
     fi: usize,
@@ -619,14 +618,13 @@ fn face_grid_impl(
             ParametricSurface::RuledSurf { .. } | ParametricSurface::SurfRev { .. }
         )
     {
-        if let Ok(ex) = seam_extras(g, fi, rectangular) {
-            for (knots, extra) in [(&mut u_knots, ex.u), (&mut v_knots, ex.v)] {
-                knots.extend(extra);
-                knots.sort_by(f64::total_cmp);
-                knots.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
-            }
-            at_u_extra = ex.at_u;
+        let ex = group_seams(g, fi);
+        for (knots, extra) in [(&mut u_knots, &ex.u), (&mut v_knots, &ex.v)] {
+            knots.extend(extra);
+            knots.sort_by(f64::total_cmp);
+            knots.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
         }
+        at_u_extra = ex.at_u.clone();
     }
     let loops = if rectangular {
         None
@@ -657,7 +655,7 @@ fn face_grid_impl(
 
 /// The points a ruled face or a surface of revolution takes from the neighbours across its
 /// edges.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct SeamExtras {
     u: Vec<f64>,
     v: Vec<f64>,
@@ -665,35 +663,51 @@ struct SeamExtras {
     at_u: Vec<[f64; 2]>,
 }
 
-/// The saved points of `edge` in the parameters of its face on `side`.
-fn edge_uv(g: &ObjectGraph, edge: usize, side: usize) -> Result<Vec<[f64; 2]>> {
-    let e = &g.objects[edge];
-    let ends = e.fields["m_firstAndLastEdgePnts"]
-        .as_array()
-        .context("edge endpoints")?;
-    ensure!(ends.len() == 2, "edge endpoint count");
-    let mut points = vec![uv_point(&ends[0]["uv"][side])?];
-    for p in e.fields["m_interiorEdgePnts"]
-        .as_array()
-        .context("edge interior points")?
-    {
-        points.push(uv_point(&p["uv"][side])?);
+/// Per graph, the points each face takes from its group (`seam_group`), computed once for
+/// every face of a group.
+#[derive(Default)]
+pub(crate) struct SeamCache(
+    std::sync::Mutex<std::collections::HashMap<usize, std::sync::Arc<SeamExtras>>>,
+);
+
+impl Clone for SeamCache {
+    fn clone(&self) -> Self {
+        Self::default()
     }
-    points.push(uv_point(&ends[1]["uv"][side])?);
-    Ok(points)
 }
 
-/// For `fi`, a ruled face (`rectangular` or not) or a surface of revolution trimmed to a
-/// rectangle, what each neighbour draws along the edge it shares with it, in `fi`'s
-/// parameters: a ruled neighbour of the other kind, a revolution beside a ruled face, a
-/// ruled face beside a revolution. An edge that does not qualify is left as it was.
-fn seam_extras(g: &ObjectGraph, fi: usize, rectangular: bool) -> Result<SeamExtras> {
+impl std::fmt::Debug for SeamCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SeamCache")
+    }
+}
+
+/// The points face `fi` takes from the connected group of faces it exchanges with.
+fn group_seams(g: &ObjectGraph, fi: usize) -> std::sync::Arc<SeamExtras> {
+    let lock = || {
+        g.seams
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    if let Some(found) = lock().get(&fi) {
+        return found.clone();
+    }
+    let group = seam_group(g, fi).unwrap_or_default();
+    let mut cache = lock();
+    for (face, extras) in group {
+        cache
+            .entry(face)
+            .or_insert_with(|| std::sync::Arc::new(extras));
+    }
+    cache.entry(fi).or_default().clone()
+}
+
+/// The edges of face `fi`'s trim loops: `(edge, side of fi, the face on the other side)`.
+fn face_links(g: &ObjectGraph, fi: usize) -> Result<Vec<(usize, usize, usize)>> {
     use crate::native_saved_mesh::pointer;
-    let mut ex = SeamExtras::default();
+    let mut links = Vec::new();
     let f = g.objects.get(fi).context("face index")?;
-    let surface = pointer(g, fi, &f.fields["m_pSurf"])?.context("face surface")?;
-    let ruled = g.objects[surface].class_name == "RuledSurf";
-    ensure!(ruled || rectangular, "trimmed revolution");
     let mut next_loop = pointer(g, fi, &f.fields["m_pFirstLoop"])?;
     let mut seen_loops = std::collections::BTreeSet::new();
     while let Some(li) = next_loop {
@@ -715,48 +729,77 @@ fn seam_extras(g: &ObjectGraph, fi: usize, rectangular: bool) -> Result<SeamExtr
             let side = side.context("edge does not belong to face")?;
             if let Some(other) = pointer(g, cur, &faces[1 - side]).ok().flatten() {
                 if other != fi {
-                    let _ = seam_edge(g, ruled, rectangular, cur, side, other, &mut ex);
+                    links.push((cur, side, other));
                 }
             }
             cur = pointer(g, cur, &e.fields["m_next"][side])?.context("null trim next")?;
         }
         next_loop = pointer(g, li, &l.fields["m_nextLoop"])?;
     }
-    Ok(ex)
+    Ok(links)
 }
 
-/// One shared edge, along one `u` or one `v` in both faces: the points the neighbour `other`
-/// draws on it, mapped into this face's parameters by the edge's saved points. A
-/// rectangular face draws every knot of its grid there, a trimmed one the strips' breaks
-/// (along `u`) or the equal steps of `v` and the loops' own points at that `u`; each face
-/// takes the other's, so that both draw the union.
-fn seam_edge(
+/// Whether two faces take each other's points along an edge they share: ruled faces and
+/// surfaces of revolution, except two ruled faces trimmed alike, which share their
+/// normalized grid instead (`face_grid_impl`).
+fn exchanges(a: &FaceGrid, b: &FaceGrid) -> bool {
+    use ParametricSurface::{RuledSurf, SurfRev};
+    match (&a.surface, &b.surface) {
+        (RuledSurf { .. }, RuledSurf { .. }) => a.loops.is_some() != b.loops.is_some(),
+        (RuledSurf { .. } | SurfRev { .. }, RuledSurf { .. } | SurfRev { .. }) => true,
+        _ => false,
+    }
+}
+
+/// A face's points during the exchange: its knots with those it took, sorted, and the points
+/// its strip sides took.
+struct SeamWork {
+    u: Vec<f64>,
+    v: Vec<f64>,
+    at_u: Vec<[f64; 2]>,
+    extras: SeamExtras,
+}
+
+/// Whether sorted `values` hold `x` to 1e-9.
+fn holds(values: &[f64], x: f64) -> bool {
+    let i = values.partition_point(|y| *y < x);
+    (i > 0 && x - values[i - 1] < 1e-9) || (i < values.len() && values[i] - x < 1e-9)
+}
+
+/// The `v` values a trimmed face's strip side at `u` holds: the equal steps, the loops' own
+/// points there and the points it took.
+fn strip_side(grid: &FaceGrid, work: &SeamWork, u: f64) -> Vec<f64> {
+    let mut values: Vec<f64> = grid
+        .v_lattice
+        .iter()
+        .copied()
+        .chain(
+            grid.loops
+                .iter()
+                .flatten()
+                .flatten()
+                .chain(&work.at_u)
+                .filter(|p| (p[0] - u).abs() < 1e-9)
+                .map(|p| p[1]),
+        )
+        .collect();
+    values.sort_by(f64::total_cmp);
+    values
+}
+
+/// One shared edge, along one `u` or one `v` in both faces: the points the face on side
+/// `1 - side` (`og`, with the points it took so far, `ow`) draws on it, mapped into the
+/// parameters of the face on `side` by the edge's saved points; with the axis they lie
+/// along there and that face's fixed parameter. A rectangular face draws every knot of its
+/// grid there, a trimmed one the strips' breaks (along `u`) or its strip side (along `v`).
+fn edge_values(
     g: &ObjectGraph,
-    ruled: bool,
-    rectangular: bool,
     edge: usize,
     side: usize,
-    other: usize,
-    ex: &mut SeamExtras,
-) -> Result<()> {
-    use crate::native_saved_mesh::{isoparametric_axis, pointer};
-    let surface = g
-        .objects
-        .get(other)
-        .and_then(|face| face.fields.get("m_pSurf"))
-        .context("neighbour surface")?;
-    let surface = pointer(g, other, surface)?.context("neighbour surface")?;
-    let og = face_grid_impl(g, other, true, false)?;
-    match (ruled, g.objects[surface].class_name.as_str()) {
-        // only a trimmed ruled face beside a rectangular one
-        (true, "RuledSurf") => ensure!(
-            og.loops.is_some() == rectangular,
-            "neighbour of the same kind"
-        ),
-        (true, "SurfRev") => ensure!(og.loops.is_none(), "trimmed revolution"),
-        (false, "RuledSurf") => {}
-        _ => anyhow::bail!("neighbour kind"),
-    }
+    og: &FaceGrid,
+    ow: &SeamWork,
+) -> Result<(usize, f64, Vec<f64>)> {
+    use crate::native_saved_mesh::isoparametric_axis;
     let (mine, theirs) = (edge_uv(g, edge, side)?, edge_uv(g, edge, 1 - side)?);
     ensure!(mine.len() == theirs.len(), "edge sample count");
     let (ax, ay) = (
@@ -767,21 +810,10 @@ fn seam_edge(
     let (lo, hi) = (first.min(last), first.max(last));
     let fixed = theirs[0][1 - ay];
     let mut values: Vec<f64> = match (&og.loops, ay) {
-        (None, 0) => og.u.clone(),
-        (None, _) => og.v.clone(),
-        (Some(loops), 0) => strip_breaks(loops, &og.u),
-        (Some(loops), _) => og
-            .v_lattice
-            .iter()
-            .copied()
-            .chain(
-                loops
-                    .iter()
-                    .flatten()
-                    .filter(|p| (p[0] - fixed).abs() < 1e-9)
-                    .map(|p| p[1]),
-            )
-            .collect(),
+        (None, 0) => ow.u.clone(),
+        (None, _) => ow.v.clone(),
+        (Some(loops), 0) => strip_breaks(loops, &ow.u),
+        (Some(_), _) => strip_side(og, ow, fixed),
     };
     values.retain(|v| *v > lo + 1e-9 && *v < hi - 1e-9);
     // the same edge in this face's parameters: the saved points must agree under one
@@ -795,14 +827,151 @@ fn seam_edge(
             .all(|(a, b)| (map(b[ay]) - a[ax]).abs() < 1e-7),
         "edge parameters differ"
     );
-    let values: Vec<f64> = values.into_iter().map(map).collect();
-    let fixed_mine = mine[0][1 - ax];
-    match (rectangular, ax) {
-        (_, 0) => ex.u.extend(values),
-        (true, _) => ex.v.extend(values),
-        (false, _) => ex.at_u.extend(values.into_iter().map(|v| [fixed_mine, v])),
+    Ok((ax, mine[0][1 - ax], values.into_iter().map(map).collect()))
+}
+
+/// Rounds of the exchange at most. A round in which no face takes a new point ends it, and
+/// a point crosses one edge per round, so a group whose edges map the parameters the same
+/// way whichever path a point takes settles within as many rounds as it has faces. The
+/// cap stops a group whose maps do not compose exactly round a cycle of faces, which could
+/// otherwise keep making points.
+const SEAM_ROUNDS: usize = 32;
+
+/// The connected group of ruled faces and surfaces of revolution that `fi` exchanges with
+/// (`exchanges`), and the points each takes: every face takes what each neighbour draws
+/// along their shared edge, the neighbour's own takings included, until no face takes a
+/// new point, so that the faces of a chain (a revolution, a ruled face, a revolution) or of
+/// a ring of revolutions all draw a shared edge through the same points. An edge that does
+/// not run along one `u` or one `v` in both faces, or whose saved points do not agree,
+/// carries nothing.
+fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<usize, SeamExtras>> {
+    use crate::native_saved_mesh::pointer;
+    use std::collections::BTreeMap;
+    // a face's grid without the exchange, or `None` when it is no ruled face or surface of
+    // revolution or has no grid
+    let mut grids: BTreeMap<usize, Option<FaceGrid>> = BTreeMap::new();
+    let grid_of = |grids: &mut BTreeMap<usize, Option<FaceGrid>>, face: usize| -> bool {
+        grids
+            .entry(face)
+            .or_insert_with(|| {
+                let surface = g.objects.get(face)?.fields.get("m_pSurf")?;
+                let surface = pointer(g, face, surface).ok()??;
+                if !matches!(
+                    g.objects.get(surface)?.class_name.as_str(),
+                    "RuledSurf" | "SurfRev"
+                ) {
+                    return None;
+                }
+                face_grid_impl(g, face, true, false).ok()
+            })
+            .is_some()
+    };
+    ensure!(
+        grid_of(&mut grids, fi),
+        "face without a ruled or revolved grid"
+    );
+    let mut links: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
+    let mut stack = vec![fi];
+    links.insert(fi, Vec::new());
+    while let Some(f) = stack.pop() {
+        let mut mine = Vec::new();
+        for (edge, side, other) in face_links(g, f).unwrap_or_default() {
+            if !grid_of(&mut grids, other) {
+                continue;
+            }
+            let (a, b) = (grids[&f].as_ref(), grids[&other].as_ref());
+            if !a.zip(b).is_some_and(|(a, b)| exchanges(a, b)) {
+                continue;
+            }
+            mine.push((edge, side, other));
+            if !links.contains_key(&other) {
+                links.insert(other, Vec::new());
+                stack.push(other);
+            }
+        }
+        links.insert(f, mine);
     }
-    Ok(())
+    let grid = |face: usize| grids[&face].as_ref().expect("group member has a grid");
+    let mut work: BTreeMap<usize, SeamWork> = links
+        .keys()
+        .map(|&face| {
+            let grid = grid(face);
+            let work = SeamWork {
+                u: grid.u.clone(),
+                v: grid.v.clone(),
+                at_u: Vec::new(),
+                extras: SeamExtras::default(),
+            };
+            (face, work)
+        })
+        .collect();
+    for _ in 0..SEAM_ROUNDS {
+        let mut grew = false;
+        for (&f, mine) in &links {
+            for &(edge, side, other) in mine {
+                let Ok((ax, fixed, values)) =
+                    edge_values(g, edge, side, grid(other), &work[&other])
+                else {
+                    continue;
+                };
+                let rectangular = grid(f).loops.is_none();
+                let side_values =
+                    (ax == 1 && !rectangular).then(|| strip_side(grid(f), &work[&f], fixed));
+                let w = work.get_mut(&f).expect("group member");
+                for x in values {
+                    let taken = match (ax, &side_values) {
+                        (0, _) => &mut w.u,
+                        (_, None) => &mut w.v,
+                        (_, Some(side)) => {
+                            if !holds(side, x)
+                                && !w
+                                    .at_u
+                                    .iter()
+                                    .any(|p| (p[0] - fixed).abs() < 1e-9 && (p[1] - x).abs() < 1e-9)
+                            {
+                                w.at_u.push([fixed, x]);
+                                w.extras.at_u.push([fixed, x]);
+                                grew = true;
+                            }
+                            continue;
+                        }
+                    };
+                    if !holds(taken, x) {
+                        taken.insert(taken.partition_point(|y| *y < x), x);
+                        if ax == 0 {
+                            &mut w.extras.u
+                        } else {
+                            &mut w.extras.v
+                        }
+                        .push(x);
+                        grew = true;
+                    }
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    Ok(work.into_iter().map(|(face, w)| (face, w.extras)).collect())
+}
+
+/// The saved points of `edge` in the parameters of its face on `side`.
+fn edge_uv(g: &ObjectGraph, edge: usize, side: usize) -> Result<Vec<[f64; 2]>> {
+    let e = &g.objects[edge];
+    let ends = e.fields["m_firstAndLastEdgePnts"]
+        .as_array()
+        .context("edge endpoints")?;
+    ensure!(ends.len() == 2, "edge endpoint count");
+    let mut points = vec![uv_point(&ends[0]["uv"][side])?];
+    for p in e.fields["m_interiorEdgePnts"]
+        .as_array()
+        .context("edge interior points")?
+    {
+        points.push(uv_point(&p["uv"][side])?);
+    }
+    points.push(uv_point(&ends[1]["uv"][side])?);
+    Ok(points)
 }
 
 /// The greatest length of the change of a ruling per unit of `u` between two profiles
