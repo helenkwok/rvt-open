@@ -292,12 +292,30 @@ fn volumes(
     classes: &[&str],
     tags: &[&str],
 ) -> Option<(BTreeMap<String, Body>, BTreeMap<String, Body>)> {
-    let Some(dir) = std::env::var_os("RVT_NORDIC_LCA_DIR").map(PathBuf::from) else {
-        eprintln!("skipping: RVT_NORDIC_LCA_DIR is not set");
+    volumes_in(
+        "RVT_NORDIC_LCA_DIR",
+        model,
+        &format!("{model}_Revit.ifc"),
+        classes,
+        tags,
+    )
+}
+
+/// [`volumes`] for `model` and Revit's export `ifc_name` in the directory the environment
+/// variable `dir_var` names.
+fn volumes_in(
+    dir_var: &str,
+    model: &str,
+    ifc_name: &str,
+    classes: &[&str],
+    tags: &[&str],
+) -> Option<(BTreeMap<String, Body>, BTreeMap<String, Body>)> {
+    let Some(dir) = std::env::var_os(dir_var).map(PathBuf::from) else {
+        eprintln!("skipping: {dir_var} is not set");
         return None;
     };
     let rvt = dir.join(format!("{model}.rvt"));
-    let ifc = dir.join(format!("{model}_Revit.ifc"));
+    let ifc = dir.join(ifc_name);
     if !rvt.exists() || !ifc.exists() {
         eprintln!("skipping: {model} or Revit's export absent");
         return None;
@@ -619,4 +637,70 @@ fn office_timber_stair_flights_have_revits_volume() {
         return;
     };
     same_bodies(&ours, &revit, 2, &tags, &[]);
+}
+
+/// Triangles of a body that another triangle of it repeats exactly (the same three points
+/// to 1e-5 ft, in any order).
+fn repeated_triangles(points: &[[f64; 3]], triangles: &[[usize; 3]]) -> usize {
+    let cell = |p: [f64; 3]| p.map(|x| (x / 0.3048e-5).round() as i64);
+    let mut seen = std::collections::BTreeSet::new();
+    triangles
+        .iter()
+        .filter(|t| {
+            let mut key = t.map(|i| cell(points[i]));
+            key.sort();
+            !seen.insert(key)
+        })
+        .count()
+}
+
+#[test]
+fn railing_and_its_rail_do_not_draw_one_shell_twice() {
+    // A railing of the Revit 2024 basic architectural sample whose continuous rail draws the
+    // same graphics node as the railing itself: the rail's triangles were in twice (volume
+    // 1.76 of Revit's; 1.000 once). The same is behind `Railing:Road Striping` 2150302 of the
+    // Snowdon Towers architectural sample (2.000 of Revit's).
+    let Some((ours, revit)) = volumes_in(
+        "RVT_REVIT2024_SAMPLES_DIR",
+        "racbasicsampleproject",
+        "racbasicsampleproject.ifc",
+        &["IFCRAILING"],
+        &["566588"],
+    ) else {
+        return;
+    };
+    let mesh = ours["566588"].mesh.as_ref().expect("a mesh body");
+    let repeated = repeated_triangles(&mesh.0, &mesh.1);
+    let ratio = ours["566588"].volume / revit["566588"].volume;
+    eprintln!(
+        "566588: {} triangles, {repeated} repeated, volume / Revit's {ratio:.4}",
+        mesh.1.len()
+    );
+    assert_eq!(repeated, 0, "triangles drawn twice");
+    assert!((ratio - 1.0).abs() < 0.01, "volume ratio {ratio}");
+}
+
+#[test]
+fn revolution_beside_a_ruled_face_shares_its_points() {
+    // A railing of the Revit 2024 Snowdon Towers site sample whose surfaces of revolution
+    // sit beside trimmed ruled faces: each takes the points the other draws along the edge
+    // between them (600 directed edges without their reverse before, 268 after).
+    let Some((ours, revit)) = volumes_in(
+        "RVT_REVIT2024_SAMPLES_DIR",
+        "Snowdon Towers Sample Site",
+        "Snowdon Towers Sample Site.ifc",
+        &["IFCRAILING"],
+        &["1348313"],
+    ) else {
+        return;
+    };
+    let mesh = ours["1348313"].mesh.as_ref().expect("a mesh body");
+    let open = unmatched_edges(&mesh.0, &mesh.1);
+    let ratio = ours["1348313"].volume / revit["1348313"].volume;
+    eprintln!(
+        "1348313: {} triangles, {open} edges without their reverse, volume / Revit's {ratio:.4}",
+        mesh.1.len()
+    );
+    assert!(open < 400, "{open} edges without their reverse");
+    assert!((ratio - 1.0).abs() < 0.03, "volume ratio {ratio}");
 }

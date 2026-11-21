@@ -613,8 +613,13 @@ fn face_grid_impl(
     let (_, mut u_knots) = axis(0, du)?;
     let (v_lattice, mut v_knots) = axis(1, dv)?;
     let mut at_u_extra = Vec::new();
-    if exchange && matches!(surface, ParametricSurface::RuledSurf { .. }) {
-        if let Ok(ex) = ruled_seam_extras(g, fi, rectangular) {
+    if exchange
+        && matches!(
+            surface,
+            ParametricSurface::RuledSurf { .. } | ParametricSurface::SurfRev { .. }
+        )
+    {
+        if let Ok(ex) = seam_extras(g, fi, rectangular) {
             for (knots, extra) in [(&mut u_knots, ex.u), (&mut v_knots, ex.v)] {
                 knots.extend(extra);
                 knots.sort_by(f64::total_cmp);
@@ -650,7 +655,8 @@ fn face_grid_impl(
     })
 }
 
-/// The points a ruled face takes from the ruled neighbours across its edges.
+/// The points a ruled face or a surface of revolution takes from the neighbours across its
+/// edges.
 #[derive(Default)]
 struct SeamExtras {
     u: Vec<f64>,
@@ -677,13 +683,17 @@ fn edge_uv(g: &ObjectGraph, edge: usize, side: usize) -> Result<Vec<[f64; 2]>> {
     Ok(points)
 }
 
-/// For ruled face `fi`, `rectangular` or not, what each ruled neighbour of the other kind
-/// draws along the edge it shares with it, in `fi`'s parameters. An edge that does not
-/// qualify is left as it was.
-fn ruled_seam_extras(g: &ObjectGraph, fi: usize, rectangular: bool) -> Result<SeamExtras> {
+/// For `fi`, a ruled face (`rectangular` or not) or a surface of revolution trimmed to a
+/// rectangle, what each neighbour draws along the edge it shares with it, in `fi`'s
+/// parameters: a ruled neighbour of the other kind, a revolution beside a ruled face, a
+/// ruled face beside a revolution. An edge that does not qualify is left as it was.
+fn seam_extras(g: &ObjectGraph, fi: usize, rectangular: bool) -> Result<SeamExtras> {
     use crate::native_saved_mesh::pointer;
     let mut ex = SeamExtras::default();
     let f = g.objects.get(fi).context("face index")?;
+    let surface = pointer(g, fi, &f.fields["m_pSurf"])?.context("face surface")?;
+    let ruled = g.objects[surface].class_name == "RuledSurf";
+    ensure!(ruled || rectangular, "trimmed revolution");
     let mut next_loop = pointer(g, fi, &f.fields["m_pFirstLoop"])?;
     let mut seen_loops = std::collections::BTreeSet::new();
     while let Some(li) = next_loop {
@@ -705,7 +715,7 @@ fn ruled_seam_extras(g: &ObjectGraph, fi: usize, rectangular: bool) -> Result<Se
             let side = side.context("edge does not belong to face")?;
             if let Some(other) = pointer(g, cur, &faces[1 - side]).ok().flatten() {
                 if other != fi {
-                    let _ = seam_edge(g, rectangular, cur, side, other, &mut ex);
+                    let _ = seam_edge(g, ruled, rectangular, cur, side, other, &mut ex);
                 }
             }
             cur = pointer(g, cur, &e.fields["m_next"][side])?.context("null trim next")?;
@@ -722,6 +732,7 @@ fn ruled_seam_extras(g: &ObjectGraph, fi: usize, rectangular: bool) -> Result<Se
 /// takes the other's, so that both draw the union.
 fn seam_edge(
     g: &ObjectGraph,
+    ruled: bool,
     rectangular: bool,
     edge: usize,
     side: usize,
@@ -735,16 +746,17 @@ fn seam_edge(
         .and_then(|face| face.fields.get("m_pSurf"))
         .context("neighbour surface")?;
     let surface = pointer(g, other, surface)?.context("neighbour surface")?;
-    ensure!(
-        g.objects[surface].class_name == "RuledSurf",
-        "neighbour is not ruled"
-    );
     let og = face_grid_impl(g, other, true, false)?;
-    // only a trimmed face beside a rectangular one
-    ensure!(
-        og.loops.is_some() == rectangular,
-        "neighbour of the same kind"
-    );
+    match (ruled, g.objects[surface].class_name.as_str()) {
+        // only a trimmed ruled face beside a rectangular one
+        (true, "RuledSurf") => ensure!(
+            og.loops.is_some() == rectangular,
+            "neighbour of the same kind"
+        ),
+        (true, "SurfRev") => ensure!(og.loops.is_none(), "trimmed revolution"),
+        (false, "RuledSurf") => {}
+        _ => anyhow::bail!("neighbour kind"),
+    }
     let (mine, theirs) = (edge_uv(g, edge, side)?, edge_uv(g, edge, 1 - side)?);
     ensure!(mine.len() == theirs.len(), "edge sample count");
     let (ax, ay) = (

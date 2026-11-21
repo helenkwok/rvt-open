@@ -187,6 +187,51 @@ fn continuous_rails(rf: &mut crate::RevitFile) -> BTreeMap<u64, Vec<u64>> {
     out
 }
 
+/// A railing's continuous rail can draw a graphics node the railing's own graphics already
+/// hold (a road-striping railing and its rail: the same 1,176 triangles twice, so the body
+/// read twice Revit's volume). A primitive of a rail that is the same node of the same
+/// graph under the same face tag and placement as one the body already has, with the same points and triangles, is left out; no
+/// other primitive is touched.
+fn drop_repeated_primitives(
+    element: &crate::native_saved_scene::SavedElement,
+    rails: &mut [&mut crate::native_saved_scene::SavedElement],
+) {
+    type Key = (Option<u64>, usize, i64, Vec<u64>, Vec<u64>, Vec<[u32; 3]>);
+    let key = |p: &Primitive| -> Key {
+        let frame = p
+            .frame
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|x| x.to_bits())
+            .collect();
+        let points = p.vertices.iter().flatten().map(|x| x.to_bits()).collect();
+        (
+            p.source_owner_id,
+            p.object_index,
+            p.face_tag,
+            frame,
+            points,
+            p.triangles.clone(),
+        )
+    };
+    let mut seen: BTreeSet<Key> = element.meshes.primitives.iter().map(key).collect();
+    for rail in rails.iter_mut() {
+        let old = std::mem::take(&mut rail.meshes.primitives);
+        let mut materials = BTreeMap::new();
+        for (i, p) in old.into_iter().enumerate() {
+            if !seen.insert(key(&p)) {
+                continue;
+            }
+            if let Some(m) = rail.render_materials.get(&i) {
+                materials.insert(rail.meshes.primitives.len(), m.clone());
+            }
+            rail.meshes.primitives.push(p);
+        }
+        rail.render_materials = materials;
+    }
+}
+
 /// Whether some face or branch of `meshes` did not decode: on the
 /// BIM4LCA office 357 such meshes, none of them Revit's body. Only branches
 /// left out for their view semantics leave a mesh whole.
@@ -1008,6 +1053,7 @@ pub fn attach_scoped_in_batches(
                 // railing keeps its own body (the box check counts it).
                 .filter(|r| !is_partial(r))
                 .collect();
+            drop_repeated_primitives(&element, &mut own_rails);
             let partial = partial_refusal(&element.meshes);
             if element.meshes.primitives.is_empty() {
                 refusals.push((
