@@ -616,6 +616,9 @@ fn ring_impl(
             break;
         }
     }
+    if output.is_none() && !plane {
+        output = touching_ring(g, index, face, &segments);
+    }
     let mut out = output.context("disconnected UV boundary")?;
     out.dedup_by(|a, b| close(*a, *b));
     ensure!(
@@ -623,6 +626,79 @@ fn ring_impl(
         "degenerate boundary"
     );
     Ok(out)
+}
+
+/// Two ends of a cylinder face's ring edges this close along the surface, in feet, are one
+/// point: 0.003 mm, which takes in the gaps of curtain mullions whose bodies then match
+/// Revit's export. A plane face already joins up to [`PLANE_JOINT_FEET`]. Wider gaps stay
+/// refused.
+const RING_TOUCHING: f64 = 1e-5;
+/// The ring of a cylinder face's `segments` where every gap between edges is a step along the
+/// surface (a helix, so a step across the seam is a whole turn and never qualifies) under
+/// [`RING_TOUCHING`]: each such pair of ends is one point, the ring's own, the next edge's
+/// stored end being dropped. No edge is added. A ring with an edge whose ends lie within that
+/// distance of each other, or whose gap could join at either end, stays refused, as does a
+/// face whose surface is not a cylinder.
+fn touching_ring(
+    g: &ObjectGraph,
+    index: &PointerIndex<'_>,
+    face: usize,
+    segments: &[Vec<[f64; 2]>],
+) -> Option<Vec<[f64; 2]>> {
+    let surface = &g.objects[index
+        .resolve(face, &g.objects[face].fields["m_pSurf"])
+        .ok()??];
+    if surface.class_name != "CylSurf" {
+        return None;
+    }
+    let radius = surface.fields["m_radius"].as_f64()?;
+    let z = point::<3>(&surface.fields["m_zVec"]).ok()?;
+    let height = z.iter().map(|k| k * k).sum::<f64>().sqrt();
+    let step = |a: [f64; 2], b: [f64; 2]| (radius * (b[0] - a[0])).hypot(height * (b[1] - a[1]));
+    if !segments
+        .iter()
+        .all(|s| step(s[0], s[s.len() - 1]) >= RING_TOUCHING)
+    {
+        return None;
+    }
+    for reverse in [false, true] {
+        let mut out = segments[0].clone();
+        if reverse {
+            out.reverse()
+        };
+        let mut valid = true;
+        for s in &segments[1..] {
+            let last = *out.last().unwrap();
+            let tail = *s.last().unwrap();
+            if close(last, s[0]) {
+                out.extend_from_slice(&s[1..])
+            } else if close(last, tail) {
+                out.extend(s.iter().rev().skip(1).copied())
+            } else {
+                let (head_step, tail_step) = (step(last, s[0]), step(last, tail));
+                if head_step.min(tail_step) >= RING_TOUCHING
+                    || head_step.max(tail_step) < RING_TOUCHING
+                {
+                    valid = false;
+                    break;
+                }
+                if head_step < tail_step {
+                    out.extend_from_slice(&s[1..])
+                } else {
+                    out.extend(s.iter().rev().skip(1).copied())
+                }
+            }
+        }
+        if !valid {
+            continue;
+        }
+        let (first, last) = (out[0], *out.last().unwrap());
+        if close(first, last) || step(last, first) < RING_TOUCHING {
+            out.pop();
+            return Some(out);
+        }
+    }
+    None
 }
 
 fn tessellation_axis(
