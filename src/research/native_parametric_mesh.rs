@@ -740,10 +740,16 @@ fn face_links(g: &ObjectGraph, fi: usize) -> Result<Vec<(usize, usize, usize)>> 
 }
 
 /// Whether two faces take each other's points along an edge they share: ruled faces and
-/// surfaces of revolution, except two ruled faces trimmed alike, which share their
-/// normalized grid instead (`face_grid_impl`).
+/// surfaces of revolution trimmed to a rectangle, except two ruled faces trimmed alike,
+/// which share their normalized grid instead (`face_grid_impl`). A trimmed surface of
+/// revolution keeps its own points.
 fn exchanges(a: &FaceGrid, b: &FaceGrid) -> bool {
     use ParametricSurface::{RuledSurf, SurfRev};
+    let trimmed_revolution =
+        |f: &FaceGrid| matches!(f.surface, SurfRev { .. }) && f.loops.is_some();
+    if trimmed_revolution(a) || trimmed_revolution(b) {
+        return false;
+    }
     match (&a.surface, &b.surface) {
         (RuledSurf { .. }, RuledSurf { .. }) => a.loops.is_some() != b.loops.is_some(),
         (RuledSurf { .. } | SurfRev { .. }, RuledSurf { .. } | SurfRev { .. }) => true,
