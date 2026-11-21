@@ -890,8 +890,8 @@ fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<u
                 continue;
             }
             mine.push((edge, side, other));
-            if !links.contains_key(&other) {
-                links.insert(other, Vec::new());
+            if let std::collections::btree_map::Entry::Vacant(e) = links.entry(other) {
+                e.insert(Vec::new());
                 stack.push(other);
             }
         }
