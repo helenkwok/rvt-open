@@ -177,6 +177,8 @@ mod fuzz_regressions;
 mod geometry_invariants;
 #[path = "../georeference.rs"]
 mod georeference;
+#[path = "../gltf_element_alpha.rs"]
+mod gltf_element_alpha;
 #[path = "../gltf_normals.rs"]
 mod gltf_normals;
 #[path = "../guid_namespace.rs"]

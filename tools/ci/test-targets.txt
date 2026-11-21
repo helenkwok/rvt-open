@@ -175,6 +175,7 @@ cli       sheet_view
 real      sheet_drawings
 real      sheet_listing
 cli       gltf_normals
+real      gltf_element_alpha
 cli       pdf3d_export
 cli       rvt_gltf_progress_cli
 cli       rvt_ifc_diagnostics_cli
