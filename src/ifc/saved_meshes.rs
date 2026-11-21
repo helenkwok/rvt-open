@@ -187,6 +187,87 @@ fn continuous_rails(rf: &mut crate::RevitFile) -> BTreeMap<u64, Vec<u64>> {
     out
 }
 
+/// A railing's continuous rail can draw a graphics node the railing's own graphics already
+/// hold (a road-striping railing and its rail: the same 1,176 triangles twice, so the body
+/// read twice Revit's volume). A primitive of a rail that is the same node of the same
+/// graph under the same face tag and placement as one the body already has, with the same
+/// points and triangles, is left out; no other primitive is touched. Where the copy kept
+/// resolved to no material and the one left out did, the copy kept takes its material.
+fn drop_repeated_primitives(
+    element: &mut crate::native_saved_scene::SavedElement,
+    rails: &mut [&mut crate::native_saved_scene::SavedElement],
+) {
+    if rails.is_empty() {
+        return;
+    }
+    type Key = (Option<u64>, usize, i64, Vec<u64>, Vec<u64>, Vec<[u32; 3]>);
+    let key = |p: &Primitive| -> Key {
+        let frame = p
+            .frame
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|x| x.to_bits())
+            .collect();
+        let points = p.vertices.iter().flatten().map(|x| x.to_bits()).collect();
+        (
+            p.source_owner_id,
+            p.object_index,
+            p.face_tag,
+            frame,
+            points,
+            p.triangles.clone(),
+        )
+    };
+    // each kept primitive's key and where it is kept: `(0, index)` in the body's own
+    // primitives, `(k + 1, index)` in rail `k`'s
+    let mut seen: BTreeMap<Key, (usize, usize)> = element
+        .meshes
+        .primitives
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (key(p), (0, i)))
+        .collect();
+    let mut kept: Vec<BTreeMap<usize, crate::native_saved_materials::RenderMaterial>> =
+        vec![BTreeMap::new(); rails.len()];
+    for (k, rail) in rails.iter_mut().enumerate() {
+        let old = std::mem::take(&mut rail.meshes.primitives);
+        // a rail is compared with the body and the rails before it, not with itself: its own
+        // repeats stay
+        let mut own: Vec<(Key, (usize, usize))> = Vec::new();
+        for (i, p) in old.into_iter().enumerate() {
+            let material = rail.render_materials.get(&i);
+            let key = key(&p);
+            if let Some(&(owner, at)) = seen.get(&key) {
+                let has = if owner == 0 {
+                    element.render_materials.contains_key(&at)
+                } else {
+                    kept[owner - 1].contains_key(&at)
+                };
+                if let (false, Some(m)) = (has, material) {
+                    if owner == 0 {
+                        element.render_materials.insert(at, m.clone());
+                    } else {
+                        kept[owner - 1].insert(at, m.clone());
+                    }
+                }
+                continue;
+            }
+            own.push((key, (k + 1, rail.meshes.primitives.len())));
+            if let Some(m) = material {
+                kept[k].insert(rail.meshes.primitives.len(), m.clone());
+            }
+            rail.meshes.primitives.push(p);
+        }
+        for (key, at) in own {
+            seen.entry(key).or_insert(at);
+        }
+    }
+    for (rail, materials) in rails.iter_mut().zip(kept) {
+        rail.render_materials = materials;
+    }
+}
+
 /// Whether some face or branch of `meshes` did not decode: on the
 /// BIM4LCA office 357 such meshes, none of them Revit's body. Only branches
 /// left out for their view semantics leave a mesh whole.
@@ -820,7 +901,7 @@ pub fn attach_scoped_in_batches(
         }
         // By value: each element's saved mesh is freed once its body is built,
         // so the scene shrinks as the model grows.
-        for element in elements {
+        for mut element in elements {
             let element_id = element.identity.element_id;
             if by_id.contains_key(&element_id) {
                 seen.insert(element_id);
@@ -1008,6 +1089,7 @@ pub fn attach_scoped_in_batches(
                 // railing keeps its own body (the box check counts it).
                 .filter(|r| !is_partial(r))
                 .collect();
+            drop_repeated_primitives(&mut element, &mut own_rails);
             let partial = partial_refusal(&element.meshes);
             if element.meshes.primitives.is_empty() {
                 refusals.push((
