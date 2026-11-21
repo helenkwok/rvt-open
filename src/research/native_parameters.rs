@@ -62,7 +62,8 @@ pub struct ObjectGraph {
     #[serde(skip)]
     pub(crate) lookup: std::sync::OnceLock<PointerLookup>,
     /// The points each ruled face or surface of revolution takes from its neighbours,
-    /// computed once per group of faces.
+    /// computed once per group of faces from the graph as first meshed; like `lookup`, it
+    /// is not rebuilt when `objects` change afterwards.
     #[serde(skip)]
     pub(crate) seams: crate::native_parametric_mesh::SeamCache,
 }

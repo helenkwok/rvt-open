@@ -740,9 +740,10 @@ fn face_links(g: &ObjectGraph, fi: usize) -> Result<Vec<(usize, usize, usize)>> 
 }
 
 /// Whether two faces take each other's points along an edge they share: ruled faces and
-/// surfaces of revolution trimmed to a rectangle, except two ruled faces trimmed alike,
-/// which share their normalized grid instead (`face_grid_impl`). A trimmed surface of
-/// revolution keeps its own points.
+/// surfaces of revolution trimmed to a rectangle, except two ruled faces neither of which is
+/// trimmed to a rectangle. Two rectangular ruled faces start from one normalized grid
+/// (`face_grid_impl`), so they take only what one of them took from elsewhere. A trimmed
+/// surface of revolution keeps its own points.
 fn exchanges(a: &FaceGrid, b: &FaceGrid) -> bool {
     use ParametricSurface::{RuledSurf, SurfRev};
     let trimmed_revolution =
@@ -751,7 +752,7 @@ fn exchanges(a: &FaceGrid, b: &FaceGrid) -> bool {
         return false;
     }
     match (&a.surface, &b.surface) {
-        (RuledSurf { .. }, RuledSurf { .. }) => a.loops.is_some() != b.loops.is_some(),
+        (RuledSurf { .. }, RuledSurf { .. }) => a.loops.is_none() || b.loops.is_none(),
         (RuledSurf { .. } | SurfRev { .. }, RuledSurf { .. } | SurfRev { .. }) => true,
         _ => false,
     }
@@ -836,12 +837,17 @@ fn edge_values(
     Ok((ax, mine[0][1 - ax], values.into_iter().map(map).collect()))
 }
 
-/// Rounds of the exchange at most. A round in which no face takes a new point ends it, and
-/// a point crosses one edge per round, so a group whose edges map the parameters the same
-/// way whichever path a point takes settles within as many rounds as it has faces. The
-/// cap stops a group whose maps do not compose exactly round a cycle of faces, which could
-/// otherwise keep making points.
-const SEAM_ROUNDS: usize = 32;
+/// Visits of a face per face of its group at most. A face is visited again only when a
+/// neighbour took a new point, so a group whose edges map the parameters the same way
+/// whichever path a point takes settles well within it (each point reaches each face once);
+/// the cap stops a group whose maps do not compose exactly round a cycle of faces, which
+/// could otherwise keep making points, and leaves it with the points taken so far.
+const SEAM_VISITS: usize = 64;
+
+/// Grid points a face trimmed to a rectangle may reach with the points it takes: those of
+/// `tessellate_uv`'s budget. A point that would take a face past it is not taken, so that the
+/// face still meshes.
+const SEAM_GRID_POINTS: usize = 2_000_000;
 
 /// The connected group of ruled faces and surfaces of revolution that `fi` exchanges with
 /// (`exchanges`), and the points each takes: every face takes what each neighbour draws
@@ -911,52 +917,67 @@ fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<u
             (face, work)
         })
         .collect();
-    for _ in 0..SEAM_ROUNDS {
+    // a face is visited until it takes nothing new; a face that takes a point sends its
+    // neighbours round again
+    let mut queue: std::collections::VecDeque<usize> = links.keys().copied().collect();
+    let mut queued: std::collections::BTreeSet<usize> = links.keys().copied().collect();
+    let mut visits = SEAM_VISITS * links.len();
+    while let Some(f) = queue.pop_front() {
+        queued.remove(&f);
+        if visits == 0 {
+            break;
+        }
+        visits -= 1;
         let mut grew = false;
-        for (&f, mine) in &links {
-            for &(edge, side, other) in mine {
-                let Ok((ax, fixed, values)) =
-                    edge_values(g, edge, side, grid(other), &work[&other])
-                else {
-                    continue;
-                };
-                let rectangular = grid(f).loops.is_none();
-                let side_values =
-                    (ax == 1 && !rectangular).then(|| strip_side(grid(f), &work[&f], fixed));
-                let w = work.get_mut(&f).expect("group member");
-                for x in values {
-                    let taken = match (ax, &side_values) {
-                        (0, _) => &mut w.u,
-                        (_, None) => &mut w.v,
-                        (_, Some(side)) => {
-                            if !holds(side, x)
-                                && !w
-                                    .at_u
-                                    .iter()
-                                    .any(|p| (p[0] - fixed).abs() < 1e-9 && (p[1] - x).abs() < 1e-9)
-                            {
-                                w.at_u.push([fixed, x]);
-                                w.extras.at_u.push([fixed, x]);
-                                grew = true;
-                            }
-                            continue;
-                        }
-                    };
-                    if !holds(taken, x) {
-                        taken.insert(taken.partition_point(|y| *y < x), x);
-                        if ax == 0 {
-                            &mut w.extras.u
-                        } else {
-                            &mut w.extras.v
-                        }
-                        .push(x);
+        let (rectangular, [lo, hi]) = (grid(f).loops.is_none(), grid(f).bounds);
+        for &(edge, side, other) in &links[&f] {
+            let Ok((ax, fixed, values)) = edge_values(g, edge, side, grid(other), &work[&other])
+            else {
+                continue;
+            };
+            let side_values =
+                (ax == 1 && !rectangular).then(|| strip_side(grid(f), &work[&f], fixed));
+            let w = work.get_mut(&f).expect("group member");
+            // a point is taken only inside the face's own range
+            for x in values
+                .into_iter()
+                .filter(|x| *x > lo[ax] + 1e-9 && *x < hi[ax] - 1e-9)
+            {
+                if let Some(side) = &side_values {
+                    if !holds(side, x)
+                        && !w
+                            .at_u
+                            .iter()
+                            .any(|p| (p[0] - fixed).abs() < 1e-9 && (p[1] - x).abs() < 1e-9)
+                    {
+                        w.at_u.push([fixed, x]);
+                        w.extras.at_u.push([fixed, x]);
                         grew = true;
                     }
+                    continue;
+                }
+                let fits = !rectangular
+                    || (w.u.len() + usize::from(ax == 0)) * (w.v.len() + usize::from(ax == 1))
+                        <= SEAM_GRID_POINTS;
+                let taken = if ax == 0 { &mut w.u } else { &mut w.v };
+                if fits && !holds(taken, x) {
+                    taken.insert(taken.partition_point(|y| *y < x), x);
+                    if ax == 0 {
+                        &mut w.extras.u
+                    } else {
+                        &mut w.extras.v
+                    }
+                    .push(x);
+                    grew = true;
                 }
             }
         }
-        if !grew {
-            break;
+        if grew {
+            for &(_, _, other) in &links[&f] {
+                if queued.insert(other) {
+                    queue.push_back(other);
+                }
+            }
         }
     }
     Ok(work.into_iter().map(|(face, w)| (face, w.extras)).collect())

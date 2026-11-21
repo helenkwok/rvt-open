@@ -698,5 +698,5 @@ fn revolutions_of_one_group_share_their_edge_points() {
         "778575: {} triangles, {open} edges without their reverse",
         mesh.1.len()
     );
-    assert!(open < 100, "{open} edges without their reverse");
+    assert_eq!(open, 0, "edges without their reverse");
 }
