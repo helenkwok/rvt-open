@@ -837,12 +837,13 @@ fn edge_values(
     Ok((ax, mine[0][1 - ax], values.into_iter().map(map).collect()))
 }
 
-/// Visits of a face per face of its group at most. A face is visited again only when a
-/// neighbour took a new point, so a group whose edges map the parameters the same way
-/// whichever path a point takes settles well within it (each point reaches each face once);
-/// the cap stops a group whose maps do not compose exactly round a cycle of faces, which
-/// could otherwise keep making points, and leaves it with the points taken so far.
-const SEAM_VISITS: usize = 64;
+/// Points one face may take from its group at most. The exchange ends when no face takes a
+/// new point, and a face is visited again only after a neighbour took one, so it ends once
+/// every face has taken all it can: in a group whose edges map the parameters the same way
+/// whichever path a point takes, once each point has reached each face. In a group whose
+/// maps do not compose exactly round a cycle of faces, points could keep coming; the cap
+/// ends that, as each face then takes no more.
+const SEAM_TAKEN: usize = 10_000;
 
 /// Grid points a face trimmed to a rectangle may reach with the points it takes: those of
 /// `tessellate_uv`'s budget. A point that would take a face past it is not taken, so that the
@@ -921,13 +922,8 @@ fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<u
     // neighbours round again
     let mut queue: std::collections::VecDeque<usize> = links.keys().copied().collect();
     let mut queued: std::collections::BTreeSet<usize> = links.keys().copied().collect();
-    let mut visits = SEAM_VISITS * links.len();
     while let Some(f) = queue.pop_front() {
         queued.remove(&f);
-        if visits == 0 {
-            break;
-        }
-        visits -= 1;
         let mut grew = false;
         let (rectangular, [lo, hi]) = (grid(f).loops.is_none(), grid(f).bounds);
         for &(edge, side, other) in &links[&f] {
@@ -943,6 +939,9 @@ fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<u
                 .into_iter()
                 .filter(|x| *x > lo[ax] + 1e-9 && *x < hi[ax] - 1e-9)
             {
+                if w.extras.u.len() + w.extras.v.len() + w.extras.at_u.len() >= SEAM_TAKEN {
+                    break;
+                }
                 if let Some(side) = &side_values {
                     if !holds(side, x)
                         && !w
