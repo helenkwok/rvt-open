@@ -782,7 +782,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     });
 
     for (g, kind, tag, id, part) in other {
-        if newest.get(&(Some(g), tag, id)) == Some(&part) {
+        if newest.get(&(Some(g), tag, id)) == Some(&part) && !out.host_samples.contains(&(g, id)) {
             *out.docs
                 .entry(g)
                 .or_default()

@@ -678,12 +678,13 @@ pub fn attach(
             if !nested.contains(id) || placed.contains(id) {
                 continue;
             }
+            let mut uncut = false;
             match d.route(*id) {
                 family_documents::Route::FamilyDocument => {}
                 // A void of the nested family is left uncut, as the file's
                 // own forms are.
                 family_documents::Route::Incomplete(why) if why.iter().all(|w| *w == "void") => {
-                    out.nested_uncut += 1;
+                    uncut = true;
                 }
                 family_documents::Route::Incomplete(why) => {
                     for w in why {
@@ -732,12 +733,23 @@ pub fn attach(
             if triangles.is_empty() {
                 continue;
             }
-            // The material of its largest solid that names one.
+            // The material of its largest solid (by volume) that names one.
+            let volume = |s: &family_documents::FamilySolid| {
+                s.triangles
+                    .iter()
+                    .map(|t| {
+                        let [a, b, c] = t.map(|i| s.vertices[i as usize]);
+                        a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                            + a[2] * (b[0] * c[1] - b[1] * c[0])
+                    })
+                    .sum::<f64>()
+                    .abs()
+            };
             let material_index = doc
                 .solids
                 .iter()
-                .filter_map(|s| Some((s.triangles.len(), material_names.get(&s.material_id?)?)))
-                .max_by_key(|(n, _)| *n)
+                .filter_map(|s| Some((volume(s), material_names.get(&s.material_id?)?)))
+                .max_by(|a, b| a.0.total_cmp(&b.0))
                 .and_then(|(_, name)| model.materials.iter().position(|mi| &mi.name == name));
             model.entities.push(IfcEntity::BuildingElement {
                 ifc_type: ifc_type.into(),
@@ -767,6 +779,7 @@ pub fn attach(
                 representation_map_index: None,
             });
             out.nested_drawn += 1;
+            out.nested_uncut += usize::from(uncut);
         }
     }
 
