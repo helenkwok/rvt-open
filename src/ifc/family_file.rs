@@ -37,6 +37,8 @@ pub const FORM_SOLID_BODY_SOURCE: &str = "family_form_decoded_solid";
 pub const FORM_SOLVED_BODY_SOURCE: &str = "family_form_solved_solid";
 /// `BodySource` of a form drawn as its stored bounding box.
 pub const FORM_BOX_BODY_SOURCE: &str = "family_form_bounding_box";
+/// `BodySource` of the family template's sample host wall.
+pub const SAMPLE_WALL_BODY_SOURCE: &str = "family_sample_host_wall";
 /// `BodySource` of a nested instance drawn from its saved graphics here.
 pub const NESTED_SAVED_MESH_BODY_SOURCE: &str = "family_nested_saved_mesh";
 
@@ -89,6 +91,16 @@ pub struct FamilySummary {
     pub forms_hidden: usize,
     /// Void forms (they cut; their result is in the cut forms' graphics).
     pub voids: usize,
+    /// Forms of groups no instance places (a group type's own copy of its
+    /// members): not drawn, as Revit draws none.
+    #[serde(default)]
+    pub forms_unplaced: usize,
+    /// Solids a decoded void was cut from.
+    #[serde(default)]
+    pub void_cuts: usize,
+    /// Sample host walls drawn (with the family's openings cut in them).
+    #[serde(default)]
+    pub sample_walls: usize,
     /// Instances of nested families, and how many this pass drew.
     pub nested_instances: usize,
     pub nested_drawn: usize,
@@ -322,6 +334,7 @@ pub fn attach(
     // The newest partition each object was read from: older copies of a
     // record a file keeps in earlier partitions are not current.
     let mut newest: BTreeMap<(u16, i64), u32> = BTreeMap::new();
+    let mut unplaced_forms: BTreeSet<i64> = BTreeSet::new();
     for_each_object_where(
         rf,
         |_, _| true,
@@ -356,8 +369,13 @@ pub fn attach(
                 }
                 return;
             }
+            // A group type's own copy of its members (no instance places
+            // the group): Revit draws none of them.
+            let unplaced = id_of(root, "m_unplacedOwnerId").is_some_and(|o| o > 0);
             if class == "FamilyInstance" {
-                nested.insert(id);
+                if !unplaced {
+                    nested.insert(id);
+                }
                 return;
             }
             if class == "MaterialElem" {
@@ -392,6 +410,10 @@ pub fn attach(
                     }
                 }
             }
+            if unplaced {
+                unplaced_forms.insert(id);
+                return;
+            }
             forms.push(Form {
                 id,
                 tag: x.frame.header.tag,
@@ -403,7 +425,9 @@ pub fn attach(
             });
         },
     )?;
-    forms.retain(|f| newest.get(&(f.tag, f.id)) == Some(&f.part));
+    forms
+        .retain(|f| newest.get(&(f.tag, f.id)) == Some(&f.part) && !unplaced_forms.contains(&f.id));
+    out.forms_unplaced = unplaced_forms.len();
     // Decoded solids of the family's own document, and which forms belong
     // to a nested family's document instead (files without keyed sections).
     let docs = family_documents::read_with_host(rf, true).ok();
@@ -500,6 +524,7 @@ pub fn attach(
 
     if let Some(d) = &docs {
         out.solve_failures = d.stats.solve_failures.clone();
+        out.void_cuts = d.stats.void_cuts;
     }
     let solids: BTreeMap<i64, Vec<&family_documents::FamilySolid>> = {
         let mut m: BTreeMap<i64, Vec<&family_documents::FamilySolid>> = BTreeMap::new();
@@ -569,7 +594,16 @@ pub fn attach(
             let reason = if !saved_graphics {
                 "saved_graphics_off"
             } else if release < 2015 {
-                "release_before_2015"
+                // No saved graphics are read before 2015: why the form did
+                // not decode.
+                docs.as_ref()
+                    .and_then(|d| d.docs.get(&HOST_DOCUMENT))
+                    .and_then(|d| d.form_failures.get(&form.id).copied())
+                    .map_or("not_decoded", |why| match why {
+                        "geometry" => "geometry_not_decoded",
+                        "bbox_mismatch" => "solve_misses_stored_box",
+                        w => w,
+                    })
             } else if out.saved_graphics_error.is_some() {
                 "saved_graphics_error"
             } else {
@@ -641,6 +675,51 @@ pub fn attach(
             solid_shape: Some(shape),
             representation_map_index: None,
         });
+    }
+
+    // The template's sample host wall, as the family editor shows it.
+    for wall in docs
+        .as_ref()
+        .and_then(|d| d.docs.get(&HOST_DOCUMENT))
+        .map(|d| d.sample_walls.as_slice())
+        .unwrap_or_default()
+    {
+        let (vertices, triangles) = super::saved_meshes::tidy_mesh(
+            wall.vertices.clone(),
+            wall.triangles
+                .iter()
+                .map(|t| BrepTriangle(t[0], t[1], t[2]))
+                .collect(),
+        );
+        model.entities.push(IfcEntity::BuildingElement {
+            ifc_type: "IFCWALL".into(),
+            name: format!("{label}:sample host wall {}", wall.form_id),
+            type_guid: Some(wall.form_id.to_string()),
+            predefined_type: None,
+            storey_index: None,
+            material_index: None,
+            property_set: Some(PropertySet {
+                name: "RvtFamilyGeometry".into(),
+                properties: vec![Property {
+                    name: "BodySource".into(),
+                    value: PropertyValue::Text(SAMPLE_WALL_BODY_SOURCE.into()),
+                }],
+            }),
+            location_feet: Some([0.0; 3]),
+            rotation_radians: None,
+            extrusion: None,
+            host_element_index: None,
+            material_layer_set_index: None,
+            material_profile_set_index: None,
+            solid_shape: Some(SolidShape::TriangulatedFaceSet {
+                vertices_feet: vertices,
+                triangles,
+                face_materials: Vec::new(),
+                uvs: Vec::new(),
+            }),
+            representation_map_index: None,
+        });
+        out.sample_walls += 1;
     }
 
     // Nested instances before 2023, from their saved graphics.
@@ -799,9 +878,8 @@ fn det(l: &[[f64; 3]; 3]) -> f64 {
         + l[0][2] * (l[1][0] * l[2][1] - l[1][1] * l[2][0])
 }
 
-/// The mesh of one nested instance: its family's decoded solids and, in a
-/// family file without keyed sections, those of the families that family
-/// places in turn.
+/// The mesh of one nested instance: its family's decoded solids and those
+/// of the families that family places in turn.
 #[derive(Default)]
 struct NestedBody {
     vertices: Vec<[f64; 3]>,
@@ -886,6 +964,8 @@ impl NestedBody {
             match *why {
                 // A void is left uncut, as the file's own forms are.
                 "void" => self.uncut = true,
+                // Its voids were cut from the solids above.
+                "void_cut" => {}
                 // Its nested families are placed below when their poses are known.
                 "nested_family" if placed.is_some() => {}
                 w => *self.missing.entry(w.to_string()).or_default() += n,
@@ -895,7 +975,7 @@ impl NestedBody {
             return;
         }
         for pose in placed.into_iter().flat_map(|p| p.values()) {
-            match d.document_of_symbol(pose.symbol) {
+            match d.document_of_symbol_in(guid, pose.symbol) {
                 Some((sub, _)) => {
                     self.collect(d, sub, compose(&map, &pose_affine(pose)), depth + 1)
                 }

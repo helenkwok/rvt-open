@@ -88,6 +88,14 @@ pub struct DocSolids {
     /// The stored bounding boxes of the solid forms that were not decoded
     /// (a caller may draw them as boxes, as it draws its own).
     pub unsolved_boxes: Vec<[[f64; 3]; 2]>,
+    /// Why each solid form that was not decoded was not, by form id
+    /// (`geometry`, `bbox_mismatch`, or the solver's reason).
+    pub form_failures: BTreeMap<i64, &'static str>,
+    /// Of a family file's own document, its template's sample host wall (the
+    /// wall a door or window family is shown in), with the openings the
+    /// family cuts in it: Revit shows it in the family, not where the family
+    /// is placed.
+    pub sample_walls: Vec<FamilySolid>,
 }
 
 impl DocSolids {
@@ -134,6 +142,11 @@ pub struct DocStats {
     /// Void forms whose box meets none of their document's solids, so they
     /// cut nothing of the family's own form.
     pub voids_outside_solids: usize,
+    /// Solids a void form was cut from.
+    pub void_cuts: usize,
+    /// Forms and instances left out because they belong to a group no
+    /// instance places (`m_unplacedOwnerId` set): Revit draws none of them.
+    pub unplaced: usize,
 }
 
 #[derive(Debug, Default)]
@@ -156,6 +169,11 @@ pub struct FamilyDocuments {
     /// Of such a file, the family instances each nested family's document
     /// places, by document and instance id (in that document's coordinates).
     pub doc_instances: BTreeMap<Guid, BTreeMap<i64, InstancePose>>,
+    /// Of a file with keyed sections, each document's own family symbols and
+    /// families (element ids are the document's own, so they are keyed by
+    /// document): symbol -> family, and family -> its content document.
+    pub doc_symbol_family: BTreeMap<(Guid, i64), i64>,
+    pub doc_family_guid: BTreeMap<(Guid, i64), Guid>,
     pub stats: DocStats,
 }
 
@@ -178,6 +196,17 @@ impl FamilyDocuments {
         let family = self.symbol_family.get(&pose.symbol)?;
         let guid = self.family_guid.get(family)?;
         Some((pose, self.docs.get(guid)?))
+    }
+
+    /// The decoded document of the family that symbol `symbol` of document
+    /// `doc` belongs to: the document's own symbols in a file with keyed
+    /// sections, the file's (one id space) otherwise.
+    pub fn document_of_symbol_in(&self, doc: Guid, symbol: i64) -> Option<(Guid, &DocSolids)> {
+        if let Some(family) = self.doc_symbol_family.get(&(doc, symbol)) {
+            let guid = self.doc_family_guid.get(&(doc, *family))?;
+            return Some((*guid, self.docs.get(guid)?));
+        }
+        self.document_of_symbol(symbol)
     }
 
     /// The decoded document of the family that symbol `symbol` belongs to.
@@ -396,7 +425,9 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         .iter()
         .map(|(t, c)| (*t, c.name.clone()))
         .collect();
-    const WANT: [&str; 16] = [
+    const WANT: [&str; 18] = [
+        "Opening",
+        "SWall",
         "FreeFormElement",
         "Path3d",
         "PathFromFace",
@@ -459,6 +490,12 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     // element's `m_famId` names the family whose document holds it.
     // Of such a file, each `Family` element's owner (`m_famId`).
     let mut family_owner: BTreeMap<i64, i64> = BTreeMap::new();
+    // Each form's geometry combinations (Revit's joins and cuts), by document
+    // and id: a void cuts the solids it shares a combination with.
+    let mut combinations: BTreeMap<(Guid, i64), Vec<i64>> = BTreeMap::new();
+    // Walls, and the openings (host wall, sketch) each document cuts.
+    let mut walls: BTreeSet<(Guid, i64)> = BTreeSet::new();
+    let mut openings: Vec<(Guid, i64, i64)> = Vec::new();
     let host_family = if host_is_family && section_count == 0 {
         host_family_id(rf, &names)?
     } else {
@@ -508,6 +545,16 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                     newest.insert((guid, x.frame.header.tag, id), part);
                 }
             }
+            // A member of a group no instance places (a group type's own
+            // copy, `m_unplacedOwnerId` naming it): Revit draws none (one door
+            // family measured keeps 32 handle extrusions in seven such groups,
+            // one of them 7 ft from the door on the floor).
+            if (class == "FamilyInstance" || FORM_CLASS_NAMES.contains(&class.as_str()))
+                && id_of(root, "m_unplacedOwnerId").is_some_and(|o| o > 0)
+            {
+                out.stats.unplaced += 1;
+                return;
+            }
             // A hosted family's template keeps a sample host (a wall, or a
             // block for a face-based family) that its `Family` names in
             // `m_refs`: it is not part of the family's form.
@@ -526,6 +573,20 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                             out.host_samples.insert((doc, e));
                         }
                     }
+                }
+            }
+            if FORM_CLASS_NAMES.contains(&class.as_str()) {
+                if let Some(g) = guid {
+                    let groups: Vec<i64> = x
+                        .objects
+                        .iter()
+                        .filter(|o| {
+                            names.get(&o.tag).map(String::as_str)
+                                == Some("FamilyGeomCombinationMembership")
+                        })
+                        .filter_map(|o| id_of(o, "m_groupId"))
+                        .collect();
+                    combinations.insert((g, id), groups);
                 }
             }
             match (class.as_str(), guid) {
@@ -549,12 +610,10 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 }
                 ("FamilyInstance", Some(g)) => {
                     other.push((g, "nested_family", x.frame.header.tag, id, part));
-                    // A sectionless family's nested family placing its own
-                    // nested families: kept to place them in turn.
-                    if host_family.is_some() {
-                        if let Some(pose) = pose_of(x, &names) {
-                            out.doc_instances.entry(g).or_default().insert(id, pose);
-                        }
+                    // A nested family placing its own nested families: kept
+                    // to place them in turn.
+                    if let Some(pose) = pose_of(x, &names) {
+                        out.doc_instances.entry(g).or_default().insert(id, pose);
                     }
                 }
                 ("Family", Some(_)) if host_family.is_some() => {
@@ -563,6 +622,17 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 ("FamilySymbol", Some(_)) if host_family.is_some() => {
                     if let Some(f) = id_of(root, "m_familyId") {
                         out.symbol_family.insert(id, f);
+                    }
+                }
+                // A keyed-section document's own nested families.
+                ("Family", Some(g)) => {
+                    if let Some(doc) = guid_of_family_document(x, &names) {
+                        out.doc_family_guid.insert((g, id), doc);
+                    }
+                }
+                ("FamilySymbol", Some(g)) => {
+                    if let Some(f) = id_of(root, "m_familyId") {
+                        out.doc_symbol_family.insert((g, id), f);
                     }
                 }
                 // A sectionless family's hidden forms are not drawn, and a
@@ -769,6 +839,15 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                         paths3d.insert(id, list);
                     }
                 }
+                ("SWall", Some(g)) => {
+                    walls.insert((g, id));
+                }
+                ("Opening", Some(g)) => {
+                    if let (Some(h), Some(k)) = (id_of(root, "m_hostId"), id_of(root, "m_sketchId"))
+                    {
+                        openings.push((g, h, k));
+                    }
+                }
                 ("ProfileRefPlane", Some(_)) => {
                     if let Some(p) = root.get("m_attachmentPoint").and_then(vec3_of) {
                         profile_planes.insert(id, p);
@@ -810,19 +889,21 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     }
     // Void forms, with their box when they solve: a void cuts the
     // document's own solids only where its box meets theirs.
-    let mut voids: Vec<(Guid, Option<Bounds>)> = Vec::new();
+    let mut voids: Vec<(Guid, i64, Option<FamilySolid>)> = Vec::new();
     for e in &extrusions {
         let doc = out.docs.entry(e.guid).or_default();
         if e.cutting {
             voids.push((
                 e.guid,
-                extrusion_solid(e, &sketches, &planes, &curves).map(|(_, b)| b),
+                e.id,
+                extrusion_solid(e, &sketches, &planes, &curves).map(|(s, _)| s),
             ));
             continue;
         }
         let solid = extrusion_solid(e, &sketches, &planes, &curves);
         let Some((solid, bbox)) = solid else {
             *doc.undecoded.entry("extrusion_geometry").or_default() += 1;
+            doc.form_failures.insert(e.id, "geometry");
             doc.unsolved_boxes.extend(boxes.get(&e.id));
             continue;
         };
@@ -839,6 +920,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             .is_none_or(|stored| box_matches(stored, &bbox, sag));
         if !matches {
             *doc.undecoded.entry("extrusion_bbox_mismatch").or_default() += 1;
+            doc.form_failures.insert(e.id, "bbox_mismatch");
             doc.unsolved_boxes.extend(boxes.get(&e.id));
             continue;
         }
@@ -874,12 +956,13 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     for f in &forms {
         let doc = out.docs.entry(f.guid).or_default();
         if f.cutting {
-            voids.push((f.guid, solve_form(f, &ctx).ok().map(|(_, b)| b)));
+            voids.push((f.guid, f.id, solve_form(f, &ctx).ok().map(|(s, _)| s)));
             continue;
         }
         match solve_form(f, &ctx) {
             Err(why) => {
                 *doc.undecoded.entry(f.kind).or_default() += 1;
+                doc.form_failures.insert(f.id, why);
                 doc.unsolved_boxes.extend(boxes.get(&f.id));
                 let reason = format!("{}:{why}", f.kind);
                 *doc.solve_failures.entry(reason.clone()).or_default() += 1;
@@ -904,6 +987,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 });
                 if !matches {
                     *doc.undecoded.entry(f.kind).or_default() += 1;
+                    doc.form_failures.insert(f.id, "bbox_mismatch");
                     doc.unsolved_boxes.extend(boxes.get(&f.id));
                     let reason = format!("{}:bbox_mismatch", f.kind);
                     *doc.solve_failures.entry(reason.clone()).or_default() += 1;
@@ -919,23 +1003,99 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             }
         }
     }
-    // A void whose box meets none of its document's solids cuts nothing of
-    // the family's own form (a void that cuts the host it is placed in, such
-    // as an opening, lies outside them): the document stays complete. A void
-    // that does not solve, or that meets a solid, leaves it incomplete.
-    for (g, void_box) in voids {
+    // A void cuts the solids it shares a geometry combination with (Revit's
+    // cut relation: on four families measured, each void and the solids it
+    // cuts are the members of one combination); a void in no combination,
+    // the solids whose box its box meets. A void that meets none cuts nothing
+    // of the family's own form (a void that cuts the host it is placed in,
+    // such as an opening, lies outside them). A void that does not solve, or
+    // whose cut fails, leaves the solids it meets uncut ("void"); one that
+    // cut them is "void_cut", so the document still reads as not complete
+    // and a project draws it from Revit's saved graphics where it can.
+    let overlaps = |a: &Bounds, b: &Bounds| (0..3).all(|k| a[0][k] < b[1][k] && b[0][k] < a[1][k]);
+    for (g, void_id, void) in voids {
+        let void_groups = combinations.get(&(g, void_id)).cloned().unwrap_or_default();
+        let void_box = void
+            .as_ref()
+            .and_then(|v| bounds(v.vertices.iter().copied()));
         let doc = out.docs.entry(g).or_default();
-        let cuts = void_box.is_none_or(|v| {
-            doc.solids.iter().any(|s| {
-                bounds(s.vertices.iter().copied())
-                    .is_some_and(|b| (0..3).all(|k| v[0][k] < b[1][k] && b[0][k] < v[1][k]))
+        let targets: Vec<usize> = (0..doc.solids.len())
+            .filter(|i| {
+                let s = &doc.solids[*i];
+                let solid_box = bounds(s.vertices.iter().copied());
+                let joined = combinations
+                    .get(&(g, s.form_id))
+                    .is_some_and(|gs| gs.iter().any(|x| void_groups.contains(x)));
+                let meets = match (&void_box, &solid_box) {
+                    (Some(v), Some(b)) => overlaps(v, b),
+                    _ => true,
+                };
+                meets && (joined || void_groups.is_empty())
             })
-        });
-        if cuts {
-            *doc.undecoded.entry("void").or_default() += 1;
-        } else {
+            .collect();
+        if targets.is_empty() {
             out.stats.voids_outside_solids += 1;
+            continue;
         }
+        let Some(void) = void else {
+            *doc.undecoded.entry("void").or_default() += 1;
+            continue;
+        };
+        let mut all_cut = true;
+        for i in targets {
+            let s = &mut doc.solids[i];
+            match crate::mesh_csg::difference(
+                (&s.vertices, &s.triangles),
+                (&void.vertices, &void.triangles),
+            ) {
+                Some((v, t)) => {
+                    s.vertices = v;
+                    s.triangles = t;
+                    out.stats.void_cuts += 1;
+                }
+                None => all_cut = false,
+            }
+        }
+        *doc.undecoded
+            .entry(if all_cut { "void_cut" } else { "void" })
+            .or_default() += 1;
+    }
+    // The family's own sample host wall: its stored box (a template keeps it
+    // straight along an axis), less the openings the family cuts in it, each
+    // its sketch's loops pushed through the wall.
+    for (g, wall) in &walls {
+        if *g != HOST_DOCUMENT || !out.host_samples.contains(&(*g, *wall)) {
+            continue;
+        }
+        let Some(b) = boxes.get(wall) else { continue };
+        let ring = vec![
+            [b[0][0], b[0][1], 0.0],
+            [b[1][0], b[0][1], 0.0],
+            [b[1][0], b[1][1], 0.0],
+            [b[0][0], b[1][1], 0.0],
+        ];
+        let Some(mut solid) = prism(&[ring], [0.0, 0.0, 1.0], b[0][2], b[1][2]) else {
+            continue;
+        };
+        let reach = dist(b[0], b[1]) + 1.0;
+        for (_, _, sketch) in openings.iter().filter(|(og, h, _)| og == g && h == wall) {
+            let cutter = ctx.sketches.get(sketch).and_then(|sk| {
+                let n = plane_normal(sk, &ctx.planes)?;
+                let (pieces, _) = sketch_pieces(sk, &ctx.curves)?;
+                prism(&loops(&pieces)?, n, -reach, reach)
+            });
+            if let Some((v, t)) = cutter.and_then(|c| {
+                crate::mesh_csg::difference(
+                    (&solid.vertices, &solid.triangles),
+                    (&c.vertices, &c.triangles),
+                )
+            }) {
+                solid.vertices = v;
+                solid.triangles = t;
+            }
+        }
+        solid.form_id = *wall;
+        out.docs.entry(*g).or_default().sample_walls.push(solid);
     }
     if let Some(host) = host_family {
         adopt_orphan_document(&mut out, &family_owner, host);
@@ -2396,6 +2556,23 @@ mod tests {
         let mut p = square(0.0);
         p.pop();
         assert!(loops(&p).is_none());
+    }
+
+    /// Element ids are each keyed document's own: a symbol id that names one
+    /// family in the file's own document names another inside a nested one.
+    #[test]
+    fn a_nested_documents_symbols_are_its_own() {
+        let (a, b, c) = ([1u8; 16], [2u8; 16], [3u8; 16]);
+        let mut d = FamilyDocuments::default();
+        for g in [a, b, c] {
+            d.docs.insert(g, DocSolids::default());
+        }
+        d.symbol_family.insert(7, 70);
+        d.family_guid.insert(70, a);
+        d.doc_symbol_family.insert((b, 7), 71);
+        d.doc_family_guid.insert((b, 71), c);
+        assert_eq!(d.document_of_symbol_in(b, 7).map(|(g, _)| g), Some(c));
+        assert_eq!(d.document_of_symbol_in(a, 7).map(|(g, _)| g), Some(a));
     }
 
     #[test]
