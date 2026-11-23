@@ -391,4 +391,26 @@ fn ifcx_layer_carries_the_textures() {
     assert!(none.is_empty());
     assert_eq!(empty["data"], serde_json::json!([]));
     assert_eq!(empty["schemas"], serde_json::json!({}));
+    // a coordinate that is not a number is written as 0 (JSON has no NaN).
+    let mut odd = m.clone();
+    if let Some(IfcEntity::BuildingElement {
+        solid_shape: Some(SolidShape::TriangulatedFaceSet { uvs, .. }),
+        ..
+    }) = odd.entities.first_mut()
+    {
+        uvs[1] = [f64::NAN, f64::INFINITY];
+    }
+    let (odd, _) = rvt::ifc::write_ifcx_texture_layer(&odd).expect("layer");
+    assert!(!odd.contains("null"));
+    assert!(odd.contains("[0.0,0.0],[0.0,0.0]"));
+}
+
+#[test]
+fn a_chunk_past_the_end_ends_the_alpha_search() {
+    // a 33-byte PNG whose first chunk claims 4 GiB.
+    let mut png = RGB_PNG[..33].to_vec();
+    png[8..12].copy_from_slice(&[0xff; 4]);
+    png[25] = 2;
+    let texture = MaterialTexture::new(png, None, None).expect("png");
+    assert!(!texture.has_alpha());
 }

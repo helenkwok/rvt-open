@@ -41,7 +41,7 @@ const Y_UP_TO_Z_UP: [f64; 16] = [
 type Placed = (usize, [f64; 16], String, Vec<(String, String)>);
 
 /// A triangle primitive's POSITION and indices accessors and material.
-type PrimitiveKey = (Option<usize>, Option<usize>, Option<usize>);
+type PrimitiveKey = (Option<usize>, Option<usize>, Option<usize>, Option<usize>);
 
 /// A poster triangle: depth, projected area, page points and colour.
 type PosterTriangle = (f64, f64, [[f64; 2]; 3], [f64; 3]);
@@ -140,7 +140,8 @@ fn indices(doc: &GltfDocument, bin: &[u8], accessor: usize) -> Option<Vec<u32>> 
 /// is the material of a primitive with none.
 fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Option<u3d::Mesh> {
     let mut out = u3d::Mesh::default();
-    let mut bases: HashMap<usize, u32> = HashMap::new();
+    // a block of points per (positions, texture coordinates) pair.
+    let mut bases: HashMap<(usize, Option<usize>), u32> = HashMap::new();
     let mut textured = false;
     for p in &doc.meshes.get(mesh)?.primitives {
         if p.mode != 4 {
@@ -149,7 +150,8 @@ fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Optio
         let Some(&position) = p.attributes.get("POSITION") else {
             continue;
         };
-        let base = match bases.get(&position) {
+        let texcoord = p.attributes.get("TEXCOORD_0").copied();
+        let base = match bases.get(&(position, texcoord)) {
             Some(&b) => b,
             None => {
                 let Some(points) = positions(doc, bin, position) else {
@@ -158,14 +160,12 @@ fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Optio
                 let b = out.positions.len() as u32;
                 let n = points.len();
                 out.positions.extend(points);
-                let uv = p
-                    .attributes
-                    .get("TEXCOORD_0")
-                    .and_then(|&a| texcoords(doc, bin, a))
+                let uv = texcoord
+                    .and_then(|a| texcoords(doc, bin, a))
                     .filter(|uv| uv.len() == n);
                 textured |= uv.is_some();
                 out.uvs.extend(uv.unwrap_or_else(|| vec![[0.0; 2]; n]));
-                bases.insert(position, b);
+                bases.insert((position, texcoord), b);
                 b
             }
         };
@@ -296,6 +296,7 @@ pub fn scene_from_gltf_at(doc: &GltfDocument, bin: &[u8], centre: bool) -> (Scen
                                 p.attributes.get("POSITION").copied(),
                                 p.indices,
                                 p.material.filter(|&m| m < doc.materials.len()),
+                                p.attributes.get("TEXCOORD_0").copied(),
                             )
                         })
                         .collect()

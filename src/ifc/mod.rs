@@ -569,7 +569,7 @@ impl MaterialTexture {
             return true;
         }
         let mut at = 8;
-        while at + 8 <= png.len() {
+        while at <= png.len() - 8 {
             let len = u32::from_be_bytes([png[at], png[at + 1], png[at + 2], png[at + 3]]) as usize;
             match &png[at + 4..at + 8] {
                 b"tRNS" => return true,

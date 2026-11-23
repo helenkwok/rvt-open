@@ -363,6 +363,8 @@ pub fn write_ifcx_graph_texture_layer(
     }
     let mut data = Vec::new();
     let mut files: Vec<super::TextureFile> = Vec::new();
+    // each textured material once: its image's path and its glTF material.
+    let mut materials: std::collections::BTreeMap<usize, Option<Value>> = Default::default();
     for (path, node) in graph.nodes.iter().filter(|(_, n)| n.ifcx) {
         let Some(mesh) = node.mesh.as_deref() else {
             continue;
@@ -370,30 +372,41 @@ pub fn write_ifcx_graph_texture_layer(
         if mesh.st.is_empty() || mesh.st.len() != mesh.points.len() {
             continue;
         }
-        let Some((info, texture)) = mesh
-            .texture
-            .and_then(|m| graph.material(m))
-            .and_then(|i| i.texture.clone().map(|t| (i, t)))
-        else {
+        let Some(m) = mesh.texture else {
             continue;
         };
-        let file = format!("textures/{}", texture.file_name());
-        if !files.iter().any(|(f, _)| *f == file) {
-            files.push((file.clone(), texture.image.clone()));
-        }
-        // The image is the colour; the factor keeps only the opacity.
-        let alpha = 1.0 - info.transparency.unwrap_or(0.0).clamp(0.0, 1.0);
-        let mut material = json!({"pbrMetallicRoughness": {
-            "baseColorFactor": [1.0, 1.0, 1.0, alpha],
-            "baseColorTexture": file,
-            "metallicFactor": 0.0,
-        }});
-        if alpha < 1.0 || texture.has_alpha() {
-            material["alphaMode"] = json!("BLEND");
-            material["doubleSided"] = json!(true);
-        }
+        let material = materials.entry(m).or_insert_with(|| {
+            let info = graph.material(m)?;
+            let texture = info.texture.as_ref()?;
+            let file = format!("textures/{}", texture.file_name());
+            if !files.iter().any(|(f, _)| *f == file) {
+                files.push((file.clone(), texture.image.clone()));
+            }
+            // The image is the colour; the factor keeps only the opacity.
+            let alpha = 1.0 - info.transparency.unwrap_or(0.0).clamp(0.0, 1.0);
+            let mut material = json!({"pbrMetallicRoughness": {
+                "baseColorFactor": [1.0, 1.0, 1.0, alpha],
+                "baseColorTexture": file,
+                "metallicFactor": 0.0,
+            }});
+            if alpha < 1.0 || texture.has_alpha() {
+                material["alphaMode"] = json!("BLEND");
+                material["doubleSided"] = json!(true);
+            }
+            Some(material)
+        });
+        let Some(material) = material.clone() else {
+            continue;
+        };
+        // a coordinate that is not a number is 0, as the IFC4 writer does:
+        // JSON has no NaN, and the schema asks for reals.
+        let st: Vec<[f64; 2]> = mesh
+            .st
+            .iter()
+            .map(|p| p.map(|c| if c.is_finite() { c } else { 0.0 }))
+            .collect();
         let mut attributes = Map::new();
-        attributes.insert(TEXTURE_COORDINATES_KEY.into(), json!(mesh.st));
+        attributes.insert(TEXTURE_COORDINATES_KEY.into(), json!(st));
         attributes.insert(GLTF_MATERIAL_KEY.into(), material);
         data.push(json!({"path": path, "attributes": attributes}));
     }

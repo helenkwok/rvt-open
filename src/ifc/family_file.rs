@@ -734,6 +734,7 @@ pub fn attach(
                     vertices_feet: body.vertices,
                     triangles: body.triangles,
                     face_materials: Vec::new(),
+                    uvs: Vec::new(),
                 }),
                 representation_map_index: None,
             });
