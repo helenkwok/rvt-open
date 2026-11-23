@@ -31,7 +31,10 @@ fn a_lone_arc_just_short_of_a_turn_closes() {
 #[test]
 fn an_arc_and_its_chord_make_one_ring_with_the_chord() {
     let chord = [at(TAU - GAP), at(GAP)];
-    for (t, line) in [([GAP, TAU - GAP], chord), ([TAU - GAP, GAP], [chord[1], chord[0]])] {
+    for (t, line) in [
+        ([GAP, TAU - GAP], chord),
+        ([TAU - GAP, GAP], [chord[1], chord[0]]),
+    ] {
         let rings = sketch_rings(&[([0.0; 3], 1.0, t)], &[line]).expect("a ring");
         assert_eq!(rings.len(), 1, "{t:?}");
         let ring = &rings[0];
@@ -39,9 +42,18 @@ fn an_arc_and_its_chord_make_one_ring_with_the_chord() {
         // corners of the ring, with no point of the arc between them.
         assert_eq!(ring.len(), 33, "{t:?}");
         let close = |p: [f64; 3], q: [f64; 3]| (0..3).all(|k| (p[k] - q[k]).abs() < 1e-9);
-        let i = ring.iter().position(|p| close(*p, chord[0])).expect("chord end");
-        let j = ring.iter().position(|p| close(*p, chord[1])).expect("chord end");
-        assert!(i.abs_diff(j) == 1 || i.abs_diff(j) == ring.len() - 1, "{i} {j}");
+        let i = ring
+            .iter()
+            .position(|p| close(*p, chord[0]))
+            .expect("chord end");
+        let j = ring
+            .iter()
+            .position(|p| close(*p, chord[1]))
+            .expect("chord end");
+        assert!(
+            i.abs_diff(j) == 1 || i.abs_diff(j) == ring.len() - 1,
+            "{i} {j}"
+        );
         assert!((area(ring).abs() - PI).abs() < 0.03, "{}", area(ring));
     }
 }
