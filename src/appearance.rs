@@ -13,15 +13,28 @@
 //!
 //! [`read`] keeps every property and every field of the stored objects,
 //! names and kinds as saved, with values as JSON: nothing is dropped or
-//! translated. The images a bitmap names are not in the file (they are paths
-//! into a material library); only a swatch is.
+//! translated. What it cannot read is listed in [`Appearance::unread`]. The
+//! images a bitmap names are not in the file (they are paths into a material
+//! library); only a swatch is.
 
 use crate::graph_value::Fv;
 use crate::native_parameters::ObjectGraph;
 use crate::{RevitFile, native_document};
 use serde::{Serialize, Serializer};
 use serde_json::{Map, Value, json};
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// The values one record's graph may hold: 16 times the largest record seen
+/// (a Snowdon Towers asset of about 110,000 values, its swatch one value per
+/// byte). It bounds the decoder's work on any record, as the default budget
+/// of 100,000 does for every other reader.
+const GRAPH_VALUES: usize = 2_000_000;
+
+/// The objects and values [`read`] visits for one record. A graph whose
+/// pointers are shared or cyclic stops here (and the record is listed unread)
+/// instead of growing without bound.
+const NODE_BUDGET: usize = 1_000_000;
 
 /// The appearance assets of a file and the materials that use them.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -30,7 +43,8 @@ pub struct Appearance {
     pub materials: Vec<MaterialAppearance>,
     /// Every appearance asset read, by element id.
     pub assets: Vec<AppearanceAsset>,
-    /// Appearance assets whose objects could not be read, and why.
+    /// Material and appearance asset records not read, or read only in part,
+    /// and why.
     pub unread: Vec<UnreadAsset>,
 }
 
@@ -48,6 +62,10 @@ pub struct MaterialAppearance {
     pub use_render_appearance: Option<bool>,
     /// The material's own asset, as saved in the material.
     pub own_asset: Option<Asset>,
+    /// The material object's other fields, as saved.
+    pub fields: Map<String, Value>,
+    /// The material element's other fields, as saved.
+    pub element_fields: Map<String, Value>,
 }
 
 /// An appearance asset element.
@@ -57,16 +75,20 @@ pub struct AppearanceAsset {
     pub element_id: u64,
     /// The asset's name.
     pub name: Option<String>,
-    /// Its colour as saved, `0x00BBGGRR`.
+    /// Its colour as saved, `0x00BBGGRR`, where it is one (any other value is
+    /// kept in `fields`).
     pub color_packed: Option<u32>,
-    /// Its transparency as saved, 0 to 1.
+    /// Its transparency as saved.
     pub transparency: Option<f64>,
     /// The property tree.
     pub asset: Asset,
-    /// The swatch image saved with it, where there is one.
+    /// The swatch image saved with it, where there is one (a thumbnail that
+    /// is not one is kept in `element_fields`).
     pub swatch: Option<Swatch>,
-    /// The element's material path map, as saved.
-    pub material_path_map: Value,
+    /// The appearance asset object's other fields, as saved.
+    pub fields: Map<String, Value>,
+    /// The element's other fields (its material path map, ...), as saved.
+    pub element_fields: Map<String, Value>,
 }
 
 /// An asset: a schema and its properties.
@@ -106,7 +128,9 @@ pub struct AssetProperty {
 /// A swatch image saved with an appearance asset.
 #[derive(Debug, Clone, Serialize)]
 pub struct Swatch {
+    /// Width in pixels.
     pub width: Option<u64>,
+    /// Height in pixels.
     pub height: Option<u64>,
     /// The image file's bytes (PNG), written as base64 in JSON.
     #[serde(serialize_with = "base64")]
@@ -115,10 +139,14 @@ pub struct Swatch {
     pub fields: Map<String, Value>,
 }
 
-/// An appearance asset not read.
+/// A material or appearance asset record not read, or read only in part.
 #[derive(Debug, Clone, Serialize)]
 pub struct UnreadAsset {
+    /// The element id.
     pub element_id: u64,
+    /// The record's class.
+    pub class: String,
+    /// Why.
     pub reason: String,
 }
 
@@ -135,7 +163,7 @@ impl Asset {
         while let Some(p) = stack.pop() {
             for a in &p.connected {
                 out.push(a);
-                out.extend(a.connected());
+                stack.extend(a.properties.iter().rev());
             }
             stack.extend(p.children.iter().rev());
         }
@@ -144,89 +172,142 @@ impl Asset {
 }
 
 impl Appearance {
-    /// The appearance asset of the material named `name`, where it has one.
+    /// The appearance asset of the material named `name`: none where no
+    /// material has the name, or where materials of that name name different
+    /// assets.
     pub fn asset_of(&self, name: &str) -> Option<&AppearanceAsset> {
-        let id = self
+        let mut ids = self
             .materials
             .iter()
-            .find(|m| m.name == name)?
-            .appearance_asset_id?;
-        self.assets.iter().find(|a| a.element_id as i64 == id)
+            .filter(|m| m.name == name)
+            .map(|m| m.appearance_asset_id);
+        let id = ids.next()??;
+        if ids.any(|other| other != Some(id)) {
+            return None;
+        }
+        self.asset(id)
     }
-}
 
-/// Read every material and appearance asset of `file`.
-pub fn read(file: &mut RevitFile) -> anyhow::Result<Appearance> {
-    let mut options = native_document::Options {
-        selected_classes: ["AppearanceAssetElem", "MaterialElem"]
+    /// The appearance asset whose element id is `id`.
+    pub fn asset(&self, id: i64) -> Option<&AppearanceAsset> {
+        self.assets
             .iter()
-            .map(|s| s.to_string())
-            .collect(),
-        releases: native_document::FRAMED_RELEASES,
-        // a swatch image is one value per byte; the record's size bounds it.
-        max_graph_values: usize::MAX,
-        ..Default::default()
-    };
-    options.channels = BTreeSet::from([102]);
-    let mut out = Appearance::default();
-    native_document::extract(file, &options, |r| {
-        let id = r.identity.element_id;
-        let class = r.class_name.as_deref().unwrap_or("");
-        let Some(g) = &r.graph else {
-            if class == "AppearanceAssetElem" {
-                out.unread.push(UnreadAsset {
-                    element_id: id,
-                    reason: r.diagnostic.clone().unwrap_or_else(|| r.status.clone()),
-                });
-            }
-            return Ok(());
-        };
+            .find(|a| i64::try_from(a.element_id) == Ok(id))
+    }
+
+    /// Add one record's graph (a `MaterialElem` or `AppearanceAssetElem`);
+    /// what [`read`] does for each record. With `unstable-research`, for
+    /// graphs made by hand.
+    #[cfg(feature = "unstable-research")]
+    pub fn add_graph(&mut self, element_id: u64, class: &str, graph: &ObjectGraph) {
+        self.ingest(element_id, class, graph);
+    }
+
+    fn unread(&mut self, element_id: u64, class: &str, reason: impl Into<String>) {
+        self.unread.push(UnreadAsset {
+            element_id,
+            class: class.to_string(),
+            reason: reason.into(),
+        });
+    }
+
+    fn ingest(&mut self, id: u64, class: &str, g: &ObjectGraph) {
         let reader = Reader::new(g);
         let Some(root) = g.objects.first() else {
-            return Ok(());
+            return self.unread(id, class, "graph has no objects");
         };
-        match root.class_name.as_str() {
+        if root.class_name != class {
+            return self.unread(id, class, format!("first object is {}", root.class_name));
+        }
+        reader.enter(0);
+        match class {
             "MaterialElem" => {
                 let Some((i, m)) = reader.target(0, &root.fields["m_pMaterial"]) else {
-                    return Ok(());
+                    return self.unread(id, class, "no material object");
                 };
-                out.materials.push(MaterialAppearance {
+                reader.enter(i);
+                let own_asset = m
+                    .get("m_asset")
+                    .filter(|a| a.is_object())
+                    .map(|a| reader.asset(i, "Asset", a));
+                let material = MaterialAppearance {
                     material_id: id,
                     name: m["m_name"].as_str().unwrap_or("").to_string(),
                     appearance_asset_id: crate::native_json::identifier_i64(
                         &m["m_appearanceAssetId"],
                     ),
                     use_render_appearance: m["m_bUseRenderAppearance"].as_bool(),
-                    own_asset: m
-                        .get("m_asset")
-                        .filter(|a| a.get("m_aAProperties").is_some())
-                        .map(|a| reader.asset(i, "Asset", a, 0)),
-                });
+                    own_asset,
+                    fields: reader.fields(i, m, &["m_name", "m_asset"]),
+                    element_fields: reader.fields(0, &root.fields, &["m_pMaterial"]),
+                };
+                self.materials.push(material);
             }
             "AppearanceAssetElem" => {
                 let Some((i, a)) = reader.target(0, &root.fields["m_pAppearanceAsset"]) else {
-                    out.unread.push(UnreadAsset {
-                        element_id: id,
-                        reason: "no appearance asset object".into(),
-                    });
-                    return Ok(());
+                    return self.unread(id, class, "no appearance asset object");
                 };
+                reader.enter(i);
+                let Some(tree) = a.get("m_Asset").filter(|t| t.is_object()) else {
+                    return self.unread(id, class, "appearance asset has no m_Asset");
+                };
+                let asset = reader.asset(i, "Asset", tree);
                 let swatch = root
                     .fields
                     .get("m_pThumbnail")
                     .and_then(|p| reader.target(0, p))
                     .and_then(|(_, t)| swatch(t));
-                out.assets.push(AppearanceAsset {
+                let color_packed = a["m_color"].as_u64().and_then(|c| u32::try_from(c).ok());
+                let mut fields = reader.fields(i, a, &["m_Name", "m_Asset", "m_transparency"]);
+                if color_packed.is_some() {
+                    fields.remove("m_color");
+                }
+                let mut skip = vec!["m_pAppearanceAsset"];
+                if swatch.is_some() {
+                    skip.push("m_pThumbnail");
+                }
+                let element_fields = reader.fields(0, &root.fields, &skip);
+                self.assets.push(AppearanceAsset {
                     element_id: id,
                     name: a["m_Name"].as_str().map(str::to_string),
-                    color_packed: a["m_color"].as_u64().and_then(|c| u32::try_from(c).ok()),
+                    color_packed,
                     transparency: a["m_transparency"].as_f64(),
-                    asset: reader.asset(i, "Asset", &a["m_Asset"], 0),
+                    asset,
                     swatch,
-                    material_path_map: root.fields["m_materialPathMap"].to_json(),
+                    fields,
+                    element_fields,
                 });
             }
-            _ => {}
+            _ => return self.unread(id, class, "not a material or appearance asset"),
+        }
+        if reader.exhausted.get() {
+            self.unread(id, class, "read in part: node budget exceeded");
+        }
+    }
+}
+
+/// Read every material and appearance asset of `file`.
+pub fn read(file: &mut RevitFile) -> anyhow::Result<Appearance> {
+    let options = native_document::Options {
+        selected_classes: ["AppearanceAssetElem", "MaterialElem"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        channels: BTreeSet::from([102]),
+        releases: native_document::FRAMED_RELEASES,
+        max_graph_values: GRAPH_VALUES,
+        ..Default::default()
+    };
+    let mut out = Appearance::default();
+    native_document::extract(file, &options, |r| {
+        let class = r.class_name.as_deref().unwrap_or("");
+        match &r.graph {
+            Some(g) => out.ingest(r.identity.element_id, class, g),
+            None => out.unread(
+                r.identity.element_id,
+                class,
+                r.diagnostic.clone().unwrap_or_else(|| r.status.clone()),
+            ),
         }
         Ok(())
     })?;
@@ -255,13 +336,16 @@ fn swatch(t: &Fv) -> Option<Swatch> {
     })
 }
 
-/// Deep enough for any asset seen (a property, its connected asset, that
-/// asset's properties: four levels); a cycle stops here.
-const MAX_DEPTH: usize = 64;
-
+/// Turns a graph's objects into records. Every object it follows is on
+/// `path` while it is read, so a pointer back to one gives a `cycle` marker;
+/// every object and value costs one of [`NODE_BUDGET`], so shared pointers
+/// cannot make the work grow past it.
 struct Reader<'a> {
     g: &'a ObjectGraph,
     edges: BTreeMap<(usize, usize), usize>,
+    path: RefCell<Vec<usize>>,
+    nodes: Cell<usize>,
+    exhausted: Cell<bool>,
 }
 
 impl<'a> Reader<'a> {
@@ -276,7 +360,43 @@ impl<'a> Reader<'a> {
                 )
             })
             .collect();
-        Self { g, edges }
+        Self {
+            g,
+            edges,
+            path: RefCell::new(Vec::new()),
+            nodes: Cell::new(0),
+            exhausted: Cell::new(false),
+        }
+    }
+
+    /// Put a root object on the path (never left).
+    fn enter(&self, i: usize) {
+        self.path.borrow_mut().push(i);
+    }
+
+    /// Count one node; false once the budget is spent.
+    fn spend(&self) -> bool {
+        let n = self.nodes.get() + 1;
+        self.nodes.set(n);
+        if n > NODE_BUDGET {
+            self.exhausted.set(true);
+        }
+        n <= NODE_BUDGET
+    }
+
+    /// Read object `j` with `f`, or give a marker where it is already on the
+    /// path or the budget is spent.
+    fn visit<T>(&self, j: usize, f: impl FnOnce() -> T, marker: impl FnOnce(Value) -> T) -> T {
+        if self.path.borrow().contains(&j) {
+            return marker(json!({"cycle": true, "object_index": j}));
+        }
+        if !self.spend() {
+            return marker(json!({"budget_exceeded": true, "object_index": j}));
+        }
+        self.path.borrow_mut().push(j);
+        let out = f();
+        self.path.borrow_mut().pop();
+        out
     }
 
     /// The object a pointer field of object `owner` points at.
@@ -290,26 +410,40 @@ impl<'a> Reader<'a> {
         v.get("pointer_token").is_some() && v.get("offset").is_some()
     }
 
+    /// The fields of object `owner` other than `skip`, resolved.
+    fn fields(&self, owner: usize, f: &Fv, skip: &[&str]) -> Map<String, Value> {
+        let mut out = Map::new();
+        if let Fv::Object(o) = f {
+            for (k, v) in o.iter() {
+                if !skip.contains(&k) {
+                    out.insert(k.to_string(), self.value(owner, v));
+                }
+            }
+        }
+        out
+    }
+
     /// An asset whose fields `f` belong to object `owner`.
-    fn asset(&self, owner: usize, class: &str, f: &Fv, depth: usize) -> Asset {
+    fn asset(&self, owner: usize, class: &str, f: &Fv) -> Asset {
         let mut properties = Vec::new();
         let mut fields = Map::new();
         if let Fv::Object(o) = f {
             for (k, v) in o.iter() {
-                if k == "m_aAProperties" {
-                    for p in v.as_array().into_iter().flatten() {
-                        match self.target(owner, p) {
-                            Some((j, _)) => properties.push(self.property(j, depth + 1)),
-                            None => fields
-                                .entry("unresolved_properties")
-                                .or_insert_with(|| json!([]))
-                                .as_array_mut()
-                                .expect("an array")
-                                .push(p.to_json()),
+                match (k, v.as_array()) {
+                    ("m_aAProperties", Some(items)) => {
+                        for p in items {
+                            match self.target(owner, p) {
+                                Some((j, _)) => match self.property(j) {
+                                    Ok(p) => properties.push(p),
+                                    Err(marker) => push(&mut fields, "unread_properties", marker),
+                                },
+                                None => push(&mut fields, "unresolved_properties", p.to_json()),
+                            }
                         }
                     }
-                } else {
-                    fields.insert(k.to_string(), self.value(owner, v, depth + 1));
+                    _ => {
+                        fields.insert(k.to_string(), self.value(owner, v));
+                    }
                 }
             }
         }
@@ -326,8 +460,13 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// The property object at index `i`.
-    fn property(&self, i: usize, depth: usize) -> AssetProperty {
+    /// The property object at index `i`, or a marker for a cycle or a spent
+    /// budget.
+    fn property(&self, i: usize) -> Result<AssetProperty, Value> {
+        self.visit(i, || Ok(self.property_body(i)), Err)
+    }
+
+    fn property_body(&self, i: usize) -> AssetProperty {
         let o = &self.g.objects[i];
         let kind = o
             .class_name
@@ -343,39 +482,35 @@ impl<'a> Reader<'a> {
             connected: Vec::new(),
             fields: Map::new(),
         };
-        if depth > MAX_DEPTH {
-            p.fields.insert("depth_limit".into(), json!(true));
-            return p;
-        }
         if let Fv::Object(f) = &o.fields {
             for (k, v) in f.iter() {
-                match k {
-                    "m_sName" => {}
-                    "m_value" => p.value = self.value(i, v, depth + 1),
-                    "m_aChild" | "m_aConnected" => {
-                        for q in v.as_array().into_iter().flatten() {
-                            match self.target(i, q) {
-                                Some((j, _)) if k == "m_aChild" => {
-                                    p.children.push(self.property(j, depth + 1));
+                match (k, v.as_array()) {
+                    ("m_sName", _) if v.is_string() => {}
+                    ("m_value", _) => p.value = self.value(i, v),
+                    ("m_aChild" | "m_aConnected", Some(items)) => {
+                        for q in items {
+                            let Some((j, t)) = self.target(i, q) else {
+                                push(&mut p.fields, &format!("unresolved_{k}"), q.to_json());
+                                continue;
+                            };
+                            if k == "m_aChild" {
+                                match self.property(j) {
+                                    Ok(c) => p.children.push(c),
+                                    Err(marker) => push(&mut p.fields, "unread_m_aChild", marker),
                                 }
-                                Some((j, t)) => p.connected.push(self.asset(
-                                    j,
-                                    &self.g.objects[j].class_name,
-                                    t,
-                                    depth + 1,
-                                )),
-                                None => p
-                                    .fields
-                                    .entry(format!("unresolved_{k}"))
-                                    .or_insert_with(|| json!([]))
-                                    .as_array_mut()
-                                    .expect("an array")
-                                    .push(q.to_json()),
+                            } else {
+                                let class = &self.g.objects[j].class_name;
+                                match self.visit(j, || Ok(self.asset(j, class, t)), Err) {
+                                    Ok(a) => p.connected.push(a),
+                                    Err(marker) => {
+                                        push(&mut p.fields, "unread_m_aConnected", marker)
+                                    }
+                                }
                             }
                         }
                     }
                     _ => {
-                        p.fields.insert(k.to_string(), self.value(i, v, depth + 1));
+                        p.fields.insert(k.to_string(), self.value(i, v));
                     }
                 }
             }
@@ -384,37 +519,43 @@ impl<'a> Reader<'a> {
     }
 
     /// A field value of object `owner` as JSON, a pointer replaced by the
-    /// object it points at (`{"class", "fields"}`), or kept as saved where
-    /// it points at none.
-    fn value(&self, owner: usize, v: &Fv, depth: usize) -> Value {
-        if depth > MAX_DEPTH {
-            return json!({"depth_limit": true});
+    /// object it points at (`{"class", "fields"}`, a property as a property),
+    /// or kept as saved where it points at none.
+    fn value(&self, owner: usize, v: &Fv) -> Value {
+        if !self.spend() {
+            return json!({"budget_exceeded": true});
         }
         match v {
-            Fv::Array(items) => Value::Array(
-                items
-                    .iter()
-                    .map(|x| self.value(owner, x, depth + 1))
-                    .collect(),
-            ),
+            Fv::Array(items) => Value::Array(items.iter().map(|x| self.value(owner, x)).collect()),
             Fv::Object(_) if Self::is_pointer(v) => match self.target(owner, v) {
-                Some((j, t)) => {
-                    let class = &self.g.objects[j].class_name;
-                    if class.starts_with("AProperty") {
-                        serde_json::to_value(self.property(j, depth + 1)).unwrap_or(Value::Null)
-                    } else {
-                        json!({"class": class, "fields": self.value(j, t, depth + 1)})
-                    }
-                }
+                Some((j, t)) => self.visit(
+                    j,
+                    || {
+                        let class = &self.g.objects[j].class_name;
+                        if class.starts_with("AProperty") {
+                            serde_json::to_value(self.property_body(j)).unwrap_or(Value::Null)
+                        } else {
+                            json!({"class": class, "fields": self.fields(j, t, &[])})
+                        }
+                    },
+                    |marker| marker,
+                ),
                 None => v.to_json(),
             },
             Fv::Object(o) => Value::Object(
                 o.iter()
-                    .map(|(k, x)| (k.to_string(), self.value(owner, x, depth + 1)))
+                    .map(|(k, x)| (k.to_string(), self.value(owner, x)))
                     .collect(),
             ),
             _ => v.to_json(),
         }
+    }
+}
+
+/// Append `v` to the array `fields[key]`.
+fn push(fields: &mut Map<String, Value>, key: &str, v: Value) {
+    if let Value::Array(items) = fields.entry(key).or_insert_with(|| json!([])) {
+        items.push(v);
     }
 }
 

@@ -434,25 +434,30 @@ pub fn write_ifcx_graph_texture_layer(
 
 // ------------------------------------------------------------ appearance
 
-/// The key of a material's render appearance asset in the appearance layer:
+/// The key of a render appearance asset's record in the appearance layer:
 /// the [`crate::appearance::AppearanceAsset`] record as JSON text, every
 /// property, kind and connected asset as saved.
 pub const APPEARANCE_KEY: &str = "rvtopen::revit::AppearanceAsset";
 
 /// The render appearance of each material of the graph as an IFCX layer to
-/// compose over the main file (header id `<id>/appearance`): each material
-/// whose name names an appearance asset in `appearance` gets that asset's
-/// record ([`APPEARANCE_KEY`]). The main file does not change. `timestamp` as
-/// [`write_ifcx_graph_layers_at`].
+/// compose over the main file (header id `<id>/appearance`). Each appearance
+/// asset a material uses is one node holding its record ([`APPEARANCE_KEY`]),
+/// written once however many materials use it; each such material's node
+/// gets it as its child `appearance`. A material is matched by name
+/// ([`crate::appearance::Appearance::asset_of`]). The main file does not
+/// change. Returns the layer and how many of the graph's materials it matched.
+/// `timestamp` as [`write_ifcx_graph_layers_at`].
 pub fn write_ifcx_graph_appearance_layer(
     graph: &IfcxGraph,
     appearance: &crate::appearance::Appearance,
     timestamp: Option<i64>,
-) -> Result<String, IfcxError> {
+) -> Result<(String, usize), IfcxError> {
     if let Some(e) = graph.errors.first() {
         return Err(IfcxError(e.clone()));
     }
     let mut data = Vec::new();
+    let mut written = std::collections::BTreeSet::new();
+    let mut matched = 0;
     for (i, path) in graph.order.materials.iter().enumerate() {
         let Some(info) = graph.material(i) else {
             continue;
@@ -460,8 +465,14 @@ pub fn write_ifcx_graph_appearance_layer(
         let Some(asset) = appearance.asset_of(&info.name) else {
             continue;
         };
-        let text = serde_json::to_string(asset).map_err(|e| IfcxError(format!("writing: {e}")))?;
-        data.push(json!({"path": path, "attributes": {APPEARANCE_KEY: text}}));
+        matched += 1;
+        let asset_path = uuid5(&format!("{}/appearance/{}", graph.id, asset.element_id));
+        if written.insert(asset.element_id) {
+            let text =
+                serde_json::to_string(asset).map_err(|e| IfcxError(format!("writing: {e}")))?;
+            data.push(json!({"path": asset_path, "attributes": {APPEARANCE_KEY: text}}));
+        }
+        data.push(json!({"path": path, "children": {"appearance": asset_path}}));
     }
     let mut schemas = Map::new();
     if !data.is_empty() {
@@ -483,7 +494,8 @@ pub fn write_ifcx_graph_appearance_layer(
         "schemas": schemas,
         "data": data,
     });
-    serde_json::to_string(&doc).map_err(|e| IfcxError(format!("writing: {e}")))
+    let text = serde_json::to_string(&doc).map_err(|e| IfcxError(format!("writing: {e}")))?;
+    Ok((text, matched))
 }
 
 // ---------------------------------------------------------------- ids

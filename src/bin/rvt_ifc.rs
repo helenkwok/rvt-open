@@ -649,18 +649,31 @@ fn run(args: Args) -> anyhow::Result<()> {
     };
     let appearance = if args.appearance.is_some() || args.ifcx_appearance.is_some() {
         rvt::control::stage("appearance assets");
-        let appearance = rvt::appearance::read(&mut rf)?;
-        if let Some(p) = &args.appearance {
-            rvt::cli::write_output(p, serde_json::to_vec(&appearance)?)?;
-            report.output("appearance", p);
-            eprintln!(
-                "rvt-ifc: wrote {} appearance assets of {} materials to {}",
-                appearance.assets.len(),
-                appearance.materials.len(),
-                p.display()
-            );
+        match rvt::appearance::read(&mut rf) {
+            Ok(appearance) => {
+                if !appearance.unread.is_empty() {
+                    eprintln!(
+                        "rvt-ifc: warning: {} material or appearance asset records not read in full (listed under \"unread\")",
+                        appearance.unread.len()
+                    );
+                }
+                if let Some(p) = &args.appearance {
+                    rvt::cli::write_output(p, serde_json::to_vec(&appearance)?)?;
+                    report.output("appearance", p);
+                    eprintln!(
+                        "rvt-ifc: wrote {} appearance assets of {} materials to {}",
+                        appearance.assets.len(),
+                        appearance.materials.len(),
+                        p.display()
+                    );
+                }
+                Some(appearance)
+            }
+            Err(e) => {
+                eprintln!("rvt-ifc: warning: appearance assets not written: {e:#}");
+                None
+            }
         }
-        Some(appearance)
     } else {
         None
     };
@@ -818,12 +831,15 @@ fn run(args: Args) -> anyhow::Result<()> {
             );
         }
         if let (Some(p), Some(appearance)) = (&args.ifcx_appearance, &appearance) {
-            let layer = write_ifcx_graph_appearance_layer(&graph, appearance, ifcx_time)?;
+            let (layer, matched) =
+                write_ifcx_graph_appearance_layer(&graph, appearance, ifcx_time)?;
             rvt::cli::write_output(p, layer.as_bytes())?;
+            report.output("ifcx-appearance", p);
             eprintln!(
-                "rvt-ifc: wrote {} IFCX appearance bytes to {}",
+                "rvt-ifc: wrote {} IFCX appearance bytes to {} ({matched} of {} materials matched by name)",
                 layer.len(),
-                p.display()
+                p.display(),
+                graph.order.materials.len()
             );
         }
         if let Some(ledger_path) = &args.ifcx_ledger {
