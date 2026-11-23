@@ -480,3 +480,105 @@ fn materials_match_assets_by_name_only_when_unambiguous() {
     assert!(a.asset_of("absent").is_none());
     assert_eq!(a.asset(101).map(|x| x.name.as_deref()), Some(Some("a101")));
 }
+
+#[test]
+fn a_deep_chain_stops_at_the_depth_limit() {
+    // 100,000 properties, each the only child of the one before
+    let n = 100_000;
+    let mut objects = vec![
+        element(1),
+        (
+            "AppearanceAsset",
+            serde_json::json!({"m_Name": "d", "m_color": 0, "m_transparency": 0.0,
+                "m_Asset": {"m_aAProperties": [ptr(10)]}}),
+        ),
+    ];
+    let mut edges = vec![(0, 1, 1), (1, 10, 2)];
+    for k in 0..n {
+        objects.push((
+            "APropertyList",
+            serde_json::json!({"m_sName": "p", "m_aChild": [ptr(1)], "m_aConnected": []}),
+        ));
+        if k + 1 < n {
+            edges.push((2 + k, 1, 3 + k));
+        }
+    }
+    let g = graph(&objects, &edges);
+    let started = std::time::Instant::now();
+    let mut a = Appearance::default();
+    a.add_graph(9, "AppearanceAssetElem", &g);
+    assert!(started.elapsed().as_secs() < 60);
+    assert_eq!(a.assets.len(), 1);
+    assert!(a.unread.iter().any(|u| u.reason.contains("depth limit")));
+    let json = serde_json::to_string(&a).expect("serializes");
+    assert!(json.contains("\"depth_limit\":true"));
+}
+
+#[test]
+fn fields_a_typed_read_did_not_take_are_kept() {
+    let mut a = Appearance::default();
+    a.add_graph(
+        10,
+        "AppearanceAssetElem",
+        &graph(
+            &[
+                element(1),
+                (
+                    "AppearanceAsset",
+                    serde_json::json!({"m_Name": 5, "m_color": 7, "m_transparency": "x",
+                        "m_Asset": {"m_aAProperties": []}}),
+                ),
+            ],
+            &[(0, 1, 1)],
+        ),
+    );
+    let asset = &a.assets[0];
+    assert_eq!((asset.name.as_deref(), asset.transparency), (None, None));
+    assert_eq!(asset.color_packed, Some(7));
+    assert_eq!(asset.fields["m_Name"], 5);
+    assert_eq!(asset.fields["m_transparency"], "x");
+    assert!(!asset.fields.contains_key("m_color"));
+    a.add_graph(
+        11,
+        "MaterialElem",
+        &graph(
+            &[
+                ("MaterialElem", serde_json::json!({"m_pMaterial": ptr(1)})),
+                ("Material", serde_json::json!({"m_name": 3, "m_asset": 4})),
+            ],
+            &[(0, 1, 1)],
+        ),
+    );
+    let m = &a.materials[0];
+    assert!(m.own_asset.is_none());
+    assert_eq!(m.fields["m_name"], 3);
+    assert_eq!(m.fields["m_asset"], 4);
+}
+
+/// When the assets cannot be read (the synthetic tier-1 model has no native
+/// records), `rvt-ifc --appearance` still writes the IFC file, warns, writes
+/// no JSON and exits 1.
+#[test]
+fn rvt_ifc_fails_when_the_requested_appearance_cannot_be_read() {
+    let input = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("corpus/tier1/architectural-2024/architectural-2024.rvt");
+    if !input.exists() {
+        return;
+    }
+    let out = std::env::temp_dir().join(format!("appearance-fail-{}", std::process::id()));
+    std::fs::create_dir_all(&out).expect("dir");
+    let (ifc, json) = (out.join("m.ifc"), out.join("m.appearance.json"));
+    let run = std::process::Command::new(env!("CARGO_BIN_EXE_rvt-ifc"))
+        .arg(&input)
+        .arg("-o")
+        .arg(&ifc)
+        .arg("--appearance")
+        .arg(&json)
+        .output()
+        .expect("runs");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(run.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("appearance assets not written"), "{stderr}");
+    assert!(ifc.exists() && !json.exists(), "{stderr}");
+    let _ = std::fs::remove_dir_all(&out);
+}

@@ -36,6 +36,12 @@ const GRAPH_VALUES: usize = 2_000_000;
 /// instead of growing without bound.
 const NODE_BUDGET: usize = 1_000_000;
 
+/// The objects [`read`] follows one inside another (an asset, its property,
+/// the asset connected there, ...). The assets seen nest a few levels; a
+/// deeper chain stops here (and the record is listed unread), so reading it
+/// never recurses deeper than this.
+const MAX_DEPTH: usize = 64;
+
 /// The appearance assets of a file and the materials that use them.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Appearance {
@@ -230,15 +236,24 @@ impl Appearance {
                     .get("m_asset")
                     .filter(|a| a.is_object())
                     .map(|a| reader.asset(i, "Asset", a));
+                let name = m["m_name"].as_str();
+                // a field is left out of `fields` only where its typed read took it
+                let mut skip = Vec::new();
+                if name.is_some() {
+                    skip.push("m_name");
+                }
+                if own_asset.is_some() {
+                    skip.push("m_asset");
+                }
                 let material = MaterialAppearance {
                     material_id: id,
-                    name: m["m_name"].as_str().unwrap_or("").to_string(),
+                    name: name.unwrap_or("").to_string(),
                     appearance_asset_id: crate::native_json::identifier_i64(
                         &m["m_appearanceAssetId"],
                     ),
                     use_render_appearance: m["m_bUseRenderAppearance"].as_bool(),
                     own_asset,
-                    fields: reader.fields(i, m, &["m_name", "m_asset"]),
+                    fields: reader.fields(i, m, &skip),
                     element_fields: reader.fields(0, &root.fields, &["m_pMaterial"]),
                 };
                 self.materials.push(material);
@@ -258,10 +273,20 @@ impl Appearance {
                     .and_then(|p| reader.target(0, p))
                     .and_then(|(_, t)| swatch(t));
                 let color_packed = a["m_color"].as_u64().and_then(|c| u32::try_from(c).ok());
-                let mut fields = reader.fields(i, a, &["m_Name", "m_Asset", "m_transparency"]);
-                if color_packed.is_some() {
-                    fields.remove("m_color");
+                let name = a["m_Name"].as_str().map(str::to_string);
+                let transparency = a["m_transparency"].as_f64();
+                // a field is left out of `fields` only where its typed read took it
+                let mut taken = vec!["m_Asset"];
+                for (key, read) in [
+                    ("m_color", color_packed.is_some()),
+                    ("m_Name", name.is_some()),
+                    ("m_transparency", transparency.is_some()),
+                ] {
+                    if read {
+                        taken.push(key);
+                    }
                 }
+                let fields = reader.fields(i, a, &taken);
                 let mut skip = vec!["m_pAppearanceAsset"];
                 if swatch.is_some() {
                     skip.push("m_pThumbnail");
@@ -269,9 +294,9 @@ impl Appearance {
                 let element_fields = reader.fields(0, &root.fields, &skip);
                 self.assets.push(AppearanceAsset {
                     element_id: id,
-                    name: a["m_Name"].as_str().map(str::to_string),
+                    name,
                     color_packed,
-                    transparency: a["m_transparency"].as_f64(),
+                    transparency,
                     asset,
                     swatch,
                     fields,
@@ -282,6 +307,9 @@ impl Appearance {
         }
         if reader.exhausted.get() {
             self.unread(id, class, "read in part: node budget exceeded");
+        }
+        if reader.too_deep.get() {
+            self.unread(id, class, "read in part: depth limit reached");
         }
     }
 }
@@ -346,6 +374,7 @@ struct Reader<'a> {
     path: RefCell<Vec<usize>>,
     nodes: Cell<usize>,
     exhausted: Cell<bool>,
+    too_deep: Cell<bool>,
 }
 
 impl<'a> Reader<'a> {
@@ -366,6 +395,7 @@ impl<'a> Reader<'a> {
             path: RefCell::new(Vec::new()),
             nodes: Cell::new(0),
             exhausted: Cell::new(false),
+            too_deep: Cell::new(false),
         }
     }
 
@@ -385,10 +415,14 @@ impl<'a> Reader<'a> {
     }
 
     /// Read object `j` with `f`, or give a marker where it is already on the
-    /// path or the budget is spent.
+    /// path, the path is [`MAX_DEPTH`] long or the budget is spent.
     fn visit<T>(&self, j: usize, f: impl FnOnce() -> T, marker: impl FnOnce(Value) -> T) -> T {
         if self.path.borrow().contains(&j) {
             return marker(json!({"cycle": true, "object_index": j}));
+        }
+        if self.path.borrow().len() >= MAX_DEPTH {
+            self.too_deep.set(true);
+            return marker(json!({"depth_limit": true, "object_index": j}));
         }
         if !self.spend() {
             return marker(json!({"budget_exceeded": true, "object_index": j}));

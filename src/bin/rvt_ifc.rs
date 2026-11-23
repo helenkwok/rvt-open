@@ -647,6 +647,9 @@ fn run(args: Args) -> anyhow::Result<()> {
     } else {
         Vec::new()
     };
+    // A requested appearance output that cannot be read: the other outputs
+    // are still written, then the run fails.
+    let mut appearance_error = None;
     let appearance = if args.appearance.is_some() || args.ifcx_appearance.is_some() {
         rvt::control::stage("appearance assets");
         match rvt::appearance::read(&mut rf) {
@@ -671,6 +674,7 @@ fn run(args: Args) -> anyhow::Result<()> {
             }
             Err(e) => {
                 eprintln!("rvt-ifc: warning: appearance assets not written: {e:#}");
+                appearance_error = Some(format!("{e:#}"));
                 None
             }
         }
@@ -858,7 +862,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         report.output("diagnostics", diagnostics_path);
     }
     if let Some(report_path) = &args.report {
-        if unread > 0 {
+        if unread > 0 || appearance_error.is_some() {
             report.status = rvt::ifc::run_report::RunStatus::Partial;
         }
         report.seconds = started.elapsed().as_secs_f64();
@@ -885,6 +889,9 @@ fn run(args: Args) -> anyhow::Result<()> {
             "note: no project name extracted; output IFC uses \"Untitled\". \
              Title typically comes from PartAtom — this file may not have one."
         );
+    }
+    if let Some(e) = appearance_error {
+        anyhow::bail!("the appearance assets asked for were not written: {e}");
     }
     Ok(())
 }
