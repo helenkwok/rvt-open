@@ -855,14 +855,14 @@ pub fn attach(
             // before the two are compared.
             let mut source = NESTED_DOCUMENT_BODY_SOURCE;
             if let Some(stored) = boxes.get(id) {
-                match stretch_to_box(&mut body.vertices, *stored, &pose_affine(pose)) {
-                    Stretch::Fits => {}
-                    Stretch::Stretched => {
+                match stretch_nested_to_box(&mut body.vertices, *stored, &pose_affine(pose)) {
+                    NestedStretch::Fits => {}
+                    NestedStretch::Stretched => {
                         source = NESTED_DOCUMENT_SCALED_BODY_SOURCE;
                         out.nested_scaled += 1;
                     }
-                    Stretch::BeyondLimits => out.nested_size_mismatch += 1,
-                    Stretch::Undetermined => out.nested_size_undetermined += 1,
+                    NestedStretch::BeyondLimits => out.nested_size_mismatch += 1,
+                    NestedStretch::Undetermined => out.nested_size_undetermined += 1,
                 }
             }
             let material_index = body
@@ -925,11 +925,16 @@ pub fn attach(
     Ok(out)
 }
 
-/// What [`stretch_to_box`] did.
+/// What [`stretch_nested_to_box`] did.
 #[derive(Debug, PartialEq)]
-enum Stretch {
+pub enum NestedStretch {
+    /// The body fits its stored box (or is smaller, or within the facet
+    /// allowance): left as it is.
     Fits,
+    /// The body was shrunk onto its stored box.
     Stretched,
+    /// The factors are beyond the limits or would enlarge an axis: left as
+    /// it is.
     BeyondLimits,
     /// The stored box is smaller than the turned body's, but its turn does
     /// not tell which of the body's own axes to shrink (near 45 degrees, a
@@ -946,17 +951,21 @@ enum Stretch {
 /// factors whose turned box is `stored` (each within the limits; an axis
 /// either box is flat along keeps its size), and centred on `stored`. A
 /// mirrored map keeps its reflection: only the size changes.
-fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2], map: &Affine) -> Stretch {
+pub fn stretch_nested_to_box(
+    vertices: &mut [[f64; 3]],
+    stored: [[f64; 3]; 2],
+    map: &Affine,
+) -> NestedStretch {
     let (l, t) = map;
     let Some(inv) = inverse3(l) else {
-        return Stretch::Fits;
+        return NestedStretch::Fits;
     };
     let own: Vec<[f64; 3]> = vertices
         .iter()
         .map(|v| std::array::from_fn(|k| (0..3).map(|j| inv[k][j] * (v[j] - t[j])).sum()))
         .collect();
     let Some([olo, ohi]) = bbox_of(&own) else {
-        return Stretch::Fits;
+        return NestedStretch::Fits;
     };
     let a: [[f64; 3]; 3] = std::array::from_fn(|k| std::array::from_fn(|j| l[k][j].abs()));
     let ow: [f64; 3] = std::array::from_fn(|j| ohi[j] - olo[j]);
@@ -971,13 +980,13 @@ fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2], map: &Affine
     let size = sw.iter().copied().fold(0.0, f64::max);
     let tol = family_documents::BBOX_TOLERANCE.max(family_documents::SOLVED_BBOX_FRACTION * size);
     if (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= tol && (hi[k] - stored[1][k]).abs() <= tol) {
-        return Stretch::Fits;
+        return NestedStretch::Fits;
     }
     // Revit's stored box holds all the instance draws, so only a body larger
     // than it is another size; one smaller can be lines and reference planes
     // the box also holds.
     if (0..3).any(|k| stored[0][k] < lo[k] - tol || stored[1][k] > hi[k] + tol) {
-        return Stretch::Fits;
+        return NestedStretch::Fits;
     }
     // Own widths x with |l| x = stored widths: an own axis the body is flat
     // along keeps its width, and a host axis the stored box is flat along
@@ -1003,7 +1012,7 @@ fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2], map: &Affine
             .collect::<Vec<Vec<f64>>>(),
         &rhs,
     ) else {
-        return Stretch::Undetermined;
+        return NestedStretch::Undetermined;
     };
     let mut factor = [1.0; 3];
     for (i, &j) in free.iter().enumerate() {
@@ -1012,7 +1021,7 @@ fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2], map: &Affine
     // The factors must give the stored box back.
     let fw: [f64; 3] = std::array::from_fn(|k| (0..3).map(|j| a[k][j] * ow[j] * factor[j]).sum());
     if rows.iter().any(|&k| (fw[k] - sw[k]).abs() > tol) {
-        return Stretch::Undetermined;
+        return NestedStretch::Undetermined;
     }
     // Within a few percent is the display's facets (a round form's stored
     // box is that of its faceted display), not another size.
@@ -1022,7 +1031,7 @@ fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2], map: &Affine
         .all(|f| (f - 1.0).abs() <= NESTED_FACET_ALLOWANCE)
         && (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= near.max(tol))
     {
-        return Stretch::Fits;
+        return NestedStretch::Fits;
     }
     // Only a shrink: a body larger than its box along one own axis and
     // smaller along another is another shape.
@@ -1030,14 +1039,14 @@ fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2], map: &Affine
         .iter()
         .all(|f| (NESTED_SCALE_LIMITS.0..=1.0 + NESTED_FACET_ALLOWANCE).contains(f))
     {
-        return Stretch::BeyondLimits;
+        return NestedStretch::BeyondLimits;
     }
     let sc: [f64; 3] = std::array::from_fn(|k| (stored[0][k] + stored[1][k]) / 2.0);
     for (v, o) in vertices.iter_mut().zip(&own) {
         let p: [f64; 3] = std::array::from_fn(|j| (o[j] - oc[j]) * factor[j]);
         *v = std::array::from_fn(|k| sc[k] + (0..3).map(|j| l[k][j] * p[j]).sum::<f64>());
     }
-    Stretch::Stretched
+    NestedStretch::Stretched
 }
 
 /// The inverse of `l`, when it is not singular.
@@ -1090,7 +1099,7 @@ fn least_squares(m: &[Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
 }
 
 /// A linear map (rows) and a translation: `p -> l * p + t`.
-type Affine = ([[f64; 3]; 3], [f64; 3]);
+pub type Affine = ([[f64; 3]; 3], [f64; 3]);
 
 /// An instance's placement as a map from its family's coordinates. A
 /// flipped instance mirrors its family across the family's own axis before

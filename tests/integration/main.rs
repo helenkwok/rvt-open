@@ -233,6 +233,8 @@ mod native_current_records;
 mod native_partitions_walk;
 #[path = "../native_phases.rs"]
 mod native_phases;
+#[path = "../nested_instance_sizes.rs"]
+mod nested_instance_sizes;
 #[path = "../parameter_diagnostics.rs"]
 mod parameter_diagnostics;
 #[path = "../partition_record_chain.rs"]
