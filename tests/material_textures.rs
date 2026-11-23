@@ -467,12 +467,23 @@ fn frag_sidecar_puts_the_images_back() {
     }
     let samples = doc["samples"].as_array().expect("samples");
     assert_eq!(samples.len(), 7);
+    let mut triangles = 0;
     for s in samples {
         assert!(ids.contains(&&s["material"]), "names a listed material");
-        assert_eq!(s["triangles"], 2);
+        let t = s["triangles"].as_u64().expect("triangles") as usize;
         let uv = s["uv"].as_array().expect("uv");
-        assert_eq!(uv.len(), 2 * 3 * 2, "one [u, v] per triangle corner");
+        assert_eq!(uv.len(), t * 3 * 2, "one [u, v] per triangle corner");
+        triangles += t;
     }
+    // every triangle of every textured mesh of the graph, once.
+    let textured: usize = graph
+        .nodes
+        .values()
+        .filter_map(|n| n.mesh.as_deref())
+        .filter(|m| m.texture.is_some())
+        .map(|m| m.face_vertex_indices.len() / 3)
+        .sum();
+    assert_eq!(triangles, textured);
     // the floor's two triangles (0, 1, 2) and (0, 2, 3), corner by corner.
     assert_eq!(
         samples[0]["uv"],
