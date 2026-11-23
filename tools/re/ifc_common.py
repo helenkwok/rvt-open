@@ -205,10 +205,12 @@ def _read_meshes(path):
     with np.load(path, allow_pickle=False) as kept:
         ids, reasons, nverts, nfaces = kept["ids"], kept["reasons"], kept["nverts"], kept["nfaces"]
         verts, faces = kept["verts"], kept["faces"]
-        # A shard written before has no lost items.
-        if "lost_parts" in kept.files:
-            for part, item, cls, reason in zip(kept["lost_parts"], kept["lost_items"], kept["lost_classes"], kept["lost_reasons"]):
-                lost[int(part)].append((int(item), str(cls), str(reason)))
+        # A shard written before items were tracked does not say which were lost: it is
+        # read as a miss, so its parts are meshed again and checked.
+        if "lost_parts" not in kept.files:
+            return out
+        for part, item, cls, reason in zip(kept["lost_parts"], kept["lost_items"], kept["lost_classes"], kept["lost_reasons"]):
+            lost[int(part)].append((int(item), str(cls), str(reason)))
     vstart = np.concatenate([[0], np.cumsum(nverts)])
     fstart = np.concatenate([[0], np.cumsum(nfaces)])
     for k, part_id in enumerate(ids):
@@ -290,5 +292,8 @@ def mesh_parts(model, settings, parts, path=None):
         _write_meshes(os.path.join(cache, f"{os.getpid()}-{time.time_ns()}.npz"), fresh)
     known.update(fresh)
     MESH_FAILURES.update({i: known[i] for i in ids if isinstance(known[i], str)})
+    # Part ids are a file's instance ids: one meshed from another file must not keep its record.
+    for i in ids:
+        ITEM_FAILURES.pop(i, None)
     ITEM_FAILURES.update({i: known[i][2] for i in ids if not isinstance(known[i], str) and known[i][2]})
     return {i: known[i][:2] for i in ids if not isinstance(known[i], str)}

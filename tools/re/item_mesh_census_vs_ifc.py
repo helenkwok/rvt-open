@@ -31,7 +31,7 @@ import ifcopenshell
 import ifcopenshell.geom
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ifc_common import ITEM_FAILURES, body_leaves  # noqa: E402
+from ifc_common import ITEM_FAILURES, MESH_FAILURES, body_leaves  # noqa: E402
 from mesh_bodies_vs_ifc import meshes  # noqa: E402
 from roof_bodies_vs_ifc import shapes_of  # noqa: E402
 
@@ -86,7 +86,8 @@ def main():
               if e.Tag and not e.is_a("IfcOpeningElement") for part in shapes_of(e)}
     meshes(path, model=model, settings=settings)
     named = {(part, item) for part, lost in ITEM_FAILURES.items() for item, _, _ in lost}
-    expected = {key for key in failed if key[0] in meshed}
+    # A part that fails whole is left out, with no item named: only the parts meshed count.
+    expected = {key for key in failed if key[0] in meshed and key[0] not in MESH_FAILURES}
     print(f"helper: parts meshed {len(meshed)}; Body items named as lost {len(named)} on {len({p for p, _ in named})} parts; "
           f"census items on those parts {len(expected)}")
     if named == expected:
