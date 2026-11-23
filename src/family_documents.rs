@@ -18,6 +18,12 @@
 //! (397 of 437 on rac_basic 2024 within 0.3 mm before arcs were bounded
 //! exactly).
 //!
+//! Files saved before Revit 2020 have no keyed sections. A standalone family
+//! of those releases keeps its nested families' documents among its own
+//! objects, and an element's `m_famId` names the family whose document holds
+//! it: those objects are read as that family's document (keyed by
+//! [`owned_document`]) rather than as the file's own forms.
+//!
 //! Only forms that decode and match their stored bounding box are returned.
 //! A family with any other solid form (sweep, revolve, blend, void, nested
 //! family) is incomplete: [`DocSolids::complete`] is false and callers fall
@@ -39,6 +45,16 @@ const EXTRUSION_END: i64 = -1_001_801;
 const JOIN_TOLERANCE: f64 = 1e-5;
 /// A decoded solid's bounding box must equal the stored one within this.
 pub const BBOX_TOLERANCE: f64 = 1e-3;
+/// Families of Revit 2009 and 2011 store a form's bounding box from its
+/// faceted display, which cuts each arc short by up to this share of its
+/// radius (1 - cos(pi/14), arcs in 14 facets a turn: every extrusion of the
+/// families measured whose box missed by more than [`BBOX_TOLERANCE`] and
+/// lay inside the decoded one missed by 0.0250 to 0.0251 of its largest
+/// radius, or less where that radius is feet long).
+pub const ARC_FACET_SAG: f64 = 0.0251;
+/// Last release whose stored boxes are read as faceted (2012 and later were
+/// not measured, and keep the exact match).
+const LAST_FACETED_BOX_RELEASE: u32 = 2011;
 /// A solved sweep or revolution is tessellated (arcs in steps of pi/16), so
 /// its box may fall short of the stored one by the chord error: this share
 /// of the form's size.
@@ -127,6 +143,9 @@ pub struct FamilyDocuments {
     pub symbol_family: BTreeMap<i64, i64>,
     /// Host family instance id -> placement.
     pub instances: BTreeMap<i64, InstancePose>,
+    /// Of a family file without keyed sections, the solid forms and family
+    /// instances its nested families' documents hold (not the file's own).
+    pub nested_objects: BTreeSet<i64>,
     pub stats: DocStats,
 }
 
@@ -232,6 +251,9 @@ enum Curve {
 struct RawExtrusion {
     guid: Guid,
     id: i64,
+    /// Its class tag and the number of the partition it was read from.
+    tag: u16,
+    part: u32,
     material: i64,
     cutting: bool,
     sketch: i64,
@@ -243,6 +265,8 @@ struct RawExtrusion {
 struct RawForm {
     guid: Guid,
     id: i64,
+    tag: u16,
+    part: u32,
     kind: &'static str,
     material: i64,
     cutting: bool,
@@ -390,6 +414,9 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
 
     let mut out = FamilyDocuments::default();
     out.stats.sections = section_count;
+    let faceted_boxes = rf
+        .basic_file_info()
+        .is_ok_and(|b| b.version <= LAST_FACETED_BOX_RELEASE);
     let mut extrusions: Vec<RawExtrusion> = Vec::new();
     let mut forms: Vec<RawForm> = Vec::new();
     // curves per document, 3D path curves and profile-plane
@@ -403,6 +430,19 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     let mut boxes: BTreeMap<i64, [[f64; 3]; 2]> = BTreeMap::new();
     // Undecoded forms per document: (kind -> count).
     let mut other: BTreeMap<Guid, BTreeMap<&'static str, usize>> = BTreeMap::new();
+    // The partition each object's newest copy was read from, by document,
+    // class and id: a file saved several times keeps older copies of some
+    // records in earlier partitions (one Revit 2011 family measured holds 27
+    // of its 51 extrusions twice), and the newest is the current one.
+    let mut newest: BTreeMap<(Option<Guid>, u16, i64), u32> = BTreeMap::new();
+    // A family file without keyed sections (every release before 2020)
+    // keeps its nested families' documents among its own objects; each
+    // element's `m_famId` names the family whose document holds it.
+    let host_family = if host_is_family && section_count == 0 {
+        host_family_id(rf, &names)?
+    } else {
+        None
+    };
 
     for_each_object_where(
         rf,
@@ -424,14 +464,33 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             // A family file's own forms belong to its own document; its
             // `Family`, `FamilySymbol` and `FamilyInstance` objects stay the
             // host's (nested families and their instances).
-            if guid.is_none()
-                && host_is_family
-                && !matches!(class.as_str(), "Family" | "FamilySymbol" | "FamilyInstance")
-            {
+            let owner = host_family.and_then(|host| {
+                id_of(root, "m_famId")
+                    .filter(|f| *f > 0 && *f != host)
+                    .map(owned_document)
+            });
+            let bookkeeping =
+                matches!(class.as_str(), "Family" | "FamilySymbol" | "FamilyInstance");
+            if let Some(g) = owner {
+                if class == "FamilyInstance" || FORM_CLASS_NAMES.contains(&class.as_str()) {
+                    out.nested_objects.insert(x.frame.header.id as i64);
+                }
+                guid = Some(g);
+            } else if guid.is_none() && host_is_family && !bookkeeping {
                 guid = Some(HOST_DOCUMENT);
             }
             let id = x.frame.header.id as i64;
+            let part = crate::partition_room_parameters::partition_number(&x.stream);
+            match newest.get(&(guid, x.frame.header.tag, id)) {
+                Some(p) if *p > part => return,
+                _ => {
+                    newest.insert((guid, x.frame.header.tag, id), part);
+                }
+            }
             match (class.as_str(), guid) {
+                ("Family", None) if host_family.is_some() => {
+                    out.family_guid.insert(id, owned_document(id));
+                }
                 ("Family", None) => {
                     if let Some(g) = guid_of_family_document(x, &names) {
                         out.family_guid.insert(id, g);
@@ -514,6 +573,8 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                         (Some(sketch), Some(s), Some(e)) => extrusions.push(RawExtrusion {
                             guid: g,
                             id,
+                            tag: x.frame.header.tag,
+                            part,
                             material: id_of(root, "m_materialId").unwrap_or(-1),
                             cutting: bool_of(root, "m_cutting"),
                             sketch,
@@ -602,6 +663,8 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                     forms.push(RawForm {
                         guid: g,
                         id,
+                        tag: x.frame.header.tag,
+                        part,
                         kind,
                         material: id_of(root, "m_materialId").unwrap_or(-1),
                         cutting: bool_of(root, "m_cutting"),
@@ -678,6 +741,10 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         },
     )?;
 
+    // Of a form read from several partitions, the newest copy.
+    extrusions.retain(|e| newest.get(&(Some(e.guid), e.tag, e.id)) == Some(&e.part));
+    forms.retain(|f| newest.get(&(Some(f.guid), f.tag, f.id)) == Some(&f.part));
+
     for (g, kinds) in other {
         out.docs.entry(g).or_default().undecoded.extend(kinds);
     }
@@ -707,9 +774,16 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             continue;
         };
         out.stats.extrusions_decoded += 1;
-        let matches = boxes.get(&e.id).is_none_or(|stored| {
-            (0..2).all(|i| (0..3).all(|k| (stored[i][k] - bbox[i][k]).abs() <= BBOX_TOLERANCE))
-        });
+        // Before 2012 the stored box may lie inside the decoded one by the
+        // arcs' facet sag, never outside it.
+        let sag = if faceted_boxes {
+            ARC_FACET_SAG * max_arc_radius(e, &sketches, &curves)
+        } else {
+            0.0
+        };
+        let matches = boxes
+            .get(&e.id)
+            .is_none_or(|stored| box_matches(stored, &bbox, sag));
         if !matches {
             *doc.undecoded.entry("extrusion_bbox_mismatch").or_default() += 1;
             continue;
@@ -864,10 +938,16 @@ fn polyline(c: &Curve) -> (Vec<[f64; 3]>, bool, Vec<[f64; 3]>) {
             b,
             t,
         } => {
-            // Equal end parameters are the whole curve.
+            // Equal end parameters are the whole curve, and so is a curve
+            // that falls short of a turn by at most a thousandth of one:
+            // Revit 2011 stores a sketched circle as an arc from pi/2000 to
+            // 2pi - pi/2000 (one door family measured: 18 extrusions whose
+            // only curve is such an arc).
             let (t0, mut t1) = (t[0], t[1]);
             if (t1 - t0).abs() < 1e-12 {
                 t1 = t0 + TAU;
+            } else if (TAU - (t1 - t0).abs()).abs() <= TAU / 1000.0 {
+                t1 = t0 + TAU.copysign(t1 - t0);
             }
             let at = |s: f64| -> [f64; 3] {
                 std::array::from_fn(|k| center[k] + a * s.cos() * x[k] + b * s.sin() * y[k])
@@ -1147,6 +1227,75 @@ fn extrusion_solid(
             .map(move |s| -> [f64; 3] { std::array::from_fn(|k| p[k] + n[k] * s) })
     }))?;
     Some((solid, bbox))
+}
+
+/// The solid-form classes.
+const FORM_CLASS_NAMES: [&str; 6] = [
+    "ExtrusionElem",
+    "SweepElem",
+    "RevolutionElem",
+    "BlendElem",
+    "SweptBlendElem",
+    "FreeFormElement",
+];
+
+/// The document key of the nested family `family` in a file without keyed
+/// sections: its id, marked so that it is no content-document GUID.
+fn owned_document(family: i64) -> Guid {
+    let mut g = [0xff; 16];
+    g[8..].copy_from_slice(&family.to_le_bytes());
+    g
+}
+
+/// The family file's own `Family` element: of the families no other
+/// family's document holds (`m_famId` -1), the first. A nested family can be
+/// one too (a loaded family whose own `Family` element says -1), but it
+/// comes after the file's own, which Revit numbers first.
+fn host_family_id(rf: &mut RevitFile, names: &BTreeMap<u16, String>) -> Result<Option<i64>> {
+    let Some(family) = names.iter().find(|(_, n)| *n == "Family").map(|(t, _)| *t) else {
+        return Ok(None);
+    };
+    let mut host: Option<i64> = None;
+    for_each_object_where(
+        rf,
+        |frame, _| frame.header.tag == family,
+        |x| {
+            let root_family = x
+                .objects
+                .first()
+                .is_some_and(|r| id_of(r, "m_famId").is_none_or(|f| f < 0));
+            let id = x.frame.header.id as i64;
+            if root_family && host.is_none_or(|h| id < h) {
+                host = Some(id);
+            }
+        },
+    )?;
+    Ok(host)
+}
+
+/// Whether a decoded box is the stored one: equal within [`BBOX_TOLERANCE`],
+/// or larger on any side by at most `sag` more (a faceted stored box).
+fn box_matches(stored: &Bounds, decoded: &Bounds, sag: f64) -> bool {
+    let ok = |gap: f64| (-BBOX_TOLERANCE..=BBOX_TOLERANCE + sag).contains(&gap);
+    (0..3).all(|k| ok(stored[0][k] - decoded[0][k]) && ok(decoded[1][k] - stored[1][k]))
+}
+
+/// The largest radius of an extrusion's arcs and ellipses (0 without).
+fn max_arc_radius(
+    e: &RawExtrusion,
+    sketches: &BTreeMap<i64, RawSketch>,
+    curves: &BTreeMap<i64, Curve>,
+) -> f64 {
+    sketches
+        .get(&e.sketch)
+        .into_iter()
+        .flat_map(|s| &s.curves)
+        .filter_map(|c| match curves.get(c)? {
+            Curve::Arc { radius, .. } => Some(*radius),
+            Curve::Ellipse { a, b, .. } => Some(a.max(*b)),
+            Curve::Line { .. } => None,
+        })
+        .fold(0.0, f64::max)
 }
 
 // ---- sweeps, revolutions and blends ---------------------------
@@ -2048,6 +2197,45 @@ mod tests {
         assert_eq!(rings.len(), 1);
         assert_eq!(rings[0].len(), 4);
     }
+
+    /// A sketched circle saved as an arc a thousandth of a turn short closes
+    /// into one ring and extrudes; a half circle does not close.
+    #[test]
+    fn an_arc_just_short_of_a_turn_is_a_closed_circle() {
+        use std::f64::consts::{PI, TAU};
+        let arc = |t: [f64; 2]| Curve::Arc {
+            center: [0.0; 3],
+            x: [1.0, 0.0, 0.0],
+            y: [0.0, 1.0, 0.0],
+            radius: 1.0,
+            t,
+        };
+        let (pts, closed, _) = polyline(&arc([PI / 2000.0, TAU - PI / 2000.0]));
+        assert!(closed);
+        let rings = loops(&[(pts, closed)]).unwrap();
+        let s = prism(&rings, [0.0, 0.0, 1.0], 0.0, 1.0).unwrap();
+        assert!((volume(&s) - PI).abs() < 0.03, "{}", volume(&s));
+        assert!(!polyline(&arc([0.0, PI])).1);
+    }
+
+    /// A faceted stored box may lie inside the decoded one by the sag, never
+    /// outside it.
+    #[test]
+    fn a_faceted_box_matches_within_the_sag_only_inward() {
+        let decoded = [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]];
+        let inward = [[0.002, 0.0, 0.0], [1.0, 0.998, 1.0]];
+        assert!(!box_matches(&inward, &decoded, 0.0));
+        assert!(box_matches(&inward, &decoded, ARC_FACET_SAG * 0.1));
+        let outward = [[-0.002, 0.0, 0.0], [1.0, 1.0, 1.0]];
+        assert!(!box_matches(&outward, &decoded, 1.0));
+        assert!(box_matches(&decoded, &decoded, 0.0));
+    }
+
+    #[test]
+    fn a_nested_family_key_is_not_a_content_document_guid() {
+        assert_ne!(owned_document(1801), HOST_DOCUMENT);
+        assert_ne!(owned_document(1801), owned_document(2120));
+    }
 }
 
 #[cfg(test)]
@@ -2187,6 +2375,8 @@ mod probe_forms {
         RawForm {
             guid: [0; 16],
             id: 1,
+            tag: 0,
+            part: 0,
             kind,
             material: -1,
             cutting: false,

@@ -15,7 +15,9 @@
 //!
 //! Nested instances are exported by the project exporter as family instances;
 //! on releases whose saved graphics the project pass does not read (before
-//! 2023) this pass draws them from their saved graphics too. Releases 2015 to
+//! 2023) this pass draws them from their saved graphics too, and an instance
+//! no pass drew (every one before 2015) from its family's decoded document,
+//! placed by the instance's transform. Releases 2015 to
 //! 2022 are read here only with a self-check: the mesh must lie inside the
 //! element's stored bounding box.
 
@@ -37,6 +39,10 @@ pub const FORM_SOLVED_BODY_SOURCE: &str = "family_form_solved_solid";
 pub const FORM_BOX_BODY_SOURCE: &str = "family_form_bounding_box";
 /// `BodySource` of a nested instance drawn from its saved graphics here.
 pub const NESTED_SAVED_MESH_BODY_SOURCE: &str = "family_nested_saved_mesh";
+
+/// `BodySource` of a nested instance drawn from its family's decoded
+/// document.
+pub const NESTED_DOCUMENT_BODY_SOURCE: &str = "family_nested_document";
 
 /// The storey a family's elements are placed in.
 pub const FAMILY_STOREY: &str = "Ref. Level";
@@ -86,6 +92,12 @@ pub struct FamilySummary {
     /// Instances of nested families, and how many this pass drew.
     pub nested_instances: usize,
     pub nested_drawn: usize,
+    /// Of `nested_drawn`, instances whose family's voids are not cut.
+    #[serde(default)]
+    pub nested_uncut: usize,
+    /// Nested instances not drawn from their family's document, by why.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub nested_missing: BTreeMap<String, usize>,
     /// Why sweeps, revolutions and blends were not rebuilt from their
     /// sketches, by `kind:reason` (forms whose saved graphics drew them too).
     #[serde(default)]
@@ -97,6 +109,9 @@ pub struct FamilySummary {
 
 struct Form {
     id: i64,
+    /// Its class tag and the number of the partition it was read from.
+    tag: u16,
+    part: u32,
     kind: &'static str,
     cutting: bool,
     visible: bool,
@@ -293,6 +308,9 @@ pub fn attach(
     let mut forms: Vec<Form> = Vec::new();
     let mut boxes: BTreeMap<i64, [[f64; 3]; 2]> = BTreeMap::new();
     let mut nested: BTreeSet<i64> = BTreeSet::new();
+    // The newest partition each object was read from: older copies of a
+    // record a file keeps in earlier partitions are not current.
+    let mut newest: BTreeMap<(u16, i64), u32> = BTreeMap::new();
     for_each_object_where(
         rf,
         |_, _| true,
@@ -310,6 +328,13 @@ pub fn attach(
                 return;
             };
             let id = x.frame.header.id as i64;
+            let part = crate::partition_room_parameters::partition_number(&x.stream);
+            match newest.get(&(x.frame.header.tag, id)) {
+                Some(p) if *p > part => return,
+                _ => {
+                    newest.insert((x.frame.header.tag, id), part);
+                }
+            }
             if class == "GElement" {
                 if let Some(Value::List(b)) = root.get("m_bBox") {
                     if let [lo, hi] = b.as_slice() {
@@ -344,6 +369,8 @@ pub fn attach(
             }
             forms.push(Form {
                 id,
+                tag: x.frame.header.tag,
+                part,
                 kind,
                 cutting: matches!(root.get("m_cutting"), Some(Value::Bool(true))),
                 visible,
@@ -351,6 +378,14 @@ pub fn attach(
             });
         },
     )?;
+    forms.retain(|f| newest.get(&(f.tag, f.id)) == Some(&f.part));
+    // Decoded solids of the family's own document, and which forms belong
+    // to a nested family's document instead (files without keyed sections).
+    let docs = family_documents::read_with_host(rf, true).ok();
+    if let Some(d) = &docs {
+        forms.retain(|f| !d.nested_objects.contains(&f.id));
+        nested.retain(|i| !d.nested_objects.contains(i));
+    }
     forms.sort_by_key(|f| f.id);
     for f in &forms {
         *out.forms_found.entry(f.kind.to_string()).or_default() += 1;
@@ -436,8 +471,6 @@ pub fn attach(
         }
     }
 
-    // Decoded solids of the family's own document.
-    let docs = family_documents::read_with_host(rf, true).ok();
     if let Some(d) = &docs {
         out.solve_failures = d.stats.solve_failures.clone();
     }
@@ -596,6 +629,109 @@ pub fn attach(
                 *solid_shape = Some(shape);
             }
             set_body_source(&mut model.entities[*index], NESTED_SAVED_MESH_BODY_SOURCE);
+            out.nested_drawn += 1;
+        }
+    }
+
+    // Nested instances no other pass drew, from their family's decoded
+    // document placed by the instance's transform (its matrix's columns
+    // are the instance's axes, as for a project's instances).
+    let placed: BTreeSet<i64> = model
+        .entities
+        .iter()
+        .filter_map(|e| match e {
+            IfcEntity::BuildingElement {
+                type_guid: Some(t), ..
+            } => t.parse().ok(),
+            _ => None,
+        })
+        .collect();
+    if let Some(d) = &docs {
+        for (id, pose) in &d.instances {
+            if !nested.contains(id) || placed.contains(id) {
+                continue;
+            }
+            match d.route(*id) {
+                family_documents::Route::FamilyDocument => {}
+                // A void of the nested family is left uncut, as the file's
+                // own forms are.
+                family_documents::Route::Incomplete(why) if why.iter().all(|w| *w == "void") => {
+                    out.nested_uncut += 1;
+                }
+                family_documents::Route::Incomplete(why) => {
+                    for w in why {
+                        *out.nested_missing.entry(w.to_string()).or_default() += 1;
+                    }
+                    continue;
+                }
+                family_documents::Route::NoFamilyDocument => {
+                    *out.nested_missing
+                        .entry("no_family_document".into())
+                        .or_default() += 1;
+                    continue;
+                }
+            }
+            let Some((_, doc)) = d.solids_for(*id) else {
+                continue;
+            };
+            let m = pose.matrix;
+            // A flipped instance mirrors its family across the family's own
+            // axis before the transform (the matrix keeps no reflection: on
+            // a ring of chairs measured, the six flipped in Y have the
+            // unflipped ones' matrices and face them across the table).
+            let mirror = [
+                if pose.flipped_x { -1.0 } else { 1.0 },
+                if pose.flipped_y { -1.0 } else { 1.0 },
+            ];
+            let reversed = pose.flipped_x != pose.flipped_y;
+            let mut vertices = Vec::new();
+            let mut triangles = Vec::new();
+            for solid in &doc.solids {
+                let base = vertices.len() as u32;
+                vertices.extend(solid.vertices.iter().map(|p| -> [f64; 3] {
+                    let (x, y) = (mirror[0] * p[0], mirror[1] * p[1]);
+                    std::array::from_fn(|k| {
+                        pose.origin[k] + m[k][0] * x + m[k][1] * y + m[k][2] * p[2]
+                    })
+                }));
+                triangles.extend(solid.triangles.iter().map(|t| {
+                    if reversed {
+                        BrepTriangle(base + t[0], base + t[2], base + t[1])
+                    } else {
+                        BrepTriangle(base + t[0], base + t[1], base + t[2])
+                    }
+                }));
+            }
+            if triangles.is_empty() {
+                continue;
+            }
+            model.entities.push(IfcEntity::BuildingElement {
+                ifc_type: ifc_type.into(),
+                name: format!("{label}:nested {id}"),
+                type_guid: Some(id.to_string()),
+                predefined_type: predefined.map(str::to_string),
+                storey_index: None,
+                material_index: None,
+                property_set: Some(PropertySet {
+                    name: "RvtFamilyGeometry".into(),
+                    properties: vec![Property {
+                        name: "BodySource".into(),
+                        value: PropertyValue::Text(NESTED_DOCUMENT_BODY_SOURCE.into()),
+                    }],
+                }),
+                location_feet: Some([0.0; 3]),
+                rotation_radians: None,
+                extrusion: None,
+                host_element_index: None,
+                material_layer_set_index: None,
+                material_profile_set_index: None,
+                solid_shape: Some(SolidShape::TriangulatedFaceSet {
+                    vertices_feet: vertices,
+                    triangles,
+                    face_materials: Vec::new(),
+                }),
+                representation_map_index: None,
+            });
             out.nested_drawn += 1;
         }
     }
