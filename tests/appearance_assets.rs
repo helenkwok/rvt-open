@@ -243,14 +243,18 @@ fn rvt_ifc_writes_appearance_json_and_layer() {
             "--ifcx".into(),
             ifcx.into(),
             "--ifc4-timestamp".into(),
-            "0".into(),
+            "2026-01-01T00:00:00Z".into(),
         ];
         args.extend(extra.iter().map(|p| p.as_os_str().to_owned()));
         let status = std::process::Command::new(env!("CARGO_BIN_EXE_rvt-ifc"))
             .args(&args)
-            .status()
+            .output()
             .expect("runs");
-        assert!(status.success());
+        assert!(
+            status.status.success(),
+            "{}",
+            String::from_utf8_lossy(&status.stderr)
+        );
     };
     let json = out.join("m.appearance.json");
     let layer = out.join("m.appearance.ifcx");
