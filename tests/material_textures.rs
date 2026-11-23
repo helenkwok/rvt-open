@@ -486,8 +486,10 @@ fn frag_sidecar_puts_the_images_back() {
     assert_eq!(triangles, textured);
     // a square's two triangles (0, 1, 2) and (0, 2, 3), corner by corner
     // (samples follow the graph's order, not the elements').
-    let square = serde_json::json!([0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0]);
-    assert!(samples.iter().any(|s| s["uv"] == square));
+    let square = [
+        0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0,
+    ];
+    assert!(samples.iter().any(|s| s["uv"] == serde_json::json!(square)));
     // a source's own placement record goes through verbatim.
     let mut native = m.clone();
     let record = serde_json::json!({"texture_RealWorldScaleX": 2.0, "texture_WAngle": 30.0});
