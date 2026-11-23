@@ -1,0 +1,20 @@
+{
+  "name": "rvt-open-frag-textures",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Draws a .frag with its rvt-open texture sidecar in @thatopen/fragments.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@thatopen/fragments": "3.6.1",
+    "three": "0.187.0",
+    "web-ifc": "0.0.80"
+  },
+  "devDependencies": {
+    "vite": "8.3.8"
+  }
+}

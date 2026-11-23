@@ -516,6 +516,12 @@ pub struct MaterialTexture {
     /// where the source gives it (the texture coordinates already hold it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_feet: Option<[f64; 2]>,
+    /// The source's own record of how the image is placed (scale, offset,
+    /// rotation, repeat, tint...), kept as read, where the reader has one.
+    /// Writers that keep the native definition (the `.frag` texture
+    /// sidecar) carry it verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<serde_json::Value>,
 }
 
 impl MaterialTexture {
@@ -534,6 +540,7 @@ impl MaterialTexture {
             mime_type: mime_type.to_string(),
             name,
             size_feet,
+            mapping: None,
         })
     }
 

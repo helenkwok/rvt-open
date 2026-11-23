@@ -414,3 +414,79 @@ fn a_chunk_past_the_end_ends_the_alpha_search() {
     let texture = MaterialTexture::new(png, None, None).expect("png");
     assert!(!texture.has_alpha());
 }
+
+#[test]
+fn frag_sidecar_puts_the_images_back() {
+    use rvt::ifc::frag_writer::{
+        TEXTURE_SIDECAR_FORMAT, write_frag_graph_textured, write_frag_graph_with,
+    };
+    use rvt::ifc::gltf::DisplayOptions;
+    use rvt::ifc::{GraphOptions, IfcxGraph};
+    let display = DisplayOptions::default();
+    let mut m = model();
+    // the plain material takes the checker's colour: the textured one must
+    // still get a material of its own.
+    m.materials[2].color_packed = m.materials[0].color_packed;
+    let graph = IfcxGraph::from_model(&m, GraphOptions::default());
+    let (frag, stats, textures) = write_frag_graph_textured(&graph, &display).expect("frag");
+    let (sidecar, files) = textures.expect("a sidecar");
+    save("frag/textures.frag", &frag);
+    save("frag/textures.frag.textures.json", sidecar.as_bytes());
+    for (name, bytes) in &files {
+        save(&format!("frag/{name}"), bytes);
+    }
+    // the .frag is the one written without the sidecar.
+    assert_eq!(write_frag_graph_with(&graph, &display).expect("frag").0, frag);
+    assert_eq!(stats.textured_materials, 3, "checker, glass, bare");
+    assert_eq!(stats.materials, 4, "the plain colour stays apart: {stats:?}");
+    assert_eq!(stats.textured_samples, 7, "as the IFCX texture layer");
+    assert_eq!(stats.textured_samples_with_uvs, 7);
+    assert_eq!(files.len(), 2, "one file per distinct image");
+    let doc: serde_json::Value = serde_json::from_str(&sidecar).expect("json");
+    assert_eq!(doc["format"], TEXTURE_SIDECAR_FORMAT);
+    assert_eq!(doc["version"], 1);
+    assert_eq!(doc["model"], graph.id.as_str());
+    let materials = doc["materials"].as_array().expect("materials");
+    assert_eq!(materials.len(), 3);
+    let ids: Vec<&serde_json::Value> = materials.iter().map(|e| &e["material"]).collect();
+    for e in materials {
+        let image = e["image"].as_str().expect("image");
+        assert!(files.iter().any(|(f, _)| f == image), "{image} written");
+        assert_eq!(e["repeatSizeFeet"], serde_json::json!([2.0, 2.0]));
+        if e["name"] == "Glass" {
+            assert_eq!(e["imageHasAlpha"], true);
+            assert_eq!(e["doubleSided"], true);
+            assert_eq!(e["color"][3], 128, "half transparent");
+        }
+    }
+    let samples = doc["samples"].as_array().expect("samples");
+    assert_eq!(samples.len(), 7);
+    for s in samples {
+        assert!(ids.contains(&&s["material"]), "names a listed material");
+        assert_eq!(s["triangles"], 2);
+        let uv = s["uv"].as_array().expect("uv");
+        assert_eq!(uv.len(), 2 * 3 * 2, "one [u, v] per triangle corner");
+    }
+    // the floor's two triangles (0, 1, 2) and (0, 2, 3), corner by corner.
+    assert_eq!(
+        samples[0]["uv"],
+        serde_json::json!([0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0])
+    );
+    // a source's own placement record goes through verbatim.
+    let mut native = m.clone();
+    let record = serde_json::json!({"texture_RealWorldScaleX": 2.0, "texture_WAngle": 30.0});
+    native.materials[0].texture.as_mut().expect("texture").mapping = Some(record.clone());
+    let graph = IfcxGraph::from_model(&native, GraphOptions::default());
+    let (_, _, textures) = write_frag_graph_textured(&graph, &display).expect("frag");
+    let doc: serde_json::Value = serde_json::from_str(&textures.expect("sidecar").0).expect("json");
+    assert!(doc["materials"].as_array().expect("materials").iter().any(|e| e["mapping"] == record));
+    // no textures: no sidecar, and one material per colour as before.
+    let mut plain = m.clone();
+    for mat in &mut plain.materials {
+        mat.texture = None;
+    }
+    let graph = IfcxGraph::from_model(&plain, GraphOptions::default());
+    let (_, stats, none) = write_frag_graph_textured(&graph, &display).expect("frag");
+    assert!(none.is_none());
+    assert_eq!(stats.textured_materials, 0);
+}

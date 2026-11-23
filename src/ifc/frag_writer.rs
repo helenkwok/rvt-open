@@ -67,8 +67,15 @@ pub struct FragStats {
     pub circle_extrusions: usize,
     /// Shells with more than 65,000 points (`BIG`).
     pub big_shells: usize,
-    /// Distinct RGBA materials.
+    /// Distinct materials: one per colour, and one per textured material
+    /// (never merged with another, so the image can be put back on it).
     pub materials: usize,
+    /// Materials drawn with an image, each listed in the texture sidecar.
+    pub textured_materials: usize,
+    /// Samples drawn in a textured material.
+    pub textured_samples: usize,
+    /// Of those, the samples with texture coordinates for every corner.
+    pub textured_samples_with_uvs: usize,
     /// Items whose ElementId was taken by another item, given another id.
     pub tags_reassigned: usize,
 }
@@ -95,6 +102,34 @@ pub fn write_frag_graph_with(
     graph: &IfcxGraph,
     display: &super::gltf::DisplayOptions,
 ) -> Result<(Vec<u8>, FragStats), IfcxError> {
+    write_frag(graph, display).map(|(bytes, stats, _, _)| (bytes, stats))
+}
+
+/// [`write_frag_graph_with`], and the textures the format cannot hold, as
+/// a sidecar to write beside the `.frag` (`<name>.frag.textures.json`) and
+/// the images it names (paths relative to the sidecar), once each. `None`
+/// when no sample is drawn in a textured material; the `.frag` is then
+/// byte-identical to [`write_frag_graph_with`]'s. The sidecar's schema is
+/// [`TEXTURE_SIDECAR_FORMAT`] version [`TEXTURE_SIDECAR_VERSION`]
+/// (`docs/frag-textures.md`).
+pub fn write_frag_graph_textured(
+    graph: &IfcxGraph,
+    display: &super::gltf::DisplayOptions,
+) -> Result<(Vec<u8>, FragStats, Option<(String, Vec<super::TextureFile>)>), IfcxError> {
+    let (bytes, stats, sidecar, files) = write_frag(graph, display)?;
+    Ok((bytes, stats, sidecar.map(|s| (s, files))))
+}
+
+/// The `format` of the texture sidecar.
+pub const TEXTURE_SIDECAR_FORMAT: &str = "rvt-open/frag-textures";
+/// The sidecar schema version; a reader refuses a newer major version.
+pub const TEXTURE_SIDECAR_VERSION: u32 = 1;
+
+#[allow(clippy::type_complexity)]
+fn write_frag(
+    graph: &IfcxGraph,
+    display: &super::gltf::DisplayOptions,
+) -> Result<(Vec<u8>, FragStats, Option<String>, Vec<super::TextureFile>), IfcxError> {
     if let Some(e) = graph.errors.first() {
         return Err(IfcxError(e.clone()));
     }
@@ -158,19 +193,20 @@ pub fn write_frag_graph_with(
             .or_default()
             .push(to);
     };
-    // (item, mesh, colour, Some((shared shape path, Body xformop))).
+    // (item, mesh, colour and textured material, Some((shared shape path,
+    // Body xformop))).
     #[allow(clippy::type_complexity)]
     let mut geometry: Vec<(
         usize,
         &super::graph::UsdMesh,
-        [u8; 4],
+        Look,
         Option<(&str, Option<&Value>)>,
     )> = Vec::new();
     // bodies that are a circle swept along a straight axis (a
     // pipe), written as fragments' own CIRCLE_EXTRUSION: (item, axis start
     // and end in metres Y-up, radius in metres, colour).
     #[allow(clippy::type_complexity)]
-    let mut circles: Vec<(usize, [f64; 3], [f64; 3], f64, [u8; 4])> = Vec::new();
+    let mut circles: Vec<(usize, [f64; 3], [f64; 3], f64, Look)> = Vec::new();
     for p in &paths {
         let node = &graph.nodes[*p];
         let id = id_of[p];
@@ -289,6 +325,9 @@ pub fn write_frag_graph_with(
                     from.attributes.get("bsi::ifc::presentation::diffuseColor"),
                     from.attributes.get("bsi::ifc::presentation::opacity"),
                 );
+                // a textured body keeps its own points (never a shared shape).
+                let texture = body.mesh.as_deref().and_then(|m| m.texture);
+                let colour = (colour, texture);
                 if let Some((p1, p2, r)) = circle {
                     if !circles.iter().any(|c| c.0 == index) {
                         circles.push((index, p1, p2, r, colour));
@@ -342,7 +381,10 @@ pub fn write_frag_graph_with(
     // item's global one (the public loader keys an item once).
     let mut item_slot: HashMap<usize, u32> = HashMap::new();
     let mut locals: Vec<Vec<u8>> = vec![transform([0.0; 3])];
-    let mut materials: Vec<[u8; 4]> = Vec::new();
+    let mut materials: Vec<Look> = Vec::new();
+    // samples drawn in a textured material: (item, mesh item, sample,
+    // material, the mesh when its texture coordinates are the sample's).
+    let mut textured: Vec<(usize, u32, u32, u32, Option<&super::graph::UsdMesh>)> = Vec::new();
     // shape path -> its shell (and representation) index.
     let mut shell_of: HashMap<&str, u32> = HashMap::new();
     // Each shell's lower corner (Y-up): its points are stored relative to it.
@@ -457,6 +499,16 @@ pub fn write_frag_graph_with(
                 (slot, 0)
             }
         };
+        if colour.1.is_some() {
+            let own = reuse.is_none() && mesh.st.len() == mesh.points.len();
+            textured.push((
+                *item,
+                sample_item,
+                samples.len() as u32,
+                material,
+                own.then_some(*mesh),
+            ));
+        }
         let mut s = Vec::new();
         for v in [sample_item, material, shell_index, local] {
             s.extend(v.to_le_bytes());
@@ -516,6 +568,9 @@ pub fn write_frag_graph_with(
                 (slot, 0)
             }
         };
+        if colour.1.is_some() {
+            textured.push((*item, sample_item, samples.len() as u32, material, None));
+        }
         let mut s = Vec::new();
         for v in [sample_item, material, repr_index, local] {
             s.extend(v.to_le_bytes());
@@ -534,7 +589,7 @@ pub fn write_frag_graph_with(
     // Two-sided when translucent, as the IFCX-to-frag conversion.
     let mats: Vec<Vec<u8>> = materials
         .iter()
-        .map(|m| vec![m[0], m[1], m[2], m[3], u8::from(m[3] < 255), 0])
+        .map(|(m, _)| vec![m[0], m[1], m[2], m[3], u8::from(m[3] < 255), 0])
         .collect();
     let mats_vec = fb.vec_structs(&mats, 1);
     let ext_vec = fb.vec_offsets(&circle_tables);
@@ -544,11 +599,17 @@ pub fn write_frag_graph_with(
             .map(|v| v.to_le_bytes())
             .collect::<Vec<_>>(),
     );
+    let mat_id_values: Vec<u32> = (0..materials.len()).map(|_| fresh()).collect();
+    let mat_ids = fb.vec_scalars(
+        &mat_id_values
+            .iter()
+            .map(|v| v.to_le_bytes())
+            .collect::<Vec<_>>(),
+    );
     let mut ids = |fb: &mut Fb, n: usize| {
         let v: Vec<[u8; 4]> = (0..n).map(|_| fresh().to_le_bytes()).collect();
         fb.vec_scalars(&v)
     };
-    let mat_ids = ids(&mut fb, materials.len());
     let repr_ids = ids(&mut fb, reprs.len());
     let sample_ids = ids(&mut fb, samples.len());
     let lt_ids = ids(&mut fb, locals.len());
@@ -713,7 +774,119 @@ pub fn write_frag_graph_with(
 
     let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     z.write_all(&raw).expect("in-memory write");
-    Ok((z.finish().expect("in-memory write"), stats))
+    let (sidecar, files) = texture_sidecar(
+        graph,
+        &materials,
+        &mat_id_values,
+        &textured,
+        &items,
+        &mut stats,
+    );
+    Ok((z.finish().expect("in-memory write"), stats, sidecar, files))
+}
+
+/// A sample's look: its RGBA colour, and the model's index of the textured
+/// material it is drawn in. Samples of one look share a `.frag` material.
+type Look = ([u8; 4], Option<usize>);
+
+/// The texture sidecar (see [`write_frag_graph_textured`]); `None` without
+/// textured samples.
+#[allow(clippy::type_complexity)]
+fn texture_sidecar(
+    graph: &IfcxGraph,
+    materials: &[Look],
+    material_ids: &[u32],
+    textured: &[(usize, u32, u32, u32, Option<&super::graph::UsdMesh>)],
+    items: &[Item],
+    stats: &mut FragStats,
+) -> (Option<String>, Vec<super::TextureFile>) {
+    if textured.is_empty() {
+        return (None, Vec::new());
+    }
+    let mut files: Vec<super::TextureFile> = Vec::new();
+    let mut entries = Vec::new();
+    // metres one repeat covers, per .frag material: the box projection a
+    // reader falls back to where a sample has no texture coordinates.
+    let mut repeat: HashMap<u32, Option<[f64; 2]>> = HashMap::new();
+    for (index, ((colour, m), id)) in materials.iter().zip(material_ids).enumerate() {
+        let Some(info) = m.and_then(|m| graph.material(m)) else {
+            continue;
+        };
+        let Some(texture) = info.texture.as_ref() else {
+            continue;
+        };
+        let file = format!("textures/{}", texture.file_name());
+        if !files.iter().any(|(f, _)| *f == file) {
+            files.push((file.clone(), texture.image.clone()));
+        }
+        repeat.insert(index as u32, texture.size_feet);
+        let mut e = json!({
+            "material": id,
+            "index": index,
+            "name": info.name,
+            "image": file,
+            "mimeType": texture.mime_type,
+            "imageHasAlpha": texture.has_alpha(),
+            "color": colour,
+            "doubleSided": colour[3] < 255,
+        });
+        if let Some(n) = &texture.name {
+            e["imageName"] = json!(n);
+        }
+        if let Some(s) = texture.size_feet {
+            e["repeatSizeFeet"] = json!(s);
+        }
+        if let Some(mapping) = &texture.mapping {
+            e["mapping"] = mapping.clone();
+        }
+        entries.push(e);
+    }
+    stats.textured_materials = entries.len();
+    let mut samples = Vec::new();
+    for (item, mesh_item, sample, material, mesh) in textured {
+        // one [u, v] per triangle corner, in the order the shell's profiles
+        // list them: the order the public loader lays out a shell's vertices.
+        let uv: Option<Vec<f64>> = mesh.map(|m| {
+            m.face_vertex_indices
+                .chunks_exact(3)
+                .flatten()
+                .flat_map(|i| m.st.get(*i as usize).copied().unwrap_or([0.0; 2]))
+                .map(|c| if c.is_finite() { c } else { 0.0 })
+                .collect()
+        });
+        let mut e = json!({
+            "item": items[*item].id,
+            "meshItem": mesh_item,
+            "sample": sample,
+            "material": material_ids[*material as usize],
+        });
+        match uv {
+            Some(uv) => {
+                e["triangles"] = json!(uv.len() / 6);
+                e["uv"] = json!(uv);
+                stats.textured_samples_with_uvs += 1;
+            }
+            None => {
+                let size = repeat
+                    .get(material)
+                    .copied()
+                    .flatten()
+                    .map_or([1.0; 2], |s| s.map(|f| f * 0.3048));
+                e["projection"] = json!({"kind": "box", "repeatSizeMetres": size});
+            }
+        }
+        samples.push(e);
+    }
+    stats.textured_samples = samples.len();
+    let doc = json!({
+        "format": TEXTURE_SIDECAR_FORMAT,
+        "version": TEXTURE_SIDECAR_VERSION,
+        "fragmentsSchema": FRAGMENTS_SCHEMA_VERSION,
+        "model": graph.id,
+        "materials": entries,
+        "samples": samples,
+    });
+    (Some(doc.to_string()), files)
 }
 
 struct Item {
