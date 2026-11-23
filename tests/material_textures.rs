@@ -436,9 +436,15 @@ fn frag_sidecar_puts_the_images_back() {
         save(&format!("frag/{name}"), bytes);
     }
     // the .frag is the one written without the sidecar.
-    assert_eq!(write_frag_graph_with(&graph, &display).expect("frag").0, frag);
+    assert_eq!(
+        write_frag_graph_with(&graph, &display).expect("frag").0,
+        frag
+    );
     assert_eq!(stats.textured_materials, 3, "checker, glass, bare");
-    assert_eq!(stats.materials, 4, "the plain colour stays apart: {stats:?}");
+    assert_eq!(
+        stats.materials, 4,
+        "the plain colour stays apart: {stats:?}"
+    );
     assert_eq!(stats.textured_samples, 7, "as the IFCX texture layer");
     assert_eq!(stats.textured_samples_with_uvs, 7);
     assert_eq!(files.len(), 2, "one file per distinct image");
@@ -475,11 +481,21 @@ fn frag_sidecar_puts_the_images_back() {
     // a source's own placement record goes through verbatim.
     let mut native = m.clone();
     let record = serde_json::json!({"texture_RealWorldScaleX": 2.0, "texture_WAngle": 30.0});
-    native.materials[0].texture.as_mut().expect("texture").mapping = Some(record.clone());
+    native.materials[0]
+        .texture
+        .as_mut()
+        .expect("texture")
+        .mapping = Some(record.clone());
     let graph = IfcxGraph::from_model(&native, GraphOptions::default());
     let (_, _, textures) = write_frag_graph_textured(&graph, &display).expect("frag");
     let doc: serde_json::Value = serde_json::from_str(&textures.expect("sidecar").0).expect("json");
-    assert!(doc["materials"].as_array().expect("materials").iter().any(|e| e["mapping"] == record));
+    assert!(
+        doc["materials"]
+            .as_array()
+            .expect("materials")
+            .iter()
+            .any(|e| e["mapping"] == record)
+    );
     // no textures: no sidecar, and one material per colour as before.
     let mut plain = m.clone();
     for mat in &mut plain.materials {

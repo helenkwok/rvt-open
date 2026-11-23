@@ -115,10 +115,14 @@ pub fn write_frag_graph_with(
 pub fn write_frag_graph_textured(
     graph: &IfcxGraph,
     display: &super::gltf::DisplayOptions,
-) -> Result<(Vec<u8>, FragStats, Option<(String, Vec<super::TextureFile>)>), IfcxError> {
+) -> Result<(Vec<u8>, FragStats, Option<FragTextures>), IfcxError> {
     let (bytes, stats, sidecar, files) = write_frag(graph, display)?;
     Ok((bytes, stats, sidecar.map(|s| (s, files))))
 }
+
+/// A `.frag`'s texture sidecar (JSON) and the images it names (path
+/// relative to the sidecar, bytes).
+pub type FragTextures = (String, Vec<super::TextureFile>);
 
 /// The `format` of the texture sidecar.
 pub const TEXTURE_SIDECAR_FORMAT: &str = "rvt-open/frag-textures";
