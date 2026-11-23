@@ -981,16 +981,10 @@ fn polyline(c: &Curve) -> (Vec<[f64; 3]>, bool, Vec<[f64; 3]>) {
             b,
             t,
         } => {
-            // Equal end parameters are the whole curve, and so is a curve
-            // that falls short of a turn by at most a thousandth of one:
-            // Revit 2011 stores a sketched circle as an arc from pi/2000 to
-            // 2pi - pi/2000 (one door family measured: 18 extrusions whose
-            // only curve is such an arc).
+            // Equal end parameters are the whole curve.
             let (t0, mut t1) = (t[0], t[1]);
             if (t1 - t0).abs() < 1e-12 {
                 t1 = t0 + TAU;
-            } else if (TAU - (t1 - t0).abs()).abs() <= TAU / 1000.0 {
-                t1 = t0 + TAU.copysign(t1 - t0);
             }
             let at = |s: f64| -> [f64; 3] {
                 std::array::from_fn(|k| center[k] + a * s.cos() * x[k] + b * s.sin() * y[k])
@@ -1252,8 +1246,9 @@ fn extrusion_solid(
     ];
     let mut pieces = Vec::new();
     let mut extremes = Vec::new();
+    let alone = sketch.curves.len() == 1;
     for id in &sketch.curves {
-        let (pts, closed, ext) = polyline(curves.get(id)?);
+        let (pts, closed, ext) = polyline(&whole_turn(curves.get(id)?, alone));
         extremes.extend(ext);
         pieces.push((pts, closed));
     }
@@ -1377,6 +1372,26 @@ type Piece = (Vec<[f64; 3]>, bool);
 /// Start and end cap triangles of a loft.
 type Caps<'a> = (&'a [[u32; 3]], &'a [[u32; 3]]);
 
+/// A sketch's only curve as the whole turn when it falls short of one by at
+/// most a thousandth: Revit 2011 stores a sketched circle as one arc from
+/// pi/2000 to 2pi - pi/2000 (one door family measured: 18 extrusions whose
+/// only curve is such an arc). A curve with others in its sketch is kept as
+/// it is, as they may close it.
+fn whole_turn(c: &Curve, alone: bool) -> Curve {
+    use std::f64::consts::TAU;
+    let near = |t: &[f64; 2]| {
+        let sweep = t[1] - t[0];
+        sweep.abs() > 1e-12 && (TAU - sweep.abs()).abs() <= TAU / 1000.0
+    };
+    let mut c = c.clone();
+    if let (true, Curve::Arc { t, .. } | Curve::Ellipse { t, .. }) = (alone, &mut c) {
+        if near(t) {
+            t[1] = t[0] + TAU.copysign(t[1] - t[0]);
+        }
+    }
+    c
+}
+
 /// A sketch's curves as polylines, with their exact axis extremes.
 fn sketch_pieces(
     sketch: &RawSketch,
@@ -1384,8 +1399,9 @@ fn sketch_pieces(
 ) -> Option<(Vec<Piece>, Vec<[f64; 3]>)> {
     let mut pieces = Vec::new();
     let mut extremes = Vec::new();
+    let alone = sketch.curves.len() == 1;
     for id in &sketch.curves {
-        let (pts, closed, ext) = polyline(curves.get(id)?);
+        let (pts, closed, ext) = polyline(&whole_turn(curves.get(id)?, alone));
         extremes.extend(ext);
         pieces.push((pts, closed));
     }
@@ -2273,12 +2289,14 @@ mod tests {
             radius: 1.0,
             t,
         };
-        let (pts, closed, _) = polyline(&arc([PI / 2000.0, TAU - PI / 2000.0]));
+        let short = arc([PI / 2000.0, TAU - PI / 2000.0]);
+        assert!(!polyline(&whole_turn(&short, false)).1);
+        let (pts, closed, _) = polyline(&whole_turn(&short, true));
         assert!(closed);
         let rings = loops(&[(pts, closed)]).unwrap();
         let s = prism(&rings, [0.0, 0.0, 1.0], 0.0, 1.0).unwrap();
         assert!((volume(&s) - PI).abs() < 0.03, "{}", volume(&s));
-        assert!(!polyline(&arc([0.0, PI])).1);
+        assert!(!polyline(&whole_turn(&arc([0.0, PI]), true)).1);
     }
 
     /// A faceted stored box may lie inside the decoded one by the sag, never
