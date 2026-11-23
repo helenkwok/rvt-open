@@ -101,6 +101,13 @@ pub struct FamilySummary {
     /// Sample host walls drawn (with the family's openings cut in them).
     #[serde(default)]
     pub sample_walls: usize,
+    /// Openings of those walls that could not be cut (the wall is drawn
+    /// with the others only).
+    #[serde(default)]
+    pub sample_wall_openings_uncut: usize,
+    /// Solids a void meets whose cut gave up: drawn uncut.
+    #[serde(default)]
+    pub void_cuts_failed: usize,
     /// Instances of nested families, and how many this pass drew.
     pub nested_instances: usize,
     pub nested_drawn: usize,
@@ -372,8 +379,11 @@ pub fn attach(
             // A group type's own copy of its members (no instance places
             // the group): Revit draws none of them.
             let unplaced = id_of(root, "m_unplacedOwnerId").is_some_and(|o| o > 0);
+            // Each accepted copy (the newest so far) decides.
             if class == "FamilyInstance" {
-                if !unplaced {
+                if unplaced {
+                    nested.remove(&id);
+                } else {
                     nested.insert(id);
                 }
                 return;
@@ -414,6 +424,7 @@ pub fn attach(
                 unplaced_forms.insert(id);
                 return;
             }
+            unplaced_forms.remove(&id);
             forms.push(Form {
                 id,
                 tag: x.frame.header.tag,
@@ -525,6 +536,8 @@ pub fn attach(
     if let Some(d) = &docs {
         out.solve_failures = d.stats.solve_failures.clone();
         out.void_cuts = d.stats.void_cuts;
+        out.sample_wall_openings_uncut = d.stats.wall_openings_uncut;
+        out.void_cuts_failed = d.stats.void_cuts_failed;
     }
     let solids: BTreeMap<i64, Vec<&family_documents::FamilySolid>> = {
         let mut m: BTreeMap<i64, Vec<&family_documents::FamilySolid>> = BTreeMap::new();
@@ -601,6 +614,7 @@ pub fn attach(
                     .and_then(|d| d.form_failures.get(&form.id).copied())
                     .map_or("not_decoded", |why| match why {
                         "geometry" => "geometry_not_decoded",
+                        "fields" => "fields_not_read",
                         "bbox_mismatch" => "solve_misses_stored_box",
                         w => w,
                     })
@@ -966,8 +980,14 @@ impl NestedBody {
                 "void" => self.uncut = true,
                 // Its voids were cut from the solids above.
                 "void_cut" => {}
-                // Its nested families are placed below when their poses are known.
-                "nested_family" if placed.is_some() => {}
+                // Its nested families are placed below when their poses
+                // are known; those without one are missing.
+                "nested_family" if placed.is_some() => {
+                    let short = n.saturating_sub(placed.map_or(0, |p| p.len()));
+                    if short > 0 {
+                        *self.missing.entry("nested_pose".into()).or_default() += short;
+                    }
+                }
                 w => *self.missing.entry(w.to_string()).or_default() += n,
             }
         }

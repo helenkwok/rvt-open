@@ -92,4 +92,31 @@ fn a_door_family_draws_its_sample_wall_with_the_opening() {
     let v = volume(w);
     // The opening goes through: the wall is less than its box, and solid.
     assert!(v > 0.0 && v < boxed - 1e-6, "wall {v} of box {boxed}");
+    // A line across the wall's thickness low at its middle meets no face (the
+    // door's opening), and one near its top meets two (solid wall).
+    let across = (0..3)
+        .min_by(|a, b| (hi[*a] - lo[*a]).total_cmp(&(hi[*b] - lo[*b])))
+        .expect("axis");
+    let along = if across == 0 { 1 } else { 0 };
+    let mid = (lo[along] + hi[along]) / 2.0 + 1e-3;
+    assert_eq!(crossings(w, along, mid, lo[2] + 1.003), 0, "opening");
+    assert_eq!(crossings(w, along, mid, hi[2] - 0.497), 2, "solid wall");
+}
+
+/// Faces a line across the wall through (`u` on axis `along`, height `z`)
+/// passes through.
+fn crossings(s: &FamilySolid, along: usize, u: f64, z: f64) -> usize {
+    s.triangles
+        .iter()
+        .filter(|t| {
+            let p = t.map(|i| {
+                let v = s.vertices[i as usize];
+                (v[along], v[2])
+            });
+            let side =
+                |a: (f64, f64), b: (f64, f64)| (b.0 - a.0) * (z - a.1) - (b.1 - a.1) * (u - a.0);
+            let (d0, d1, d2) = (side(p[0], p[1]), side(p[1], p[2]), side(p[2], p[0]));
+            (d0 > 0.0 && d1 > 0.0 && d2 > 0.0) || (d0 < 0.0 && d1 < 0.0 && d2 < 0.0)
+        })
+        .count()
 }

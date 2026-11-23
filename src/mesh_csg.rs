@@ -15,6 +15,26 @@ const EPSILON: f64 = 1e-6;
 /// cascade on dense meshes): the uncut solid is kept.
 const MAX_POLYGONS: usize = 200_000;
 
+/// Polygon classifications a cut may make in all, building and clipping
+/// together, before it gives up (a tree can degenerate to a list, which
+/// makes building quadratic while the polygon count stays small).
+const MAX_WORK: usize = 20_000_000;
+
+/// The work left; a cut that runs out returns `None`.
+struct Budget(std::cell::Cell<usize>);
+
+impl Budget {
+    /// Charge one classification; false once nothing is left.
+    fn spend(&self) -> bool {
+        let left = self.0.get();
+        self.0.set(left.saturating_sub(1));
+        left > 0
+    }
+    fn exhausted(&self) -> bool {
+        self.0.get() == 0
+    }
+}
+
 type V3 = [f64; 3];
 
 fn sub(a: V3, b: V3) -> V3 {
@@ -170,7 +190,7 @@ struct Node {
 }
 
 impl Tree {
-    fn new(polygons: Vec<Polygon>) -> Tree {
+    fn new(polygons: Vec<Polygon>, budget: &Budget) -> Tree {
         let mut t = Tree::default();
         t.nodes.push(Node {
             plane: None,
@@ -178,19 +198,22 @@ impl Tree {
             front: None,
             back: None,
         });
-        t.build(0, polygons);
+        t.build(0, polygons, budget);
         t
     }
 
-    fn build(&mut self, root: usize, polygons: Vec<Polygon>) {
+    fn build(&mut self, root: usize, polygons: Vec<Polygon>, budget: &Budget) {
         let mut stack = vec![(root, polygons)];
         while let Some((at, polys)) = stack.pop() {
-            if polys.is_empty() {
+            if polys.is_empty() || budget.exhausted() {
                 continue;
             }
             let plane = *self.nodes[at].plane.get_or_insert(polys[0].plane);
             let (mut cf, mut cb, mut f, mut b) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
             for p in polys {
+                if !budget.spend() {
+                    break;
+                }
                 split(&plane, p, &mut cf, &mut cb, &mut f, &mut b);
             }
             self.nodes[at].polygons.extend(cf);
@@ -238,7 +261,7 @@ impl Tree {
     }
 
     /// The parts of `polygons` outside this solid.
-    fn clip_polygons(&self, polygons: Vec<Polygon>) -> Vec<Polygon> {
+    fn clip_polygons(&self, polygons: Vec<Polygon>, budget: &Budget) -> Vec<Polygon> {
         let mut out = Vec::new();
         let mut stack = vec![(0usize, polygons)];
         while let Some((at, polys)) = stack.pop() {
@@ -249,6 +272,9 @@ impl Tree {
             };
             let (mut cf, mut cb, mut f, mut b) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
             for p in polys {
+                if !budget.spend() {
+                    break;
+                }
                 split(&plane, p, &mut cf, &mut cb, &mut f, &mut b);
             }
             f.extend(cf);
@@ -266,10 +292,10 @@ impl Tree {
     }
 
     /// Remove from this tree's polygons the parts inside `other`.
-    fn clip_to(&mut self, other: &Tree) {
+    fn clip_to(&mut self, other: &Tree, budget: &Budget) {
         for i in 0..self.nodes.len() {
             let polys = std::mem::take(&mut self.nodes[i].polygons);
-            self.nodes[i].polygons = other.clip_polygons(polys);
+            self.nodes[i].polygons = other.clip_polygons(polys, budget);
         }
     }
 
@@ -302,19 +328,29 @@ pub fn difference(
     a: (&[V3], &[[u32; 3]]),
     b: (&[V3], &[[u32; 3]]),
 ) -> Option<(Vec<V3>, Vec<[u32; 3]>)> {
-    let mut ta = Tree::new(polygons(a.0, a.1));
-    let mut tb = Tree::new(polygons(b.0, b.1));
+    // Nothing minus anything is nothing.
+    if a.1.is_empty() {
+        return Some((Vec::new(), Vec::new()));
+    }
+    let budget = Budget(std::cell::Cell::new(MAX_WORK));
+    let mut ta = Tree::new(polygons(a.0, a.1), &budget);
+    let mut tb = Tree::new(polygons(b.0, b.1), &budget);
     ta.invert();
-    ta.clip_to(&tb);
-    tb.clip_to(&ta);
+    ta.clip_to(&tb, &budget);
+    tb.clip_to(&ta, &budget);
     tb.invert();
-    tb.clip_to(&ta);
+    tb.clip_to(&ta, &budget);
     tb.invert();
     if ta.count() + tb.count() > MAX_POLYGONS {
         return None;
     }
-    ta.build(0, tb.all_polygons());
+    ta.build(0, tb.all_polygons(), &budget);
     ta.invert();
+    // The final merge splits the cutter's faces again: the result is
+    // bounded too, and a cut that ran out of work is not a cut.
+    if budget.exhausted() || ta.count() > MAX_POLYGONS {
+        return None;
+    }
     let mut vertices = Vec::new();
     let mut triangles = Vec::new();
     for p in ta.all_polygons() {
@@ -385,6 +421,18 @@ mod tests {
         let b = cube([1.0, 1.0, -1.0], [2.0, 2.0, 2.0]);
         let (v, t) = difference((&a.0, &a.1), (&b.0, &b.1)).expect("cut");
         assert!((volume(&v, &t) - 8.0).abs() < 1e-9, "{}", volume(&v, &t));
+    }
+
+    /// A second void meeting a solid the first removed whole leaves nothing,
+    /// not the second void inside out.
+    #[test]
+    fn a_removed_solid_stays_removed() {
+        let a = cube([1.0; 3], [2.0; 3]);
+        let b = cube([0.0; 3], [3.0; 3]);
+        let (v, t) = difference((&a.0, &a.1), (&b.0, &b.1)).expect("cut");
+        assert!(volume(&v, &t).abs() < 1e-9);
+        let (v2, t2) = difference((&v, &t), (&b.0, &b.1)).expect("cut");
+        assert!(t2.is_empty() && v2.is_empty());
     }
 
     #[test]
