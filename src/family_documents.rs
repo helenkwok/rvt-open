@@ -383,7 +383,8 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         .iter()
         .map(|(t, c)| (*t, c.name.clone()))
         .collect();
-    const WANT: [&str; 15] = [
+    const WANT: [&str; 16] = [
+        "FreeFormElement",
         "Path3d",
         "PathFromFace",
         "ProfileRefPlane",
@@ -425,7 +426,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     let mut forms: Vec<RawForm> = Vec::new();
     // curves per document, 3D path curves and profile-plane
     // attachment points, by element id.
-    let mut doc_curves: BTreeMap<Guid, Vec<Curve>> = BTreeMap::new();
+    let mut doc_curves: BTreeMap<Guid, BTreeMap<i64, Curve>> = BTreeMap::new();
     let mut paths3d: BTreeMap<i64, Vec<Curve>> = BTreeMap::new();
     let mut profile_planes: BTreeMap<i64, [f64; 3]> = BTreeMap::new();
     let mut sketches: BTreeMap<i64, RawSketch> = BTreeMap::new();
@@ -433,7 +434,8 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     let mut curves: BTreeMap<i64, Curve> = BTreeMap::new();
     let mut boxes: BTreeMap<i64, [[f64; 3]; 2]> = BTreeMap::new();
     // Undecoded forms per document: (kind -> count).
-    let mut other: BTreeMap<Guid, BTreeMap<&'static str, usize>> = BTreeMap::new();
+    // (document, kind, class tag, id, partition), kept for the newest copy.
+    let mut other: Vec<(Guid, &'static str, u16, i64, u32)> = Vec::new();
     // The partition each object's newest copy was read from, by document,
     // class and id: a file saved several times keeps older copies of some
     // records in earlier partitions (one Revit 2011 family measured holds 27
@@ -552,11 +554,16 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                     }
                 }
                 ("FamilyInstance", Some(g)) => {
-                    *other
-                        .entry(g)
-                        .or_default()
-                        .entry("nested_family")
-                        .or_default() += 1;
+                    other.push((g, "nested_family", x.frame.header.tag, id, part));
+                }
+                // A sectionless family's hidden forms are not drawn, and a
+                // free form is not decoded.
+                (c, Some(_))
+                    if host_family.is_some()
+                        && FORM_CLASS_NAMES.contains(&c)
+                        && is_hidden(x, &names) => {}
+                ("FreeFormElement", Some(g)) if host_family.is_some() => {
+                    other.push((g, "free_form", x.frame.header.tag, id, part));
                 }
                 (_, None) => {}
                 ("GElement", Some(_)) => {
@@ -602,13 +609,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                             start: s,
                             end: e,
                         }),
-                        _ => {
-                            *other
-                                .entry(g)
-                                .or_default()
-                                .entry("extrusion_fields")
-                                .or_default() += 1
-                        }
+                        _ => other.push((g, "extrusion_fields", x.frame.header.tag, id, part)),
                     }
                 }
                 ("SweepElem" | "RevolutionElem" | "BlendElem" | "SweptBlendElem", Some(g)) => {
@@ -737,7 +738,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 }
                 ("CurveElem", Some(g)) => {
                     if let Some(c) = curve_of(x, &names) {
-                        doc_curves.entry(g).or_default().push(c.clone());
+                        doc_curves.entry(g).or_default().insert(id, c.clone());
                         curves.insert(id, c);
                     }
                 }
@@ -773,8 +774,15 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             && !out.host_samples.contains(&(f.guid, f.id))
     });
 
-    for (g, kinds) in other {
-        out.docs.entry(g).or_default().undecoded.extend(kinds);
+    for (g, kind, tag, id, part) in other {
+        if newest.get(&(Some(g), tag, id)) == Some(&part) {
+            *out.docs
+                .entry(g)
+                .or_default()
+                .undecoded
+                .entry(kind)
+                .or_default() += 1;
+        }
     }
     // Every document that has any form is listed, even when empty, so a
     // caller can tell "no solid form" from "not a document".
@@ -831,7 +839,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 .and_then(|fam| out.family_guid.get(fam))
                 .and_then(|g| doc_curves.get(g));
             if let Some(c) = doc {
-                profile_curves.insert(*sym, c.clone());
+                profile_curves.insert(*sym, c.values().cloned().collect());
             }
         }
     }
@@ -1256,6 +1264,26 @@ fn extrusion_solid(
     }))?;
     Some((solid, bbox))
 }
+
+/// Whether a form's `Visible` parameter is off.
+fn is_hidden(x: &SchemaObject, names: &BTreeMap<u16, String>) -> bool {
+    x.objects
+        .iter()
+        .filter(|o| names.get(&o.tag).map(String::as_str) == Some("ParamValueSetInt"))
+        .filter_map(|o| match o.get("m_paramSet") {
+            Some(Value::List(l)) => Some(l),
+            _ => None,
+        })
+        .flatten()
+        .any(|e| {
+            matches!(e, Value::Object(pv)
+                if id_of(pv, "m_paramId") == Some(VISIBLE_PARAMETER)
+                    && matches!(pv.get("m_value"), Some(Value::Int(0))))
+        })
+}
+
+/// `IS_VISIBLE_PARAM`.
+const VISIBLE_PARAMETER: i64 = -1_006_205;
 
 /// The solid-form classes.
 const FORM_CLASS_NAMES: [&str; 6] = [
