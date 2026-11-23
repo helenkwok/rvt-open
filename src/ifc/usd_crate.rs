@@ -25,10 +25,15 @@ pub(super) mod ty {
     pub const DOUBLE: u8 = 9;
     pub const STRING: u8 = 10;
     pub const TOKEN: u8 = 11;
+    pub const ASSET_PATH: u8 = 12;
     pub const MATRIX4D: u8 = 15;
+    pub const FLOAT2: u8 = 20;
     pub const FLOAT3: u8 = 24;
+    pub const FLOAT4: u8 = 28;
     pub const DICTIONARY: u8 = 31;
+    pub const TOKEN_LIST_OP: u8 = 32;
     pub const PATH_LIST_OP: u8 = 34;
+    pub const PATH_VECTOR: u8 = 40;
     pub const TOKEN_VECTOR: u8 = 41;
     pub const SPECIFIER: u8 = 42;
     pub const VARIABILITY: u8 = 44;
@@ -37,6 +42,7 @@ pub(super) mod ty {
 /// Spec forms (spec 16.3.8.4.6).
 pub(super) const FORM_ATTRIBUTE: u32 = 1;
 pub(super) const FORM_PRIM: u32 = 6;
+pub(super) const FORM_RELATIONSHIP: u32 = 8;
 pub(super) const FORM_LAYER: u32 = 7;
 
 const ARRAY: u64 = 0x80;
@@ -164,6 +170,26 @@ impl Crate {
         Self::inline(ty::TOKEN, i)
     }
 
+    /// An `asset` value: its path's token, inlined.
+    pub(super) fn asset_value(&mut self, s: &str) -> u64 {
+        let i = self.token(s);
+        Self::inline(ty::ASSET_PATH, i)
+    }
+
+    /// A `float`, inlined.
+    pub(super) fn float(&mut self, v: f64) -> u64 {
+        Self::inline(ty::FLOAT, (v as f32).to_bits())
+    }
+
+    /// A `float4`.
+    pub(super) fn float4(&mut self, v: &[f64; 4]) -> u64 {
+        let rep = self.at(ty::FLOAT4, 0);
+        for x in v {
+            self.data.extend_from_slice(&(*x as f32).to_le_bytes());
+        }
+        rep
+    }
+
     pub(super) fn int64(&mut self, v: i64) -> u64 {
         if let Ok(small) = i32::try_from(v) {
             return Self::inline(ty::INT64, small as u32);
@@ -246,6 +272,14 @@ impl Crate {
         )
     }
 
+    pub(super) fn float2_array(&mut self, v: &[[f64; 2]]) -> u64 {
+        self.array(
+            ty::FLOAT2,
+            v.len(),
+            v.iter().flatten().flat_map(|x| (*x as f32).to_le_bytes()),
+        )
+    }
+
     pub(super) fn string_array(&mut self, v: &[String]) -> u64 {
         let ix: Vec<u32> = v.iter().map(|s| self.string(s)).collect();
         self.array(
@@ -308,6 +342,42 @@ impl Crate {
     pub(super) fn prepend_paths(&mut self, paths: &[u32]) -> u64 {
         let rep = self.at(ty::PATH_LIST_OP, 0);
         self.data.push(0x20);
+        self.data
+            .extend_from_slice(&(paths.len() as u64).to_le_bytes());
+        for p in paths {
+            self.data.extend_from_slice(&p.to_le_bytes());
+        }
+        rep
+    }
+
+    /// A path list op with explicit items only (`= [...]`).
+    pub(super) fn explicit_paths(&mut self, paths: &[u32]) -> u64 {
+        let rep = self.at(ty::PATH_LIST_OP, 0);
+        // isExplicit | hasExplicitItems
+        self.data.push(0x03);
+        self.data
+            .extend_from_slice(&(paths.len() as u64).to_le_bytes());
+        for p in paths {
+            self.data.extend_from_slice(&p.to_le_bytes());
+        }
+        rep
+    }
+
+    /// A token list op with prepended items only (`apiSchemas`).
+    pub(super) fn prepend_tokens(&mut self, tokens: &[u32]) -> u64 {
+        let rep = self.at(ty::TOKEN_LIST_OP, 0);
+        self.data.push(0x20);
+        self.data
+            .extend_from_slice(&(tokens.len() as u64).to_le_bytes());
+        for t in tokens {
+            self.data.extend_from_slice(&t.to_le_bytes());
+        }
+        rep
+    }
+
+    /// A path vector (`targetChildren`, `connectionChildren`).
+    pub(super) fn path_vector(&mut self, paths: &[u32]) -> u64 {
+        let rep = self.at(ty::PATH_VECTOR, 0);
         self.data
             .extend_from_slice(&(paths.len() as u64).to_le_bytes());
         for p in paths {

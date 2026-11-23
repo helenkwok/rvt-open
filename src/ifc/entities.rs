@@ -638,6 +638,12 @@ pub enum SolidShape {
         /// element's own). Empty, or one per triangle.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         face_materials: Vec<usize>,
+        /// Per vertex, its texture coordinates `[u, v]`: 0 to 1 across one
+        /// repeat of the image, `v` up from the image's bottom edge (as OBJ,
+        /// USD and IFC count it). Empty, or one per vertex; only triangles
+        /// drawn in a material with a [`super::MaterialTexture`] use them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        uvs: Vec<[f64; 2]>,
     },
     /// Simple extruded-area solid via the [`Extrusion`] struct.
     /// Emitted when a caller wants to keep `extrusion` set to

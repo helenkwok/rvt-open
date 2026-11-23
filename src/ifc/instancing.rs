@@ -58,6 +58,7 @@ impl SymbolMesh {
             vertices_feet: self.vertices_feet.clone(),
             triangles: self.triangles.clone(),
             face_materials: self.face_materials.clone(),
+            uvs: Vec::new(),
         }
     }
 }
@@ -232,6 +233,7 @@ pub fn register_parts(
             vertices_feet: local,
             triangles,
             face_materials,
+            uvs: Vec::new(),
         });
     }
     model.instancing.instances.insert(index, drawn);
@@ -249,12 +251,18 @@ pub fn parts_of(model: &IfcModel, index: usize) -> Option<&[(usize, Frame)]> {
                 vertices_feet,
                 triangles,
                 face_materials,
+                uvs,
             }),
         ..
     } = model.entities.get(index)?
     else {
         return None;
     };
+    // the symbol meshes carry no texture coordinates: a textured body is
+    // drawn whole.
+    if !uvs.is_empty() {
+        return None;
+    }
     let coloured = !face_materials.is_empty();
     let (mut v, mut t) = (0usize, 0usize);
     for (symbol, target) in parts {
@@ -407,6 +415,7 @@ pub fn body_mesh(mesh: &SymbolMesh) -> Option<super::body_geometry::Mesh> {
         } else {
             Vec::new()
         },
+        uvs: Vec::new(),
     };
     (!out.triangles.is_empty()).then_some(out)
 }

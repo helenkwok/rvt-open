@@ -298,12 +298,14 @@ fn synthetic_project_emits_valid_ifc4() {
                 // Not read, as a decoded material's can be: the surface style
                 // leaves it unset, and CI's IfcOpenShell job validates that
                 transparency: None,
+                texture: None,
             },
             // material_index 1: windows
             MaterialInfo {
                 name: "Glass - Tinted".into(),
                 color_packed: Some(0x00DDAA88), // blue-ish (B=0x88, G=0xAA, R=0xDD)
                 transparency: Some(0.6),
+                texture: None,
             },
         ],
         ..Default::default()

@@ -1222,6 +1222,7 @@ mod tests {
             vertices,
             triangles,
             face_materials: Vec::new(),
+            uvs: Vec::new(),
         }
     }
 
@@ -1246,6 +1247,7 @@ mod tests {
             vertices: vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]],
             triangles: vec![[0, 1, 2], [0, 2, 1]],
             face_materials: Vec::new(),
+            uvs: Vec::new(),
         };
         let shells = mesh_shells(&m).expect("balanced");
         assert!(shells.iter().all(|s| s.volume.abs() < 1e-12));

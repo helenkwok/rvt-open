@@ -209,6 +209,8 @@ mod level_names;
 mod level_parameters;
 #[path = "../level_shared_elevation.rs"]
 mod level_shared_elevation;
+#[path = "../material_textures.rs"]
+mod material_textures;
 #[path = "../memory_staging.rs"]
 mod memory_staging;
 #[path = "../mep_categories.rs"]

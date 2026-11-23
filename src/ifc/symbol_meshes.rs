@@ -288,6 +288,7 @@ pub fn attach(rf: &mut crate::RevitFile, model: &mut IfcModel) -> anyhow::Result
                 vertices_feet: vertices,
                 triangles,
                 face_materials: Vec::new(),
+                uvs: Vec::new(),
             });
         }
         report.replaced += 1;
@@ -675,6 +676,7 @@ pub fn add_site_content(
                 vertices_feet: vertices,
                 triangles,
                 face_materials,
+                uvs: Vec::new(),
             }),
         );
         let tag = id.to_string();

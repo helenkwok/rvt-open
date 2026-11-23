@@ -262,6 +262,7 @@ fuzz_target!(|input: FuzzInput| {
             name: truncate_string(m.name, MAX_STRING),
             color_packed: m.color_packed,
             transparency: m.transparency,
+            texture: None,
         })
         .collect();
 
