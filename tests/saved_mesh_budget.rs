@@ -103,7 +103,9 @@ mod family_documents_361 {
             docs.family_guid.values().all(|g| docs.docs.contains_key(g)),
             "a host family names a document the stream does not hold"
         );
-        assert_eq!(docs.stats.extrusions, 435);
+        // 26 more are members of groups no instance places (a group type's
+        // own copy), which Revit does not draw and the reader leaves out.
+        assert_eq!(docs.stats.extrusions, 409);
         // A solid counts only when its bounding box equals the stored one:
         // the extrusions that match, and the sweeps, revolutions and blends
         // solved from their sketches (each also checked against its box).
@@ -111,8 +113,9 @@ mod family_documents_361 {
             docs.stats.extrusions_bbox_match + docs.stats.solved.values().sum::<usize>(),
             docs.docs.values().map(|d| d.solids.len()).sum::<usize>()
         );
-        assert!(docs.stats.extrusions_decoded >= 374);
-        assert!(docs.stats.extrusions_bbox_match >= 367);
+        // 8 of those unplaced extrusions decoded and matched their boxes.
+        assert!(docs.stats.extrusions_decoded >= 366);
+        assert!(docs.stats.extrusions_bbox_match >= 359);
         // System families (curtain mullions and panels) have no document.
         let none = docs
             .instances
