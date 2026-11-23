@@ -76,6 +76,22 @@ pub struct FragStats {
     pub textured_samples: usize,
     /// Of those, the samples with texture coordinates for every corner.
     pub textured_samples_with_uvs: usize,
+    /// Textured bodies merged into another body of the same item and look,
+    /// so that each sample is one run of vertices in a tile.
+    pub textured_bodies_merged: usize,
+    /// Extra samples made by cutting a textured shell below the public
+    /// loader's 65,535-vertex buffer.
+    pub textured_shells_split: usize,
+    /// Samples with texture coordinates that share an item and a material
+    /// with another such sample: a viewer could not tell their runs apart.
+    /// 0 by construction; counted to prove it.
+    pub textured_duplicate_keys: usize,
+    /// Triangle corners whose texture coordinate was missing or not a
+    /// number, written as `[0, 0]`.
+    pub textured_corners_defaulted: usize,
+    /// Textured samples left out of the sidecar because their material had
+    /// no image to list.
+    pub textured_samples_skipped: usize,
     /// Items whose ElementId was taken by another item, given another id.
     pub tags_reassigned: usize,
 }
@@ -102,7 +118,7 @@ pub fn write_frag_graph_with(
     graph: &IfcxGraph,
     display: &super::gltf::DisplayOptions,
 ) -> Result<(Vec<u8>, FragStats), IfcxError> {
-    write_frag(graph, display).map(|(bytes, stats, _, _)| (bytes, stats))
+    write_frag(graph, display).map(|(bytes, stats, _)| (bytes, stats))
 }
 
 /// [`write_frag_graph_with`], and the textures the format cannot hold, as
@@ -116,24 +132,126 @@ pub fn write_frag_graph_textured(
     graph: &IfcxGraph,
     display: &super::gltf::DisplayOptions,
 ) -> Result<(Vec<u8>, FragStats, Option<FragTextures>), IfcxError> {
-    let (bytes, stats, sidecar, files) = write_frag(graph, display)?;
-    Ok((bytes, stats, sidecar.map(|s| (s, files))))
+    write_frag(graph, display)
 }
-
-/// A `.frag`'s texture sidecar (JSON) and the images it names (path
-/// relative to the sidecar, bytes).
-pub type FragTextures = (String, Vec<super::TextureFile>);
 
 /// The `format` of the texture sidecar.
 pub const TEXTURE_SIDECAR_FORMAT: &str = "rvt-open/frag-textures";
-/// The sidecar schema version; a reader refuses a newer major version.
+/// The sidecar schema version. It changes whenever a reader written for
+/// the previous version would misread the file, so a reader refuses any
+/// version but the ones it knows.
 pub const TEXTURE_SIDECAR_VERSION: u32 = 1;
 
-#[allow(clippy::type_complexity)]
+/// Triangles per textured shell at most: 3 vertices each stays under the
+/// 65,535-vertex buffer the public loader fills per shell (it starts a new
+/// buffer, and so a new run of vertices, past that), and the shell's points
+/// under the 65,000 that make it `BIG`.
+pub const TEXTURED_SHELL_TRIANGLES: usize = 21_666;
+
+/// A `.frag`'s texture sidecar (`<name>.frag.textures.json`, schema in
+/// `docs/frag-textures.md`) and the images it names.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FragTextures {
+    /// [`TEXTURE_SIDECAR_FORMAT`].
+    pub format: &'static str,
+    /// [`TEXTURE_SIDECAR_VERSION`].
+    pub version: u32,
+    /// The Fragments schema the `.frag` follows.
+    pub fragments_schema: &'static str,
+    /// The `.frag`'s own model id (its `guid` field: the IFCX header id).
+    pub model: String,
+    /// SHA-256 of the `.frag` file's bytes, lower-case hex: the file the
+    /// sidecar belongs to.
+    pub frag_sha256: String,
+    /// One entry per textured `.frag` material.
+    pub materials: Vec<SidecarMaterial>,
+    /// One entry per sample drawn in a textured material.
+    pub samples: Vec<SidecarSample>,
+    /// The images: path relative to the sidecar, and bytes.
+    #[serde(skip)]
+    pub images: Vec<super::TextureFile>,
+}
+
+impl FragTextures {
+    /// The sidecar as JSON, written to `w` as it is made.
+    pub fn write_json(&self, w: impl Write) -> serde_json::Result<()> {
+        serde_json::to_writer(w, self)
+    }
+}
+
+/// A textured `.frag` material in the sidecar.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarMaterial {
+    /// The material's local id in the `.frag`.
+    pub material: u32,
+    /// Its index in `Meshes.materials`.
+    pub index: usize,
+    /// 0, or the piece of a textured shell cut below the loader's buffer
+    /// (each piece has a material of its own; same image).
+    pub part: u32,
+    /// The source material's name.
+    pub name: String,
+    /// The image's path, relative to the sidecar.
+    pub image: String,
+    /// `image/png` or `image/jpeg`.
+    pub mime_type: String,
+    /// The image's file name in the source, where it names one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_name: Option<String>,
+    /// Whether the image can hold transparency.
+    pub image_has_alpha: bool,
+    /// The `.frag` material's `[r, g, b, a]`.
+    pub color: [u8; 4],
+    /// As the `.frag` material.
+    pub double_sided: bool,
+    /// What one repeat of the image covers, feet, as the source gives it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeat_size_feet: Option<[f64; 2]>,
+    /// The source's placement record, with absolute paths cut to file names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<Value>,
+}
+
+/// A `.frag` sample drawn in a textured material.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarSample {
+    /// The item's local id.
+    pub item: u32,
+    /// The item's index in `Meshes.meshesItems`.
+    pub mesh_item: u32,
+    /// The sample's index in `Meshes.samples`.
+    pub sample: u32,
+    /// The textured material's local id.
+    pub material: u32,
+    /// Triangles of the sample's shell, where `uv` is given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub triangles: Option<usize>,
+    /// One `u, v` per triangle corner, in profile order, `v` up; single
+    /// precision, as the `.frag`'s points.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uv: Option<Vec<f32>>,
+    /// Where the sample has no texture coordinates: a box projection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projection: Option<Projection>,
+}
+
+/// A box projection for a sample without texture coordinates.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Projection {
+    /// `box`.
+    pub kind: &'static str,
+    /// Metres one repeat covers.
+    pub repeat_size_metres: [f64; 2],
+}
+
 fn write_frag(
     graph: &IfcxGraph,
     display: &super::gltf::DisplayOptions,
-) -> Result<(Vec<u8>, FragStats, Option<String>, Vec<super::TextureFile>), IfcxError> {
+) -> Result<(Vec<u8>, FragStats, Option<FragTextures>), IfcxError> {
     if let Some(e) = graph.errors.first() {
         return Err(IfcxError(e.clone()));
     }
@@ -331,9 +449,11 @@ fn write_frag(
                 );
                 // a textured body keeps its own points (never a shared shape).
                 let texture = body.mesh.as_deref().and_then(|m| m.texture);
-                let colour = (colour, texture);
+                let colour = (colour, texture.map(|t| (t, 0)));
                 if let Some((p1, p2, r)) = circle {
                     if !circles.iter().any(|c| c.0 == index) {
+                        // a circle extrusion has no texture coordinates.
+                        let colour = (colour.0, colour.1.map(|(t, _)| (t, PROJECTED)));
                         circles.push((index, p1, p2, r, colour));
                     }
                 } else if let Some(mesh) = body.mesh.as_deref() {
@@ -359,6 +479,15 @@ fn write_frag(
         }
     }
     stats.items = paths.len();
+    // an item's textured bodies of one look become one shell, cut below the
+    // public loader's buffer, so each sample is one run of a tile's
+    // vertices that its texture coordinates line up with.
+    let merged = merge_textured(&mut geometry, &mut stats);
+    geometry.extend(
+        merged
+            .iter()
+            .map(|(item, look, mesh)| (*item, mesh, *look, None)),
+    );
     let max_local_id = fresh();
 
     // ---- write, children before parents
@@ -778,119 +907,279 @@ fn write_frag(
 
     let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     z.write_all(&raw).expect("in-memory write");
-    let (sidecar, files) = texture_sidecar(
+    let frag = z.finish().expect("in-memory write");
+    let sidecar = texture_sidecar(
         graph,
+        &frag,
         &materials,
         &mat_id_values,
         &textured,
         &items,
         &mut stats,
     );
-    Ok((z.finish().expect("in-memory write"), stats, sidecar, files))
+    Ok((frag, stats, sidecar))
 }
 
-/// A sample's look: its RGBA colour, and the model's index of the textured
-/// material it is drawn in. Samples of one look share a `.frag` material.
-type Look = ([u8; 4], Option<usize>);
+/// The texture part of a look for a sample without texture coordinates.
+const PROJECTED: u32 = u32::MAX;
+
+/// Takes the unshared textured meshes out of `geometry` and returns them
+/// merged per item and look (texture coordinates or none), each merged mesh
+/// cut into pieces of at most [`TEXTURED_SHELL_TRIANGLES`] triangles, piece
+/// `k` in look part `k` (a material of its own); meshes without texture
+/// coordinates in part [`PROJECTED`].
+#[allow(clippy::type_complexity)]
+fn merge_textured(
+    geometry: &mut Vec<(
+        usize,
+        &super::graph::UsdMesh,
+        Look,
+        Option<(&str, Option<&Value>)>,
+    )>,
+    stats: &mut FragStats,
+) -> Vec<(usize, Look, super::graph::UsdMesh)> {
+    use super::graph::UsdMesh;
+    type Key = (usize, Look, bool);
+    let mut order: Vec<Key> = Vec::new();
+    let mut groups: HashMap<Key, Vec<&UsdMesh>> = HashMap::new();
+    geometry.retain(|(item, mesh, look, shared)| {
+        if look.1.is_none() || shared.is_some() {
+            return true;
+        }
+        let key = (*item, *look, mesh.st.len() == mesh.points.len());
+        let list = groups.entry(key).or_insert_with(|| {
+            order.push(key);
+            Vec::new()
+        });
+        list.push(*mesh);
+        false
+    });
+    let mut out = Vec::new();
+    for key in order {
+        let (item, look, with_st) = key;
+        let meshes = &groups[&key];
+        stats.textured_bodies_merged += meshes.len() - 1;
+        let mut whole = UsdMesh {
+            texture: look.1.map(|(t, _)| t),
+            ..Default::default()
+        };
+        for m in meshes {
+            let base = whole.points.len() as u32;
+            whole.points.extend_from_slice(&m.points);
+            if with_st {
+                whole.st.extend_from_slice(&m.st);
+            }
+            whole.face_vertex_indices.extend(
+                m.face_vertex_indices
+                    .chunks_exact(3)
+                    .flatten()
+                    .map(|i| i + base),
+            );
+        }
+        if !with_st {
+            out.push((item, (look.0, look.1.map(|(t, _)| (t, PROJECTED))), whole));
+            continue;
+        }
+        let triangles = whole.face_vertex_indices.len() / 3;
+        if triangles <= TEXTURED_SHELL_TRIANGLES {
+            out.push((item, look, whole));
+            continue;
+        }
+        let pieces = whole
+            .face_vertex_indices
+            .chunks(3 * TEXTURED_SHELL_TRIANGLES)
+            .enumerate();
+        for (part, chunk) in pieces {
+            let mut piece = UsdMesh {
+                texture: whole.texture,
+                ..Default::default()
+            };
+            let mut new_index: HashMap<u32, u32> = HashMap::new();
+            for &i in chunk {
+                let n = *new_index.entry(i).or_insert_with(|| {
+                    let p = i as usize;
+                    piece
+                        .points
+                        .push(whole.points.get(p).copied().unwrap_or([0.0; 3]));
+                    piece
+                        .st
+                        .push(whole.st.get(p).copied().unwrap_or([f64::NAN; 2]));
+                    (piece.points.len() - 1) as u32
+                });
+                piece.face_vertex_indices.push(n);
+            }
+            stats.textured_shells_split += usize::from(part > 0);
+            out.push((item, (look.0, look.1.map(|(t, _)| (t, part as u32))), piece));
+        }
+    }
+    out
+}
+
+/// `v` with every string that looks like an absolute path (`/...`,
+/// `C:\...`, `\\host\...`) cut to its file name: a source's placement
+/// record must not carry the author's folders into the sidecar.
+fn strip_paths(v: &Value) -> Value {
+    match v {
+        Value::String(s) => {
+            let b = s.as_bytes();
+            let absolute = s.starts_with('/')
+                || s.starts_with("\\\\")
+                || (b.len() > 2
+                    && b[0].is_ascii_alphabetic()
+                    && b[1] == b':'
+                    && matches!(b[2], b'\\' | b'/'));
+            if absolute {
+                Value::String(s.rsplit(['/', '\\']).next().unwrap_or("").to_string())
+            } else {
+                v.clone()
+            }
+        }
+        Value::Array(a) => Value::Array(a.iter().map(strip_paths).collect()),
+        Value::Object(o) => {
+            Value::Object(o.iter().map(|(k, x)| (k.clone(), strip_paths(x))).collect())
+        }
+        _ => v.clone(),
+    }
+}
+
+/// A sample's look: its RGBA colour, and for a textured sample the model's
+/// index of its material and the piece (see [`merge_textured`]). Samples of
+/// one look share a `.frag` material.
+type Look = ([u8; 4], Option<(usize, u32)>);
 
 /// The texture sidecar (see [`write_frag_graph_textured`]); `None` without
 /// textured samples.
 #[allow(clippy::type_complexity)]
 fn texture_sidecar(
     graph: &IfcxGraph,
+    frag: &[u8],
     materials: &[Look],
     material_ids: &[u32],
     textured: &[(usize, u32, u32, u32, Option<&super::graph::UsdMesh>)],
     items: &[Item],
     stats: &mut FragStats,
-) -> (Option<String>, Vec<super::TextureFile>) {
+) -> Option<FragTextures> {
+    use sha2::Digest;
     if textured.is_empty() {
-        return (None, Vec::new());
+        return None;
     }
-    let mut files: Vec<super::TextureFile> = Vec::new();
+    let mut images: Vec<super::TextureFile> = Vec::new();
+    // the image of each model material, named once: its hash name, or with
+    // a suffix where two different images hash alike.
+    let mut image_of: HashMap<usize, String> = HashMap::new();
     let mut entries = Vec::new();
-    // metres one repeat covers, per .frag material: the box projection a
-    // reader falls back to where a sample has no texture coordinates.
+    // metres one repeat covers, per listed .frag material.
     let mut repeat: HashMap<u32, Option<[f64; 2]>> = HashMap::new();
-    for (index, ((colour, m), id)) in materials.iter().zip(material_ids).enumerate() {
-        let Some(info) = m.and_then(|m| graph.material(m)) else {
+    for (index, ((colour, look), id)) in materials.iter().zip(material_ids).enumerate() {
+        let Some((m, part)) = *look else {
+            continue;
+        };
+        let Some(info) = graph.material(m) else {
             continue;
         };
         let Some(texture) = info.texture.as_ref() else {
             continue;
         };
-        let file = format!("textures/{}", texture.file_name());
-        if !files.iter().any(|(f, _)| *f == file) {
-            files.push((file.clone(), texture.image.clone()));
-        }
+        let file = image_of
+            .entry(m)
+            .or_insert_with(|| {
+                let mut name = format!("textures/{}", texture.file_name());
+                let mut n = 0;
+                loop {
+                    match images.iter().find(|(f, _)| *f == name) {
+                        None => {
+                            images.push((name.clone(), texture.image.clone()));
+                            break name;
+                        }
+                        Some((_, bytes)) if *bytes == texture.image => break name,
+                        Some(_) => {
+                            n += 1;
+                            let stem = texture.file_name();
+                            let stem = stem
+                                .rsplit_once('.')
+                                .map_or(stem.as_str(), |(s, _)| s)
+                                .to_string();
+                            name = format!("textures/{stem}-{n}.{}", texture.extension());
+                        }
+                    }
+                }
+            })
+            .clone();
         repeat.insert(index as u32, texture.size_feet);
-        let mut e = json!({
-            "material": id,
-            "index": index,
-            "name": info.name,
-            "image": file,
-            "mimeType": texture.mime_type,
-            "imageHasAlpha": texture.has_alpha(),
-            "color": colour,
-            "doubleSided": colour[3] < 255,
+        entries.push(SidecarMaterial {
+            material: *id,
+            index,
+            part: if part == PROJECTED { 0 } else { part },
+            name: info.name.clone(),
+            image: file,
+            mime_type: texture.mime_type.clone(),
+            image_name: texture
+                .name
+                .as_deref()
+                .map(|n| n.rsplit(['/', '\\']).next().unwrap_or(n).to_string()),
+            image_has_alpha: texture.has_alpha(),
+            color: *colour,
+            double_sided: colour[3] < 255,
+            repeat_size_feet: texture.size_feet,
+            mapping: texture.mapping.as_ref().map(strip_paths),
         });
-        if let Some(n) = &texture.name {
-            e["imageName"] = json!(n);
-        }
-        if let Some(s) = texture.size_feet {
-            e["repeatSizeFeet"] = json!(s);
-        }
-        if let Some(mapping) = &texture.mapping {
-            e["mapping"] = mapping.clone();
-        }
-        entries.push(e);
     }
     stats.textured_materials = entries.len();
     let mut samples = Vec::new();
+    let mut keys = std::collections::HashSet::new();
     for (item, mesh_item, sample, material, mesh) in textured {
+        if !repeat.contains_key(material) {
+            stats.textured_samples_skipped += 1;
+            continue;
+        }
         // one [u, v] per triangle corner, in the order the shell's profiles
         // list them: the order the public loader lays out a shell's vertices.
-        let uv: Option<Vec<f64>> = mesh.map(|m| {
-            m.face_vertex_indices
-                .chunks_exact(3)
-                .flatten()
-                .flat_map(|i| m.st.get(*i as usize).copied().unwrap_or([0.0; 2]))
-                .map(|c| if c.is_finite() { c } else { 0.0 })
-                .collect()
-        });
-        let mut e = json!({
-            "item": items[*item].id,
-            "meshItem": mesh_item,
-            "sample": sample,
-            "material": material_ids[*material as usize],
-        });
-        match uv {
-            Some(uv) => {
-                e["triangles"] = json!(uv.len() / 6);
-                e["uv"] = json!(uv);
-                stats.textured_samples_with_uvs += 1;
+        let uv: Option<Vec<f32>> = mesh.map(|m| {
+            let mut uv = Vec::with_capacity(m.face_vertex_indices.len() / 3 * 6);
+            for i in m.face_vertex_indices.chunks_exact(3).flatten() {
+                let c = m.st.get(*i as usize).copied().unwrap_or([f64::NAN; 2]);
+                if !c.iter().all(|x| x.is_finite()) {
+                    stats.textured_corners_defaulted += 1;
+                }
+                uv.extend(c.map(|x| if x.is_finite() { x as f32 } else { 0.0 }));
             }
-            None => {
-                let size = repeat
-                    .get(material)
-                    .copied()
-                    .flatten()
-                    .map_or([1.0; 2], |s| s.map(|f| f * 0.3048));
-                e["projection"] = json!({"kind": "box", "repeatSizeMetres": size});
+            uv
+        });
+        let projection = if uv.is_none() {
+            let size = repeat[material].map_or([1.0; 2], |s| s.map(|f| f * 0.3048));
+            Some(Projection {
+                kind: "box",
+                repeat_size_metres: size,
+            })
+        } else {
+            if !keys.insert((*mesh_item, *material)) {
+                stats.textured_duplicate_keys += 1;
             }
-        }
-        samples.push(e);
+            stats.textured_samples_with_uvs += 1;
+            None
+        };
+        samples.push(SidecarSample {
+            item: items[*item].id,
+            mesh_item: *mesh_item,
+            sample: *sample,
+            material: material_ids[*material as usize],
+            triangles: uv.as_ref().map(|u| u.len() / 6),
+            uv,
+            projection,
+        });
     }
     stats.textured_samples = samples.len();
-    let doc = json!({
-        "format": TEXTURE_SIDECAR_FORMAT,
-        "version": TEXTURE_SIDECAR_VERSION,
-        "fragmentsSchema": FRAGMENTS_SCHEMA_VERSION,
-        "model": graph.id,
-        "materials": entries,
-        "samples": samples,
-    });
-    (Some(doc.to_string()), files)
+    let digest = sha2::Sha256::digest(frag);
+    Some(FragTextures {
+        format: TEXTURE_SIDECAR_FORMAT,
+        version: TEXTURE_SIDECAR_VERSION,
+        fragments_schema: FRAGMENTS_SCHEMA_VERSION,
+        model: graph.id.clone(),
+        frag_sha256: digest.iter().map(|b| format!("{b:02x}")).collect(),
+        materials: entries,
+        samples,
+        images,
+    })
 }
 
 struct Item {

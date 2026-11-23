@@ -732,23 +732,11 @@ fn run(args: Args) -> anyhow::Result<()> {
         )?;
         rvt::cli::write_output(frag_path, &bytes)?;
         report.output("frag", frag_path);
-        if let Some((sidecar, images)) = textures {
-            let mut path = frag_path.clone().into_os_string();
-            path.push(".textures.json");
-            let path = PathBuf::from(path);
-            let dir = path.parent().unwrap_or(std::path::Path::new("."));
-            for (name, image) in &images {
-                let file = dir.join(name);
-                if let Some(parent) = file.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                rvt::cli::write_output(&file, image)?;
-            }
-            rvt::cli::write_output(&path, sidecar.as_bytes())?;
+        if let Some(path) = rvt::cli::write_frag_textures(frag_path, textures.as_ref())? {
             report.output("frag-textures", &path);
             eprintln!(
                 "rvt-ifc: wrote the .frag's textures ({} images) to {}",
-                images.len(),
+                textures.as_ref().map_or(0, |t| t.images.len()),
                 path.display()
             );
         }

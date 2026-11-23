@@ -39,12 +39,22 @@ if (q.get("glb")) {
   renderer.render(scene, camera);
 } else {
   const fragUrl = q.get("frag");
+  const buffer = await (await fetch(fragUrl)).arrayBuffer();
   const fragments = new FRAGS.FragmentsModels(workerUrl);
   if (q.get("textures") !== "0") {
     const url = new URL(`${fragUrl}.textures.json`, location.href);
-    state.counts = applyFragTextures(fragments, await (await fetch(url)).json(), url);
+    const res = await fetch(url);
+    // a model without textures has no sidecar (a dev server may answer a
+    // missing file with its index page, so check the type too).
+    if (res.ok && (res.headers.get("content-type") ?? "").includes("json")) {
+      const sidecar = await res.json();
+      state.samplesWithUv = sidecar.samples.filter((s) => s.uv).length;
+      state.counts = (await applyFragTextures(fragments, "m", sidecar, url, buffer)).counts;
+      state.sidecar = "applied";
+    } else {
+      state.sidecar = "none";
+    }
   }
-  const buffer = await (await fetch(fragUrl)).arrayBuffer();
   const model = await fragments.load(buffer, { modelId: "m", camera });
   scene.add(model.object);
   frame(model.box);

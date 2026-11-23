@@ -271,6 +271,76 @@ pub fn write_output_with<T, E: std::error::Error + Send + Sync + 'static>(
     Ok(result.expect("written"))
 }
 
+/// Writes, beside the `.frag` at `frag`, its texture sidecar
+/// (`<frag>.textures.json`, streamed) and the images it names, and removes
+/// what an earlier run left there that this one no longer writes: the
+/// sidecar when `textures` is `None`, and the images the earlier sidecar
+/// named that the new one does not (only names of the form
+/// `textures/<hex>[-n].png|jpg`, which only this writer gives). Returns the
+/// sidecar's path when one was written.
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub fn write_frag_textures(
+    frag: &std::path::Path,
+    textures: Option<&crate::ifc::frag_writer::FragTextures>,
+) -> std::io::Result<Option<std::path::PathBuf>> {
+    let mut path = frag.as_os_str().to_owned();
+    path.push(".textures.json");
+    let path = std::path::PathBuf::from(path);
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    let ours = |name: &str| -> bool {
+        let Some(file) = name.strip_prefix("textures/") else {
+            return false;
+        };
+        let Some((stem, ext)) = file.rsplit_once('.') else {
+            return false;
+        };
+        let hex = stem.split_once('-').map_or(stem, |(h, n)| {
+            if n.bytes().all(|b| b.is_ascii_digit()) && !n.is_empty() {
+                h
+            } else {
+                ""
+            }
+        });
+        matches!(ext, "png" | "jpg")
+            && hex.len() == 16
+            && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    };
+    let earlier: Vec<String> = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| {
+            v["materials"].as_array().map(|m| {
+                m.iter()
+                    .filter_map(|e| e["image"].as_str().map(String::from))
+                    .filter(|n| ours(n))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    let now: Vec<&str> = textures
+        .map(|t| t.images.iter().map(|(n, _)| n.as_str()).collect())
+        .unwrap_or_default();
+    if let Some(t) = textures {
+        for (name, image) in &t.images {
+            let file = dir.join(name);
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            write_output(&file, image)?;
+        }
+        write_output_with(&path, |w| t.write_json(w))?;
+    } else if path.is_file() {
+        std::fs::remove_file(&path)?;
+    }
+    for name in earlier.iter().filter(|n| !now.contains(&n.as_str())) {
+        let file = dir.join(name);
+        if file.is_file() {
+            std::fs::remove_file(file)?;
+        }
+    }
+    Ok(textures.map(|_| path))
+}
+
 /// A writer that counts the bytes it passes on.
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 struct Counted<W> {

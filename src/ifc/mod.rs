@@ -504,6 +504,7 @@ pub struct MaterialInfo {
 /// by the texture coordinates of its mesh
 /// ([`entities::SolidShape::TriangulatedFaceSet`]'s `uvs`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct MaterialTexture {
     /// The image file's bytes.
     pub image: Vec<u8>,
@@ -517,9 +518,9 @@ pub struct MaterialTexture {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_feet: Option<[f64; 2]>,
     /// The source's own record of how the image is placed (scale, offset,
-    /// rotation, repeat, tint...), kept as read, where the reader has one.
-    /// Writers that keep the native definition (the `.frag` texture
-    /// sidecar) carry it verbatim.
+    /// rotation, repeat, tint...), kept as read, for a reader that has one
+    /// (none fills it yet). The `.frag` texture sidecar carries it, with
+    /// absolute paths cut to file names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mapping: Option<serde_json::Value>,
 }
