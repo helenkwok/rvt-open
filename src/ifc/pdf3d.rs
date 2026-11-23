@@ -140,8 +140,9 @@ fn indices(doc: &GltfDocument, bin: &[u8], accessor: usize) -> Option<Vec<u32>> 
 /// is the material of a primitive with none.
 fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Option<u3d::Mesh> {
     let mut out = u3d::Mesh::default();
-    // a block of points per (positions, texture coordinates) pair.
-    let mut bases: HashMap<(usize, Option<usize>), u32> = HashMap::new();
+    // a block of points per (positions, texture coordinates) pair: its
+    // first point and its size.
+    let mut bases: HashMap<(usize, Option<usize>), (u32, u32)> = HashMap::new();
     let mut textured = false;
     for p in &doc.meshes.get(mesh)?.primitives {
         if p.mode != 4 {
@@ -151,7 +152,7 @@ fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Optio
             continue;
         };
         let texcoord = p.attributes.get("TEXCOORD_0").copied();
-        let base = match bases.get(&(position, texcoord)) {
+        let (base, count) = match bases.get(&(position, texcoord)) {
             Some(&b) => b,
             None => {
                 let Some(points) = positions(doc, bin, position) else {
@@ -165,11 +166,10 @@ fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Optio
                     .filter(|uv| uv.len() == n);
                 textured |= uv.is_some();
                 out.uvs.extend(uv.unwrap_or_else(|| vec![[0.0; 2]; n]));
-                bases.insert((position, texcoord), b);
-                b
+                bases.insert((position, texcoord), (b, n as u32));
+                (b, n as u32)
             }
         };
-        let count = out.positions.len() as u32 - base;
         let idx = match p.indices {
             Some(i) => match indices(doc, bin, i) {
                 Some(v) => v,
