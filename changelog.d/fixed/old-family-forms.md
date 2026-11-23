@@ -17,4 +17,9 @@
   named by the family's `m_refs`) is not drawn as one of its forms. Their forms and nested
   instances take the material their record names (by the material's name, as
   the material resolver reads only 2015 and later), so colours and glass
-  transparency show.
+  transparency show. The file's own family is the
+  root family no family symbol names that holds the most elements; a nested
+  instance is drawn with whatever of its family decodes (undecoded forms as
+  their stored boxes) and the nested families that family places in turn;
+  and solved forms of these releases accept a faceted stored box as
+  extrusions do.

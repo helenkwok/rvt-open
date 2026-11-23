@@ -85,6 +85,9 @@ pub struct DocSolids {
     /// Why its sweeps, revolutions and blends did not solve, by
     /// `kind:reason` (the document's share of [`DocStats::solve_failures`]).
     pub solve_failures: BTreeMap<String, usize>,
+    /// The stored bounding boxes of the solid forms that were not decoded
+    /// (a caller may draw them as boxes, as it draws its own).
+    pub unsolved_boxes: Vec<[[f64; 3]; 2]>,
 }
 
 impl DocSolids {
@@ -150,6 +153,9 @@ pub struct FamilyDocuments {
     /// wall of a door, the block of a face-based family), by document: the
     /// elements each `Family` names in `m_refs`.
     pub host_samples: BTreeSet<(Guid, i64)>,
+    /// Of such a file, the family instances each nested family's document
+    /// places, by document and instance id (in that document's coordinates).
+    pub doc_instances: BTreeMap<Guid, BTreeMap<i64, InstancePose>>,
     pub stats: DocStats,
 }
 
@@ -172,6 +178,13 @@ impl FamilyDocuments {
         let family = self.symbol_family.get(&pose.symbol)?;
         let guid = self.family_guid.get(family)?;
         Some((pose, self.docs.get(guid)?))
+    }
+
+    /// The decoded document of the family that symbol `symbol` belongs to.
+    pub fn document_of_symbol(&self, symbol: i64) -> Option<(Guid, &DocSolids)> {
+        let family = self.symbol_family.get(&symbol)?;
+        let guid = self.family_guid.get(family)?;
+        Some((*guid, self.docs.get(guid)?))
     }
 
     pub fn route(&self, id: i64) -> Route {
@@ -444,6 +457,8 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     // A family file without keyed sections (every release before 2020)
     // keeps its nested families' documents among its own objects; each
     // element's `m_famId` names the family whose document holds it.
+    // Of such a file, each `Family` element's owner (`m_famId`).
+    let mut family_owner: BTreeMap<i64, i64> = BTreeMap::new();
     let host_family = if host_is_family && section_count == 0 {
         host_family_id(rf, &names)?
     } else {
@@ -496,6 +511,9 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             // A hosted family's template keeps a sample host (a wall, or a
             // block for a face-based family) that its `Family` names in
             // `m_refs`: it is not part of the family's form.
+            if let (Some(_), "Family") = (host_family, class.as_str()) {
+                family_owner.insert(id, id_of(root, "m_famId").unwrap_or(-1));
+            }
             if let (Some(host), "Family") = (host_family, class.as_str()) {
                 let doc = if id == host {
                     HOST_DOCUMENT
@@ -525,36 +543,27 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                     }
                 }
                 ("FamilyInstance", None) => {
-                    let info = x
-                        .objects
-                        .iter()
-                        .find(|o| names.get(&o.tag).map(String::as_str) == Some("InstanceInfo"));
-                    let trf = info.and_then(|i| i.get("m_Trf")).and_then(|t| target(x, t));
-                    let matrix = trf.and_then(|t| match t.get("m_3x3")? {
-                        Value::List(rows) if rows.len() == 3 => {
-                            Some([vec3_of(&rows[0])?, vec3_of(&rows[1])?, vec3_of(&rows[2])?])
-                        }
-                        _ => None,
-                    });
-                    let origin = trf.and_then(|t| vec3_of(t.get("m_or")?));
-                    if let (Some(symbol), Some(matrix), Some(origin)) =
-                        (id_of(root, "m_masterSymbolId"), matrix, origin)
-                    {
-                        out.instances.insert(
-                            id,
-                            InstancePose {
-                                symbol,
-                                info_symbol: info.and_then(|i| id_of(i, "m_symbolId")),
-                                matrix,
-                                origin,
-                                flipped_x: bool_of(root, "m_flippedX"),
-                                flipped_y: bool_of(root, "m_flippedY"),
-                            },
-                        );
+                    if let Some(pose) = pose_of(x, &names) {
+                        out.instances.insert(id, pose);
                     }
                 }
                 ("FamilyInstance", Some(g)) => {
                     other.push((g, "nested_family", x.frame.header.tag, id, part));
+                    // A sectionless family's nested family placing its own
+                    // nested families: kept to place them in turn.
+                    if host_family.is_some() {
+                        if let Some(pose) = pose_of(x, &names) {
+                            out.doc_instances.entry(g).or_default().insert(id, pose);
+                        }
+                    }
+                }
+                ("Family", Some(_)) if host_family.is_some() => {
+                    out.family_guid.insert(id, owned_document(id));
+                }
+                ("FamilySymbol", Some(_)) if host_family.is_some() => {
+                    if let Some(f) = id_of(root, "m_familyId") {
+                        out.symbol_family.insert(id, f);
+                    }
                 }
                 // A sectionless family's hidden forms are not drawn, and a
                 // free form is not decoded.
@@ -814,6 +823,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         let solid = extrusion_solid(e, &sketches, &planes, &curves);
         let Some((solid, bbox)) = solid else {
             *doc.undecoded.entry("extrusion_geometry").or_default() += 1;
+            doc.unsolved_boxes.extend(boxes.get(&e.id));
             continue;
         };
         out.stats.extrusions_decoded += 1;
@@ -829,6 +839,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             .is_none_or(|stored| box_matches(stored, &bbox, sag));
         if !matches {
             *doc.undecoded.entry("extrusion_bbox_mismatch").or_default() += 1;
+            doc.unsolved_boxes.extend(boxes.get(&e.id));
             continue;
         }
         out.stats.extrusions_bbox_match += 1;
@@ -869,6 +880,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         match solve_form(f, &ctx) {
             Err(why) => {
                 *doc.undecoded.entry(f.kind).or_default() += 1;
+                doc.unsolved_boxes.extend(boxes.get(&f.id));
                 let reason = format!("{}:{why}", f.kind);
                 *doc.solve_failures.entry(reason.clone()).or_default() += 1;
                 *out.stats.solve_failures.entry(reason).or_default() += 1;
@@ -880,9 +892,19 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                         .fold(0.0, f64::max);
                     let tol = BBOX_TOLERANCE.max(SOLVED_BBOX_FRACTION * size);
                     (0..2).all(|i| (0..3).all(|k| (stored[i][k] - bbox[i][k]).abs() <= tol))
+                        // A faceted stored box lies inside by the facet sag
+                        // of the form's arcs, the revolution's own among them
+                        // (its radius is at most the form's size).
+                        || (faceted_boxes
+                            && box_matches(
+                                stored,
+                                &bbox,
+                                ARC_FACET_SAG * size.max(form_arc_radius(f, &ctx)),
+                            ))
                 });
                 if !matches {
                     *doc.undecoded.entry(f.kind).or_default() += 1;
+                    doc.unsolved_boxes.extend(boxes.get(&f.id));
                     let reason = format!("{}:bbox_mismatch", f.kind);
                     *doc.solve_failures.entry(reason.clone()).or_default() += 1;
                     *out.stats.solve_failures.entry(reason).or_default() += 1;
@@ -915,7 +937,44 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             out.stats.voids_outside_solids += 1;
         }
     }
+    if let Some(host) = host_family {
+        adopt_orphan_document(&mut out, &family_owner, host);
+    }
     Ok(out)
+}
+
+/// A loaded family whose own element holds no document, while the file
+/// keeps exactly one other document with forms that no family names: in one
+/// Revit 2015 family measured, the loaded family's element (held by the
+/// host) and its document's own root element (`m_famId` -1, no document
+/// GUID) are two elements, and nothing in the records links them. Only the
+/// one unambiguous pairing is made.
+fn adopt_orphan_document(out: &mut FamilyDocuments, family_owner: &BTreeMap<i64, i64>, host: i64) {
+    let has_forms = |g: &Guid| {
+        out.docs
+            .get(g)
+            .is_some_and(|d| !d.solids.is_empty() || !d.unsolved_boxes.is_empty())
+    };
+    let used: BTreeSet<i64> = out
+        .instances
+        .values()
+        .filter_map(|p| out.symbol_family.get(&p.symbol).copied())
+        .collect();
+    let named: BTreeSet<i64> = out.symbol_family.values().copied().collect();
+    let without: Vec<i64> = used
+        .iter()
+        .copied()
+        .filter(|f| out.family_guid.get(f).is_none_or(|g| !has_forms(g)))
+        .collect();
+    let orphans: Vec<i64> = family_owner
+        .iter()
+        .filter(|(f, o)| **o < 0 && **f != host && !named.contains(f))
+        .map(|(f, _)| *f)
+        .filter(|f| has_forms(&owned_document(*f)))
+        .collect();
+    if let ([family], [root]) = (without.as_slice(), orphans.as_slice()) {
+        out.family_guid.insert(*family, owned_document(*root));
+    }
 }
 
 // ---- geometry -------------------------------------------------------------
@@ -1287,6 +1346,32 @@ fn is_hidden(x: &SchemaObject, names: &BTreeMap<u16, String>) -> bool {
 /// `IS_VISIBLE_PARAM`.
 const VISIBLE_PARAMETER: i64 = -1_006_205;
 
+/// A family instance's placement, from its `InstanceInfo`.
+fn pose_of(x: &SchemaObject, names: &BTreeMap<u16, String>) -> Option<InstancePose> {
+    let root = x.objects.first()?;
+    let info = x
+        .objects
+        .iter()
+        .find(|o| names.get(&o.tag).map(String::as_str) == Some("InstanceInfo"));
+    let trf = info
+        .and_then(|i| i.get("m_Trf"))
+        .and_then(|t| target(x, t))?;
+    let matrix = match trf.get("m_3x3")? {
+        Value::List(rows) if rows.len() == 3 => {
+            [vec3_of(&rows[0])?, vec3_of(&rows[1])?, vec3_of(&rows[2])?]
+        }
+        _ => return None,
+    };
+    Some(InstancePose {
+        symbol: id_of(root, "m_masterSymbolId")?,
+        info_symbol: info.and_then(|i| id_of(i, "m_symbolId")),
+        matrix,
+        origin: vec3_of(trf.get("m_or")?)?,
+        flipped_x: bool_of(root, "m_flippedX"),
+        flipped_y: bool_of(root, "m_flippedY"),
+    })
+}
+
 /// The solid-form classes.
 const FORM_CLASS_NAMES: [&str; 6] = [
     "ExtrusionElem",
@@ -1306,29 +1391,60 @@ fn owned_document(family: i64) -> Guid {
 }
 
 /// The family file's own `Family` element: of the families no other
-/// family's document holds (`m_famId` -1), the first. A nested family can be
-/// one too (a loaded family whose own `Family` element says -1), but it
-/// comes after the file's own, which Revit numbers first.
+/// family's document holds (`m_famId` -1) and no family symbol names (a
+/// loaded family's own element can say -1 too, but its symbols name it), the
+/// one that holds the most sketch, curve and form elements. A file can keep
+/// several such roots (one Revit 2015 family measured has four; the file's
+/// own holds 4,035 elements, the others 112 to 656).
 fn host_family_id(rf: &mut RevitFile, names: &BTreeMap<u16, String>) -> Result<Option<i64>> {
-    let Some(family) = names.iter().find(|(_, n)| *n == "Family").map(|(t, _)| *t) else {
-        return Ok(None);
-    };
-    let mut host: Option<i64> = None;
+    const COUNTED: [&str; 10] = [
+        "Family",
+        "FamilySymbol",
+        "SketchPlane",
+        "VarSketch",
+        "CurveElem",
+        "ExtrusionElem",
+        "SweepElem",
+        "RevolutionElem",
+        "BlendElem",
+        "SweptBlendElem",
+    ];
+    let tags: BTreeMap<u16, &str> = names
+        .iter()
+        .filter_map(|(t, n)| COUNTED.contains(&n.as_str()).then_some((*t, n.as_str())))
+        .collect();
+    let mut roots: BTreeSet<i64> = BTreeSet::new();
+    let mut named: BTreeSet<i64> = BTreeSet::new();
+    let mut held: BTreeMap<i64, usize> = BTreeMap::new();
     for_each_object_where(
         rf,
-        |frame, _| frame.header.tag == family,
+        |frame, _| tags.contains_key(&frame.header.tag),
         |x| {
-            let root_family = x
-                .objects
-                .first()
-                .is_some_and(|r| id_of(r, "m_famId").is_none_or(|f| f < 0));
-            let id = x.frame.header.id as i64;
-            if root_family && host.is_none_or(|h| id < h) {
-                host = Some(id);
+            let Some(root) = x.objects.first() else {
+                return;
+            };
+            let owner = id_of(root, "m_famId");
+            match tags.get(&x.frame.header.tag) {
+                Some(&"Family") if owner.is_none_or(|f| f < 0) => {
+                    roots.insert(x.frame.header.id as i64);
+                }
+                Some(&"FamilySymbol") => {
+                    if let Some(f) = id_of(root, "m_familyId") {
+                        named.insert(f);
+                    }
+                }
+                _ => {}
+            }
+            if let Some(f) = owner.filter(|f| *f > 0) {
+                *held.entry(f).or_default() += 1;
             }
         },
     )?;
-    Ok(host)
+    Ok(roots
+        .iter()
+        .filter(|r| !named.contains(r))
+        .max_by_key(|r| (held.get(r).copied().unwrap_or(0), std::cmp::Reverse(**r)))
+        .copied())
 }
 
 /// Whether a decoded box is the stored one: equal within [`BBOX_TOLERANCE`],
@@ -1336,6 +1452,20 @@ fn host_family_id(rf: &mut RevitFile, names: &BTreeMap<u16, String>) -> Result<O
 fn box_matches(stored: &Bounds, decoded: &Bounds, sag: f64) -> bool {
     let ok = |gap: f64| (-BBOX_TOLERANCE..=BBOX_TOLERANCE + sag).contains(&gap);
     (0..3).all(|k| ok(stored[0][k] - decoded[0][k]) && ok(decoded[1][k] - stored[1][k]))
+}
+
+/// The largest radius of the arcs and ellipses of a form's sketches.
+fn form_arc_radius(f: &RawForm, ctx: &SolveCtx) -> f64 {
+    f.sketch_ids
+        .values()
+        .filter_map(|id| ctx.sketches.get(id))
+        .flat_map(|s| &s.curves)
+        .filter_map(|c| match ctx.curves.get(c)? {
+            Curve::Arc { radius, .. } => Some(*radius),
+            Curve::Ellipse { a, b, .. } => Some(a.max(*b)),
+            Curve::Line { .. } => None,
+        })
+        .fold(0.0, f64::max)
 }
 
 /// The largest radius of an extrusion's arcs and ellipses (0 without).
