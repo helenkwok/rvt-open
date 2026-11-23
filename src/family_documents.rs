@@ -52,6 +52,10 @@ pub const BBOX_TOLERANCE: f64 = 1e-3;
 /// lay inside the decoded one missed by 0.0250 to 0.0251 of its largest
 /// radius, or less where that radius is feet long).
 pub const ARC_FACET_SAG: f64 = 0.0251;
+/// A revolution's stored box may lie inside its solved one by this share of
+/// its radius, at most half the solved box's largest side (1 - cos(pi/6): a
+/// turn shown in six facets).
+pub const REVOLUTION_FACET_SAG: f64 = 0.134;
 /// Last release whose stored boxes are read as faceted (2012 and later were
 /// not measured, and keep the exact match).
 const LAST_FACETED_BOX_RELEASE: u32 = 2011;
@@ -975,6 +979,20 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                         .fold(0.0, f64::max);
                     let tol = BBOX_TOLERANCE.max(SOLVED_BBOX_FRACTION * size);
                     (0..2).all(|i| (0..3).all(|k| (stored[i][k] - bbox[i][k]).abs() <= tol))
+                        // A revolution's stored box is that of its display,
+                        // which turns a small one in as few as six facets: it
+                        // lies inside by up to that sag of the radius (four
+                        // full revolutions of a Revit 2012 family measured:
+                        // stored boxes 0.0711 by 0.0616 ft, a hexagon across
+                        // its corners and across its flats).
+                        || (f.kind == "revolution"
+                            && box_matches(
+                                stored,
+                                &bbox,
+                                REVOLUTION_FACET_SAG
+                                    * (0..3).map(|k| bbox[1][k] - bbox[0][k]).fold(0.0, f64::max)
+                                    / 2.0,
+                            ))
                         // A faceted stored box lies inside by the facet sag
                         // of the form's arcs, the revolution's own among them
                         // (its radius is at most the form's size).
