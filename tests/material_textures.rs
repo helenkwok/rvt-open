@@ -328,3 +328,89 @@ fn usd_binds_textured_materials() {
     let plain = rvt::ifc::write_usda(&m).expect("usda");
     assert!(!plain.contains("def Material") && !plain.contains("primvars:st"));
 }
+
+#[test]
+fn ifcx_layer_carries_the_textures() {
+    let m = model();
+    let main = rvt::ifc::write_ifcx(&m).expect("ifcx");
+    let (layer, files) = rvt::ifc::write_ifcx_texture_layer(&m).expect("texture layer");
+    save("ifcx/textures.ifcx", main.as_bytes());
+    save("ifcx/textures.textures.ifcx", layer.as_bytes());
+    for (name, bytes) in &files {
+        save(&format!("ifcx/{name}"), bytes);
+    }
+    // the main file is the one written without the layer: colours only.
+    assert!(!main.contains(rvt::ifc::TEXTURE_COORDINATES_KEY));
+    assert!(!main.contains(rvt::ifc::GLTF_MATERIAL_KEY));
+    let main: serde_json::Value = serde_json::from_str(&main).expect("main json");
+    let layer: serde_json::Value = serde_json::from_str(&layer).expect("layer json");
+    assert_eq!(
+        layer["header"]["id"],
+        format!("{}/textures", main["header"]["id"].as_str().expect("id"))
+    );
+    assert_eq!(files.len(), 2, "one file per distinct image");
+    let mesh_points = |path: &str| {
+        main["data"]
+            .as_array()
+            .expect("data")
+            .iter()
+            .find(|n| n["path"] == path)
+            .and_then(|n| n["attributes"]["usd::usdgeom::mesh"]["points"].as_array())
+            .map(Vec::len)
+    };
+    let data = layer["data"].as_array().expect("layer data");
+    // the floor; the shelf's and the nested one's two parts; the mixed
+    // element's textured part; the bare one.
+    assert_eq!(data.len(), 7);
+    let schemas = layer["schemas"].as_object().expect("schemas");
+    let mut blended = 0;
+    for n in data {
+        let path = n["path"].as_str().expect("path");
+        let attributes = n["attributes"].as_object().expect("attributes");
+        assert!(attributes.keys().all(|k| schemas.contains_key(k)));
+        let st = attributes[rvt::ifc::TEXTURE_COORDINATES_KEY]
+            .as_array()
+            .expect("st");
+        assert_eq!(Some(st.len()), mesh_points(path), "one [s, t] per point");
+        let pbr = &attributes[rvt::ifc::GLTF_MATERIAL_KEY]["pbrMetallicRoughness"];
+        let file = pbr["baseColorTexture"].as_str().expect("image");
+        assert!(files.iter().any(|(f, _)| f == file));
+        if attributes[rvt::ifc::GLTF_MATERIAL_KEY]["alphaMode"] == "BLEND" {
+            blended += 1;
+            assert_eq!(pbr["baseColorFactor"][3], 0.5, "the glass's opacity");
+        }
+    }
+    assert_eq!(blended, 2, "the shelf's and the nested one's glass parts");
+    // a model without images: a layer without data or schemas.
+    let mut plain = m.clone();
+    for mat in &mut plain.materials {
+        mat.texture = None;
+    }
+    let (empty, none) = rvt::ifc::write_ifcx_texture_layer(&plain).expect("layer");
+    let empty: serde_json::Value = serde_json::from_str(&empty).expect("json");
+    assert!(none.is_empty());
+    assert_eq!(empty["data"], serde_json::json!([]));
+    assert_eq!(empty["schemas"], serde_json::json!({}));
+    // a coordinate that is not a number is written as 0 (JSON has no NaN).
+    let mut odd = m.clone();
+    if let Some(IfcEntity::BuildingElement {
+        solid_shape: Some(SolidShape::TriangulatedFaceSet { uvs, .. }),
+        ..
+    }) = odd.entities.first_mut()
+    {
+        uvs[1] = [f64::NAN, f64::INFINITY];
+    }
+    let (odd, _) = rvt::ifc::write_ifcx_texture_layer(&odd).expect("layer");
+    assert!(!odd.contains("null"));
+    assert!(odd.contains("[0.0,0.0],[0.0,0.0]"));
+}
+
+#[test]
+fn a_chunk_past_the_end_ends_the_alpha_search() {
+    // a 33-byte PNG whose first chunk claims 4 GiB.
+    let mut png = RGB_PNG[..33].to_vec();
+    png[8..12].copy_from_slice(&[0xff; 4]);
+    png[25] = 2;
+    let texture = MaterialTexture::new(png, None, None).expect("png");
+    assert!(!texture.has_alpha());
+}

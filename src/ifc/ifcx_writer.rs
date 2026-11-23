@@ -20,7 +20,10 @@
 //! - exporter diagnostics ([`DIAGNOSTIC_KEYS`]) can be split into a layer of
 //!   their own ([`write_ifcx_graph_layers`], `rvt-ifc --ifcx-diagnostics`),
 //!   so the main file does not change when only the RVT's layout does;
-//!   [`write_ifcx_graph`] is the two composed, one file.
+//!   [`write_ifcx_graph`] is the two composed, one file;
+//! - textures (texture coordinates and an image per textured mesh) are a
+//!   layer of their own ([`write_ifcx_graph_texture_layer`]): the IFC5 mesh
+//!   schema has no texture coordinates, so the main file keeps the colour.
 //!
 //! Output is a pure function of the model: byte-identical on a rerun.
 
@@ -286,6 +289,147 @@ fn write_split_to(
     let data = serde_json::to_string(&diag_data).expect("a JSON value serializes");
     let diagnostics = format!("{before}{}{after}", &data[1..data.len() - 1]);
     Ok((diagnostics, ledger))
+}
+
+// ------------------------------------------------------------ textures
+
+/// The key of a mesh's texture coordinates in the texture layer: one
+/// `[s, t]` per point of its `usd::usdgeom::mesh`, in the same order
+/// (OpenUSD's `primvars:st` with `vertex` interpolation), `t` up, linear
+/// over each triangle. The IFC5 mesh schema has no texture coordinates.
+pub const TEXTURE_COORDINATES_KEY: &str = "primvars::st";
+
+/// The key of a textured mesh's material in the texture layer: a glTF PBR
+/// material, as the IFC5 examples write one (`gltf::material`), whose
+/// `pbrMetallicRoughness.baseColorTexture` is the image's path relative to
+/// the layer (a glTF reader flips `t`: glTF's `v` points down).
+pub const GLTF_MATERIAL_KEY: &str = "gltf::material";
+
+/// The schemas the texture layer declares.
+fn texture_schemas() -> Map<String, Value> {
+    let real = json!({"dataType": "Real"});
+    let optional = |v: Value| {
+        let mut v = v;
+        v["optional"] = json!(true);
+        v
+    };
+    let mut schemas = Map::new();
+    schemas.insert(
+        TEXTURE_COORDINATES_KEY.into(),
+        json!({"value": {"dataType": "Array", "arrayRestrictions": {"value": {
+            "dataType": "Array", "arrayRestrictions": {"min": 2, "max": 2, "value": real.clone()}}}}}),
+    );
+    schemas.insert(
+        GLTF_MATERIAL_KEY.into(),
+        json!({"value": {"dataType": "Object", "objectRestrictions": {"values": {
+            "pbrMetallicRoughness": {"dataType": "Object", "optional": false,
+                "objectRestrictions": {"values": {
+                    "baseColorFactor": optional(json!({"dataType": "Array",
+                        "arrayRestrictions": {"min": 4, "max": 4, "value": real.clone()}})),
+                    "baseColorTexture": optional(json!({"dataType": "String"})),
+                    "metallicFactor": optional(real.clone()),
+                    "roughnessFactor": optional(real.clone()),
+                }}},
+            "alphaMode": optional(json!({"dataType": "Enum",
+                "enumRestrictions": {"options": ["OPAQUE", "MASK", "BLEND"]}})),
+            "doubleSided": optional(json!({"dataType": "Boolean"})),
+        }}}}),
+    );
+    schemas
+}
+
+/// The textures of `model` as an IFCX layer over [`write_ifcx`]'s file, and
+/// the images it refers to. See [`write_ifcx_graph_texture_layer`].
+pub fn write_ifcx_texture_layer(
+    model: &IfcModel,
+) -> Result<(String, Vec<super::TextureFile>), IfcxError> {
+    write_ifcx_graph_texture_layer(&IfcxGraph::from_model(model, GraphOptions::default()), None)
+}
+
+/// The textures of the graph as an IFCX layer to compose over the main file
+/// (header id `<id>/textures`): each mesh drawn in a textured material gets
+/// its texture coordinates ([`TEXTURE_COORDINATES_KEY`]) and a glTF material
+/// ([`GLTF_MATERIAL_KEY`]) reading `textures/<hash>.<ext>`; the images come
+/// back to be written there, once each. The main file does not change, so a
+/// reader that leaves the layer out still draws the material's colour. A
+/// model without textures gives a layer without data. `timestamp` as
+/// [`write_ifcx_graph_layers_at`].
+pub fn write_ifcx_graph_texture_layer(
+    graph: &IfcxGraph,
+    timestamp: Option<i64>,
+) -> Result<(String, Vec<super::TextureFile>), IfcxError> {
+    if let Some(e) = graph.errors.first() {
+        return Err(IfcxError(e.clone()));
+    }
+    let mut data = Vec::new();
+    let mut files: Vec<super::TextureFile> = Vec::new();
+    // each textured material once: its image's path and its glTF material.
+    let mut materials: std::collections::BTreeMap<usize, Option<Value>> = Default::default();
+    for (path, node) in graph.nodes.iter().filter(|(_, n)| n.ifcx) {
+        let Some(mesh) = node.mesh.as_deref() else {
+            continue;
+        };
+        if mesh.st.is_empty() || mesh.st.len() != mesh.points.len() {
+            continue;
+        }
+        let Some(m) = mesh.texture else {
+            continue;
+        };
+        let material = materials.entry(m).or_insert_with(|| {
+            let info = graph.material(m)?;
+            let texture = info.texture.as_ref()?;
+            let file = format!("textures/{}", texture.file_name());
+            if !files.iter().any(|(f, _)| *f == file) {
+                files.push((file.clone(), texture.image.clone()));
+            }
+            // The image is the colour; the factor keeps only the opacity.
+            let alpha = 1.0 - info.transparency.unwrap_or(0.0).clamp(0.0, 1.0);
+            let mut material = json!({"pbrMetallicRoughness": {
+                "baseColorFactor": [1.0, 1.0, 1.0, alpha],
+                "baseColorTexture": file,
+                "metallicFactor": 0.0,
+            }});
+            if alpha < 1.0 || texture.has_alpha() {
+                material["alphaMode"] = json!("BLEND");
+                material["doubleSided"] = json!(true);
+            }
+            Some(material)
+        });
+        let Some(material) = material.clone() else {
+            continue;
+        };
+        // a coordinate that is not a number is 0, as the IFC4 writer does:
+        // JSON has no NaN, and the schema asks for reals.
+        let st: Vec<[f64; 2]> = mesh
+            .st
+            .iter()
+            .map(|p| p.map(|c| if c.is_finite() { c } else { 0.0 }))
+            .collect();
+        let mut attributes = Map::new();
+        attributes.insert(TEXTURE_COORDINATES_KEY.into(), json!(st));
+        attributes.insert(GLTF_MATERIAL_KEY.into(), material);
+        data.push(json!({"path": path, "attributes": attributes}));
+    }
+    let schemas = if data.is_empty() {
+        Map::new()
+    } else {
+        texture_schemas()
+    };
+    let doc = json!({
+        "header": {
+            "id": format!("{}/textures", graph.id),
+            "ifcxVersion": "ifcx_alpha",
+            "dataVersion": "1.0.0",
+            "author": "rvt-open",
+            "timestamp": super::step_writer::iso_timestamp_from(
+                timestamp.unwrap_or_else(default_timestamp)),
+        },
+        "imports": [{"uri": IFC_IMPORT}, {"uri": PROP_IMPORT}, {"uri": USD_IMPORT}],
+        "schemas": schemas,
+        "data": data,
+    });
+    let text = serde_json::to_string(&doc).map_err(|e| IfcxError(format!("writing: {e}")))?;
+    Ok((text, files))
 }
 
 // ---------------------------------------------------------------- ids
