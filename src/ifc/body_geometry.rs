@@ -48,6 +48,9 @@ pub struct Mesh {
     /// material Revit draws that face in ([`NO_FACE_MATERIAL`]: the
     /// element's own colour). Empty, or one per triangle.
     pub face_materials: Vec<usize>,
+    /// per vertex, its texture coordinates (`[u, v]`, `v` up). Empty, or
+    /// one per vertex.
+    pub uvs: Vec<[f64; 2]>,
 }
 
 /// A [`Mesh::face_materials`] entry for a face drawn in its element's colour.
@@ -69,6 +72,18 @@ impl Mesh {
             let mut theirs = other.face_materials;
             pad(&mut theirs, other.triangles.len());
             self.face_materials.extend(theirs);
+        }
+        let mine = !self.uvs.is_empty() && self.uvs.len() == self.vertices.len();
+        let theirs_textured = !other.uvs.is_empty() && other.uvs.len() == other.vertices.len();
+        if mine || theirs_textured {
+            let mut theirs = other.uvs;
+            if !mine {
+                self.uvs = vec![[0.0; 2]; self.vertices.len()];
+            }
+            theirs.resize(other.vertices.len(), [0.0; 2]);
+            self.uvs.extend(theirs);
+        } else {
+            self.uvs.clear();
         }
         self.vertices.extend(other.vertices);
         self.triangles.extend(
@@ -1793,10 +1808,15 @@ pub fn solid_mesh(shape: &SolidShape) -> Option<Mesh> {
             } else {
                 face_materials
             };
+            let uvs = match shape {
+                SolidShape::TriangulatedFaceSet { uvs, .. } if uvs.len() == count => uvs.clone(),
+                _ => Vec::new(),
+            };
             let mesh = Mesh {
                 vertices: vertices_feet.clone(),
                 triangles,
                 face_materials,
+                uvs,
             };
             (!mesh.is_empty()).then(|| mesh.outward_or_two_sided())
         }
@@ -2689,6 +2709,7 @@ mod tests {
             vertices_feet: vertices,
             triangles,
             face_materials,
+            uvs: Vec::new(),
         };
         let mesh = solid_mesh(&shape).expect("mesh");
         assert_eq!(mesh.triangles.len(), 24, "drawn once, not two-sided");

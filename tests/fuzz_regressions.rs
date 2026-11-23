@@ -828,6 +828,7 @@ fn step_writer_handles_adversarial_model_strings() {
                 name,
                 color_packed: Some(0x00ff00ff),
                 transparency: Some(0.25),
+                texture: None,
             }],
             material_layer_sets: Vec::new(),
             material_profile_sets: Vec::new(),

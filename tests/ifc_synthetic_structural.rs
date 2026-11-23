@@ -51,11 +51,13 @@ fn synthetic_structural_ifc_has_expected_entity_counts() {
         name: "A992 Steel".into(),
         color_packed: None,
         transparency: None,
+        texture: None,
     };
     let oak = MaterialInfo {
         name: "Wood - Oak".into(),
         color_packed: None,
         transparency: None,
+        texture: None,
     };
 
     // IFC-30: a shared MaterialProfileSet for the two beams.

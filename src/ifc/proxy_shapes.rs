@@ -307,6 +307,7 @@ pub fn attach(model: &mut IfcModel) -> ProxyReport {
             vertices_feet: m.v,
             triangles: m.t,
             face_materials: Vec::new(),
+            uvs: Vec::new(),
         });
         for p in &mut set.properties {
             if p.name == "BodySource" {

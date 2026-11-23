@@ -2732,6 +2732,7 @@ fn material_info_from_decoded(decoded: &DecodedElement) -> Option<MaterialInfo> 
         name,
         color_packed: material.color,
         transparency: material.transparency,
+        texture: None,
     })
 }
 
@@ -8761,6 +8762,7 @@ fn stair_run_pieces_solid(
         vertices_feet,
         triangles,
         face_materials: Vec::new(),
+        uvs: Vec::new(),
     }
 }
 

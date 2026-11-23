@@ -2788,6 +2788,7 @@ pub(crate) fn element_shape(
             vertices_feet: vertices,
             triangles,
             face_materials,
+            uvs: Vec::new(),
         },
         dropped,
     ))
@@ -3048,6 +3049,7 @@ fn local_body(
             vertices_feet: vertices,
             triangles,
             face_materials,
+            uvs: Vec::new(),
         },
         count,
         dropped,
@@ -3252,6 +3254,7 @@ pub(crate) fn material_index_for(
         name: found.name.clone(),
         color_packed: Some(packed),
         transparency: shading_transparency(found),
+        texture: None,
     });
     materials.len() - 1
 }
@@ -4327,6 +4330,7 @@ fn raise_embed_host(
         vertices_feet: vertices,
         triangles,
         face_materials: Vec::new(),
+        uvs: Vec::new(),
     });
     if let Some(set) = property_set {
         let mut named = false;

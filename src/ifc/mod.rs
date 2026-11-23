@@ -154,7 +154,10 @@ pub use ifcx_writer::{
     write_ifcx_with_ledger,
 };
 pub use step_writer::{write_step, write_step_graph};
-pub use usd_writer::{write_usda, write_usda_graph, write_usdc, write_usdc_graph};
+pub use usd_writer::{
+    TextureFile, write_usda, write_usda_graph, write_usda_graph_textured, write_usda_textured,
+    write_usdc, write_usdc_graph, write_usdc_graph_textured, write_usdc_textured,
+};
 
 /// How the two ends of a wall's location curve are joined
 /// ([`DecodedExportDiagnostics::wall_join_types`]).
@@ -490,6 +493,92 @@ pub struct MaterialInfo {
     pub color_packed: Option<u32>,
     /// Surface transparency in the 0..1 range. 0 = fully opaque.
     pub transparency: Option<f64>,
+    /// The image drawn on the surface, where the material has one. The
+    /// colour stays the material's average, for formats that draw no image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<MaterialTexture>,
+}
+
+/// A material's image: a PNG or JPEG file's bytes as stored, placed on a face
+/// by the texture coordinates of its mesh
+/// ([`entities::SolidShape::TriangulatedFaceSet`]'s `uvs`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MaterialTexture {
+    /// The image file's bytes.
+    pub image: Vec<u8>,
+    /// `image/png` or `image/jpeg`.
+    pub mime_type: String,
+    /// The image's file name, where the source names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The width and height one repeat of the image covers on a face, feet,
+    /// where the source gives it (the texture coordinates already hold it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_feet: Option<[f64; 2]>,
+}
+
+impl MaterialTexture {
+    /// A texture of a PNG or JPEG image, its type read from its first
+    /// bytes; `None` for any other image.
+    pub fn new(image: Vec<u8>, name: Option<String>, size_feet: Option<[f64; 2]>) -> Option<Self> {
+        let mime_type = if image.starts_with(b"\x89PNG\r\n\x1a\n") {
+            "image/png"
+        } else if image.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            "image/jpeg"
+        } else {
+            return None;
+        };
+        Some(Self {
+            image,
+            mime_type: mime_type.to_string(),
+            name,
+            size_feet,
+        })
+    }
+
+    /// A file name for the image, the same for the same bytes: 16 hex digits
+    /// of their 64-bit FNV-1a hash and the extension. Writers that keep
+    /// images beside the model (OBJ, OpenUSD) name them so.
+    pub fn file_name(&self) -> String {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in &self.image {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        format!("{h:016x}.{}", self.extension())
+    }
+
+    /// `png` or `jpg`.
+    pub fn extension(&self) -> &'static str {
+        if self.mime_type == "image/png" {
+            "png"
+        } else {
+            "jpg"
+        }
+    }
+
+    /// Whether the image can hold transparency: a PNG with an alpha channel
+    /// (colour type 4 or 6) or a transparency chunk (`tRNS`).
+    pub fn has_alpha(&self) -> bool {
+        let png = &self.image;
+        if self.mime_type != "image/png" || png.len() < 33 {
+            return false;
+        }
+        if matches!(png[25], 4 | 6) {
+            return true;
+        }
+        let mut at = 8;
+        while at + 8 <= png.len() {
+            let len = u32::from_be_bytes([png[at], png[at + 1], png[at + 2], png[at + 3]]) as usize;
+            match &png[at + 4..at + 8] {
+                b"tRNS" => return true,
+                b"IDAT" | b"IEND" => return false,
+                _ => {}
+            }
+            at = at.saturating_add(12).saturating_add(len);
+        }
+        false
+    }
 }
 
 /// Stable schema version for [`ExportDiagnostics`] JSON.
@@ -3057,6 +3146,7 @@ fn material_constituent_sets_from_types(
                             name: name.clone(),
                             color_packed: None,
                             transparency: None,
+                            texture: None,
                         });
                         materials.len() - 1
                     }
@@ -3094,6 +3184,7 @@ fn layer_material_index(band: &LayerBand, name: &str, materials: &mut Vec<Materi
                 name: name.to_string(),
                 color_packed: band.color_packed,
                 transparency: band.color_packed.map(|_| band.transparency),
+                texture: None,
             });
             materials.len() - 1
         }
@@ -3336,6 +3427,7 @@ fn material_layer_sets_from_layers(
                                 name: name.clone(),
                                 color_packed: band.color_packed,
                                 transparency: band.color_packed.map(|_| band.transparency),
+                                texture: None,
                             });
                             materials.len() - 1
                         }

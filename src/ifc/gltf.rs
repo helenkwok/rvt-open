@@ -58,6 +58,13 @@ pub struct GltfDocument {
     pub buffer_views: Vec<BufferView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub accessors: Vec<Accessor>,
+    /// Textured materials' images, each a buffer view of its file's bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<Image>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samplers: Vec<Sampler>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub textures: Vec<Texture>,
     /// `EXT_mesh_gpu_instancing`, `EXT_meshopt_compression`.
     #[serde(
         rename = "extensionsUsed",
@@ -307,6 +314,39 @@ pub struct Primitive {
     pub mode: u32,
 }
 
+/// An image stored in the binary chunk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    #[serde(rename = "bufferView")]
+    pub buffer_view: usize,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// How a texture is sampled: repeated both ways (glTF's default wrap),
+/// filtered linearly, mipmapped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sampler {
+    #[serde(rename = "magFilter")]
+    pub mag_filter: u32,
+    #[serde(rename = "minFilter")]
+    pub min_filter: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Texture {
+    pub sampler: usize,
+    pub source: usize,
+}
+
+/// A material's reference to a texture, read through `TEXCOORD_0`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextureInfo {
+    pub index: usize,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Material {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,6 +360,10 @@ pub struct Material {
     /// Where the base colour and its alpha come from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extras: Option<MaterialExtras>,
+    /// For a textured material, the sRGB colour (0 to 1) of the material as
+    /// a format that draws no image shows it: its average. Not written.
+    #[serde(skip)]
+    pub flat_rgba: Option<[f32; 4]>,
 }
 
 /// Where a material's colour and its alpha come from, each [`SOURCE_FILE`] or
@@ -368,6 +412,12 @@ pub struct PbrMetallicRoughness {
     pub metallic_factor: f32,
     #[serde(rename = "roughnessFactor")]
     pub roughness_factor: f32,
+    #[serde(
+        rename = "baseColorTexture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub base_color_texture: Option<TextureInfo>,
 }
 
 impl Default for PbrMetallicRoughness {
@@ -376,6 +426,7 @@ impl Default for PbrMetallicRoughness {
             base_color_factor: [0.75, 0.75, 0.75, 1.0],
             metallic_factor: 0.0,
             roughness_factor: 0.6,
+            base_color_texture: None,
         }
     }
 }
@@ -558,34 +609,43 @@ impl From<DisplayOptions> for GltfOptions {
     }
 }
 
-/// `(POSITION, indices, NORMAL, feature-edge LINES indices)` accessors of
-/// one mesh part.
-type Accessors = (usize, usize, Option<usize>, Option<usize>);
+/// `(POSITION, indices, NORMAL, feature-edge LINES indices, TEXCOORD_0)`
+/// accessors of one mesh part.
+type Accessors = (usize, usize, Option<usize>, Option<usize>, Option<usize>);
 
 /// An instanced group: (0 a representation map | 1 a symbol mesh of a part,
 /// its index, the element material).
 type InstanceKey = (u8, usize, Option<usize>);
 
 /// The parts' triangles, each in its face material else
-/// `material`, and their feature edges in black.
+/// `material`, and their feature edges in black. `textured` is, per model
+/// material, the copy that draws its image: a part with texture coordinates
+/// takes it.
 fn primitives_of(
     doc: &mut GltfDocument,
     edge_material: &mut Option<usize>,
     parts: &[(Accessors, Option<usize>)],
     material: Option<usize>,
-    materials: usize,
+    textured: &[Option<usize>],
 ) -> Vec<Primitive> {
     let mut out = Vec::new();
-    for ((position, indices, normal, edges), face) in parts {
+    for ((position, indices, normal, edges, uv), face) in parts {
         let mut attributes = std::collections::BTreeMap::new();
         attributes.insert("POSITION".into(), *position);
         if let Some(normal) = normal {
             attributes.insert("NORMAL".into(), *normal);
         }
+        let mut drawn = face.filter(|m| *m < textured.len()).or(material);
+        if let Some(uv) = uv {
+            if let Some(t) = drawn.and_then(|m| textured.get(m).copied().flatten()) {
+                attributes.insert("TEXCOORD_0".into(), *uv);
+                drawn = Some(t);
+            }
+        }
         out.push(Primitive {
             attributes: attributes.clone(),
             indices: Some(*indices),
-            material: face.filter(|m| *m < materials).or(material),
+            material: drawn,
             mode: 4, // TRIANGLES
         });
         if let Some(edges) = edges {
@@ -702,6 +762,9 @@ fn mesh_hash(mesh: &body_geometry::Mesh) -> u64 {
     }
     mesh.triangles.hash(&mut h);
     mesh.face_materials.hash(&mut h);
+    for uv in &mesh.uvs {
+        uv.map(f64::to_bits).hash(&mut h);
+    }
     h.finish()
 }
 
@@ -843,6 +906,7 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
                 ],
                 metallic_factor: pbr.metallic,
                 roughness_factor: pbr.roughness,
+                base_color_texture: None,
             },
             double_sided: pbr.double_sided,
             alpha_mode: if pbr.alpha < 1.0 {
@@ -856,8 +920,60 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
                 read_or_chosen(m.color_packed.is_some()),
                 read_or_chosen(m.transparency.is_some()),
             ),
+            flat_rgba: None,
         };
         doc.materials.push(mat);
+    }
+    // A textured material's image, drawn by the primitives that carry
+    // texture coordinates, through a copy of the material that reads it.
+    let mut textured: Vec<Option<usize>> = vec![None; model.materials.len()];
+    for (i, m) in model.materials.iter().enumerate() {
+        let Some(t) = &m.texture else {
+            continue;
+        };
+        let off = bin.len();
+        bin.extend_from_slice(&t.image);
+        pad_to_4(&mut bin);
+        doc.buffer_views.push(BufferView {
+            buffer: 0,
+            byte_offset: off,
+            byte_length: t.image.len(),
+            target: None,
+            byte_stride: None,
+            extensions: None,
+        });
+        doc.images.push(Image {
+            buffer_view: doc.buffer_views.len() - 1,
+            mime_type: t.mime_type.clone(),
+            name: t.name.clone(),
+        });
+        if doc.samplers.is_empty() {
+            // LINEAR, LINEAR_MIPMAP_LINEAR
+            doc.samplers.push(Sampler {
+                mag_filter: 9729,
+                min_filter: 9987,
+            });
+        }
+        doc.textures.push(Texture {
+            sampler: 0,
+            source: doc.images.len() - 1,
+        });
+        let mut mat = doc.materials[i].clone();
+        let a = mat.pbr_metallic_roughness.base_color_factor[3];
+        let p = m.color_packed.unwrap_or(0x00BF_BFBF);
+        let c = |s: u32| ((p >> s) & 0xff) as f32 / 255.0;
+        mat.flat_rgba = Some([c(0), c(8), c(16), a]);
+        // The image is the colour; the factor keeps only the alpha.
+        mat.pbr_metallic_roughness.base_color_factor = [1.0, 1.0, 1.0, a];
+        mat.pbr_metallic_roughness.base_color_texture = Some(TextureInfo {
+            index: doc.textures.len() - 1,
+        });
+        if t.has_alpha() {
+            mat.alpha_mode = Some("BLEND".into());
+            mat.double_sided = true;
+        }
+        doc.materials.push(mat);
+        textured[i] = Some(doc.materials.len() - 1);
     }
 
     // An element with no material of its own takes its category's colour,
@@ -1130,7 +1246,7 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
                         &mut edge_material,
                         &[(accessors, None)],
                         Some(material),
-                        model.materials.len(),
+                        &textured,
                     );
                     let mesh_idx = doc.meshes.len();
                     doc.meshes.push(Mesh {
@@ -1191,7 +1307,7 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
                         // Translate · rotate about Z · scale the unit cube, whose
                         // base sits half its height below its centre.
                         Some((
-                            vec![((0, 1, Some(2), cube_edges), None)],
+                            vec![((0, 1, Some(2), cube_edges, None), None)],
                             [
                                 c * sx,
                                 s * sx,
@@ -1368,7 +1484,7 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
                             &mut edge_material,
                             &accessors,
                             material,
-                            model.materials.len(),
+                            &textured,
                         );
                         let mesh_idx = doc.meshes.len();
                         doc.meshes.push(Mesh {
@@ -1387,13 +1503,8 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
                 if parts.is_empty() {
                     (None, None, children)
                 } else {
-                    let primitives = primitives_of(
-                        &mut doc,
-                        &mut edge_material,
-                        &parts,
-                        material,
-                        model.materials.len(),
-                    );
+                    let primitives =
+                        primitives_of(&mut doc, &mut edge_material, &parts, material, &textured);
                     let mesh_idx = doc.meshes.len();
                     doc.meshes.push(Mesh {
                         primitives,
@@ -1443,13 +1554,7 @@ pub fn build_gltf_with(model: &IfcModel, opts: &GltfOptions) -> (GltfDocument, V
     // where it draws several elements.
     for (key, (parts, members)) in instanced {
         let (_, _, material) = key;
-        let primitives = primitives_of(
-            &mut doc,
-            &mut edge_material,
-            &parts,
-            material,
-            model.materials.len(),
-        );
+        let primitives = primitives_of(&mut doc, &mut edge_material, &parts, material, &textured);
         let (first, first_name, first_matrix) = &members[0];
         let first_type = match &model.entities[*first] {
             IfcEntity::BuildingElement { ifc_type, .. } => ifc_type.clone(),
@@ -1627,10 +1732,12 @@ fn colour_material(name: String, rgb: u32, alpha: f32, source: &str) -> Material
             base_color_factor: [linear(16), linear(8), linear(0), alpha],
             metallic_factor: 0.0,
             roughness_factor: 0.8,
+            base_color_texture: None,
         },
         double_sided: alpha < 1.0,
         alpha_mode: (alpha < 1.0).then(|| "BLEND".into()),
         extras: sources(source, source),
+        flat_rgba: None,
     }
 }
 
@@ -1719,6 +1826,8 @@ fn push_mesh(
     if omit_normals {
         smooth.iter_mut().for_each(|s| *s = true);
     }
+    let textured = !mesh.uvs.is_empty() && mesh.uvs.len() == mesh.vertices.len();
+    let mut texcoords: Vec<f32> = Vec::new();
     let mut welded: std::collections::HashMap<(u32, [u32; 3]), u32> = Default::default();
     for (tri, fnrm) in mesh.triangles.iter().zip(&face_normals) {
         for &v in tri {
@@ -1755,6 +1864,11 @@ fn push_mesh(
                     let at = (positions.len() / 3) as u32;
                     positions.extend_from_slice(&q);
                     normals.extend_from_slice(&n);
+                    if textured {
+                        let [u, v] = mesh.uvs[vi];
+                        let f = |x: f64| if x.is_finite() { x as f32 } else { 0.0 };
+                        texcoords.extend_from_slice(&[f(u), f(1.0 - v)]);
+                    }
                     welded.insert(key, at);
                     at
                 }
@@ -1858,7 +1972,20 @@ fn push_mesh(
             push_indices(doc, bin, &feature_edges(&points, &tris), short)
         })
         .flatten();
-    Some((position, index, normal, edges))
+    // texture coordinates, glTF's `v` down from the image's top edge.
+    let uv = (!texcoords.is_empty()).then(|| {
+        let view = view(doc, bin, &bytemuck_cast_f32(&texcoords), 34962);
+        acc(
+            doc,
+            view,
+            5126,
+            vertex_count,
+            "VEC2",
+            Vec::new(),
+            Vec::new(),
+        )
+    });
+    Some((position, index, normal, edges, uv))
 }
 
 /// Indices as an element-array accessor, 16-bit when `short` (lossless:

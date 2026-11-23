@@ -38,6 +38,9 @@ pub struct Mesh {
     pub shading: Vec<u32>,
     /// Per shading index, an index into [`Scene::materials`].
     pub shaders: Vec<usize>,
+    /// Per position, its glTF texture coordinates (`v` down), where any
+    /// part of the mesh has them; else empty. The U3D writer leaves them out.
+    pub uvs: Vec<[f32; 2]>,
 }
 
 /// A placed mesh: one model node.

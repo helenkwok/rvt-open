@@ -58,6 +58,7 @@ impl SymbolMesh {
             vertices_feet: self.vertices_feet.clone(),
             triangles: self.triangles.clone(),
             face_materials: self.face_materials.clone(),
+            uvs: Vec::new(),
         }
     }
 }
@@ -232,6 +233,7 @@ pub fn register_parts(
             vertices_feet: local,
             triangles,
             face_materials,
+            uvs: Vec::new(),
         });
     }
     model.instancing.instances.insert(index, drawn);
@@ -249,6 +251,7 @@ pub fn parts_of(model: &IfcModel, index: usize) -> Option<&[(usize, Frame)]> {
                 vertices_feet,
                 triangles,
                 face_materials,
+                ..
             }),
         ..
     } = model.entities.get(index)?
@@ -407,6 +410,7 @@ pub fn body_mesh(mesh: &SymbolMesh) -> Option<super::body_geometry::Mesh> {
         } else {
             Vec::new()
         },
+        uvs: Vec::new(),
     };
     (!out.triangles.is_empty()).then_some(out)
 }

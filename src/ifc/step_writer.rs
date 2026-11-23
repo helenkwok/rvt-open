@@ -17,9 +17,10 @@
 //! dependency, fully `#![deny(unsafe_code)]`-clean.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
 
 use super::IfcModel;
-use super::entities::{Extrusion, OpeningCut, PropertySet, SolidShape};
+use super::entities::{BrepTriangle, Extrusion, OpeningCut, PropertySet, SolidShape};
 
 /// Options controlling STEP serialization.
 #[derive(Debug, Clone, Default)]
@@ -721,6 +722,11 @@ struct StepWriter<'a> {
     /// each model material's sRGB colour (`0x00BBGGRR`), for
     /// face-coloured triangle meshes (`IfcIndexedColourMap`).
     material_colours: Vec<Option<u32>>,
+    /// each model material's `IfcBlobTexture`, for textured triangle meshes
+    /// (`IfcIndexedTriangleTextureMap`).
+    material_textures: Vec<Option<usize>>,
+    /// The material of the element whose body is being written.
+    element_material: Option<usize>,
     /// Whether an `IfcSpace` keeps its material association, which IFC4's
     /// `IfcRelAssociatesMaterial.AllowedElements` does not allow and Revit's
     /// export writes: [`write_step_with_space_materials`].
@@ -897,6 +903,8 @@ impl StepWriter<'_> {
             next_id: 1,
             timestamp,
             material_colours: Vec::new(),
+            material_textures: Vec::new(),
+            element_material: None,
             space_materials: false,
             non_finite: None,
         }
@@ -1511,6 +1519,9 @@ impl StepWriter<'_> {
         solid_position: usize,
         z_axis: usize,
     ) -> (Vec<usize>, &'static str) {
+        if let Some(parts) = self.split_by_texture(shape) {
+            return self.emit_solid_items(&parts, solid_position, z_axis);
+        }
         match shape {
             SolidShape::Compound(items) if !items.is_empty() => {
                 let kinds: std::collections::BTreeSet<&'static str> =
@@ -1591,6 +1602,118 @@ impl StepWriter<'_> {
             map,
             format!("IFCINDEXEDCOLOURMAP(#{set_id},$,#{list},({index}))"),
         );
+    }
+
+    /// The textured material a triangle mesh draws (each kept triangle's
+    /// face material, else the element's): the one most of its textured
+    /// triangles take.
+    fn texture_of(&self, face_materials: &[usize], kept: &[usize]) -> Option<usize> {
+        let mut counts: BTreeMap<usize, usize> = Default::default();
+        for &k in kept {
+            let m = face_materials
+                .get(k)
+                .copied()
+                .filter(|m| *m < self.material_textures.len())
+                .or(self.element_material);
+            if let Some(m) =
+                m.filter(|m| self.material_textures.get(*m).copied().flatten().is_some())
+            {
+                *counts.entry(m).or_default() += 1;
+            }
+        }
+        counts.into_iter().max_by_key(|(_, n)| *n).map(|(m, _)| m)
+    }
+
+    /// An `IfcIndexedTriangleTextureMap` laying its textured material's
+    /// image on the face set `set_id` by its vertices' texture coordinates
+    /// (`IfcTextureVertexList`, indexed as the points are).
+    fn emit_texture_map(
+        &mut self,
+        set_id: usize,
+        face_materials: &[usize],
+        kept: &[usize],
+        uvs: &[[f64; 2]],
+        count: usize,
+    ) {
+        if uvs.len() != count || count == 0 {
+            return;
+        }
+        let Some(blob) = self
+            .texture_of(face_materials, kept)
+            .and_then(|m| self.material_textures[m])
+        else {
+            return;
+        };
+        let f = |x: f64| if x.is_finite() { x } else { 0.0 };
+        let list = uvs
+            .iter()
+            .map(|[u, v]| format!("({:.6},{:.6})", f(*u), f(*v)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let vertices = self.id();
+        self.emit_entity(vertices, format!("IFCTEXTUREVERTEXLIST(({list}))"));
+        let map = self.id();
+        self.emit_entity(
+            map,
+            format!("IFCINDEXEDTRIANGLETEXTUREMAP((#{blob}),#{set_id},#{vertices},$)"),
+        );
+    }
+
+    /// A textured triangle mesh whose triangles draw more than one textured
+    /// material, as one mesh per face material (an IFC4 texture map lays one
+    /// image on a whole face set); `None` for any other shape.
+    fn split_by_texture(&self, shape: &SolidShape) -> Option<SolidShape> {
+        let SolidShape::TriangulatedFaceSet {
+            vertices_feet,
+            triangles,
+            face_materials,
+            uvs,
+        } = shape
+        else {
+            return None;
+        };
+        if uvs.len() != vertices_feet.len() || face_materials.len() != triangles.len() {
+            return None;
+        }
+        let textured = |m: &usize| self.material_textures.get(*m).copied().flatten().is_some();
+        let mut seen: Vec<usize> = Vec::new();
+        for m in face_materials {
+            if !seen.contains(m) {
+                seen.push(*m);
+            }
+        }
+        if seen.iter().filter(|m| textured(m)).count() < 2 {
+            return None;
+        }
+        let count = vertices_feet.len();
+        let parts = seen
+            .into_iter()
+            .map(|m| {
+                let mut remap: HashMap<u32, u32> = Default::default();
+                let (mut v, mut t, mut uv) = (Vec::new(), Vec::new(), Vec::new());
+                for (tri, _) in triangles.iter().zip(face_materials).filter(|(tri, f)| {
+                    **f == m && [tri.0, tri.1, tri.2].iter().all(|&i| (i as usize) < count)
+                }) {
+                    let mut at = |i: u32| {
+                        *remap.entry(i).or_insert_with(|| {
+                            v.push(vertices_feet[i as usize]);
+                            uv.push(uvs[i as usize]);
+                            (v.len() - 1) as u32
+                        })
+                    };
+                    let (a, b, c) = (at(tri.0), at(tri.1), at(tri.2));
+                    t.push(BrepTriangle(a, b, c));
+                }
+                let n = t.len();
+                SolidShape::TriangulatedFaceSet {
+                    vertices_feet: v,
+                    triangles: t,
+                    face_materials: vec![m; n],
+                    uvs: uv,
+                }
+            })
+            .collect();
+        Some(SolidShape::Compound(parts))
     }
 
     /// The union of solids `first` and `rest`, as nested `IfcBooleanResult`s.
@@ -1836,6 +1959,7 @@ impl StepWriter<'_> {
                             vertices_feet: Vec::new(),
                             triangles: Vec::new(),
                             face_materials: Vec::new(),
+                            uvs: Vec::new(),
                         },
                         solid_position,
                         z_axis,
@@ -1958,6 +2082,7 @@ impl StepWriter<'_> {
                 vertices_feet,
                 triangles,
                 face_materials,
+                uvs,
             } => {
                 let points = vertices_feet
                     .iter()
@@ -1991,6 +2116,7 @@ impl StepWriter<'_> {
                     format!("IFCTRIANGULATEDFACESET(#{list_id},$,$,({indices}),$)"),
                 );
                 self.emit_face_colours(set_id, face_materials, &kept);
+                self.emit_texture_map(set_id, face_materials, &kept, uvs, count);
                 (set_id, "Tessellation")
             }
             SolidShape::SweptPath {
@@ -2295,6 +2421,7 @@ impl StepWriter<'_> {
 
     fn emit_data(&mut self, model: &IfcModel) {
         self.material_colours = model.materials.iter().map(|m| m.color_packed).collect();
+        self.material_textures = vec![None; model.materials.len()];
         self.emit_line("DATA;");
         let seed = global_id_seed(model);
         let ns = guid_namespace(model);
@@ -2772,7 +2899,7 @@ impl StepWriter<'_> {
         // is valid IFC4 — we don't want to emit empty rendering
         // records when there's nothing to render.
         let mut material_ids: Vec<usize> = Vec::with_capacity(model.materials.len());
-        for mat in &model.materials {
+        for (mat_index, mat) in model.materials.iter().enumerate() {
             let mat_id = self.id();
             let name_escaped = escape(&mat.name);
             self.emit_entity(mat_id, format!("IFCMATERIAL('{name_escaped}',$,$)"));
@@ -2795,10 +2922,35 @@ impl StepWriter<'_> {
                         "IFCSURFACESTYLERENDERING(#{colour_id},{transparency},$,$,$,$,$,$,.FLAT.)"
                     ),
                 );
+                // A textured material's image, embedded: an IfcBlobTexture
+                // in the style, which triangle meshes map with their
+                // texture coordinates.
+                let mut styles = format!("#{rendering_id}");
+                if let Some(texture) = &mat.texture {
+                    let format = if texture.mime_type == "image/png" {
+                        "PNG"
+                    } else {
+                        "JPG"
+                    };
+                    let mut code = String::with_capacity(texture.image.len() * 2 + 1);
+                    code.push('0');
+                    for b in &texture.image {
+                        let _ = write!(code, "{b:02X}");
+                    }
+                    let blob = self.id();
+                    self.emit_entity(
+                        blob,
+                        format!("IFCBLOBTEXTURE(.T.,.T.,$,$,$,'{format}',\"{code}\")"),
+                    );
+                    let with = self.id();
+                    self.emit_entity(with, format!("IFCSURFACESTYLEWITHTEXTURES((#{blob}))"));
+                    let _ = write!(styles, ",#{with}");
+                    self.material_textures[mat_index] = Some(blob);
+                }
                 let style_id = self.id();
                 self.emit_entity(
                     style_id,
-                    format!("IFCSURFACESTYLE('{name_escaped}',.BOTH.,(#{rendering_id}))"),
+                    format!("IFCSURFACESTYLE('{name_escaped}',.BOTH.,({styles}))"),
                 );
                 let presentation_id = self.id();
                 self.emit_entity(
@@ -3097,6 +3249,7 @@ impl StepWriter<'_> {
             // inverse rather than compounding. `origin_feet` is
             // `[0,0,0]` on every map rvt-open builds today, which makes
             // the two placements the same identity frame anyway.
+            self.element_material = None;
             let (solid_ids, rep_type) = self.emit_solid_items(&rmap.shape, map_placement, z_axis);
             let items = solid_ids
                 .iter()
@@ -3523,6 +3676,7 @@ impl StepWriter<'_> {
                             reps.push(format!("#{}", self.emit_wall_axis(axis_ctx, ends)));
                         }
                     }
+                    self.element_material = *material_index;
                     let (solid_ids, rep_type) =
                         self.emit_solid_items(shape, solid_position, z_axis);
                     let items = solid_ids
@@ -7025,6 +7179,7 @@ mod wall_axis_tests {
             ],
             triangles: vec![BrepTriangle(0, 1, 2), BrepTriangle(0, 2, 3)],
             face_materials: Vec::new(),
+            uvs: Vec::new(),
         };
         let line = [[0.0, 0.0], [4.0, 0.0]];
         let axis = wall_axis_local(line, [2.0, 0.0, 0.0], None, &solid_plan_points(&mesh), &[]);

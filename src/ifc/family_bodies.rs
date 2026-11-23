@@ -319,6 +319,7 @@ pub fn attach_oriented(
             vertices_feet: vertices,
             triangles,
             face_materials: Vec::new(),
+            uvs: Vec::new(),
         });
         for property in &mut set.properties {
             if property.name == "BodySource" {

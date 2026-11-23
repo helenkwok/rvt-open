@@ -98,6 +98,22 @@ fn positions(doc: &GltfDocument, bin: &[u8], accessor: usize) -> Option<Vec<[f32
         .collect()
 }
 
+fn texcoords(doc: &GltfDocument, bin: &[u8], accessor: usize) -> Option<Vec<[f32; 2]>> {
+    let a = doc.accessors.get(accessor)?;
+    if a.component_type != 5126 || a.type_ != "VEC2" {
+        return None;
+    }
+    let (bytes, count, stride) = accessor_bytes(doc, bin, accessor)?;
+    let stride = if stride == 0 { 8 } else { stride };
+    (0..count)
+        .map(|i| {
+            let p = bytes.get(i * stride..i * stride + 8)?;
+            let f = |k: usize| f32::from_le_bytes([p[k], p[k + 1], p[k + 2], p[k + 3]]);
+            Some([f(0), f(4)])
+        })
+        .collect()
+}
+
 fn indices(doc: &GltfDocument, bin: &[u8], accessor: usize) -> Option<Vec<u32>> {
     let a = doc.accessors.get(accessor)?;
     let size = match a.component_type {
@@ -125,6 +141,7 @@ fn indices(doc: &GltfDocument, bin: &[u8], accessor: usize) -> Option<Vec<u32>> 
 fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Option<u3d::Mesh> {
     let mut out = u3d::Mesh::default();
     let mut bases: HashMap<usize, u32> = HashMap::new();
+    let mut textured = false;
     for p in &doc.meshes.get(mesh)?.primitives {
         if p.mode != 4 {
             continue;
@@ -139,7 +156,15 @@ fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Optio
                     continue;
                 };
                 let b = out.positions.len() as u32;
+                let n = points.len();
                 out.positions.extend(points);
+                let uv = p
+                    .attributes
+                    .get("TEXCOORD_0")
+                    .and_then(|&a| texcoords(doc, bin, a))
+                    .filter(|uv| uv.len() == n);
+                textured |= uv.is_some();
+                out.uvs.extend(uv.unwrap_or_else(|| vec![[0.0; 2]; n]));
                 bases.insert(position, b);
                 b
             }
@@ -167,6 +192,9 @@ fn mesh_of(doc: &GltfDocument, bin: &[u8], mesh: usize, default: usize) -> Optio
                     .unwrap_or(default),
             );
         }
+    }
+    if !textured {
+        out.uvs.clear();
     }
     (!out.triangles.is_empty()).then_some(out)
 }
@@ -198,6 +226,9 @@ pub fn scene_from_gltf_at(doc: &GltfDocument, bin: &[u8], centre: bool) -> (Scen
         .materials
         .iter()
         .map(|m| {
+            if let Some(flat) = m.flat_rgba {
+                return flat;
+            }
             let [r, g, b, a] = m.pbr_metallic_roughness.base_color_factor;
             [
                 linear_to_srgb(r),

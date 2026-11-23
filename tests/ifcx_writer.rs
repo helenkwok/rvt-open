@@ -429,6 +429,7 @@ fn synthetic_graph_turns_indices_into_paths_and_back() {
             name: "Concrete".into(),
             color_packed: Some(0x808080),
             transparency: None,
+            texture: None,
         }],
         material_layer_sets: vec![MaterialLayerSet {
             name: "Wall".into(),

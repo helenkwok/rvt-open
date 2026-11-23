@@ -246,6 +246,7 @@ fn box_mesh(b: [[f64; 3]; 2]) -> SolidShape {
         vertices_feet: vertices,
         triangles,
         face_materials: Vec::new(),
+        uvs: Vec::new(),
     }
 }
 
@@ -488,6 +489,7 @@ pub fn attach(
                         vertices_feet: vertices,
                         triangles,
                         face_materials: Vec::new(),
+                        uvs: Vec::new(),
                     }),
                     if form.kind == "extrusion" {
                         FORM_SOLID_BODY_SOURCE

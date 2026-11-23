@@ -41,7 +41,7 @@ use super::graph::{GraphOptions, IfcxGraph};
 use super::ifcx_writer::{IfcxError, Ty, v5a_prop};
 use super::usd_crate::{self as crate_fmt, Crate};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 /// Serialize an `IfcModel` as USD text. See the module docs.
@@ -52,8 +52,44 @@ pub fn write_usda(model: &IfcModel) -> Result<String, IfcxError> {
 /// The graph (built with meshes) as USD text.
 pub fn write_usda_graph(graph: &IfcxGraph) -> Result<String, IfcxError> {
     let mut text = Text::default();
-    walk(graph, &mut text)?;
+    walk(graph, &mut text, false)?;
     Ok(text.out)
+}
+
+/// An image file a layer refers to: its path relative to the layer and its
+/// bytes, for the caller to write beside it.
+pub type TextureFile = (String, Vec<u8>);
+
+/// [`write_usda`] with its textures: a mesh drawn in a textured material
+/// carries `primvars:st` and is bound (`material:binding`) to a `Material`
+/// under `<root>/Looks`, a `UsdPreviewSurface` whose diffuse colour (and
+/// opacity, for an image with transparency) a `UsdUVTexture` reads from
+/// `textures/<hash>.<ext>`; the images come back to be written there.
+pub fn write_usda_textured(model: &IfcModel) -> Result<(String, Vec<TextureFile>), IfcxError> {
+    write_usda_graph_textured(&IfcxGraph::from_model(model, GraphOptions::default()))
+}
+
+/// [`write_usda_textured`] of a graph built with meshes.
+pub fn write_usda_graph_textured(
+    graph: &IfcxGraph,
+) -> Result<(String, Vec<TextureFile>), IfcxError> {
+    let mut text = Text::default();
+    let files = walk(graph, &mut text, true)?;
+    Ok((text.out, files))
+}
+
+/// [`write_usdc`] with its textures, as [`write_usda_textured`].
+pub fn write_usdc_textured(model: &IfcModel) -> Result<(Vec<u8>, Vec<TextureFile>), IfcxError> {
+    write_usdc_graph_textured(&IfcxGraph::from_model(model, GraphOptions::default()))
+}
+
+/// [`write_usdc_textured`] of a graph built with meshes.
+pub fn write_usdc_graph_textured(
+    graph: &IfcxGraph,
+) -> Result<(Vec<u8>, Vec<TextureFile>), IfcxError> {
+    let mut sink = CrateSink::new();
+    let files = walk(graph, &mut sink, true)?;
+    Ok((sink.finish().map_err(IfcxError)?, files))
 }
 
 /// Serialize an `IfcModel` as a binary USD layer (`.usdc`). See the module docs.
@@ -65,7 +101,7 @@ pub fn write_usdc(model: &IfcModel) -> Result<Vec<u8>, IfcxError> {
 /// [`write_usda_graph`].
 pub fn write_usdc_graph(graph: &IfcxGraph) -> Result<Vec<u8>, IfcxError> {
     let mut sink = CrateSink::new();
-    walk(graph, &mut sink)?;
+    walk(graph, &mut sink, false)?;
     sink.finish().map_err(IfcxError)
 }
 
@@ -93,6 +129,14 @@ enum Val {
     Matrix4d([f64; 16]),
     /// `token[]`.
     TokArr(Vec<&'static str>),
+    /// `texCoord2f[]`.
+    Vec2fArr(Vec<[f64; 2]>),
+    /// `float`.
+    Float(f64),
+    /// `asset`.
+    Asset(String),
+    /// No value: an output, or an input read through its connection.
+    Nothing,
 }
 
 /// One attribute spec.
@@ -104,6 +148,8 @@ struct Attr<'a> {
     /// The IFCX key, as `customData.ifcx`.
     ifcx: Option<&'a str>,
     interpolation: Option<&'static str>,
+    /// The attribute it reads from (`<prim path>.<name>`).
+    connect: Option<String>,
 }
 
 /// A prim's head: `def <type>` or an untyped `class`.
@@ -116,12 +162,28 @@ enum Head {
 /// What the walk writes to: `.usda` text or a Crate layer.
 trait Sink {
     fn layer(&mut self, default_prim: &str, ifcx_id: &str, georeference: Option<&Value>);
-    fn prim(&mut self, head: Head, name: &str, display: Option<&str>, inherits: &[String]);
+    /// A prim; `bound`: it applies `MaterialBindingAPI`.
+    fn prim(
+        &mut self,
+        head: Head,
+        name: &str,
+        display: Option<&str>,
+        inherits: &[String],
+        bound: bool,
+    );
     fn attr(&mut self, a: Attr);
+    /// A uniform relationship to one prim.
+    fn rel(&mut self, name: &str, target: &str);
     fn end(&mut self);
 }
 
-fn walk(graph: &IfcxGraph, sink: &mut dyn Sink) -> Result<(), IfcxError> {
+/// Writes the graph to `sink`; with `textures`, the textured materials too,
+/// returning their images.
+fn walk(
+    graph: &IfcxGraph,
+    sink: &mut dyn Sink,
+    textures: bool,
+) -> Result<Vec<TextureFile>, IfcxError> {
     if let Some(e) = graph.errors.first() {
         return Err(IfcxError(e.clone()));
     }
@@ -141,21 +203,56 @@ fn walk(graph: &IfcxGraph, sink: &mut dyn Sink) -> Result<(), IfcxError> {
         return Err(IfcxError(format!("node {p} hangs from nothing")));
     }
     let root = prim_name(&graph.root);
+    // the textured materials the meshes are drawn in, each with its image.
+    let mut looks: BTreeMap<usize, (super::MaterialInfo, String)> = BTreeMap::new();
+    if textures {
+        for node in graph.nodes.values() {
+            let Some(m) = node.mesh.as_ref().and_then(|m| m.texture) else {
+                continue;
+            };
+            if looks.contains_key(&m) {
+                continue;
+            }
+            if let Some(info) = graph.material(m).filter(|i| i.texture.is_some()) {
+                let file = info
+                    .texture
+                    .as_ref()
+                    .map(|t| format!("textures/{}", t.file_name()))
+                    .unwrap_or_default();
+                looks.insert(m, (info, file));
+            }
+        }
+    }
     let w = Writer {
         graph,
         types_path: format!("/{root}/Types"),
+        looks_path: format!("/{root}/Looks"),
         types,
+        looks,
     };
     sink.layer(&root, &graph.id, graph.georeference_metadata().as_ref());
     w.prim(sink, &graph.root, Head::Def("Xform"), "rvt-open", None);
-    Ok(())
+    let mut files: Vec<TextureFile> = Vec::new();
+    for (info, file) in w.looks.values() {
+        if let Some(t) = &info.texture {
+            if !files.iter().any(|(f, _)| f == file) {
+                files.push((file.clone(), t.image.clone()));
+            }
+        }
+    }
+    Ok(files)
 }
 
 struct Writer<'a> {
     graph: &'a IfcxGraph,
     types_path: String,
+    /// Where the textured materials are: `Material` prims under it.
+    looks_path: String,
     /// The type nodes: `class` prims under `types_path`.
     types: BTreeSet<&'a str>,
+    /// The textured materials, by model material index, with their image's
+    /// path relative to the layer.
+    looks: BTreeMap<usize, (super::MaterialInfo, String)>,
 }
 
 impl Writer<'_> {
@@ -187,7 +284,18 @@ impl Writer<'_> {
             .iter()
             .map(|t| format!("{}/{}", self.types_path, prim_name(t)))
             .collect();
-        sink.prim(head, &prim_name(path), Some(display), &inherits);
+        let look = node
+            .mesh
+            .as_ref()
+            .and_then(|m| m.texture)
+            .filter(|m| self.looks.contains_key(m));
+        sink.prim(
+            head,
+            &prim_name(path),
+            Some(display),
+            &inherits,
+            look.is_some(),
+        );
         let mut names = BTreeSet::new();
         for (key, value) in &node.attributes {
             if key.starts_with(super::graph::IFC4_PREFIX) {
@@ -204,6 +312,20 @@ impl Writer<'_> {
         let colour = own.as_ref().or(colour);
         if let Some(mesh) = node.mesh.as_deref() {
             mesh_body(sink, mesh, colour);
+            if let Some(m) = look {
+                if mesh.st.len() == mesh.points.len() {
+                    sink.attr(Attr {
+                        name: "primvars:st",
+                        type_name: "texCoord2f[]",
+                        uniform: false,
+                        value: Val::Vec2fArr(mesh.st.clone()),
+                        ifcx: None,
+                        interpolation: Some("vertex"),
+                        connect: None,
+                    });
+                }
+                sink.rel("material:binding", &format!("{}/M{m}", self.looks_path));
+            }
         } else if self.shaped(path) {
             // the points come from the inherited shape class.
             colour_attrs(sink, colour);
@@ -216,8 +338,15 @@ impl Writer<'_> {
             };
             self.prim(sink, child, head, name, own.as_ref());
         }
+        if path == self.graph.root && !self.looks.is_empty() {
+            sink.prim(Head::Def("Scope"), "Looks", None, &[], false);
+            for (m, (info, file)) in &self.looks {
+                self.look(sink, *m, info, file);
+            }
+            sink.end();
+        }
         if path == self.graph.root && !self.types.is_empty() {
-            sink.prim(Head::Def("Scope"), "Types", None, &[]);
+            sink.prim(Head::Def("Scope"), "Types", None, &[], false);
             for t in &self.types {
                 let name = self.graph.nodes[*t]
                     .attributes
@@ -228,6 +357,95 @@ impl Writer<'_> {
             }
             sink.end();
         }
+        sink.end();
+    }
+
+    /// A textured material: `UsdPreviewSurface` reading its diffuse colour
+    /// (and its opacity, where the image holds transparency) from a
+    /// `UsdUVTexture` of `file`, placed by the mesh's `st`.
+    fn look(&self, sink: &mut dyn Sink, m: usize, info: &super::MaterialInfo, file: &str) {
+        let at = format!("{}/M{m}", self.looks_path);
+        let attr = |name, type_name, value, connect: Option<String>| Attr {
+            name,
+            type_name,
+            uniform: false,
+            value,
+            ifcx: None,
+            interpolation: None,
+            connect,
+        };
+        let id = |sink: &mut dyn Sink, shader: &'static str| {
+            sink.attr(Attr {
+                uniform: true,
+                ..attr("info:id", "token", Val::Tok(shader), None)
+            });
+        };
+        let alpha = info.texture.as_ref().is_some_and(|t| t.has_alpha());
+        sink.prim(
+            Head::Def("Material"),
+            &format!("M{m}"),
+            Some(&info.name),
+            &[],
+            false,
+        );
+        sink.attr(attr(
+            "outputs:surface",
+            "token",
+            Val::Nothing,
+            Some(format!("{at}/Surface.outputs:surface")),
+        ));
+        sink.prim(Head::Def("Shader"), "Surface", None, &[], false);
+        id(sink, "UsdPreviewSurface");
+        sink.attr(attr(
+            "inputs:diffuseColor",
+            "color3f",
+            Val::Nothing,
+            Some(format!("{at}/Image.outputs:rgb")),
+        ));
+        let opacity = 1.0 - info.transparency.unwrap_or(0.0).clamp(0.0, 1.0);
+        if alpha {
+            sink.attr(attr(
+                "inputs:opacity",
+                "float",
+                Val::Nothing,
+                Some(format!("{at}/Image.outputs:a")),
+            ));
+        } else if opacity < 1.0 {
+            sink.attr(attr("inputs:opacity", "float", Val::Float(opacity), None));
+        }
+        sink.attr(attr("outputs:surface", "token", Val::Nothing, None));
+        sink.end();
+        sink.prim(Head::Def("Shader"), "Image", None, &[], false);
+        id(sink, "UsdUVTexture");
+        sink.attr(attr(
+            "inputs:file",
+            "asset",
+            Val::Asset(file.to_string()),
+            None,
+        ));
+        sink.attr(attr(
+            "inputs:st",
+            "float2",
+            Val::Nothing,
+            Some(format!("{at}/St.outputs:result")),
+        ));
+        sink.attr(attr("inputs:wrapS", "token", Val::Tok("repeat"), None));
+        sink.attr(attr("inputs:wrapT", "token", Val::Tok("repeat"), None));
+        sink.attr(attr("outputs:rgb", "float3", Val::Nothing, None));
+        if alpha {
+            sink.attr(attr("outputs:a", "float", Val::Nothing, None));
+        }
+        sink.end();
+        sink.prim(Head::Def("Shader"), "St", None, &[], false);
+        id(sink, "UsdPrimvarReader_float2");
+        sink.attr(attr(
+            "inputs:varname",
+            "string",
+            Val::Str("st".into()),
+            None,
+        ));
+        sink.attr(attr("outputs:result", "float2", Val::Nothing, None));
+        sink.end();
         sink.end();
     }
 
@@ -271,6 +489,7 @@ impl Writer<'_> {
             value,
             ifcx: Some(key),
             interpolation: None,
+            connect: None,
         });
     }
 }
@@ -313,6 +532,7 @@ fn mesh_body(sink: &mut dyn Sink, mesh: &super::graph::UsdMesh, colour: Option<&
         value,
         ifcx: None,
         interpolation: None,
+        connect: None,
     };
     // Flat shading: one unit normal per face (a viewer that does not compute
     // normals draws a mesh without them black).
@@ -379,6 +599,7 @@ fn colour_attrs(sink: &mut dyn Sink, colour: Option<&Colour>) {
         value,
         ifcx: None,
         interpolation: None,
+        connect: None,
     };
     if let Some((rgb, opacity)) = colour {
         let c = |i: usize| rgb[i].as_f64().unwrap_or(0.0);
@@ -490,6 +711,7 @@ fn transform_op(sink: &mut dyn Sink, value: &Value) {
         value: Val::Matrix4d(m),
         ifcx: Some("usd::xformop"),
         interpolation: None,
+        connect: None,
     });
     sink.attr(Attr {
         name: "xformOpOrder",
@@ -498,6 +720,7 @@ fn transform_op(sink: &mut dyn Sink, value: &Value) {
         value: Val::TokArr(vec!["xformOp:transform"]),
         ifcx: None,
         interpolation: None,
+        connect: None,
     });
 }
 
@@ -549,6 +772,10 @@ fn val_text(v: &Val) -> String {
                 .join(", ")
         ),
         Val::TokArr(v) => list(v.iter().map(|s| quote(s)).collect()),
+        Val::Vec2fArr(v) => list(v.iter().map(|p| format!("({}, {})", p[0], p[1])).collect()),
+        Val::Float(x) => x.to_string(),
+        Val::Asset(a) => format!("@{a}@"),
+        Val::Nothing => String::new(),
     }
 }
 
@@ -601,7 +828,14 @@ impl Sink for Text {
         );
     }
 
-    fn prim(&mut self, head: Head, name: &str, display: Option<&str>, inherits: &[String]) {
+    fn prim(
+        &mut self,
+        head: Head,
+        name: &str,
+        display: Option<&str>,
+        inherits: &[String],
+        bound: bool,
+    ) {
         let pad = self.pad();
         let head = match head {
             Head::Def(t) => format!("def {t}"),
@@ -614,6 +848,12 @@ impl Sink for Text {
                     "{pad}{head} \"{name}\" (\n{pad}    displayName = {}\n",
                     quote(d)
                 );
+                if bound {
+                    let _ = writeln!(
+                        self.out,
+                        "{pad}    prepend apiSchemas = [\"MaterialBindingAPI\"]"
+                    );
+                }
                 if !inherits.is_empty() {
                     let targets: Vec<String> = inherits.iter().map(|t| format!("<{t}>")).collect();
                     let _ = writeln!(
@@ -633,13 +873,13 @@ impl Sink for Text {
 
     fn attr(&mut self, a: Attr) {
         let pad = self.pad();
-        let text = val_text(&a.value);
         let uniform = if a.uniform { "uniform " } else { "" };
-        let _ = write!(
-            self.out,
-            "{pad}{uniform}{} {} = {text}",
-            a.type_name, a.name
-        );
+        let _ = write!(self.out, "{pad}{uniform}{} {}", a.type_name, a.name);
+        if let Some(target) = &a.connect {
+            let _ = write!(self.out, ".connect = <{target}>");
+        } else if !matches!(a.value, Val::Nothing) {
+            let _ = write!(self.out, " = {}", val_text(&a.value));
+        }
         if let Some(k) = a.ifcx {
             let _ = write!(
                 self.out,
@@ -650,6 +890,11 @@ impl Sink for Text {
             let _ = write!(self.out, " (\n{pad}    interpolation = \"{i}\"\n{pad})");
         }
         self.out.push('\n');
+    }
+
+    fn rel(&mut self, name: &str, target: &str) {
+        let pad = self.pad();
+        let _ = writeln!(self.out, "{pad}rel {name} = <{target}>");
     }
 
     fn end(&mut self) {
@@ -686,6 +931,10 @@ struct CrateSink {
     pending: Vec<(usize, Vec<String>)>,
     /// Specs held until the inherit targets resolve: (path, form, fields).
     specs: Vec<(u32, u32, Fields)>,
+    /// Connection and relationship targets, resolved in `finish` as the
+    /// inherit targets are: (spec index, `connectionPaths` or
+    /// `targetPaths`, the target's absolute path text).
+    links: Vec<(usize, &'static str, String)>,
 }
 
 impl CrateSink {
@@ -706,6 +955,10 @@ impl CrateSink {
             Val::Vec3fArr(v) => c.float3_array(v),
             Val::Matrix4d(m) => c.matrix4d(m),
             Val::TokArr(v) => c.token_array(v),
+            Val::Vec2fArr(v) => c.float2_array(v),
+            Val::Float(x) => c.float(*x),
+            Val::Asset(a) => c.asset_value(a),
+            Val::Nothing => 0,
         }
     }
 
@@ -739,6 +992,7 @@ impl CrateSink {
             texts: vec![String::new()],
             pending: Vec::new(),
             specs: Vec::new(),
+            links: Vec::new(),
         }
     }
 
@@ -763,6 +1017,21 @@ impl CrateSink {
                 .collect::<Result<Vec<u32>, String>>()?;
             let rep = self.c.prepend_paths(&ix);
             self.specs[spec].2.push(("inheritPaths", rep));
+        }
+        for (spec, field, target) in std::mem::take(&mut self.links) {
+            let ix = *self
+                .path_ix
+                .get(&target)
+                .ok_or_else(|| format!("usdc: target {target} is no prim or property"))?;
+            let list = self.c.explicit_paths(&[ix]);
+            let children = self.c.path_vector(&[ix]);
+            let children_field = if field == "targetPaths" {
+                "targetChildren"
+            } else {
+                "connectionChildren"
+            };
+            self.specs[spec].2.push((field, list));
+            self.specs[spec].2.push((children_field, children));
         }
         for (path, form, fields) in std::mem::take(&mut self.specs) {
             self.c.spec(path, form, &fields);
@@ -792,7 +1061,14 @@ impl Sink for CrateSink {
         self.stack[0].fields = fields;
     }
 
-    fn prim(&mut self, head: Head, name: &str, display: Option<&str>, inherits: &[String]) {
+    fn prim(
+        &mut self,
+        head: Head,
+        name: &str,
+        display: Option<&str>,
+        inherits: &[String],
+        bound: bool,
+    ) {
         let parent = self.stack.last().map_or(0, |p| p.path);
         let path = self.c.path(parent, name, false);
         let tok = self.c.token(name);
@@ -813,6 +1089,10 @@ impl Sink for CrateSink {
         if let Some(d) = display {
             fields.push(("displayName", self.c.string_value(d)));
         }
+        if bound {
+            let api = self.c.token("MaterialBindingAPI");
+            fields.push(("apiSchemas", self.c.prepend_tokens(&[api])));
+        }
         self.stack.push(OpenPrim {
             path,
             fields,
@@ -825,18 +1105,30 @@ impl Sink for CrateSink {
     fn attr(&mut self, a: Attr) {
         let parent = self.stack.last().map_or(0, |p| p.path);
         let path = self.c.path(parent, a.name, true);
+        let text = format!(
+            "{}.{}",
+            self.texts.last().map_or("", String::as_str),
+            a.name
+        );
+        self.path_ix.insert(text, path);
         let tok = self.c.token(a.name);
         if let Some(p) = self.stack.last_mut() {
             p.properties.push(tok);
         }
-        let value = self.value(&a.value);
+        let value = (!matches!(a.value, Val::Nothing)).then(|| self.value(&a.value));
         let c = &mut self.c;
         let mut fields = vec![
             ("custom", Crate::bool(false)),
             ("typeName", c.token_value(a.type_name)),
             ("variability", Crate::variability(i32::from(a.uniform))),
-            ("default", value),
         ];
+        if let Some(value) = value {
+            fields.push(("default", value));
+        }
+        if let Some(target) = a.connect {
+            self.links
+                .push((self.specs.len(), "connectionPaths", target));
+        }
         if let Some(k) = a.ifcx {
             let v = c.string_value(k);
             fields.push(("customData", c.dictionary(&[("ifcx", v)])));
@@ -845,6 +1137,23 @@ impl Sink for CrateSink {
             fields.push(("interpolation", c.token_value(i)));
         }
         self.specs.push((path, crate_fmt::FORM_ATTRIBUTE, fields));
+    }
+
+    fn rel(&mut self, name: &str, target: &str) {
+        let parent = self.stack.last().map_or(0, |p| p.path);
+        let path = self.c.path(parent, name, true);
+        let tok = self.c.token(name);
+        if let Some(p) = self.stack.last_mut() {
+            p.properties.push(tok);
+        }
+        let fields = vec![
+            ("custom", Crate::bool(false)),
+            ("variability", Crate::variability(1)),
+        ];
+        self.links
+            .push((self.specs.len(), "targetPaths", target.to_string()));
+        self.specs
+            .push((path, crate_fmt::FORM_RELATIONSHIP, fields));
     }
 
     fn end(&mut self) {

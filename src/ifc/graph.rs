@@ -95,6 +95,7 @@ pub(crate) fn split_by_face_material(
             order.push(*m);
         }
     }
+    let textured = mesh.uvs.len() == mesh.vertices.len();
     order
         .into_iter()
         .map(|m| {
@@ -109,6 +110,9 @@ pub(crate) fn split_by_face_material(
                 let t = t.map(|v| {
                     *remap.entry(v).or_insert_with(|| {
                         part.vertices.push(mesh.vertices[v as usize]);
+                        if textured {
+                            part.uvs.push(mesh.uvs[v as usize]);
+                        }
                         (part.vertices.len() - 1) as u32
                     })
                 });
@@ -136,6 +140,7 @@ fn shared_points(mesh: &super::body_geometry::Mesh) -> (Vec<[f64; 3]>, String, [
         vertices: rel.iter().map(|p| p.map(|c| c as f64)).collect(),
         triangles: mesh.triangles.clone(),
         face_materials: Vec::new(),
+        uvs: Vec::new(),
     };
     let (_, key) = super::body_geometry::mesh_key(&local, 1e-7);
     let points = rel.iter().map(|p| p.map(|c| c as f64 / 1e7)).collect();
@@ -148,6 +153,13 @@ fn shared_points(mesh: &super::body_geometry::Mesh) -> (Vec<[f64; 3]>, String, [
 pub struct UsdMesh {
     pub points: Vec<[f64; 3]>,
     pub face_vertex_indices: Vec<u32>,
+    /// per point, its texture coordinates (`[u, v]`, `v` up), where the
+    /// mesh is drawn in a textured material; else empty. IFCX has no key for
+    /// them; OpenUSD writes them as `primvars:st`.
+    pub st: Vec<[f64; 2]>,
+    /// The index in the model's materials of the textured material the mesh
+    /// is drawn in.
+    pub texture: Option<usize>,
 }
 
 impl UsdMesh {
@@ -583,6 +595,12 @@ impl IfcxGraph {
             .get(path)?
             .attributes
             .get(&format!("{IFC4_PREFIX}{key}"))
+    }
+
+    /// The model's material at `index`, as the graph holds it.
+    pub fn material(&self, index: usize) -> Option<super::MaterialInfo> {
+        let path = self.order.materials.get(index)?;
+        serde_json::from_value(self.ifc4_object(path, &[])).ok()
     }
 
     /// The model view the IFC4 writer reads, derived from the graph.
@@ -1356,7 +1374,14 @@ impl Builder {
                 super::body_geometry::drawn_body(model, i, entity).filter(|_| options.meshes)
             {
                 match body_mesh(body) {
-                    Some(mesh) if !mesh.is_empty() => {
+                    Some(mut mesh) if !mesh.is_empty() => {
+                        // a textured mesh drawn whole in the element's
+                        // material: its parts name that material.
+                        if mesh.face_materials.is_empty() && !mesh.uvs.is_empty() {
+                            if let Some(m) = *material_index {
+                                mesh.face_materials = vec![m; mesh.triangles.len()];
+                            }
+                        }
                         // A display body is in the element's own frame.
                         let target = if model.display_bodies.contains_key(&i) {
                             super::instancing::IDENTITY
@@ -1402,6 +1427,12 @@ impl Builder {
         let mut next = start;
         for (part, (mesh, material)) in (start..).zip(split_by_face_material(mesh)) {
             next = part + 1;
+            // a textured part keeps its own points: its texture coordinates
+            // are not part of a shared shape's key.
+            let texture = material
+                .filter(|m| model.materials.get(*m).is_some_and(|i| i.texture.is_some()))
+                .filter(|_| !mesh.uvs.is_empty() && mesh.uvs.len() == mesh.vertices.len());
+            let shared = shared && texture.is_none();
             let indices: Vec<u32> = mesh.triangles.iter().flatten().copied().collect();
             let (body_path, body_name) = if part == 0 {
                 (uuid5(&format!("{path}/body")), "Body".to_string())
@@ -1437,6 +1468,7 @@ impl Builder {
                     self.node(&shape).mesh = Some(Box::new(UsdMesh {
                         points,
                         face_vertex_indices: indices,
+                        ..UsdMesh::default()
                     }));
                 }
                 self.node(&body_path).inherits.push(shape);
@@ -1469,6 +1501,12 @@ impl Builder {
                 self.node(&body_path).mesh = Some(Box::new(UsdMesh {
                     points,
                     face_vertex_indices: indices,
+                    st: if texture.is_some() {
+                        mesh.uvs.clone()
+                    } else {
+                        Vec::new()
+                    },
+                    texture,
                 }));
             }
         }
