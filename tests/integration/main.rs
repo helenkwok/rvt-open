@@ -211,6 +211,8 @@ mod level_parameters;
 mod level_shared_elevation;
 #[path = "../material_textures.rs"]
 mod material_textures;
+#[path = "../measure_scorer_names.rs"]
+mod measure_scorer_names;
 #[path = "../memory_staging.rs"]
 mod memory_staging;
 #[path = "../mep_categories.rs"]
