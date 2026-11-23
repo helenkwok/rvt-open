@@ -487,10 +487,15 @@ fn frag_sidecar_puts_the_images_back() {
     // a square's two triangles (0, 1, 2) and (0, 2, 3), corner by corner,
     // first in its sample (a single face also gets its back, the same
     // corners wound the other way; samples follow the graph's order).
-    let square = [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0];
+    let square: Vec<f64> = vec![0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0];
     let starts = |s: &serde_json::Value| {
-        let uv = s["uv"].as_array().expect("uv");
-        uv.len() >= 12 && uv[..12] == serde_json::json!(square).as_array().expect("array")[..]
+        let uv: Vec<f64> = s["uv"]
+            .as_array()
+            .expect("uv")
+            .iter()
+            .filter_map(|v| v.as_f64())
+            .collect();
+        uv.starts_with(&square)
     };
     assert!(samples.iter().any(starts));
     // a source's own placement record goes through verbatim.
