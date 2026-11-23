@@ -491,7 +491,10 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     let mut sketches: BTreeMap<i64, RawSketch> = BTreeMap::new();
     let mut planes: BTreeMap<i64, RawPlane> = BTreeMap::new();
     let mut curves: BTreeMap<i64, Curve> = BTreeMap::new();
-    let mut boxes: BTreeMap<i64, [[f64; 3]; 2]> = BTreeMap::new();
+    // Stored boxes by id space and id: each keyed document numbers its own
+    // elements, while a file without keyed sections (its nested families'
+    // documents too) has one space, `None`.
+    let mut boxes: BTreeMap<(Option<Guid>, i64), [[f64; 3]; 2]> = BTreeMap::new();
     // Undecoded forms per document: (kind -> count).
     // (document, kind, class tag, id, partition), kept for the newest copy.
     let mut other: Vec<(Guid, &'static str, u16, i64, u32)> = Vec::new();
@@ -518,6 +521,9 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     } else {
         Deleted::default()
     };
+    // Each family's sample hosts, from its newest copy (an older copy read
+    // first is replaced).
+    let mut sample_refs: BTreeMap<i64, Vec<(Guid, i64)>> = BTreeMap::new();
     let host_family = if host_is_family && section_count == 0 {
         host_family_id(rf, &names)?
     } else {
@@ -542,6 +548,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 n.checked_sub(1).map(|i| s[i].1)
             });
             let id = x.frame.header.id as i64;
+            let space = guid;
             // A family file's own forms belong to its own document; its
             // `Family`, `FamilySymbol` and `FamilyInstance` objects stay the
             // host's (nested families and their instances).
@@ -614,13 +621,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 } else {
                     owned_document(id)
                 };
-                for o in &x.objects {
-                    if names.get(&o.tag).map(String::as_str) == Some("FamilyElemRef") {
-                        if let Some(e) = id_of(o, "m_elemId") {
-                            out.host_samples.insert((doc, e));
-                        }
-                    }
-                }
+                sample_refs.insert(id, element_refs(x, &names, doc));
             }
             if FORM_CLASS_NAMES.contains(&class.as_str()) {
                 if let Some(g) = guid {
@@ -646,13 +647,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                     } else if host_is_family {
                         // A keyed family file's own family (it names no
                         // content document): its template's sample hosts.
-                        for o in &x.objects {
-                            if names.get(&o.tag).map(String::as_str) == Some("FamilyElemRef") {
-                                if let Some(e) = id_of(o, "m_elemId") {
-                                    out.host_samples.insert((HOST_DOCUMENT, e));
-                                }
-                            }
-                        }
+                        sample_refs.insert(id, element_refs(x, &names, HOST_DOCUMENT));
                     }
                 }
                 ("FamilySymbol", None) => {
@@ -706,7 +701,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                     if let Some(Value::List(b)) = root.get("m_bBox") {
                         if let [lo, hi] = b.as_slice() {
                             if let (Some(lo), Some(hi)) = (vec3_of(lo), vec3_of(hi)) {
-                                boxes.insert(id, [lo, hi]);
+                                boxes.insert((space, id), [lo, hi]);
                             }
                         }
                     }
@@ -912,6 +907,11 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             }
         },
     )?;
+    out.host_samples = sample_refs.into_values().flatten().collect();
+    // A document's id space for its stored boxes: its own when keyed, else
+    // the file's.
+    let section_guids: BTreeSet<Guid> = sections.values().flatten().map(|(_, g)| *g).collect();
+    let space_of = |g: Guid| section_guids.contains(&g).then_some(g);
 
     // Of a form read from several partitions, the newest copy; and no
     // template's sample host.
@@ -966,7 +966,8 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         let Some((solid, bbox)) = solid else {
             *doc.undecoded.entry("extrusion_geometry").or_default() += 1;
             doc.form_failures.insert(e.id, "geometry");
-            doc.unsolved_boxes.extend(boxes.get(&e.id));
+            doc.unsolved_boxes
+                .extend(boxes.get(&(space_of(e.guid), e.id)));
             continue;
         };
         out.stats.extrusions_decoded += 1;
@@ -978,12 +979,13 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             0.0
         };
         let matches = boxes
-            .get(&e.id)
+            .get(&(space_of(e.guid), e.id))
             .is_none_or(|stored| box_matches(stored, &bbox, sag));
         if !matches {
             *doc.undecoded.entry("extrusion_bbox_mismatch").or_default() += 1;
             doc.form_failures.insert(e.id, "bbox_mismatch");
-            doc.unsolved_boxes.extend(boxes.get(&e.id));
+            doc.unsolved_boxes
+                .extend(boxes.get(&(space_of(e.guid), e.id)));
             continue;
         }
         out.stats.extrusions_bbox_match += 1;
@@ -1025,13 +1027,14 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             Err(why) => {
                 *doc.undecoded.entry(f.kind).or_default() += 1;
                 doc.form_failures.insert(f.id, why);
-                doc.unsolved_boxes.extend(boxes.get(&f.id));
+                doc.unsolved_boxes
+                    .extend(boxes.get(&(space_of(f.guid), f.id)));
                 let reason = format!("{}:{why}", f.kind);
                 *doc.solve_failures.entry(reason.clone()).or_default() += 1;
                 *out.stats.solve_failures.entry(reason).or_default() += 1;
             }
             Ok((solid, bbox)) => {
-                let matches = boxes.get(&f.id).is_none_or(|stored| {
+                let matches = boxes.get(&(space_of(f.guid), f.id)).is_none_or(|stored| {
                     let size = (0..3)
                         .map(|k| (stored[1][k] - stored[0][k]).abs())
                         .fold(0.0, f64::max);
@@ -1059,7 +1062,8 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 if !matches {
                     *doc.undecoded.entry(f.kind).or_default() += 1;
                     doc.form_failures.insert(f.id, "bbox_mismatch");
-                    doc.unsolved_boxes.extend(boxes.get(&f.id));
+                    doc.unsolved_boxes
+                        .extend(boxes.get(&(space_of(f.guid), f.id)));
                     let reason = format!("{}:bbox_mismatch", f.kind);
                     *doc.solve_failures.entry(reason.clone()).or_default() += 1;
                     *out.stats.solve_failures.entry(reason).or_default() += 1;
@@ -1148,7 +1152,9 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         if *g != HOST_DOCUMENT || !out.host_samples.contains(&(*g, *wall)) {
             continue;
         }
-        let Some(b) = boxes.get(wall) else { continue };
+        let Some(b) = boxes.get(&(space_of(*g), *wall)) else {
+            continue;
+        };
         let ring = vec![
             [b[0][0], b[0][1], 0.0],
             [b[1][0], b[0][1], 0.0],
@@ -1664,6 +1670,17 @@ pub(crate) fn deleted_elements(rf: &mut RevitFile) -> Deleted {
         declared,
         newest_partition,
     }
+}
+
+/// The elements a `Family` record names in its `FamilyElemRef`s (its
+/// template's sample hosts), as of document `doc`.
+fn element_refs(x: &SchemaObject, names: &BTreeMap<u16, String>, doc: Guid) -> Vec<(Guid, i64)> {
+    x.objects
+        .iter()
+        .filter(|o| names.get(&o.tag).map(String::as_str) == Some("FamilyElemRef"))
+        .filter_map(|o| id_of(o, "m_elemId"))
+        .map(|e| (doc, e))
+        .collect()
 }
 
 /// The solid-form classes.

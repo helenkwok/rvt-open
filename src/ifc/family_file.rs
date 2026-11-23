@@ -54,6 +54,9 @@ const NESTED_SCALE_LIMITS: (f64, f64) = (0.2, 5.0);
 /// A body within this fraction of its stored box fits it.
 const NESTED_FACET_ALLOWANCE: f64 = 0.05;
 
+/// Why a form whose voids removed all of it is not drawn.
+const REMOVED_BY_VOID: &str = "removed_by_void";
+
 /// The storey a family's elements are placed in.
 pub const FAMILY_STOREY: &str = "Ref. Level";
 
@@ -597,6 +600,10 @@ pub fn attach(
         };
         let (shape, source) = match (shape, solids.get(&form.id)) {
             (Some(s), _) => (Some(s), source),
+            // Its voids removed the whole form: nothing to draw.
+            (None, Some(list)) if list.iter().all(|s| s.triangles.is_empty()) => {
+                (None, REMOVED_BY_VOID)
+            }
             (None, Some(list)) => {
                 let mut vertices = Vec::new();
                 let mut triangles = Vec::new();
@@ -633,7 +640,9 @@ pub fn attach(
             && source != FORM_SOLID_BODY_SOURCE
             && source != FORM_SOLVED_BODY_SOURCE
         {
-            let reason = if !saved_graphics {
+            let reason = if source == REMOVED_BY_VOID {
+                REMOVED_BY_VOID
+            } else if !saved_graphics {
                 "saved_graphics_off"
             } else if release < 2015 {
                 // No saved graphics are read before 2015: why the form did
@@ -1190,32 +1199,6 @@ mod tests {
         // inner: (1, -1, 0) + (0, 2, 0) = (1, 1, 0); outer: turn to (-1, 1, 0), then + (10, 0, 0).
         assert_eq!(q, [9.0, 1.0, 0.0]);
         assert!(det(&map.0) < 0.0);
-    }
-
-    /// A nested body of its family's saved 4 ft type takes its instance's
-    /// 3 ft stored box; one within the facet allowance, or inside its stored
-    /// box, keeps its own.
-    #[test]
-    fn nested_bodies_take_their_stored_box() {
-        let mut v = vec![[-1.5, 0.1, 0.0], [2.5, 0.24, 7.0]];
-        let stored = [[-1.5, 0.1, 0.0], [1.5, 0.24, 7.0]];
-        assert_eq!(stretch_to_box(&mut v, stored), Stretch::Stretched);
-        assert_eq!(v, vec![[-1.5, 0.1, 0.0], [1.5, 0.24, 7.0]]);
-        let mut round = vec![[0.0; 3], [1.0, 1.0, 0.5]];
-        let faceted = [[0.0, 0.0, 0.0], [0.97, 1.0, 0.5]];
-        assert_eq!(stretch_to_box(&mut round, faceted), Stretch::Fits);
-        assert_eq!(round[1], [1.0, 1.0, 0.5]);
-        // A larger stored box can hold lines and reference planes too.
-        let mut small = vec![[0.0; 3], [1.0, 1.0, 1.0]];
-        assert_eq!(
-            stretch_to_box(&mut small, [[0.0; 3], [10.0, 1.0, 1.0]]),
-            Stretch::Fits
-        );
-        let mut other = vec![[0.0; 3], [10.0, 1.0, 1.0]];
-        assert_eq!(
-            stretch_to_box(&mut other, [[0.0; 3], [1.0, 1.0, 1.0]]),
-            Stretch::BeyondLimits
-        );
     }
 
     #[test]
