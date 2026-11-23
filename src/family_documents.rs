@@ -740,6 +740,13 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                     if let Some(c) = curve_of(x, &names) {
                         doc_curves.entry(g).or_default().insert(id, c.clone());
                         curves.insert(id, c);
+                    } else {
+                        // A newer copy that does not decode leaves no older
+                        // copy's curve behind.
+                        curves.remove(&id);
+                        if let Some(m) = doc_curves.get_mut(&g) {
+                            m.remove(&id);
+                        }
                     }
                 }
                 ("Path3d" | "PathFromFace", Some(_)) => {
