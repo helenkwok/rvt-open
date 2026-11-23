@@ -149,9 +149,10 @@ pub use export_pipeline::{
 pub use from_decoded::{BuilderOptions, ElementInput, build_ifc_model};
 pub use graph::{GraphOptions, IfcxGraph};
 pub use ifcx_writer::{
-    DIAGNOSTIC_KEYS, LossLedger, write_ifcx, write_ifcx_graph, write_ifcx_graph_layers,
-    write_ifcx_graph_layers_at, write_ifcx_graph_layers_to, write_ifcx_graph_with_ledger,
-    write_ifcx_with_ledger,
+    DIAGNOSTIC_KEYS, GLTF_MATERIAL_KEY, LossLedger, TEXTURE_COORDINATES_KEY, write_ifcx,
+    write_ifcx_graph, write_ifcx_graph_layers, write_ifcx_graph_layers_at,
+    write_ifcx_graph_layers_to, write_ifcx_graph_texture_layer, write_ifcx_graph_with_ledger,
+    write_ifcx_texture_layer, write_ifcx_with_ledger,
 };
 pub use step_writer::{write_step, write_step_graph};
 pub use usd_writer::{
@@ -568,7 +569,7 @@ impl MaterialTexture {
             return true;
         }
         let mut at = 8;
-        while at + 8 <= png.len() {
+        while at <= png.len() - 8 {
             let len = u32::from_be_bytes([png[at], png[at + 1], png[at + 2], png[at + 3]]) as usize;
             match &png[at + 4..at + 8] {
                 b"tRNS" => return true,

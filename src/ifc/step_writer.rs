@@ -1714,8 +1714,12 @@ impl StepWriter<'_> {
             return None;
         }
         let count = self.material_textures.len();
-        let drawn = |m: usize| Some(m).filter(|m| *m < count).or(self.element_material);
-        let textured = |m: Option<usize>| m.is_some_and(|m| self.material_textures[m].is_some());
+        let element = self.element_material.filter(|m| *m < count);
+        let drawn = |m: usize| Some(m).filter(|m| *m < count).or(element);
+        let textured = |m: Option<usize>| {
+            m.and_then(|m| self.material_textures.get(m))
+                .is_some_and(Option::is_some)
+        };
         let mut seen: Vec<Option<usize>> = Vec::new();
         for m in face_materials {
             if !seen.contains(&drawn(*m)) {
