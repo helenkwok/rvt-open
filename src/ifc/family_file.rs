@@ -15,7 +15,9 @@
 //!
 //! Nested instances are exported by the project exporter as family instances;
 //! on releases whose saved graphics the project pass does not read (before
-//! 2023) this pass draws them from their saved graphics too. Releases 2015 to
+//! 2023) this pass draws them from their saved graphics too, and an instance
+//! no pass drew (every one before 2015) from its family's decoded document,
+//! placed by the instance's transform. Releases 2015 to
 //! 2022 are read here only with a self-check: the mesh must lie inside the
 //! element's stored bounding box.
 
@@ -37,6 +39,10 @@ pub const FORM_SOLVED_BODY_SOURCE: &str = "family_form_solved_solid";
 pub const FORM_BOX_BODY_SOURCE: &str = "family_form_bounding_box";
 /// `BodySource` of a nested instance drawn from its saved graphics here.
 pub const NESTED_SAVED_MESH_BODY_SOURCE: &str = "family_nested_saved_mesh";
+
+/// `BodySource` of a nested instance drawn from its family's decoded
+/// document.
+pub const NESTED_DOCUMENT_BODY_SOURCE: &str = "family_nested_document";
 
 /// The storey a family's elements are placed in.
 pub const FAMILY_STOREY: &str = "Ref. Level";
@@ -86,6 +92,19 @@ pub struct FamilySummary {
     /// Instances of nested families, and how many this pass drew.
     pub nested_instances: usize,
     pub nested_drawn: usize,
+    /// Of `nested_drawn`, instances whose family's voids are not cut.
+    #[serde(default)]
+    pub nested_uncut: usize,
+    /// Undecoded forms of nested families drawn as their stored boxes.
+    #[serde(default)]
+    pub nested_form_boxes: usize,
+    /// Of `nested_drawn`, forms of their families' documents not in the
+    /// mesh, by why (an instance counted once per reason).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub nested_partial: BTreeMap<String, usize>,
+    /// Nested instances not drawn from their family's document, by why.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub nested_missing: BTreeMap<String, usize>,
     /// Why sweeps, revolutions and blends were not rebuilt from their
     /// sketches, by `kind:reason` (forms whose saved graphics drew them too).
     #[serde(default)]
@@ -97,6 +116,9 @@ pub struct FamilySummary {
 
 struct Form {
     id: i64,
+    /// Its class tag and the number of the partition it was read from.
+    tag: u16,
+    part: u32,
     kind: &'static str,
     cutting: bool,
     visible: bool,
@@ -294,6 +316,12 @@ pub fn attach(
     let mut forms: Vec<Form> = Vec::new();
     let mut boxes: BTreeMap<i64, [[f64; 3]; 2]> = BTreeMap::new();
     let mut nested: BTreeSet<i64> = BTreeSet::new();
+    // Material element id -> its material's name (the model's materials
+    // are listed by name).
+    let mut material_names: BTreeMap<i64, String> = BTreeMap::new();
+    // The newest partition each object was read from: older copies of a
+    // record a file keeps in earlier partitions are not current.
+    let mut newest: BTreeMap<(u16, i64), u32> = BTreeMap::new();
     for_each_object_where(
         rf,
         |_, _| true,
@@ -311,6 +339,13 @@ pub fn attach(
                 return;
             };
             let id = x.frame.header.id as i64;
+            let part = crate::partition_room_parameters::partition_number(&x.stream);
+            match newest.get(&(x.frame.header.tag, id)) {
+                Some(p) if *p > part => return,
+                _ => {
+                    newest.insert((x.frame.header.tag, id), part);
+                }
+            }
             if class == "GElement" {
                 if let Some(Value::List(b)) = root.get("m_bBox") {
                     if let [lo, hi] = b.as_slice() {
@@ -323,6 +358,20 @@ pub fn attach(
             }
             if class == "FamilyInstance" {
                 nested.insert(id);
+                return;
+            }
+            if class == "MaterialElem" {
+                let name = x
+                    .objects
+                    .iter()
+                    .filter(|o| names.get(&o.tag).map(String::as_str) == Some("Material"))
+                    .find_map(|o| match o.get("m_name") {
+                        Some(Value::Text(t)) if !t.trim().is_empty() => Some(t.clone()),
+                        _ => None,
+                    });
+                if let Some(name) = name {
+                    material_names.insert(id, name);
+                }
                 return;
             }
             let Some((_, kind)) = FORM_CLASSES.iter().find(|(c, _)| c == class) else {
@@ -345,6 +394,8 @@ pub fn attach(
             }
             forms.push(Form {
                 id,
+                tag: x.frame.header.tag,
+                part,
                 kind,
                 cutting: matches!(root.get("m_cutting"), Some(Value::Bool(true))),
                 visible,
@@ -352,6 +403,16 @@ pub fn attach(
             });
         },
     )?;
+    forms.retain(|f| newest.get(&(f.tag, f.id)) == Some(&f.part));
+    // Decoded solids of the family's own document, and which forms belong
+    // to a nested family's document instead (files without keyed sections).
+    let docs = family_documents::read_with_host(rf, true).ok();
+    if let Some(d) = &docs {
+        forms.retain(|f| {
+            !d.nested_objects.contains(&f.id) && !d.host_samples.contains(&(HOST_DOCUMENT, f.id))
+        });
+        nested.retain(|i| !d.nested_objects.contains(i));
+    }
     forms.sort_by_key(|f| f.id);
     for f in &forms {
         *out.forms_found.entry(f.kind.to_string()).or_default() += 1;
@@ -437,8 +498,6 @@ pub fn attach(
         }
     }
 
-    // Decoded solids of the family's own document.
-    let docs = family_documents::read_with_host(rf, true).ok();
     if let Some(d) = &docs {
         out.solve_failures = d.stats.solve_failures.clone();
     }
@@ -544,6 +603,14 @@ pub fn attach(
                     &found,
                 ));
             }
+            // Releases the resolver does not read (before 2015): the
+            // model's material of the same name, read from the file's
+            // material records.
+            if material_index.is_none() {
+                material_index = material_names
+                    .get(&m)
+                    .and_then(|n| model.materials.iter().position(|mi| &mi.name == n));
+            }
         }
         model.entities.push(IfcEntity::BuildingElement {
             ifc_type: ifc_type.into(),
@@ -602,6 +669,83 @@ pub fn attach(
         }
     }
 
+    // Nested instances no other pass drew, from their family's decoded
+    // document placed by the instance's transform (its matrix's columns
+    // are the instance's axes, as for a project's instances).
+    let placed: BTreeSet<i64> = model
+        .entities
+        .iter()
+        .filter_map(|e| match e {
+            IfcEntity::BuildingElement {
+                type_guid: Some(t), ..
+            } => t.parse().ok(),
+            _ => None,
+        })
+        .collect();
+    if let Some(d) = &docs {
+        for (id, pose) in &d.instances {
+            if !nested.contains(id) || placed.contains(id) {
+                continue;
+            }
+            let Some((guid, _)) = d.document_of_symbol(pose.symbol) else {
+                *out.nested_missing
+                    .entry("no_family_document".into())
+                    .or_default() += 1;
+                continue;
+            };
+            let mut body = NestedBody::default();
+            body.collect(d, guid, pose_affine(pose), 0);
+            if body.triangles.is_empty() {
+                for w in body.missing.keys() {
+                    *out.nested_missing.entry(w.clone()).or_default() += 1;
+                }
+                if body.missing.is_empty() {
+                    *out.nested_missing
+                        .entry("no_solid_form".into())
+                        .or_default() += 1;
+                }
+                continue;
+            }
+            let material_index = body
+                .material
+                .and_then(|(_, m)| material_names.get(&m))
+                .and_then(|name| model.materials.iter().position(|mi| &mi.name == name));
+            model.entities.push(IfcEntity::BuildingElement {
+                ifc_type: ifc_type.into(),
+                name: format!("{label}:nested {id}"),
+                type_guid: Some(id.to_string()),
+                predefined_type: predefined.map(str::to_string),
+                storey_index: None,
+                material_index,
+                property_set: Some(PropertySet {
+                    name: "RvtFamilyGeometry".into(),
+                    properties: vec![Property {
+                        name: "BodySource".into(),
+                        value: PropertyValue::Text(NESTED_DOCUMENT_BODY_SOURCE.into()),
+                    }],
+                }),
+                location_feet: Some([0.0; 3]),
+                rotation_radians: None,
+                extrusion: None,
+                host_element_index: None,
+                material_layer_set_index: None,
+                material_profile_set_index: None,
+                solid_shape: Some(SolidShape::TriangulatedFaceSet {
+                    vertices_feet: body.vertices,
+                    triangles: body.triangles,
+                    face_materials: Vec::new(),
+                }),
+                representation_map_index: None,
+            });
+            out.nested_drawn += 1;
+            out.nested_uncut += usize::from(body.uncut);
+            out.nested_form_boxes += body.boxes;
+            for w in body.missing.into_keys() {
+                *out.nested_partial.entry(w).or_default() += 1;
+            }
+        }
+    }
+
     // One storey at the family origin.
     if model.building_storeys.is_empty() {
         model.building_storeys.push(super::Storey {
@@ -619,6 +763,159 @@ pub fn attach(
     }
     out.summary = summary_line(&out);
     Ok(out)
+}
+
+/// A linear map (rows) and a translation: `p -> l * p + t`.
+type Affine = ([[f64; 3]; 3], [f64; 3]);
+
+/// An instance's placement as a map from its family's coordinates. A
+/// flipped instance mirrors its family across the family's own axis before
+/// the transform (the matrix keeps no reflection: on a ring of chairs
+/// measured, the six flipped in Y have the unflipped ones' matrices and face
+/// them across the table). The matrix's columns are the instance's axes.
+fn pose_affine(pose: &family_documents::InstancePose) -> Affine {
+    let mirror = [
+        if pose.flipped_x { -1.0 } else { 1.0 },
+        if pose.flipped_y { -1.0 } else { 1.0 },
+        1.0,
+    ];
+    let l = std::array::from_fn(|k| std::array::from_fn(|j| pose.matrix[k][j] * mirror[j]));
+    (l, pose.origin)
+}
+
+/// `a` after `b`.
+fn compose(a: &Affine, b: &Affine) -> Affine {
+    let l = std::array::from_fn(|i| {
+        std::array::from_fn(|j| (0..3).map(|k| a.0[i][k] * b.0[k][j]).sum())
+    });
+    let t = std::array::from_fn(|i| a.1[i] + (0..3).map(|k| a.0[i][k] * b.1[k]).sum::<f64>());
+    (l, t)
+}
+
+fn det(l: &[[f64; 3]; 3]) -> f64 {
+    l[0][0] * (l[1][1] * l[2][2] - l[1][2] * l[2][1])
+        - l[0][1] * (l[1][0] * l[2][2] - l[1][2] * l[2][0])
+        + l[0][2] * (l[1][0] * l[2][1] - l[1][1] * l[2][0])
+}
+
+/// The mesh of one nested instance: its family's decoded solids and, in a
+/// family file without keyed sections, those of the families that family
+/// places in turn.
+#[derive(Default)]
+struct NestedBody {
+    vertices: Vec<[f64; 3]>,
+    triangles: Vec<BrepTriangle>,
+    /// The largest solid (by volume) that names a material, and that material.
+    material: Option<(f64, i64)>,
+    /// A void was left uncut.
+    uncut: bool,
+    /// Undecoded forms drawn as their boxes.
+    boxes: usize,
+    /// Forms of the documents drawn that are not in the mesh, by why.
+    missing: BTreeMap<String, usize>,
+}
+
+/// Deepest nesting followed.
+const MAX_NESTING: usize = 8;
+
+impl NestedBody {
+    fn collect(
+        &mut self,
+        d: &family_documents::FamilyDocuments,
+        guid: family_documents::Guid,
+        map: Affine,
+        depth: usize,
+    ) {
+        let Some(doc) = d.docs.get(&guid) else {
+            *self.missing.entry("no_family_document".into()).or_default() += 1;
+            return;
+        };
+        let reversed = det(&map.0) < 0.0;
+        for solid in &doc.solids {
+            let base = self.vertices.len() as u32;
+            self.vertices
+                .extend(solid.vertices.iter().map(|p| -> [f64; 3] {
+                    std::array::from_fn(|k| {
+                        map.1[k] + (0..3).map(|j| map.0[k][j] * p[j]).sum::<f64>()
+                    })
+                }));
+            self.triangles.extend(solid.triangles.iter().map(|t| {
+                if reversed {
+                    BrepTriangle(base + t[0], base + t[2], base + t[1])
+                } else {
+                    BrepTriangle(base + t[0], base + t[1], base + t[2])
+                }
+            }));
+            if let Some(m) = solid.material_id {
+                let v = volume(solid);
+                if self.material.is_none_or(|(w, _)| v > w) {
+                    self.material = Some((v, m));
+                }
+            }
+        }
+        // Forms that did not decode, as their stored boxes (the file's own
+        // undecoded forms are drawn so too).
+        for b in &doc.unsolved_boxes {
+            let SolidShape::TriangulatedFaceSet {
+                vertices_feet,
+                triangles,
+                ..
+            } = box_mesh(*b)
+            else {
+                continue;
+            };
+            let base = self.vertices.len() as u32;
+            self.vertices
+                .extend(vertices_feet.iter().map(|p| -> [f64; 3] {
+                    std::array::from_fn(|k| {
+                        map.1[k] + (0..3).map(|j| map.0[k][j] * p[j]).sum::<f64>()
+                    })
+                }));
+            self.triangles.extend(triangles.iter().map(|t| {
+                if reversed {
+                    BrepTriangle(base + t.0, base + t.2, base + t.1)
+                } else {
+                    BrepTriangle(base + t.0, base + t.1, base + t.2)
+                }
+            }));
+            self.boxes += 1;
+        }
+        let placed = d.doc_instances.get(&guid);
+        for (why, n) in &doc.undecoded {
+            match *why {
+                // A void is left uncut, as the file's own forms are.
+                "void" => self.uncut = true,
+                // Its nested families are placed below when their poses are known.
+                "nested_family" if placed.is_some() => {}
+                w => *self.missing.entry(w.to_string()).or_default() += n,
+            }
+        }
+        if depth >= MAX_NESTING {
+            return;
+        }
+        for pose in placed.into_iter().flat_map(|p| p.values()) {
+            match d.document_of_symbol(pose.symbol) {
+                Some((sub, _)) => {
+                    self.collect(d, sub, compose(&map, &pose_affine(pose)), depth + 1)
+                }
+                None => *self.missing.entry("no_family_document".into()).or_default() += 1,
+            }
+        }
+    }
+}
+
+/// The volume a closed solid encloses.
+fn volume(s: &family_documents::FamilySolid) -> f64 {
+    s.triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|i| s.vertices[i as usize]);
+            a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0])
+        })
+        .sum::<f64>()
+        .abs()
+        / 6.0
 }
 
 #[cfg(test)]
@@ -648,6 +945,38 @@ mod tests {
             summary_line(&s),
             "Revit family, release 2027, category Furniture, types A, B (drawn: A)"
         );
+    }
+
+    /// A flipped instance inside a rotated one: the mirror comes first, and
+    /// the map's determinant says to reverse the winding.
+    #[test]
+    fn nested_placements_compose_with_their_mirrors() {
+        let pose = |matrix, origin, flipped_y| family_documents::InstancePose {
+            symbol: 1,
+            info_symbol: None,
+            matrix,
+            origin,
+            flipped_x: false,
+            flipped_y,
+        };
+        // A quarter turn about z at (10, 0, 0), then a Y flip at (0, 2, 0).
+        let outer = pose_affine(&pose(
+            [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            [10.0, 0.0, 0.0],
+            false,
+        ));
+        let inner = pose_affine(&pose(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            [0.0, 2.0, 0.0],
+            true,
+        ));
+        let map = compose(&outer, &inner);
+        let p = [1.0, 1.0, 0.0];
+        let q: [f64; 3] =
+            std::array::from_fn(|k| map.1[k] + (0..3).map(|j| map.0[k][j] * p[j]).sum::<f64>());
+        // inner: (1, -1, 0) + (0, 2, 0) = (1, 1, 0); outer: turn to (-1, 1, 0), then + (10, 0, 0).
+        assert_eq!(q, [9.0, 1.0, 0.0]);
+        assert!(det(&map.0) < 0.0);
     }
 
     #[test]

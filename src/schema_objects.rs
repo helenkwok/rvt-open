@@ -88,7 +88,10 @@ const STANDARD_GRAVITY_FT_S2: f64 = 9.80665 / 0.3048;
 /// First release whose object ids are 64-bit on the wire.
 pub const FIRST_WIDE_ID_RELEASE: u32 = 2024;
 
-/// Tag of `ElementId`.
+/// Tag of `ElementId` from Revit 2012 on. The class is found by its name:
+/// earlier schemas give it tag 19 (and tag 20 to `Identifier`, the class it
+/// holds), so a fixed tag read every id of a Revit 2008 to 2011 file as an
+/// object wrapping the id.
 const ELEMENT_ID_TAG: u16 = 20;
 /// Most elements a container may hold before the read is refused.
 const MAX_COUNT: usize = 1 << 24;
@@ -596,8 +599,16 @@ impl Reader<'_> {
             .map(Value::List)
     }
 
-    fn element_id(&mut self, depth: usize) -> R<Value> {
-        let fields = self.fields(ELEMENT_ID_TAG, depth + 1)?;
+    /// Whether class `tag` is `ElementId`.
+    fn is_element_id(&self, tag: u16) -> bool {
+        self.layouts
+            .classes
+            .get(&tag)
+            .map_or(tag == ELEMENT_ID_TAG, |c| c.name == "ElementId")
+    }
+
+    fn element_id(&mut self, tag: u16, depth: usize) -> R<Value> {
+        let fields = self.fields(tag, depth + 1)?;
         // ElementId { Identifier m_id { integer m_id(64) } }
         let mut v = fields.values.first().map(|(_, v)| v.clone());
         while let Some(Value::Object(inner)) = v {
@@ -625,8 +636,8 @@ impl Reader<'_> {
                 modifier,
                 count,
             } => self.repeat(*modifier, *count, &mut |r| {
-                if *tag == ELEMENT_ID_TAG {
-                    r.element_id(depth)
+                if r.is_element_id(*tag) {
+                    r.element_id(*tag, depth)
                 } else {
                     r.fields(*tag, depth + 1).map(Value::Object)
                 }
@@ -1480,5 +1491,59 @@ mod tests {
             Some(&Value::Int(12))
         );
         assert!(docs.iter().all(|d| d.graph.exact));
+    }
+
+    /// Before Revit 2012 `ElementId` is tag 19 and tag 20 is `Identifier`,
+    /// the class it holds: an id field still reads as an id.
+    #[test]
+    fn element_id_is_found_by_class_name() {
+        let field = |name: &str, ty| SchemaField {
+            name: name.into(),
+            ty,
+            flags: 0,
+        };
+        let class = |tag, name: &str, fields| SchemaLayout {
+            tag,
+            name: name.into(),
+            base: None,
+            fields,
+        };
+        let int = SchemaFieldType::Scalar {
+            kind: 4,
+            modifier: 0,
+            count: None,
+        };
+        let object = |tag| SchemaFieldType::Object {
+            tag,
+            modifier: 0,
+            count: None,
+        };
+        let mut classes = BTreeMap::new();
+        classes.insert(19, class(19, "ElementId", vec![field("m_id", object(20))]));
+        classes.insert(
+            20,
+            class(20, "Identifier", vec![field("m_id", int.clone())]),
+        );
+        classes.insert(7, class(7, "Thing", vec![field("m_famId", object(19))]));
+        let layouts = SchemaLayouts { classes };
+        let mut buf = 7u16.to_le_bytes().to_vec();
+        buf.extend(42i32.to_le_bytes());
+        let frame = Frame {
+            header: ObjectHeader {
+                id: 1,
+                width: IdWidth::Narrow,
+                adler: 0,
+                size: buf.len() as u32,
+                tag: 7,
+            },
+            span: 0..buf.len(),
+            payload: 0..buf.len(),
+        };
+        let object = read_frame(&layouts, "Partitions/0", &buf, frame);
+        assert!(object.exact, "{:?}", object.stopped);
+        assert_eq!(
+            object.root().and_then(|r| r.get("m_famId")),
+            Some(&Value::Id(42))
+        );
     }
 }
