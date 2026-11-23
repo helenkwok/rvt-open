@@ -158,8 +158,9 @@ pub struct DocStats {
     pub wall_openings_uncut: usize,
     /// Solids a void meets whose cut gave up (drawn uncut).
     pub void_cuts_failed: usize,
-    /// Copies of a family file's forms that are deleted elements' (see
-    /// [`deleted_elements`]): Revit draws none of them.
+    /// Copies of a family file's forms that are deleted elements' (not in
+    /// the element table, and in a partition older than the file's newest):
+    /// Revit draws none of them.
     pub deleted: usize,
 }
 
