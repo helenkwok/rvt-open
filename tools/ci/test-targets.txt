@@ -183,6 +183,7 @@ cli       rvt_info_cli
 cli       rvt_inspect_cli
 cli       rvt_schedule_cli
 
+real      appearance_assets
 contract  binary_inventory
 contract  builtin_catalog_sources
 contract  field_type_coverage

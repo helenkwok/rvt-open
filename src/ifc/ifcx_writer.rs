@@ -432,6 +432,57 @@ pub fn write_ifcx_graph_texture_layer(
     Ok((text, files))
 }
 
+// ------------------------------------------------------------ appearance
+
+/// The key of a material's render appearance asset in the appearance layer:
+/// the [`crate::appearance::AppearanceAsset`] record as JSON text, every
+/// property, kind and connected asset as saved.
+pub const APPEARANCE_KEY: &str = "rvtopen::revit::AppearanceAsset";
+
+/// The render appearance of each material of the graph as an IFCX layer to
+/// compose over the main file (header id `<id>/appearance`): each material
+/// whose name names an appearance asset in `appearance` gets that asset's
+/// record ([`APPEARANCE_KEY`]). The main file does not change. `timestamp` as
+/// [`write_ifcx_graph_layers_at`].
+pub fn write_ifcx_graph_appearance_layer(
+    graph: &IfcxGraph,
+    appearance: &crate::appearance::Appearance,
+    timestamp: Option<i64>,
+) -> Result<String, IfcxError> {
+    if let Some(e) = graph.errors.first() {
+        return Err(IfcxError(e.clone()));
+    }
+    let mut data = Vec::new();
+    for (i, path) in graph.order.materials.iter().enumerate() {
+        let Some(info) = graph.material(i) else {
+            continue;
+        };
+        let Some(asset) = appearance.asset_of(&info.name) else {
+            continue;
+        };
+        let text = serde_json::to_string(asset).map_err(|e| IfcxError(format!("writing: {e}")))?;
+        data.push(json!({"path": path, "attributes": {APPEARANCE_KEY: text}}));
+    }
+    let mut schemas = Map::new();
+    if !data.is_empty() {
+        schemas.insert(APPEARANCE_KEY.into(), json!({"value": {"dataType": "String"}}));
+    }
+    let doc = json!({
+        "header": {
+            "id": format!("{}/appearance", graph.id),
+            "ifcxVersion": "ifcx_alpha",
+            "dataVersion": "1.0.0",
+            "author": "rvt-open",
+            "timestamp": super::step_writer::iso_timestamp_from(
+                timestamp.unwrap_or_else(default_timestamp)),
+        },
+        "imports": [{"uri": IFC_IMPORT}, {"uri": PROP_IMPORT}, {"uri": USD_IMPORT}],
+        "schemas": schemas,
+        "data": data,
+    });
+    serde_json::to_string(&doc).map_err(|e| IfcxError(format!("writing: {e}")))
+}
+
 // ---------------------------------------------------------------- ids
 
 /// SHA-1 (RFC 3174), for uuid5 only.

@@ -10,8 +10,8 @@ use clap::{Parser, ValueEnum};
 use rvt::{
     RevitFile,
     ifc::{
-        ExportConvention, ExportDiagnostics, ExportQualityMode, write_ifcx_graph_layers_to,
-        write_usda_graph, write_usdc_graph,
+        ExportConvention, ExportDiagnostics, ExportQualityMode, write_ifcx_graph_appearance_layer,
+        write_ifcx_graph_layers_to, write_usda_graph, write_usdc_graph,
     },
     walker::WalkerLimits,
 };
@@ -278,6 +278,16 @@ struct Args {
     /// from the project template; a larger file).
     #[arg(long, requires = "ifcx", conflicts_with = "no_ifcx_revit_elements")]
     ifcx_unused_types: bool,
+    /// Also write each material's render appearance asset as an IFCX layer
+    /// to this path: the asset's whole property tree as saved, on the
+    /// material's node. The `--ifcx` file does not change.
+    #[arg(long, value_name = "PATH", requires = "ifcx")]
+    ifcx_appearance: Option<PathBuf>,
+    /// Write every material's render appearance asset as JSON to this path:
+    /// its schema, every property with its kind and value, the connected
+    /// textures and procedurals with their placement, and its swatch.
+    #[arg(long, value_name = "PATH", conflicts_with = "placeholder")]
+    appearance: Option<PathBuf>,
     /// Also write the model as ThatOpen Fragments (`.frag`, the public
     /// @thatopen/fragments 3.6.0 schema) to this path: the IFCX graph's
     /// items, properties, tree and meshes.
@@ -637,6 +647,23 @@ fn run(args: Args) -> anyhow::Result<()> {
     } else {
         Vec::new()
     };
+    let appearance = if args.appearance.is_some() || args.ifcx_appearance.is_some() {
+        rvt::control::stage("appearance assets");
+        let appearance = rvt::appearance::read(&mut rf)?;
+        if let Some(p) = &args.appearance {
+            rvt::cli::write_output(p, serde_json::to_vec(&appearance)?)?;
+            report.output("appearance", p);
+            eprintln!(
+                "rvt-ifc: wrote {} appearance assets of {} materials to {}",
+                appearance.assets.len(),
+                appearance.materials.len(),
+                p.display()
+            );
+        }
+        Some(appearance)
+    } else {
+        None
+    };
     // Everything below is written from the graph: free the file (its
     // inflated streams and memos) before it is built, and the model after.
     drop(rf);
@@ -787,6 +814,15 @@ fn run(args: Args) -> anyhow::Result<()> {
             eprintln!(
                 "rvt-ifc: wrote {} IFCX diagnostics bytes to {}",
                 diagnostics_layer.len(),
+                p.display()
+            );
+        }
+        if let (Some(p), Some(appearance)) = (&args.ifcx_appearance, &appearance) {
+            let layer = write_ifcx_graph_appearance_layer(&graph, appearance, ifcx_time)?;
+            rvt::cli::write_output(p, layer.as_bytes())?;
+            eprintln!(
+                "rvt-ifc: wrote {} IFCX appearance bytes to {}",
+                layer.len(),
                 p.display()
             );
         }

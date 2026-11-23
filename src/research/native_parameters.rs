@@ -1121,7 +1121,15 @@ impl<'a> Cursor<'a> {
                 } else {
                     self.u32()?
                 };
-                ensure!(n <= 100_000, "native container count budget exceeded");
+                // 100,000 items, or more where the caller's value budget
+                // allows it and the record still holds that many bytes (an
+                // item takes at least one): a swatch image's bytes.
+                let budget = self
+                    .limits
+                    .max_values
+                    .min(self.body.len().saturating_sub(self.pos))
+                    .max(100_000);
+                ensure!(n as usize <= budget, "native container count budget exceeded");
                 if BUILD {
                     let mut values = Vec::with_capacity(n.min(1024) as usize);
                     for _ in 0..n {
