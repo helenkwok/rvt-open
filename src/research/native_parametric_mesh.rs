@@ -682,7 +682,7 @@ impl std::fmt::Debug for SeamCache {
     }
 }
 
-/// The points face `fi` takes from the connected group of faces it exchanges with.
+/// The points face `fi` takes from the connected group of faces it exchanges with (`takes`).
 fn group_seams(g: &ObjectGraph, fi: usize) -> std::sync::Arc<SeamExtras> {
     let lock = || {
         g.seams
@@ -739,17 +739,23 @@ fn face_links(g: &ObjectGraph, fi: usize) -> Result<Vec<(usize, usize, usize)>> 
     Ok(links)
 }
 
-/// Whether two faces take each other's points along an edge they share: ruled faces and
-/// surfaces of revolution trimmed to a rectangle, except two ruled faces neither of which is
-/// trimmed to a rectangle. Two rectangular ruled faces start from one normalized grid
-/// (`face_grid_impl`), so they take only what one of them took from elsewhere. A trimmed
-/// surface of revolution keeps its own points.
-fn exchanges(a: &FaceGrid, b: &FaceGrid) -> bool {
+/// Whether face `a` takes `b`'s points along an edge they share: ruled faces and surfaces of
+/// revolution trimmed to a rectangle take each other's, except two ruled faces neither of
+/// which is trimmed to a rectangle. Two rectangular ruled faces start from one normalized grid
+/// (`face_grid_impl`), so they take only what one of them took from elsewhere. A surface of
+/// revolution whose trim is not one rectangle and a rectangular neighbour take each other's
+/// points too (a rectangular ruled face does not take the trimmed revolution's), but two
+/// trimmed surfaces of revolution exchange nothing: letting them changed the drawing of
+/// coverings of the BIM4LCA housing models.
+fn takes(a: &FaceGrid, b: &FaceGrid) -> bool {
     use ParametricSurface::{RuledSurf, SurfRev};
     let trimmed_revolution =
         |f: &FaceGrid| matches!(f.surface, SurfRev { .. }) && f.loops.is_some();
-    if trimmed_revolution(a) || trimmed_revolution(b) {
-        return false;
+    if trimmed_revolution(b) {
+        return matches!(a.surface, SurfRev { .. }) && a.loops.is_none();
+    }
+    if trimmed_revolution(a) {
+        return b.loops.is_none() && matches!(b.surface, RuledSurf { .. } | SurfRev { .. });
     }
     match (&a.surface, &b.surface) {
         (RuledSurf { .. }, RuledSurf { .. }) => a.loops.is_none() || b.loops.is_none(),
@@ -851,9 +857,9 @@ const SEAM_TAKEN: usize = 10_000;
 const SEAM_GRID_POINTS: usize = 2_000_000;
 
 /// The connected group of ruled faces and surfaces of revolution that `fi` exchanges with
-/// (`exchanges`), and the points each takes: every face takes what each neighbour draws
-/// along their shared edge, the neighbour's own takings included, until no face takes a
-/// new point, so that the faces of a chain (a revolution, a ruled face, a revolution) or of
+/// (`takes`, either way), and the points each takes: every face takes what each neighbour it
+/// takes from draws along their shared edge, the neighbour's own takings included, until no
+/// face takes a new point, so that the faces of a chain (a revolution, a ruled face, a revolution) or of
 /// a ring of revolutions all draw a shared edge through the same points. An edge that does
 /// not run along one `u` or one `v` in both faces, or whose saved points do not agree,
 /// carries nothing.
@@ -883,7 +889,9 @@ fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<u
         grid_of(&mut grids, fi),
         "face without a ruled or revolved grid"
     );
+    // per face, the edges it takes points across, and the faces that take its points
     let mut links: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
+    let mut takers: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     let mut stack = vec![fi];
     links.insert(fi, Vec::new());
     while let Some(f) = stack.pop() {
@@ -893,12 +901,16 @@ fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<u
                 continue;
             }
             let (a, b) = (grids[&f].as_ref(), grids[&other].as_ref());
-            if !a.zip(b).is_some_and(|(a, b)| exchanges(a, b)) {
-                continue;
+            let Some((a, b)) = a.zip(b) else { continue };
+            let (take, give) = (takes(a, b), takes(b, a));
+            if take {
+                mine.push((edge, side, other));
             }
-            mine.push((edge, side, other));
-            if let std::collections::btree_map::Entry::Vacant(e) = links.entry(other) {
-                e.insert(Vec::new());
+            if give {
+                takers.entry(f).or_default().push(other);
+            }
+            if (take || give) && !links.contains_key(&other) {
+                links.insert(other, Vec::new());
                 stack.push(other);
             }
         }
@@ -972,7 +984,7 @@ fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<u
             }
         }
         if grew {
-            for &(_, _, other) in &links[&f] {
+            for &other in takers.get(&f).into_iter().flatten() {
                 if queued.insert(other) {
                     queue.push_back(other);
                 }

@@ -700,3 +700,44 @@ fn revolutions_of_one_group_share_their_edge_points() {
     );
     assert_eq!(open, 0, "edges without their reverse");
 }
+
+#[test]
+fn trimmed_revolution_and_its_rectangular_neighbour_share_their_edge_points() {
+    // A piece of furniture of the Revit 2024 DACH sample where a surface of revolution whose
+    // trim is not one rectangle meets one trimmed to a rectangle: each takes the other's points
+    // along their shared edge (326 directed edges without their reverse before, 306 after, as
+    // the body scorer counts them).
+    // The family's geometry draws this body as rvt-ifc does by default; saved meshes alone
+    // draw it from another source.
+    let Some(dir) = std::env::var_os("RVT_REVIT2024_SAMPLES_DIR").map(PathBuf::from) else {
+        eprintln!("skipping: RVT_REVIT2024_SAMPLES_DIR is not set");
+        return;
+    };
+    let rvt = dir.join("DACHsampleproject.rvt");
+    if !rvt.exists() {
+        eprintln!("skipping: DACHsampleproject absent");
+        return;
+    }
+    let mut rf = RevitFile::open(&rvt).expect("open");
+    let options = ConvertOptions {
+        family_geometry: true,
+        saved_meshes: true,
+        saved_materials: true,
+        proxy_shapes: true,
+        ..ConvertOptions::default()
+    };
+    let result = export(&mut rf, &options).expect("export");
+    let ours = body_volumes(
+        &parse(&write_step(&result.model)),
+        &["IFCFURNITURE"],
+        &["2396652"],
+        1.0,
+    );
+    let mesh = ours["2396652"].mesh.as_ref().expect("a mesh body");
+    let open = unmatched_edges(&mesh.0, &mesh.1);
+    eprintln!(
+        "2396652: {} triangles, {open} edges without their reverse",
+        mesh.1.len()
+    );
+    assert!(open < 316, "{open} edges without their reverse");
+}
