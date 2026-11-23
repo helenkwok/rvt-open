@@ -67,8 +67,8 @@ pub const SOLVED_BBOX_FRACTION: f64 = 0.01;
 /// One decoded solid form, in the family document's coordinates (feet).
 #[derive(Debug, Clone, Default)]
 pub struct FamilySolid {
-    /// Of a revolution, its axis's direction.
-    pub revolution_axis: Option<[f64; 3]>,
+    /// Of a revolution, a point on its axis and the axis's unit direction.
+    pub revolution_axis: Option<[[f64; 3]; 2]>,
     pub vertices: Vec<[f64; 3]>,
     pub triangles: Vec<[u32; 3]>,
     /// The host material element the form names, `None` for "by category".
@@ -158,6 +158,10 @@ pub struct DocStats {
     pub wall_openings_uncut: usize,
     /// Solids a void meets whose cut gave up (drawn uncut).
     pub void_cuts_failed: usize,
+    /// Forms and instances of the file's own elements that its element
+    /// table (`Global/ElemTable`) does not list: deleted elements whose last
+    /// copies an earlier partition still keeps. Revit draws none of them.
+    pub deleted: usize,
 }
 
 #[derive(Debug, Default)]
@@ -508,6 +512,12 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     let mut walls: BTreeSet<(Guid, i64)> = BTreeSet::new();
     // Keyed by document and opening: a newer copy replaces an older one.
     let mut openings: BTreeMap<(Guid, i64), Option<(i64, i64)>> = BTreeMap::new();
+    // The element ids the file lists: a deleted element's last copies stay in
+    // the partition they were saved in (one Revit 2011 family measured keeps
+    // 9 extrusions and a sweep the table does not list, among them a back
+    // upright and a crossbar facing the wrong way). Empty when the table does
+    // not read, and then nothing is left out.
+    let declared = declared_ids(rf);
     let host_family = if host_is_family && section_count == 0 {
         host_family_id(rf, &names)?
     } else {
@@ -531,6 +541,15 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 let n = s.partition_point(|(at, _)| *at <= start);
                 n.checked_sub(1).map(|i| s[i].1)
             });
+            // Outside a keyed document the ids are the file's own, which the
+            // element table lists.
+            let id = x.frame.header.id as i64;
+            if guid.is_none() && !declared.is_empty() && !declared.contains(&id) {
+                if class == "FamilyInstance" || FORM_CLASS_NAMES.contains(&class.as_str()) {
+                    out.stats.deleted += 1;
+                }
+                return;
+            }
             // A family file's own forms belong to its own document; its
             // `Family`, `FamilySymbol` and `FamilyInstance` objects stay the
             // host's (nested families and their instances).
@@ -549,7 +568,6 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             } else if guid.is_none() && host_is_family && !bookkeeping {
                 guid = Some(HOST_DOCUMENT);
             }
-            let id = x.frame.header.id as i64;
             let part = crate::partition_room_parameters::partition_number(&x.stream);
             match newest.get(&(guid, x.frame.header.tag, id)) {
                 Some(p) if *p > part => return,
@@ -1023,7 +1041,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                         // its corners and across its flats).
                         || solid
                             .revolution_axis
-                            .is_some_and(|a| revolution_box_matches(stored, &bbox, a))
+                            .is_some_and(|a| revolution_box_matches(stored, &bbox, a, &solid.vertices))
                         // A faceted stored box lies inside by the facet sag
                         // of the form's arcs, the revolution's own among them
                         // (its radius is at most the form's size).
@@ -1601,6 +1619,13 @@ fn pose_of(x: &SchemaObject, names: &BTreeMap<u16, String>) -> Option<InstancePo
     })
 }
 
+/// The element ids `Global/ElemTable` lists, empty when it does not read.
+pub(crate) fn declared_ids(rf: &mut RevitFile) -> BTreeSet<i64> {
+    crate::elem_table::declared_element_ids(rf)
+        .map(|ids| ids.into_iter().map(i64::from).collect())
+        .unwrap_or_default()
+}
+
 /// The solid-form classes.
 const FORM_CLASS_NAMES: [&str; 6] = [
     "ExtrusionElem",
@@ -1697,12 +1722,26 @@ fn mesh_volume(vertices: &[[f64; 3]], triangles: &[[u32; 3]]) -> f64 {
 
 /// Whether a revolution's stored box is its six-facet display's: on each
 /// axis it may lie inside the solved box by [`REVOLUTION_FACET_SAG`] of the
-/// solved half-extent there, scaled by how far that axis is from the
-/// revolution's (none along the axis itself, where facets change nothing).
-fn revolution_box_matches(stored: &Bounds, solved: &Bounds, axis: [f64; 3]) -> bool {
+/// revolution's radius (its vertices' farthest distance from its axis),
+/// scaled by how far that axis is from the revolution's (none along the axis
+/// itself, where facets change nothing).
+fn revolution_box_matches(
+    stored: &Bounds,
+    solved: &Bounds,
+    [on_axis, axis]: [[f64; 3]; 2],
+    vertices: &[[f64; 3]],
+) -> bool {
+    let radius = vertices
+        .iter()
+        .map(|v| {
+            let d = sub(*v, on_axis);
+            let along = dot(d, axis);
+            (dot(d, d) - along * along).max(0.0).sqrt()
+        })
+        .fold(0.0, f64::max);
     (0..3).all(|k| {
         let radial = (1.0 - axis[k] * axis[k]).max(0.0).sqrt();
-        let sag = REVOLUTION_FACET_SAG * (solved[1][k] - solved[0][k]) / 2.0 * radial;
+        let sag = REVOLUTION_FACET_SAG * radius * radial;
         let ok = |gap: f64| (-BBOX_TOLERANCE..=BBOX_TOLERANCE + sag).contains(&gap);
         ok(stored[0][k] - solved[0][k]) && ok(solved[1][k] - stored[1][k])
     })
@@ -2263,7 +2302,7 @@ fn solve_form(f: &RawForm, ctx: &SolveCtx) -> Result<(FamilySolid, Bounds), &'st
             .ok_or("bbox")?;
             Ok((
                 FamilySolid {
-                    revolution_axis: Some(d),
+                    revolution_axis: Some([o, d]),
                     ..solid
                 },
                 bbox,

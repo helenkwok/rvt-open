@@ -45,6 +45,14 @@ pub const NESTED_SAVED_MESH_BODY_SOURCE: &str = "family_nested_saved_mesh";
 /// `BodySource` of a nested instance drawn from its family's decoded
 /// document.
 pub const NESTED_DOCUMENT_BODY_SOURCE: &str = "family_nested_document";
+/// `BodySource` of such an instance stretched to its own stored box: its
+/// family's document draws that family's saved type, and the instance's type
+/// can be another size (a door's panel of 4 ft in a 3 ft door).
+pub const NESTED_DOCUMENT_SCALED_BODY_SOURCE: &str = "family_nested_document_scaled";
+/// A stretch beyond these factors is another shape, not another size.
+const NESTED_SCALE_LIMITS: (f64, f64) = (0.2, 5.0);
+/// A body within this fraction of its stored box fits it.
+const NESTED_FACET_ALLOWANCE: f64 = 0.05;
 
 /// The storey a family's elements are placed in.
 pub const FAMILY_STOREY: &str = "Ref. Level";
@@ -95,6 +103,10 @@ pub struct FamilySummary {
     /// members): not drawn, as Revit draws none.
     #[serde(default)]
     pub forms_unplaced: usize,
+    /// Forms of deleted elements (the element table does not list them; an
+    /// earlier partition still keeps their last copies): not drawn.
+    #[serde(default)]
+    pub forms_deleted: usize,
     /// Solids a decoded void was cut from.
     #[serde(default)]
     pub void_cuts: usize,
@@ -117,6 +129,13 @@ pub struct FamilySummary {
     /// Undecoded forms of nested families drawn as their stored boxes.
     #[serde(default)]
     pub nested_form_boxes: usize,
+    /// Of `nested_drawn`, instances stretched to their own stored box.
+    #[serde(default)]
+    pub nested_scaled: usize,
+    /// Of `nested_drawn`, instances whose stored box differs from their
+    /// body by a stretch beyond the limits: drawn as their document draws them.
+    #[serde(default)]
+    pub nested_size_mismatch: usize,
     /// Of `nested_drawn`, forms of their families' documents not in the
     /// mesh, by why (an instance counted once per reason).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -342,6 +361,10 @@ pub fn attach(
     // record a file keeps in earlier partitions are not current.
     let mut newest: BTreeMap<(u16, i64), u32> = BTreeMap::new();
     let mut unplaced_forms: BTreeSet<i64> = BTreeSet::new();
+    // Elements the element table does not list are deleted: an earlier
+    // partition still keeps their last copies (empty: nothing left out).
+    let declared = family_documents::declared_ids(rf);
+    let mut deleted_forms: BTreeSet<i64> = BTreeSet::new();
     for_each_object_where(
         rf,
         |_, _| true,
@@ -359,6 +382,12 @@ pub fn attach(
                 return;
             };
             let id = x.frame.header.id as i64;
+            if !declared.is_empty() && !declared.contains(&id) {
+                if FORM_CLASSES.iter().any(|(c, _)| c == class) {
+                    deleted_forms.insert(id);
+                }
+                return;
+            }
             let part = crate::partition_room_parameters::partition_number(&x.stream);
             match newest.get(&(x.frame.header.tag, id)) {
                 Some(p) if *p > part => return,
@@ -439,6 +468,7 @@ pub fn attach(
     forms
         .retain(|f| newest.get(&(f.tag, f.id)) == Some(&f.part) && !unplaced_forms.contains(&f.id));
     out.forms_unplaced = unplaced_forms.len();
+    out.forms_deleted = deleted_forms.len();
     // Decoded solids of the family's own document, and which forms belong
     // to a nested family's document instead (files without keyed sections).
     let docs = family_documents::read_with_host(rf, true).ok();
@@ -799,6 +829,28 @@ pub fn attach(
                 }
                 continue;
             }
+            // The instance's own stored box is the size of its type; the
+            // document draws its family's saved type, which can be another.
+            // Only an instance on the family's axes is compared: a turned
+            // one's stored box is that of its turned box, larger than its body
+            // (on a ring of chairs measured, by 10% to 19% for the eight turned
+            // by 25 and 60 degrees).
+            let mut source = NESTED_DOCUMENT_BODY_SOURCE;
+            let on_axes = pose
+                .matrix
+                .iter()
+                .flatten()
+                .all(|v| v.abs() <= 1e-6 || (v.abs() - 1.0).abs() <= 1e-6);
+            if let Some(stored) = boxes.get(id).filter(|_| on_axes) {
+                match stretch_to_box(&mut body.vertices, *stored) {
+                    Stretch::Fits => {}
+                    Stretch::Stretched => {
+                        source = NESTED_DOCUMENT_SCALED_BODY_SOURCE;
+                        out.nested_scaled += 1;
+                    }
+                    Stretch::BeyondLimits => out.nested_size_mismatch += 1,
+                }
+            }
             let material_index = body
                 .material
                 .and_then(|(_, m)| material_names.get(&m))
@@ -814,7 +866,7 @@ pub fn attach(
                     name: "RvtFamilyGeometry".into(),
                     properties: vec![Property {
                         name: "BodySource".into(),
-                        value: PropertyValue::Text(NESTED_DOCUMENT_BODY_SOURCE.into()),
+                        value: PropertyValue::Text(source.into()),
                     }],
                 }),
                 location_feet: Some([0.0; 3]),
@@ -857,6 +909,61 @@ pub fn attach(
     }
     out.summary = summary_line(&out);
     Ok(out)
+}
+
+/// What [`stretch_to_box`] did.
+#[derive(Debug, PartialEq)]
+enum Stretch {
+    Fits,
+    Stretched,
+    BeyondLimits,
+}
+
+/// Map `vertices`' box onto `stored` axis by axis, when they differ by more
+/// than the box tolerance and [`NESTED_FACET_ALLOWANCE`], and every stretch
+/// is within the limits (an axis either box is flat along keeps its size and
+/// is only moved).
+fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2]) -> Stretch {
+    let Some([lo, hi]) = bbox_of(vertices) else {
+        return Stretch::Fits;
+    };
+    let size = (0..3)
+        .map(|k| stored[1][k] - stored[0][k])
+        .fold(0.0, f64::max);
+    let tol = family_documents::BBOX_TOLERANCE.max(family_documents::SOLVED_BBOX_FRACTION * size);
+    if (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= tol && (hi[k] - stored[1][k]).abs() <= tol) {
+        return Stretch::Fits;
+    }
+    let factor: [f64; 3] = std::array::from_fn(|k| {
+        let (have, want) = (hi[k] - lo[k], stored[1][k] - stored[0][k]);
+        if have <= tol || want <= tol {
+            1.0
+        } else {
+            want / have
+        }
+    });
+    // Within a few percent is the display's facets (a round form's stored
+    // box is that of its faceted display), not another size.
+    let near = NESTED_FACET_ALLOWANCE * size;
+    if factor
+        .iter()
+        .all(|f| (f - 1.0).abs() <= NESTED_FACET_ALLOWANCE)
+        && (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= near.max(tol))
+    {
+        return Stretch::Fits;
+    }
+    if !factor
+        .iter()
+        .all(|f| (NESTED_SCALE_LIMITS.0..=NESTED_SCALE_LIMITS.1).contains(f))
+    {
+        return Stretch::BeyondLimits;
+    }
+    for v in vertices.iter_mut() {
+        for k in 0..3 {
+            v[k] = stored[0][k] + (v[k] - lo[k]) * factor[k];
+        }
+    }
+    Stretch::Stretched
 }
 
 /// A linear map (rows) and a translation: `p -> l * p + t`.
@@ -1078,6 +1185,25 @@ mod tests {
         // inner: (1, -1, 0) + (0, 2, 0) = (1, 1, 0); outer: turn to (-1, 1, 0), then + (10, 0, 0).
         assert_eq!(q, [9.0, 1.0, 0.0]);
         assert!(det(&map.0) < 0.0);
+    }
+
+    /// A nested body of its family's saved 4 ft type takes its instance's
+    /// 3 ft stored box; one within the facet allowance keeps its own.
+    #[test]
+    fn nested_bodies_take_their_stored_box() {
+        let mut v = vec![[-1.5, 0.1, 0.0], [2.5, 0.24, 7.0]];
+        let stored = [[-1.5, 0.1, 0.0], [1.5, 0.24, 7.0]];
+        assert_eq!(stretch_to_box(&mut v, stored), Stretch::Stretched);
+        assert_eq!(v, vec![[-1.5, 0.1, 0.0], [1.5, 0.24, 7.0]]);
+        let mut round = vec![[0.0; 3], [1.0, 1.0, 0.5]];
+        let faceted = [[0.0, 0.0, 0.0], [0.97, 1.0, 0.5]];
+        assert_eq!(stretch_to_box(&mut round, faceted), Stretch::Fits);
+        assert_eq!(round[1], [1.0, 1.0, 0.5]);
+        let mut other = vec![[0.0; 3], [1.0, 1.0, 1.0]];
+        assert_eq!(
+            stretch_to_box(&mut other, [[0.0; 3], [10.0, 1.0, 1.0]]),
+            Stretch::BeyondLimits
+        );
     }
 
     #[test]
