@@ -308,6 +308,9 @@ pub fn attach(
     let mut forms: Vec<Form> = Vec::new();
     let mut boxes: BTreeMap<i64, [[f64; 3]; 2]> = BTreeMap::new();
     let mut nested: BTreeSet<i64> = BTreeSet::new();
+    // Material element id -> its material's name (the model's materials
+    // are listed by name).
+    let mut material_names: BTreeMap<i64, String> = BTreeMap::new();
     // The newest partition each object was read from: older copies of a
     // record a file keeps in earlier partitions are not current.
     let mut newest: BTreeMap<(u16, i64), u32> = BTreeMap::new();
@@ -347,6 +350,20 @@ pub fn attach(
             }
             if class == "FamilyInstance" {
                 nested.insert(id);
+                return;
+            }
+            if class == "MaterialElem" {
+                let name = x
+                    .objects
+                    .iter()
+                    .filter(|o| names.get(&o.tag).map(String::as_str) == Some("Material"))
+                    .find_map(|o| match o.get("m_name") {
+                        Some(Value::Text(t)) if !t.trim().is_empty() => Some(t.clone()),
+                        _ => None,
+                    });
+                if let Some(name) = name {
+                    material_names.insert(id, name);
+                }
                 return;
             }
             let Some((_, kind)) = FORM_CLASSES.iter().find(|(c, _)| c == class) else {
@@ -577,6 +594,14 @@ pub fn attach(
                     &found,
                 ));
             }
+            // Releases the resolver does not read (before 2015): the
+            // model's material of the same name, read from the file's
+            // material records.
+            if material_index.is_none() {
+                material_index = material_names
+                    .get(&m)
+                    .and_then(|n| model.materials.iter().position(|mi| &mi.name == n));
+            }
         }
         model.entities.push(IfcEntity::BuildingElement {
             ifc_type: ifc_type.into(),
@@ -707,13 +732,20 @@ pub fn attach(
             if triangles.is_empty() {
                 continue;
             }
+            // The material of its largest solid that names one.
+            let material_index = doc
+                .solids
+                .iter()
+                .filter_map(|s| Some((s.triangles.len(), material_names.get(&s.material_id?)?)))
+                .max_by_key(|(n, _)| *n)
+                .and_then(|(_, name)| model.materials.iter().position(|mi| &mi.name == name));
             model.entities.push(IfcEntity::BuildingElement {
                 ifc_type: ifc_type.into(),
                 name: format!("{label}:nested {id}"),
                 type_guid: Some(id.to_string()),
                 predefined_type: predefined.map(str::to_string),
                 storey_index: None,
-                material_index: None,
+                material_index,
                 property_set: Some(PropertySet {
                     name: "RvtFamilyGeometry".into(),
                     properties: vec![Property {
