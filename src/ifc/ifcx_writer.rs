@@ -465,7 +465,10 @@ pub fn write_ifcx_graph_appearance_layer(
     }
     let mut schemas = Map::new();
     if !data.is_empty() {
-        schemas.insert(APPEARANCE_KEY.into(), json!({"value": {"dataType": "String"}}));
+        schemas.insert(
+            APPEARANCE_KEY.into(),
+            json!({"value": {"dataType": "String"}}),
+        );
     }
     let doc = json!({
         "header": {

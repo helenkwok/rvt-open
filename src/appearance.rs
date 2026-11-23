@@ -269,7 +269,12 @@ impl<'a> Reader<'a> {
         let edges = g
             .edges
             .iter()
-            .map(|e| ((e.source_object_index, e.pointer_offset), e.target_object_index))
+            .map(|e| {
+                (
+                    (e.source_object_index, e.pointer_offset),
+                    e.target_object_index,
+                )
+            })
             .collect();
         Self { g, edges }
     }
@@ -430,4 +435,3 @@ fn base64<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
     }
     s.serialize_str(&out)
 }
-

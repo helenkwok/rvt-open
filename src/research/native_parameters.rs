@@ -1129,7 +1129,10 @@ impl<'a> Cursor<'a> {
                     .max_values
                     .min(self.body.len().saturating_sub(self.pos))
                     .max(100_000);
-                ensure!(n as usize <= budget, "native container count budget exceeded");
+                ensure!(
+                    n as usize <= budget,
+                    "native container count budget exceeded"
+                );
                 if BUILD {
                     let mut values = Vec::with_capacity(n.min(1024) as usize);
                     for _ in 0..n {

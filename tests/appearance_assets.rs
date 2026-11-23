@@ -26,8 +26,14 @@ fn read(name: &str) -> Option<Appearance> {
 fn schemas(a: &Appearance) -> BTreeMap<String, usize> {
     let mut out = BTreeMap::new();
     for asset in &a.assets {
-        *out.entry(asset.asset.schema.clone().unwrap_or_else(|| "(none)".into()))
-            .or_default() += 1;
+        *out.entry(
+            asset
+                .asset
+                .schema
+                .clone()
+                .unwrap_or_else(|| "(none)".into()),
+        )
+        .or_default() += 1;
     }
     out
 }
@@ -105,8 +111,14 @@ fn rac_basic_assets_schemas_and_bitmaps() {
     assert_eq!(noise.len(), 1);
     let n = noise[0];
     let value = |p: &str| n.property(p).map(|p| (p.kind.as_str(), p.value.clone()));
-    assert_eq!(value("noise_Size"), Some(("Double1", serde_json::json!(50.0))));
-    assert_eq!(value("noise_Levels"), Some(("Double1", serde_json::json!(3.0))));
+    assert_eq!(
+        value("noise_Size"),
+        Some(("Double1", serde_json::json!(50.0)))
+    );
+    assert_eq!(
+        value("noise_Levels"),
+        Some(("Double1", serde_json::json!(3.0)))
+    );
     assert_eq!(value("noise_Type"), Some(("Integer", serde_json::json!(0))));
     assert_eq!(
         value("noise_Color2"),
