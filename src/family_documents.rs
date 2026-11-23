@@ -22,7 +22,7 @@
 //! of those releases keeps its nested families' documents among its own
 //! objects, and an element's `m_famId` names the family whose document holds
 //! it: those objects are read as that family's document (keyed by
-//! [`owned_document`]) rather than as the file's own forms.
+//! `owned_document`) rather than as the file's own forms.
 //!
 //! Only forms that decode and match their stored bounding box are returned.
 //! A family with any other solid form (sweep, revolve, blend, void, nested
@@ -146,6 +146,10 @@ pub struct FamilyDocuments {
     /// Of a family file without keyed sections, the solid forms and family
     /// instances its nested families' documents hold (not the file's own).
     pub nested_objects: BTreeSet<i64>,
+    /// Of such a file, the sample hosts of hosted families' templates (the
+    /// wall of a door, the block of a face-based family), by document: the
+    /// elements each `Family` names in `m_refs`.
+    pub host_samples: BTreeSet<(Guid, i64)>,
     pub stats: DocStats,
 }
 
@@ -487,6 +491,23 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                     newest.insert((guid, x.frame.header.tag, id), part);
                 }
             }
+            // A hosted family's template keeps a sample host (a wall, or a
+            // block for a face-based family) that its `Family` names in
+            // `m_refs`: it is not part of the family's form.
+            if let (Some(host), "Family") = (host_family, class.as_str()) {
+                let doc = if id == host {
+                    HOST_DOCUMENT
+                } else {
+                    owned_document(id)
+                };
+                for o in &x.objects {
+                    if names.get(&o.tag).map(String::as_str) == Some("FamilyElemRef") {
+                        if let Some(e) = id_of(o, "m_elemId") {
+                            out.host_samples.insert((doc, e));
+                        }
+                    }
+                }
+            }
             match (class.as_str(), guid) {
                 ("Family", None) if host_family.is_some() => {
                     out.family_guid.insert(id, owned_document(id));
@@ -741,9 +762,16 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         },
     )?;
 
-    // Of a form read from several partitions, the newest copy.
-    extrusions.retain(|e| newest.get(&(Some(e.guid), e.tag, e.id)) == Some(&e.part));
-    forms.retain(|f| newest.get(&(Some(f.guid), f.tag, f.id)) == Some(&f.part));
+    // Of a form read from several partitions, the newest copy; and no
+    // template's sample host.
+    extrusions.retain(|e| {
+        newest.get(&(Some(e.guid), e.tag, e.id)) == Some(&e.part)
+            && !out.host_samples.contains(&(e.guid, e.id))
+    });
+    forms.retain(|f| {
+        newest.get(&(Some(f.guid), f.tag, f.id)) == Some(&f.part)
+            && !out.host_samples.contains(&(f.guid, f.id))
+    });
 
     for (g, kinds) in other {
         out.docs.entry(g).or_default().undecoded.extend(kinds);

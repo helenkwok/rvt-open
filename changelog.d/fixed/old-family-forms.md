@@ -12,4 +12,6 @@
   bounding boxes are faceted, so an extrusion with arcs may be up to 2.51% of
   its largest radius larger on a side than its box; a sketched circle saved
   as an arc a thousandth of a turn short now closes. Of a record kept in
-  several partitions, only the newest copy is read.
+  several partitions, only the newest copy is read, and the sample host a
+  hosted family's template keeps (a door's wall, a face-based family's block,
+  named by the family's `m_refs`) is not drawn as one of its forms.

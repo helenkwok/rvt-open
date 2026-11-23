@@ -383,7 +383,9 @@ pub fn attach(
     // to a nested family's document instead (files without keyed sections).
     let docs = family_documents::read_with_host(rf, true).ok();
     if let Some(d) = &docs {
-        forms.retain(|f| !d.nested_objects.contains(&f.id));
+        forms.retain(|f| {
+            !d.nested_objects.contains(&f.id) && !d.host_samples.contains(&(HOST_DOCUMENT, f.id))
+        });
         nested.retain(|i| !d.nested_objects.contains(i));
     }
     forms.sort_by_key(|f| f.id);
