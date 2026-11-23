@@ -725,6 +725,9 @@ struct StepWriter<'a> {
     /// each model material's `IfcBlobTexture`, for textured triangle meshes
     /// (`IfcIndexedTriangleTextureMap`).
     material_textures: Vec<Option<usize>>,
+    /// each model material's `IfcSurfaceStyle`, styling each part of a
+    /// textured mesh split by material.
+    material_styles: Vec<Option<usize>>,
     /// The material of the element whose body is being written.
     element_material: Option<usize>,
     /// Whether the face sets being written are parts of a textured mesh split
@@ -907,6 +910,7 @@ impl StepWriter<'_> {
             timestamp,
             material_colours: Vec::new(),
             material_textures: Vec::new(),
+            material_styles: Vec::new(),
             element_material: None,
             split_colours: false,
             space_materials: false,
@@ -1616,6 +1620,26 @@ impl StepWriter<'_> {
         );
     }
 
+    /// A part of a textured mesh split by material ([`Self::split_by_texture`])
+    /// draws one material: its surface style on the face set, so a reader
+    /// that styles items rather than reading colour and texture maps draws
+    /// each part in its own material (the element names none, or another).
+    fn emit_part_style(&mut self, set_id: usize, face_materials: &[usize]) {
+        if !self.split_colours {
+            return;
+        }
+        let count = self.material_styles.len();
+        let material = face_materials
+            .first()
+            .copied()
+            .filter(|m| *m < count)
+            .or(self.element_material.filter(|m| *m < count));
+        if let Some(style) = material.and_then(|m| self.material_styles[m]) {
+            let id = self.id();
+            self.emit_entity(id, format!("IFCSTYLEDITEM(#{set_id},(#{style}),$)"));
+        }
+    }
+
     /// The textured material a triangle mesh draws (each kept triangle's
     /// face material, else the element's): the one most of its textured
     /// triangles take.
@@ -2161,6 +2185,7 @@ impl StepWriter<'_> {
                 );
                 self.emit_face_colours(set_id, face_materials, &kept);
                 self.emit_texture_map(set_id, face_materials, &kept, uvs, count);
+                self.emit_part_style(set_id, face_materials);
                 (set_id, "Tessellation")
             }
             SolidShape::SweptPath {
@@ -2466,6 +2491,7 @@ impl StepWriter<'_> {
     fn emit_data(&mut self, model: &IfcModel) {
         self.material_colours = model.materials.iter().map(|m| m.color_packed).collect();
         self.material_textures = vec![None; model.materials.len()];
+        self.material_styles = vec![None; model.materials.len()];
         self.emit_line("DATA;");
         let seed = global_id_seed(model);
         let ns = guid_namespace(model);
@@ -2999,6 +3025,7 @@ impl StepWriter<'_> {
                     style_id,
                     format!("IFCSURFACESTYLE('{name_escaped}',.BOTH.,({styles}))"),
                 );
+                self.material_styles[mat_index] = Some(style_id);
                 let presentation_id = self.id();
                 self.emit_entity(
                     presentation_id,

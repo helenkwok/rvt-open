@@ -194,6 +194,7 @@ real      memory_staging
 contract  project_count_fixtures
 contract  spline_profile_steps
 contract  support_matrix
+contract  texture_split_parts
 contract  witness_registry skip=ifc_lite_gate_is_wired_and_version_pinned,ifcopenshell_gate_script_is_wired
 contract  witness_verdict
 
