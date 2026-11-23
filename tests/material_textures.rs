@@ -68,8 +68,9 @@ fn square(z: f64) -> (Vec<[f64; 3]>, Vec<BrepTriangle>, Vec<[f64; 2]>) {
 /// Element 0: a square in textured material 0 (the element's own); element 1:
 /// two squares, one in each textured material (face materials); element 2: an
 /// untextured square in plain material 2; element 3: a textured square and a
-/// plain one; element 4: a square whose faces name no material, the element's
-/// being textured and without a colour.
+/// plain one; element 4: element 1's mesh nested in two compounds of one item;
+/// element 5: a square whose faces name no material, the element's being
+/// textured and without a colour.
 fn model() -> IfcModel {
     let mut m = IfcModel {
         project_name: Some("textures".into()),
@@ -136,6 +137,22 @@ fn model() -> IfcModel {
             face_materials: vec![0, 0, 2, 2],
             uvs: uv,
         },
+    ));
+    let (mut v, mut t, mut uv) = square(7.0);
+    let (v2, t2, uv2) = square(8.0);
+    v.extend(v2);
+    t.extend(t2.iter().map(|x| BrepTriangle(x.0 + 4, x.1 + 4, x.2 + 4)));
+    uv.extend(uv2);
+    let shelf = SolidShape::TriangulatedFaceSet {
+        vertices_feet: v,
+        triangles: t,
+        face_materials: vec![0, 0, 1, 1],
+        uvs: uv,
+    };
+    m.entities.push(element(
+        "Nested",
+        None,
+        SolidShape::Compound(vec![SolidShape::Compound(vec![shelf])]),
     ));
     let (v, t, uv) = square(6.0);
     m.entities.push(element(
@@ -214,8 +231,8 @@ fn glb_draws_the_images() {
         .filter(|p| p["attributes"].get("TEXCOORD_0").is_some())
         .count();
     assert_eq!(
-        with_uv, 5,
-        "floor, the shelf's two parts, the mixed one's textured part, the bare one"
+        with_uv, 7,
+        "floor, the two shelves' parts, the mixed one's textured part, the bare one"
     );
     for p in &prims {
         let material = &doc["materials"][p["material"].as_u64().expect("material") as usize];
@@ -248,7 +265,7 @@ fn obj_writes_texture_coordinates_and_images() {
     assert!(mtl.contains(&format!("map_Kd {name}")));
     // each open square drawn from both sides: its points once per side; the
     // mixed element's plain square carries coordinates beside its textured one.
-    assert_eq!(obj.lines().filter(|l| l.starts_with("vt ")).count(), 6 * 8);
+    assert_eq!(obj.lines().filter(|l| l.starts_with("vt ")).count(), 8 * 8);
     assert!(obj.lines().any(|l| l.starts_with("f ") && l.contains('/')));
     assert!(
         obj.lines().any(|l| l.starts_with("f ") && !l.contains('/')),
@@ -268,11 +285,12 @@ fn ifc4_embeds_and_maps_the_images() {
     let blobs = step.matches("IFCBLOBTEXTURE(.T.,.T.,$,$,$,'PNG',\"089504E4");
     assert_eq!(blobs.count(), 3);
     assert_eq!(step.matches("IFCSURFACESTYLEWITHTEXTURES(").count(), 3);
-    // the floor; the shelf split into one face set per textured material; the
-    // mixed element split into its textured and its plain square; the bare one.
-    assert_eq!(step.matches("IFCINDEXEDTRIANGLETEXTUREMAP(").count(), 5);
-    assert_eq!(step.matches("IFCTEXTUREVERTEXLIST(").count(), 5);
-    assert_eq!(step.matches("IFCTRIANGULATEDFACESET(").count(), 7);
+    // the floor; the shelf, and the nested one, split into one face set per
+    // textured material; the mixed element split into its textured and its
+    // plain square; the bare one.
+    assert_eq!(step.matches("IFCINDEXEDTRIANGLETEXTUREMAP(").count(), 7);
+    assert_eq!(step.matches("IFCTEXTUREVERTEXLIST(").count(), 7);
+    assert_eq!(step.matches("IFCTRIANGULATEDFACESET(").count(), 9);
     // the plain square split off keeps its colour.
     assert_eq!(step.matches("IFCINDEXEDCOLOURMAP(").count(), 1);
 }
@@ -291,9 +309,9 @@ fn usd_binds_textured_materials() {
     assert_eq!(count("def Material \"M"), 3);
     assert_eq!(count("\"UsdPreviewSurface\""), 3);
     assert_eq!(count("\"UsdUVTexture\""), 3);
-    assert_eq!(count("texCoord2f[] primvars:st = "), 5);
-    assert_eq!(count("rel material:binding = <"), 5);
-    assert_eq!(count("prepend apiSchemas = [\"MaterialBindingAPI\"]"), 5);
+    assert_eq!(count("texCoord2f[] primvars:st = "), 7);
+    assert_eq!(count("rel material:binding = <"), 7);
+    assert_eq!(count("prepend apiSchemas = [\"MaterialBindingAPI\"]"), 7);
     assert!(text.contains(&format!("asset inputs:file = @{}@", files[0].0)));
     assert!(
         text.contains("inputs:opacity.connect = <"),

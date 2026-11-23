@@ -1674,13 +1674,22 @@ impl StepWriter<'_> {
     /// A textured triangle mesh whose triangles draw more than one material
     /// (each face material, else the element's), as one mesh per material: an
     /// IFC4 texture map lays one image on a whole face set. A compound has its
-    /// triangle meshes split so. `None` when nothing splits.
+    /// triangle meshes split so, a mesh nested in compounds of one item each
+    /// included (a compound of several, nested, is a union, whose operands are
+    /// breps and carry no texture). `None` when nothing splits.
     fn split_by_texture(&self, shape: &SolidShape) -> Option<SolidShape> {
         let (vertices_feet, triangles, face_materials, uvs) = match shape {
             SolidShape::Compound(items) => {
                 let mut changed = false;
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
+                    let mut item = item;
+                    while let SolidShape::Compound(inner) = item {
+                        match inner.as_slice() {
+                            [one] => item = one,
+                            _ => break,
+                        }
+                    }
                     match self.split_by_texture(item) {
                         Some(SolidShape::Compound(parts))
                             if matches!(item, SolidShape::TriangulatedFaceSet { .. }) =>
