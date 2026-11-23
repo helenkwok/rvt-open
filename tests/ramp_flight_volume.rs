@@ -700,3 +700,26 @@ fn revolutions_of_one_group_share_their_edge_points() {
     );
     assert_eq!(open, 0, "edges without their reverse");
 }
+
+#[test]
+fn trimmed_revolution_and_its_rectangular_neighbour_share_their_edge_points() {
+    // A piece of furniture of the Revit 2024 DACH sample where a surface of revolution whose
+    // trim is not one rectangle meets one trimmed to a rectangle: each takes the other's points
+    // along their shared edge (326 directed edges without their reverse before, 306 after, as
+    // the body scorer counts them).
+    let Some(ours) = ours_only(
+        "RVT_REVIT2024_SAMPLES_DIR",
+        "DACHsampleproject",
+        &["IFCFURNITURE"],
+        &["2396652"],
+    ) else {
+        return;
+    };
+    let mesh = ours["2396652"].mesh.as_ref().expect("a mesh body");
+    let open = unmatched_edges(&mesh.0, &mesh.1);
+    eprintln!(
+        "2396652: {} triangles, {open} edges without their reverse",
+        mesh.1.len()
+    );
+    assert!(open < 316, "{open} edges without their reverse");
+}

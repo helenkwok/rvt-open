@@ -743,15 +743,16 @@ fn face_links(g: &ObjectGraph, fi: usize) -> Result<Vec<(usize, usize, usize)>> 
 /// revolution trimmed to a rectangle take each other's, except two ruled faces neither of
 /// which is trimmed to a rectangle. Two rectangular ruled faces start from one normalized grid
 /// (`face_grid_impl`), so they take only what one of them took from elsewhere. A surface of
-/// revolution whose trim is not one rectangle takes a rectangular neighbour's points on its
-/// strip sides alone (`seam_group`), which adds them where the edge runs without cutting the
-/// face into other strips, and gives none: two of them exchange nothing.
+/// revolution whose trim is not one rectangle and a rectangular neighbour take each other's
+/// points too (a rectangular ruled face does not take the trimmed revolution's), but two
+/// trimmed surfaces of revolution exchange nothing: letting them changed the drawing of
+/// coverings of the BIM4LCA housing models.
 fn takes(a: &FaceGrid, b: &FaceGrid) -> bool {
     use ParametricSurface::{RuledSurf, SurfRev};
     let trimmed_revolution =
         |f: &FaceGrid| matches!(f.surface, SurfRev { .. }) && f.loops.is_some();
     if trimmed_revolution(b) {
-        return false;
+        return matches!(a.surface, SurfRev { .. }) && a.loops.is_none();
     }
     if trimmed_revolution(a) {
         return b.loops.is_none() && matches!(b.surface, RuledSurf { .. } | SurfRev { .. });
@@ -937,16 +938,11 @@ fn seam_group(g: &ObjectGraph, fi: usize) -> Result<std::collections::BTreeMap<u
         queued.remove(&f);
         let mut grew = false;
         let (rectangular, [lo, hi]) = (grid(f).loops.is_none(), grid(f).bounds);
-        // a trimmed surface of revolution takes points on its strip sides alone
-        let sides_only = !rectangular && matches!(grid(f).surface, ParametricSurface::SurfRev { .. });
         for &(edge, side, other) in &links[&f] {
             let Ok((ax, fixed, values)) = edge_values(g, edge, side, grid(other), &work[&other])
             else {
                 continue;
             };
-            if sides_only && ax == 0 {
-                continue;
-            }
             let side_values =
                 (ax == 1 && !rectangular).then(|| strip_side(grid(f), &work[&f], fixed));
             let w = work.get_mut(&f).expect("group member");
