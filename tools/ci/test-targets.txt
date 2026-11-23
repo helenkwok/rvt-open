@@ -190,8 +190,8 @@ contract  ifc_synthetic_project
 contract  ifc_synthetic_structural
 contract  json_schema_contracts
 contract  material_textures
-contract  near_circle_sketch
 real      memory_staging
+contract  near_circle_sketch
 contract  project_count_fixtures
 contract  spline_profile_steps
 contract  support_matrix
