@@ -133,6 +133,8 @@ enum Val {
     Vec2fArr(Vec<[f64; 2]>),
     /// `float`.
     Float(f64),
+    /// `float4`.
+    Vec4f([f64; 4]),
     /// `asset`.
     Asset(String),
     /// No value: an output, or an input read through its connection.
@@ -429,6 +431,15 @@ impl Writer<'_> {
             Val::Nothing,
             Some(format!("{at}/St.outputs:result")),
         ));
+        if alpha && opacity < 1.0 {
+            // the image's alpha times the material's opacity.
+            sink.attr(attr(
+                "inputs:scale",
+                "float4",
+                Val::Vec4f([1.0, 1.0, 1.0, opacity]),
+                None,
+            ));
+        }
         sink.attr(attr("inputs:wrapS", "token", Val::Tok("repeat"), None));
         sink.attr(attr("inputs:wrapT", "token", Val::Tok("repeat"), None));
         sink.attr(attr("outputs:rgb", "float3", Val::Nothing, None));
@@ -774,6 +785,7 @@ fn val_text(v: &Val) -> String {
         Val::TokArr(v) => list(v.iter().map(|s| quote(s)).collect()),
         Val::Vec2fArr(v) => list(v.iter().map(|p| format!("({}, {})", p[0], p[1])).collect()),
         Val::Float(x) => x.to_string(),
+        Val::Vec4f(p) => format!("({}, {}, {}, {})", p[0], p[1], p[2], p[3]),
         Val::Asset(a) => format!("@{a}@"),
         Val::Nothing => String::new(),
     }
@@ -957,6 +969,7 @@ impl CrateSink {
             Val::TokArr(v) => c.token_array(v),
             Val::Vec2fArr(v) => c.float2_array(v),
             Val::Float(x) => c.float(*x),
+            Val::Vec4f(p) => c.float4(p),
             Val::Asset(a) => c.asset_value(a),
             Val::Nothing => 0,
         }

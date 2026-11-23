@@ -1375,11 +1375,16 @@ impl Builder {
             {
                 match body_mesh(body) {
                     Some(mut mesh) if !mesh.is_empty() => {
-                        // a textured mesh drawn whole in the element's
-                        // material: its parts name that material.
-                        if mesh.face_materials.is_empty() && !mesh.uvs.is_empty() {
-                            if let Some(m) = *material_index {
+                        // a textured mesh's faces drawn in the element's
+                        // material name it, so their part carries its image.
+                        if let Some(m) = material_index.filter(|_| !mesh.uvs.is_empty()) {
+                            if mesh.face_materials.is_empty() {
                                 mesh.face_materials = vec![m; mesh.triangles.len()];
+                            }
+                            for f in &mut mesh.face_materials {
+                                if *f == super::body_geometry::NO_FACE_MATERIAL {
+                                    *f = m;
+                                }
                             }
                         }
                         // A display body is in the element's own frame.
@@ -1490,11 +1495,22 @@ impl Builder {
                 );
             } else {
                 let r = |v: f64| (v * FT * 1e6).round() / 1e6;
+                // a map's target first, as the shared branch composes it (only
+                // a textured body reaches here with one).
+                let mapped = (*target != super::instancing::IDENTITY).then(|| {
+                    super::instancing::compose(
+                        &super::instancing::placement_frame(placement),
+                        target,
+                    )
+                });
                 let points: Vec<[f64; 3]> = mesh
                     .vertices
                     .iter()
                     .map(|v| {
-                        let p = placement.apply(*v);
+                        let p = match &mapped {
+                            Some(m) => super::instancing::apply(m, *v),
+                            None => placement.apply(*v),
+                        };
                         [r(p[0]), r(p[1]), r(p[2])]
                     })
                     .collect();

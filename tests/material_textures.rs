@@ -67,16 +67,23 @@ fn square(z: f64) -> (Vec<[f64; 3]>, Vec<BrepTriangle>, Vec<[f64; 2]>) {
 
 /// Element 0: a square in textured material 0 (the element's own); element 1:
 /// two squares, one in each textured material (face materials); element 2: an
-/// untextured square in plain material 2.
+/// untextured square in plain material 2; element 3: a textured square and a
+/// plain one; element 4: a square whose faces name no material, the element's
+/// being textured and without a colour.
 fn model() -> IfcModel {
     let mut m = IfcModel {
         project_name: Some("textures".into()),
         ..Default::default()
     };
+    let mut glass = material("Glass", 0x00ff00, Some(RGBA_PNG));
+    glass.transparency = Some(0.5);
+    let mut bare = material("Bare", 0, Some(RGB_PNG));
+    bare.color_packed = None;
     m.materials = vec![
         material("Checker", 0x7f7f7f, Some(RGB_PNG)),
-        material("Glass", 0x00ff00, Some(RGBA_PNG)),
+        glass,
         material("Plain", 0x2040c0, None),
+        bare,
     ];
     let (v, t, uv) = square(0.0);
     m.entities.push(element(
@@ -113,6 +120,32 @@ fn model() -> IfcModel {
             triangles: t,
             face_materials: Vec::new(),
             uvs: Vec::new(),
+        },
+    ));
+    let (mut v, mut t, mut uv) = square(4.0);
+    let (v2, t2, uv2) = square(5.0);
+    v.extend(v2);
+    t.extend(t2.iter().map(|x| BrepTriangle(x.0 + 4, x.1 + 4, x.2 + 4)));
+    uv.extend(uv2);
+    m.entities.push(element(
+        "Mixed",
+        None,
+        SolidShape::TriangulatedFaceSet {
+            vertices_feet: v,
+            triangles: t,
+            face_materials: vec![0, 0, 2, 2],
+            uvs: uv,
+        },
+    ));
+    let (v, t, uv) = square(6.0);
+    m.entities.push(element(
+        "Bare",
+        Some(3),
+        SolidShape::TriangulatedFaceSet {
+            vertices_feet: v,
+            triangles: t,
+            face_materials: vec![usize::MAX; 2],
+            uvs: uv,
         },
     ));
     m
@@ -158,8 +191,8 @@ fn glb_draws_the_images() {
     let glb = rvt::ifc::gltf::model_to_glb(&model());
     save("textures.glb", &glb);
     let doc = gltf_json(&glb);
-    assert_eq!(doc["images"].as_array().map(Vec::len), Some(2));
-    assert_eq!(doc["textures"].as_array().map(Vec::len), Some(2));
+    assert_eq!(doc["images"].as_array().map(Vec::len), Some(3));
+    assert_eq!(doc["textures"].as_array().map(Vec::len), Some(3));
     assert_eq!(doc["images"][0]["mimeType"], "image/png");
     let textured: Vec<&serde_json::Value> = doc["materials"]
         .as_array()
@@ -167,7 +200,7 @@ fn glb_draws_the_images() {
         .iter()
         .filter(|m| m["pbrMetallicRoughness"].get("baseColorTexture").is_some())
         .collect();
-    assert_eq!(textured.len(), 2, "one textured copy per textured material");
+    assert_eq!(textured.len(), 3, "one textured copy per textured material");
     assert_eq!(textured[1]["alphaMode"], "BLEND", "the image holds alpha");
     let prims: Vec<&serde_json::Value> = doc["meshes"]
         .as_array()
@@ -180,7 +213,10 @@ fn glb_draws_the_images() {
         .iter()
         .filter(|p| p["attributes"].get("TEXCOORD_0").is_some())
         .count();
-    assert_eq!(with_uv, 3, "floor, and the shelf's two parts; not the lid");
+    assert_eq!(
+        with_uv, 5,
+        "floor, the shelf's two parts, the mixed one's textured part, the bare one"
+    );
     for p in &prims {
         let material = &doc["materials"][p["material"].as_u64().expect("material") as usize];
         let has_texture = material["pbrMetallicRoughness"]
@@ -199,14 +235,20 @@ fn obj_writes_texture_coordinates_and_images() {
     for (name, bytes) in &files {
         save(&format!("obj/{name}"), bytes);
     }
-    assert_eq!(files.len(), 2);
-    assert_eq!(mtl.matches("map_Kd ").count(), 2);
+    assert_eq!(files.len(), 2, "one file per distinct image");
+    assert_eq!(mtl.matches("map_Kd ").count(), 3);
+    assert_eq!(
+        mtl.matches("map_d -imfchan m ").count(),
+        1,
+        "the image with alpha"
+    );
     let name = MaterialTexture::new(RGB_PNG.to_vec(), None, None)
         .expect("png")
         .file_name();
     assert!(mtl.contains(&format!("map_Kd {name}")));
-    // each open square drawn from both sides: its points once per side.
-    assert_eq!(obj.lines().filter(|l| l.starts_with("vt ")).count(), 3 * 8);
+    // each open square drawn from both sides: its points once per side; the
+    // mixed element's plain square carries coordinates beside its textured one.
+    assert_eq!(obj.lines().filter(|l| l.starts_with("vt ")).count(), 6 * 8);
     assert!(obj.lines().any(|l| l.starts_with("f ") && l.contains('/')));
     assert!(
         obj.lines().any(|l| l.starts_with("f ") && !l.contains('/')),
@@ -222,16 +264,17 @@ fn obj_writes_texture_coordinates_and_images() {
 fn ifc4_embeds_and_maps_the_images() {
     let step = rvt::ifc::write_step(&model());
     save("textures.ifc", step.as_bytes());
-    assert_eq!(
-        step.matches("IFCBLOBTEXTURE(.T.,.T.,$,$,$,'PNG',\"089504E4")
-            .count(),
-        2
-    );
-    assert_eq!(step.matches("IFCSURFACESTYLEWITHTEXTURES(").count(), 2);
-    // the floor, and the shelf split into one face set per textured material.
-    assert_eq!(step.matches("IFCINDEXEDTRIANGLETEXTUREMAP(").count(), 3);
-    assert_eq!(step.matches("IFCTEXTUREVERTEXLIST(").count(), 3);
-    assert_eq!(step.matches("IFCTRIANGULATEDFACESET(").count(), 4);
+    // the material without a colour keeps its image.
+    let blobs = step.matches("IFCBLOBTEXTURE(.T.,.T.,$,$,$,'PNG',\"089504E4");
+    assert_eq!(blobs.count(), 3);
+    assert_eq!(step.matches("IFCSURFACESTYLEWITHTEXTURES(").count(), 3);
+    // the floor; the shelf split into one face set per textured material; the
+    // mixed element split into its textured and its plain square; the bare one.
+    assert_eq!(step.matches("IFCINDEXEDTRIANGLETEXTUREMAP(").count(), 5);
+    assert_eq!(step.matches("IFCTEXTUREVERTEXLIST(").count(), 5);
+    assert_eq!(step.matches("IFCTRIANGULATEDFACESET(").count(), 7);
+    // the plain square split off keeps its colour.
+    assert_eq!(step.matches("IFCINDEXEDCOLOURMAP(").count(), 1);
 }
 
 #[test]
@@ -242,22 +285,23 @@ fn usd_binds_textured_materials() {
     for (name, bytes) in &files {
         save(&format!("usd/{name}"), bytes);
     }
-    assert_eq!(files.len(), 2);
+    assert_eq!(files.len(), 2, "one file per distinct image");
     assert!(files.iter().all(|(f, _)| f.starts_with("textures/")));
-    assert_eq!(text.matches("def Material \"M").count(), 2);
-    assert_eq!(text.matches("\"UsdPreviewSurface\"").count(), 2);
-    assert_eq!(text.matches("\"UsdUVTexture\"").count(), 2);
-    assert_eq!(text.matches("texCoord2f[] primvars:st = ").count(), 3);
-    assert_eq!(text.matches("rel material:binding = <").count(), 3);
-    assert_eq!(
-        text.matches("prepend apiSchemas = [\"MaterialBindingAPI\"]")
-            .count(),
-        3
-    );
+    let count = |needle: &str| text.matches(needle).count();
+    assert_eq!(count("def Material \"M"), 3);
+    assert_eq!(count("\"UsdPreviewSurface\""), 3);
+    assert_eq!(count("\"UsdUVTexture\""), 3);
+    assert_eq!(count("texCoord2f[] primvars:st = "), 5);
+    assert_eq!(count("rel material:binding = <"), 5);
+    assert_eq!(count("prepend apiSchemas = [\"MaterialBindingAPI\"]"), 5);
     assert!(text.contains(&format!("asset inputs:file = @{}@", files[0].0)));
     assert!(
         text.contains("inputs:opacity.connect = <"),
         "the image with alpha"
+    );
+    assert!(
+        text.contains("float4 inputs:scale = (1, 1, 1, 0.5)"),
+        "its alpha times the material's opacity"
     );
     let (binary, binary_files) = rvt::ifc::write_usdc_textured(&m).expect("usdc");
     save("usd/textures.usdc", &binary);

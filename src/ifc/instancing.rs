@@ -251,13 +251,18 @@ pub fn parts_of(model: &IfcModel, index: usize) -> Option<&[(usize, Frame)]> {
                 vertices_feet,
                 triangles,
                 face_materials,
-                ..
+                uvs,
             }),
         ..
     } = model.entities.get(index)?
     else {
         return None;
     };
+    // the symbol meshes carry no texture coordinates: a textured body is
+    // drawn whole.
+    if !uvs.is_empty() {
+        return None;
+    }
     let coloured = !face_materials.is_empty();
     let (mut v, mut t) = (0usize, 0usize);
     for (symbol, target) in parts {

@@ -29,6 +29,7 @@ pub(super) mod ty {
     pub const MATRIX4D: u8 = 15;
     pub const FLOAT2: u8 = 20;
     pub const FLOAT3: u8 = 24;
+    pub const FLOAT4: u8 = 28;
     pub const DICTIONARY: u8 = 31;
     pub const TOKEN_LIST_OP: u8 = 32;
     pub const PATH_LIST_OP: u8 = 34;
@@ -178,6 +179,15 @@ impl Crate {
     /// A `float`, inlined.
     pub(super) fn float(&mut self, v: f64) -> u64 {
         Self::inline(ty::FLOAT, (v as f32).to_bits())
+    }
+
+    /// A `float4`.
+    pub(super) fn float4(&mut self, v: &[f64; 4]) -> u64 {
+        let rep = self.at(ty::FLOAT4, 0);
+        for x in v {
+            self.data.extend_from_slice(&(*x as f32).to_le_bytes());
+        }
+        rep
     }
 
     pub(super) fn int64(&mut self, v: i64) -> u64 {

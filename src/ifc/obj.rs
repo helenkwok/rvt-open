@@ -35,8 +35,8 @@ pub fn model_to_obj_textured(
     obj_and_mtl(model, mtl_file, true)
 }
 
-/// The image (its file name and bytes) material `m` of `doc` draws.
-fn material_image(doc: &GltfDocument, bin: &[u8], m: usize) -> Option<(String, Vec<u8>)> {
+/// The image material `m` of `doc` draws.
+fn material_image(doc: &GltfDocument, bin: &[u8], m: usize) -> Option<MaterialTexture> {
     let t = doc
         .materials
         .get(m)?
@@ -46,8 +46,7 @@ fn material_image(doc: &GltfDocument, bin: &[u8], m: usize) -> Option<(String, V
     let image = doc.images.get(doc.textures.get(t.index)?.source)?;
     let view = doc.buffer_views.get(image.buffer_view)?;
     let bytes = bin.get(view.byte_offset..view.byte_offset + view.byte_length)?;
-    let texture = MaterialTexture::new(bytes.to_vec(), None, None)?;
-    Some((texture.file_name(), texture.image))
+    MaterialTexture::new(bytes.to_vec(), None, None)
 }
 
 fn obj_and_mtl(
@@ -66,10 +65,20 @@ fn obj_and_mtl(
     let mut mtl = String::from("# rvt-open\n");
     for (i, [r, g, b, a]) in scene.materials.iter().enumerate() {
         match textures.then(|| material_image(&doc, &bin, i)).flatten() {
-            Some((file, bytes)) => {
-                let _ = writeln!(mtl, "newmtl m{i}\nKd 1 1 1\nd {a:.4}\nmap_Kd {file}\n");
+            Some(texture) => {
+                let file = texture.file_name();
+                // An image with transparency is also the opacity map (its alpha).
+                let alpha = if texture.has_alpha() {
+                    format!("map_d -imfchan m {file}\n")
+                } else {
+                    String::new()
+                };
+                let _ = writeln!(
+                    mtl,
+                    "newmtl m{i}\nKd 1 1 1\nd {a:.4}\nmap_Kd {file}\n{alpha}"
+                );
                 if !files.iter().any(|(f, _)| *f == file) {
-                    files.push((file, bytes));
+                    files.push((file, texture.image));
                 }
             }
             None => {

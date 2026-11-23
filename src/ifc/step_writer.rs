@@ -727,6 +727,9 @@ struct StepWriter<'a> {
     material_textures: Vec<Option<usize>>,
     /// The material of the element whose body is being written.
     element_material: Option<usize>,
+    /// Whether the face sets being written are parts of a textured mesh split
+    /// by material: an untextured part keeps its one colour as a colour map.
+    split_colours: bool,
     /// Whether an `IfcSpace` keeps its material association, which IFC4's
     /// `IfcRelAssociatesMaterial.AllowedElements` does not allow and Revit's
     /// export writes: [`write_step_with_space_materials`].
@@ -905,6 +908,7 @@ impl StepWriter<'_> {
             material_colours: Vec::new(),
             material_textures: Vec::new(),
             element_material: None,
+            split_colours: false,
             space_materials: false,
             non_finite: None,
         }
@@ -1520,7 +1524,12 @@ impl StepWriter<'_> {
         z_axis: usize,
     ) -> (Vec<usize>, &'static str) {
         if let Some(parts) = self.split_by_texture(shape) {
-            return self.emit_solid_items(&parts, solid_position, z_axis);
+            // each part keeps its material's colour, as the whole mesh's
+            // colour map gave it.
+            let outer = std::mem::replace(&mut self.split_colours, true);
+            let items = self.emit_solid_items(&parts, solid_position, z_axis);
+            self.split_colours = outer;
+            return items;
         }
         match shape {
             SolidShape::Compound(items) if !items.is_empty() => {
@@ -1573,7 +1582,10 @@ impl StepWriter<'_> {
                 }
             }
         }
-        if palette.len() < 2 {
+        let kept_colour = self.split_colours
+            && palette.len() == 1
+            && self.texture_of(face_materials, kept).is_none();
+        if palette.len() < 2 && !kept_colour {
             return;
         }
         let common = (0..palette.len()).max_by_key(|&i| counts[i]).unwrap_or(0);
@@ -1659,40 +1671,59 @@ impl StepWriter<'_> {
         );
     }
 
-    /// A textured triangle mesh whose triangles draw more than one textured
-    /// material, as one mesh per face material (an IFC4 texture map lays one
-    /// image on a whole face set); `None` for any other shape.
+    /// A textured triangle mesh whose triangles draw more than one material
+    /// (each face material, else the element's), as one mesh per material: an
+    /// IFC4 texture map lays one image on a whole face set. A compound has its
+    /// triangle meshes split so. `None` when nothing splits.
     fn split_by_texture(&self, shape: &SolidShape) -> Option<SolidShape> {
-        let SolidShape::TriangulatedFaceSet {
-            vertices_feet,
-            triangles,
-            face_materials,
-            uvs,
-        } = shape
-        else {
-            return None;
+        let (vertices_feet, triangles, face_materials, uvs) = match shape {
+            SolidShape::Compound(items) => {
+                let mut changed = false;
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    match self.split_by_texture(item) {
+                        Some(SolidShape::Compound(parts))
+                            if matches!(item, SolidShape::TriangulatedFaceSet { .. }) =>
+                        {
+                            changed = true;
+                            out.extend(parts);
+                        }
+                        _ => out.push(item.clone()),
+                    }
+                }
+                return changed.then_some(SolidShape::Compound(out));
+            }
+            SolidShape::TriangulatedFaceSet {
+                vertices_feet,
+                triangles,
+                face_materials,
+                uvs,
+            } => (vertices_feet, triangles, face_materials, uvs),
+            _ => return None,
         };
         if uvs.len() != vertices_feet.len() || face_materials.len() != triangles.len() {
             return None;
         }
-        let textured = |m: &usize| self.material_textures.get(*m).copied().flatten().is_some();
-        let mut seen: Vec<usize> = Vec::new();
+        let count = self.material_textures.len();
+        let drawn = |m: usize| Some(m).filter(|m| *m < count).or(self.element_material);
+        let textured = |m: Option<usize>| m.is_some_and(|m| self.material_textures[m].is_some());
+        let mut seen: Vec<Option<usize>> = Vec::new();
         for m in face_materials {
-            if !seen.contains(m) {
-                seen.push(*m);
+            if !seen.contains(&drawn(*m)) {
+                seen.push(drawn(*m));
             }
         }
-        if seen.iter().filter(|m| textured(m)).count() < 2 {
+        if seen.len() < 2 || !seen.iter().any(|m| textured(*m)) {
             return None;
         }
-        let count = vertices_feet.len();
+        let points = vertices_feet.len();
         let parts = seen
             .into_iter()
             .map(|m| {
                 let mut remap: HashMap<u32, u32> = Default::default();
                 let (mut v, mut t, mut uv) = (Vec::new(), Vec::new(), Vec::new());
                 for (tri, _) in triangles.iter().zip(face_materials).filter(|(tri, f)| {
-                    **f == m && [tri.0, tri.1, tri.2].iter().all(|&i| (i as usize) < count)
+                    drawn(**f) == m && [tri.0, tri.1, tri.2].iter().all(|&i| (i as usize) < points)
                 }) {
                     let mut at = |i: u32| {
                         *remap.entry(i).or_insert_with(|| {
@@ -1708,7 +1739,7 @@ impl StepWriter<'_> {
                 SolidShape::TriangulatedFaceSet {
                     vertices_feet: v,
                     triangles: t,
-                    face_materials: vec![m; n],
+                    face_materials: vec![m.unwrap_or(usize::MAX); n],
                     uvs: uv,
                 }
             })
@@ -2903,6 +2934,7 @@ impl StepWriter<'_> {
             let mat_id = self.id();
             let name_escaped = escape(&mat.name);
             self.emit_entity(mat_id, format!("IFCMATERIAL('{name_escaped}',$,$)"));
+            let mut styles: Vec<String> = Vec::new();
             if let Some(packed) = mat.color_packed {
                 let r = (packed & 0xFF) as f64 / 255.0;
                 let g = ((packed >> 8) & 0xFF) as f64 / 255.0;
@@ -2922,31 +2954,33 @@ impl StepWriter<'_> {
                         "IFCSURFACESTYLERENDERING(#{colour_id},{transparency},$,$,$,$,$,$,.FLAT.)"
                     ),
                 );
-                // A textured material's image, embedded: an IfcBlobTexture
-                // in the style, which triangle meshes map with their
-                // texture coordinates.
-                let mut styles = format!("#{rendering_id}");
-                if let Some(texture) = &mat.texture {
-                    let format = if texture.mime_type == "image/png" {
-                        "PNG"
-                    } else {
-                        "JPG"
-                    };
-                    let mut code = String::with_capacity(texture.image.len() * 2 + 1);
-                    code.push('0');
-                    for b in &texture.image {
-                        let _ = write!(code, "{b:02X}");
-                    }
-                    let blob = self.id();
-                    self.emit_entity(
-                        blob,
-                        format!("IFCBLOBTEXTURE(.T.,.T.,$,$,$,'{format}',\"{code}\")"),
-                    );
-                    let with = self.id();
-                    self.emit_entity(with, format!("IFCSURFACESTYLEWITHTEXTURES((#{blob}))"));
-                    let _ = write!(styles, ",#{with}");
-                    self.material_textures[mat_index] = Some(blob);
+                styles.push(format!("#{rendering_id}"));
+            }
+            // A textured material's image, embedded: an IfcBlobTexture in the
+            // style, which triangle meshes map with their texture coordinates.
+            if let Some(texture) = &mat.texture {
+                let format = if texture.mime_type == "image/png" {
+                    "PNG"
+                } else {
+                    "JPG"
+                };
+                let mut code = String::with_capacity(texture.image.len() * 2 + 1);
+                code.push('0');
+                for b in &texture.image {
+                    let _ = write!(code, "{b:02X}");
                 }
+                let blob = self.id();
+                self.emit_entity(
+                    blob,
+                    format!("IFCBLOBTEXTURE(.T.,.T.,$,$,$,'{format}',\"{code}\")"),
+                );
+                let with = self.id();
+                self.emit_entity(with, format!("IFCSURFACESTYLEWITHTEXTURES((#{blob}))"));
+                styles.push(format!("#{with}"));
+                self.material_textures[mat_index] = Some(blob);
+            }
+            if !styles.is_empty() {
+                let styles = styles.join(",");
                 let style_id = self.id();
                 self.emit_entity(
                     style_id,
