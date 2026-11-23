@@ -74,7 +74,10 @@
 # and the pairs once held out (holdout-*, bimcollab-*, spent-*), of which only
 # counts leave the runner, are never looked up or stored: the Actions cache is
 # not private to the workflows that may change it.
-# A scorer that fails is recorded, not fatal: its output is the evidence.
+# A scorer that fails is recorded, not fatal: its output is the evidence. A
+# scorer the run names (MEASURE_SCORERS), or a probe's scorer, that exits
+# non-zero is also listed in OUT_DIR/scorer-failures.txt (model, scorer, exit
+# status), and the run then ends with status 1, after every output is written.
 # These runs check what the exports hold; their times are not benchmarks
 # (the workflow's `timing` job times both refs on one runner,
 # tools/ci/measure-timing.sh). Every export runs first, MEASURE_JOBS at once,
@@ -87,6 +90,9 @@ set -uo pipefail
 BIN="$1"; MODELS="$2"; OUT="$3"
 SCORERS="$(dirname "$0")/../re"
 mkdir -p "$OUT"
+# A run's own list of the named scorers that failed (see `score`), never an earlier run's.
+FAILURES="$OUT/scorer-failures.txt"
+rm -f "$FAILURES"
 
 # model name | .rvt | Revit's export ("-" when there is none)
 MODELS_LIST="
@@ -233,9 +239,15 @@ score() { # name args...
   # A run that names its scorers is run for their answer, and a crash left in
   # the output file reads as a green run. In the default set a scorer
   # may exit 1 for a finding, so only the named ones are raised, and a probe's
-  # scorer, which is always asked for by name.
+  # scorer, which is always asked for by name. The annotation alone leaves the
+  # run's status at 0, so each one is also listed in scorer-failures.txt, and
+  # the run ends non-zero while that list holds a line. A model whose results
+  # leave the run only as counts, or a pair once held out, is not named there.
   if [ "$status" != 0 ] && { [[ "$step" == probe_score* ]] || { [ "${#STEPS[@]}" -gt 0 ] && wanted "$step"; }; }; then
     echo "::error::$(basename "$dir"): the scorer $step, named in this run, exited $status (see its $step.txt)"
+    local model; model=$(basename "$dir")
+    case "$model" in holdout-*|bimcollab-*|spent-*) model="a model kept to counts" ;; esac
+    printf '%s\t%s\texit %s\n' "$model" "$step" "$status" >> "$FAILURES"
   fi
 }
 
@@ -552,6 +564,20 @@ for s in "${STEPS[@]:-}"; do
     echo "::error::$s reads a probe's output: dispatch it with -f probe=<probe> -f probe_scorer=$s, not in scorers" >&2
     exit 2
   fi
+  # A scorer of several saves, given one model's two files, prints its usage
+  # and exits 2 on every model; so does one whose usage line takes three files
+  # or more outside its [options]. Its name says so, or its usage line does.
+  usage=$(grep -m1 -E "python3? +tools/re/$s\.py" "$SCORERS/$s.py" | sed -E 's/\[[^]]*\]//g' || true)
+  files=$(grep -o '<[^>]*>' <<< "$usage" | wc -l)
+  case "$s" in
+    *_across_saves) why="it compares several saves: run it on their exports" ;;
+    *) why="its usage takes three files or more: run it on the kept exports"
+       [ "$files" -ge 3 ] || why="" ;;
+  esac
+  if [ -n "$why" ]; then
+    echo "::error::$s is not run on one model's export and Revit's: $why" >&2
+    exit 2
+  fi
 done
 # A run of one probe writes probe.txt (probe_score.txt, probe-pair.txt), a
 # run of several probe-<probe>.txt (probe_score-<probe>.txt, ...).
@@ -685,3 +711,10 @@ for i in "${!PROBES[@]}"; do
     esac
   done <<< "$items"
 done
+# Every output is written by now, so a failed run still holds what to look into.
+if [ -s "$FAILURES" ]; then
+  while IFS=$'\t' read -r model step status; do
+    echo "::error::${model}: the scorer ${step}, named in this run, ${status}"
+  done < "$FAILURES"
+  exit 1
+fi
