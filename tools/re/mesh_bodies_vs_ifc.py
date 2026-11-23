@@ -81,7 +81,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fine_mesh  # noqa: E402
 import true_curves  # noqa: E402
 import volume_readings  # noqa: E402
-from ifc_common import mesh_parts, site_frame, tag_sample  # noqa: E402
+from ifc_common import mesh_parts, report_lost_items, site_frame, tag_sample  # noqa: E402
 from roof_bodies_vs_ifc import shapes_of  # noqa: E402
 from saved_meshes_vs_ifc import body_sources  # noqa: E402
 
@@ -142,6 +142,9 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
         # curve flag), as the last element with the Tag always has: the flight, not the ramp.
         chosen.append((element, parts, bool(every) and not parts))
     shapes = mesh_parts(model, settings, [part for _, parts, _ in chosen for part in parts], path)
+    # A body that lost an item is still scored, as a part that fails is left out and its
+    # element scored on the rest; the line says how many.
+    report_lost_items(f"meshes {os.path.basename(path) if path else '(model)'}", [part.id() for _, parts, _ in chosen for part in parts])
     out = {}
     for element, parts, repeated in chosen:
         triangles = []
@@ -165,14 +168,17 @@ def meshes(path, tags=None, source=None, model=None, role=None, settings=None, d
     return out
 
 
-def volume(triangles):
-    """The enclosed volume, taken about the body's own centre: a mesh with
-    cracks between its faces (each curved face is meshed on its own) has a
-    signed volume that grows with its distance from the origin, as a closed
-    mesh's does not. The centre takes away only the origin's part:
-    a body missing a face still differs by its open boundary's area vector
-    times the centre's distance from it."""
-    centre = triangles.reshape(-1, 3).mean(axis=0)
+def volume(triangles, centre=None):
+    """The enclosed volume, taken about `centre`, by default the body's own
+    vertex centre: a mesh with cracks between its faces (each curved face is
+    meshed on its own) has a signed volume that grows with its distance from
+    the origin, as a closed mesh's does not. The centre takes away only the
+    origin's part: a body missing a face still differs by its open boundary's
+    area vector times the centre's distance from it, so an open body's volume
+    moves with the centre, and with its own vertex centre whenever points are
+    added on its surface; `score_pair` takes both bodies about one point."""
+    if centre is None:
+        centre = triangles.reshape(-1, 3).mean(axis=0)
     a, b, c = triangles[:, 0] - centre, triangles[:, 1] - centre, triangles[:, 2] - centre
     return abs(np.einsum("ij,ij->i", a, np.cross(b, c)).sum() / 6.0)
 
@@ -389,7 +395,11 @@ def score_pair(tag):
     if "parent" in WORKER and os.getppid() != WORKER["parent"]:
         os._exit(1)
     our_triangles, ref_triangles = SCORING["ours"][tag][2], SCORING["ref"][tag][2]
-    ref_volume, our_volume = volume(ref_triangles), volume(our_triangles)
+    # Both volumes about the centre of Revit's vertices, which no change to rvt-open's mesh
+    # moves: Revit's reads as before, a closed body of ours too (its volume is the same about
+    # any point), and an open one no longer changes with points added on its own surface.
+    centre = ref_triangles.reshape(-1, 3).mean(axis=0)
+    ref_volume, our_volume = volume(ref_triangles, centre), volume(our_triangles, centre)
     ratio = our_volume / ref_volume if ref_volume > 0 else float("inf")
     to_ours = surface_distance(vertices(ref_triangles), our_triangles)
     to_ref = surface_distance(vertices(our_triangles), ref_triangles)
