@@ -13,7 +13,7 @@
 //!
 //! [`read`] keeps every property and every field of the stored objects,
 //! names and kinds as saved, with values as JSON: nothing is dropped or
-//! translated. What it cannot read is listed in [`Appearance::unread`]. The
+//! translated. What it cannot read is listed in the `unread` field of [`Appearance`]. The
 //! images a bitmap names are not in the file (they are paths into a material
 //! library); only a swatch is.
 
