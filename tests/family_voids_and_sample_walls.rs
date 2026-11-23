@@ -1,5 +1,7 @@
-//! Families cut their voids from the solids the voids are joined to, and a
-//! door family draws its template's sample host wall with the door's opening.
+//! Families cut their voids from the solids the voids are joined to, a door
+//! family draws its template's sample host wall with the door's opening,
+//! deleted forms an older partition still keeps are left out, and a nested
+//! instance takes the size of its own stored box.
 //!
 //! Runs against published course datasets of families
 //! (`RVT_FAMILY_SAMPLES_DIR`, searched for each file name below), when
@@ -7,6 +9,7 @@
 
 use rvt::RevitFile;
 use rvt::family_documents::{FamilySolid, HOST_DOCUMENT, read_with_host};
+use rvt::ifc::RvtDocExporter;
 use std::path::{Path, PathBuf};
 
 fn find(dir: &Path, name: &str) -> Option<PathBuf> {
@@ -119,4 +122,45 @@ fn crossings(s: &FamilySolid, along: usize, u: f64, z: f64) -> usize {
             (d0 > 0.0 && d1 > 0.0 && d2 > 0.0) || (d0 < 0.0 && d1 < 0.0 && d2 < 0.0)
         })
         .count()
+}
+
+fn family_summary(name: &str) -> Option<rvt::ifc::family_file::FamilySummary> {
+    let mut rf = open(name)?;
+    let result = RvtDocExporter
+        .export_with_diagnostics(&mut rf)
+        .expect("export");
+    Some(result.diagnostics.input.family.expect("a family summary"))
+}
+
+/// (file, deleted forms left out, forms drawn), as measured: each left-out
+/// form is in neither the element table nor the newest partition, and Revit's
+/// saved display of the family holds none of them.
+const DELETED: [(&str, usize, usize); 2] = [
+    ("F05_Base Molding.rfa", 3, 3),
+    ("Flag Pole w Flag.rfa", 4, 0),
+];
+
+#[test]
+fn deleted_forms_an_older_partition_keeps_are_left_out() {
+    for (name, deleted, drawn) in DELETED {
+        let Some(f) = family_summary(name) else {
+            continue;
+        };
+        assert_eq!(f.forms_deleted, deleted, "{name}: deleted forms");
+        assert_eq!(
+            f.forms_drawn.values().sum::<usize>(),
+            drawn,
+            "{name}: forms drawn"
+        );
+    }
+}
+
+#[test]
+fn nested_instances_take_their_stored_size() {
+    // The arch's four column capitals and bases: their family's document draws
+    // them 2.27 ft deep, their instances' stored boxes 0.77 ft.
+    let Some(f) = family_summary("F04_Three Center Arch_Complete.rfa") else {
+        return;
+    };
+    assert_eq!((f.nested_drawn, f.nested_scaled), (4, 4));
 }

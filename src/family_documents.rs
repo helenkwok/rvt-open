@@ -158,9 +158,8 @@ pub struct DocStats {
     pub wall_openings_uncut: usize,
     /// Solids a void meets whose cut gave up (drawn uncut).
     pub void_cuts_failed: usize,
-    /// Forms and instances of the file's own elements that its element
-    /// table (`Global/ElemTable`) does not list: deleted elements whose last
-    /// copies an earlier partition still keeps. Revit draws none of them.
+    /// Copies of a family file's forms that are deleted elements' (see
+    /// [`deleted_elements`]): Revit draws none of them.
     pub deleted: usize,
 }
 
@@ -512,12 +511,12 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     let mut walls: BTreeSet<(Guid, i64)> = BTreeSet::new();
     // Keyed by document and opening: a newer copy replaces an older one.
     let mut openings: BTreeMap<(Guid, i64), Option<(i64, i64)>> = BTreeMap::new();
-    // The element ids the file lists: a deleted element's last copies stay in
-    // the partition they were saved in (one Revit 2011 family measured keeps
-    // 9 extrusions and a sweep the table does not list, among them a back
-    // upright and a crossbar facing the wrong way). Empty when the table does
-    // not read, and then nothing is left out.
-    let declared = declared_ids(rf);
+    // A family file's deleted elements: see [`deleted_elements`].
+    let deleted = if host_is_family {
+        deleted_elements(rf)
+    } else {
+        Deleted::default()
+    };
     let host_family = if host_is_family && section_count == 0 {
         host_family_id(rf, &names)?
     } else {
@@ -541,15 +540,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 let n = s.partition_point(|(at, _)| *at <= start);
                 n.checked_sub(1).map(|i| s[i].1)
             });
-            // Outside a keyed document the ids are the file's own, which the
-            // element table lists.
             let id = x.frame.header.id as i64;
-            if guid.is_none() && !declared.is_empty() && !declared.contains(&id) {
-                if class == "FamilyInstance" || FORM_CLASS_NAMES.contains(&class.as_str()) {
-                    out.stats.deleted += 1;
-                }
-                return;
-            }
             // A family file's own forms belong to its own document; its
             // `Family`, `FamilySymbol` and `FamilyInstance` objects stay the
             // host's (nested families and their instances).
@@ -567,6 +558,18 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 guid = Some(g);
             } else if guid.is_none() && host_is_family && !bookkeeping {
                 guid = Some(HOST_DOCUMENT);
+            }
+            // The family file's own forms (not a nested family's, which the
+            // table does not list and an older partition keeps as loaded; not
+            // instances: two placed in a family of 2015 measured are in neither
+            // the table nor the newest partition, and its CAD views show them).
+            if owner.is_none()
+                && guid.is_none_or(|g| g == HOST_DOCUMENT)
+                && FORM_CLASS_NAMES.contains(&class.as_str())
+                && deleted.holds(id, &x.stream)
+            {
+                out.stats.deleted += 1;
+                return;
             }
             let part = crate::partition_room_parameters::partition_number(&x.stream);
             match newest.get(&(guid, x.frame.header.tag, id)) {
@@ -1619,11 +1622,47 @@ fn pose_of(x: &SchemaObject, names: &BTreeMap<u16, String>) -> Option<InstancePo
     })
 }
 
-/// The element ids `Global/ElemTable` lists, empty when it does not read.
-pub(crate) fn declared_ids(rf: &mut RevitFile) -> BTreeSet<i64> {
-    crate::elem_table::declared_element_ids(rf)
+/// A family file's deleted elements, by two signs that must agree: the
+/// element table (`Global/ElemTable`) does not list the element, and its copy
+/// lies in a partition older than the file's newest (both of the file's own
+/// elements, not of its nested families' documents). A file saved again keeps
+/// a deleted element's last copies in the partition they were saved in, and
+/// writes its live elements anew: one Revit 2011 chair measured keeps 9
+/// extrusions and a sweep (a back upright, a crossbar and an arm loop of an
+/// earlier design) only in its older partition, the table listing none of
+/// them and every other form in the newest partition. The table alone does
+/// not decide: on published families of 2015 to 2023 it leaves out live forms
+/// whose only copies are in the newest (and often only) partition.
+#[derive(Default)]
+pub(crate) struct Deleted {
+    declared: BTreeSet<i64>,
+    newest_partition: u32,
+}
+
+impl Deleted {
+    /// Whether the copy of `id` read from `stream` is a deleted element's.
+    pub(crate) fn holds(&self, id: i64, stream: &str) -> bool {
+        !self.declared.is_empty()
+            && !self.declared.contains(&id)
+            && crate::partition_room_parameters::partition_number(stream) < self.newest_partition
+    }
+}
+
+/// [`Deleted`] of `rf` (nothing deleted when the table does not read).
+pub(crate) fn deleted_elements(rf: &mut RevitFile) -> Deleted {
+    let declared = crate::elem_table::declared_element_ids(rf)
         .map(|ids| ids.into_iter().map(i64::from).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let newest_partition = rf
+        .partition_stream_names()
+        .iter()
+        .map(|s| crate::partition_room_parameters::partition_number(s))
+        .max()
+        .unwrap_or(0);
+    Deleted {
+        declared,
+        newest_partition,
+    }
 }
 
 /// The solid-form classes.

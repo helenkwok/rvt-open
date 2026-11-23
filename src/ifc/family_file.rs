@@ -103,8 +103,8 @@ pub struct FamilySummary {
     /// members): not drawn, as Revit draws none.
     #[serde(default)]
     pub forms_unplaced: usize,
-    /// Forms of deleted elements (the element table does not list them; an
-    /// earlier partition still keeps their last copies): not drawn.
+    /// Forms of deleted elements (their last copies in an older partition,
+    /// the element table listing none of them): not drawn.
     #[serde(default)]
     pub forms_deleted: usize,
     /// Solids a decoded void was cut from.
@@ -361,9 +361,8 @@ pub fn attach(
     // record a file keeps in earlier partitions are not current.
     let mut newest: BTreeMap<(u16, i64), u32> = BTreeMap::new();
     let mut unplaced_forms: BTreeSet<i64> = BTreeSet::new();
-    // Elements the element table does not list are deleted: an earlier
-    // partition still keeps their last copies (empty: nothing left out).
-    let declared = family_documents::declared_ids(rf);
+    // Deleted elements' last copies an older partition keeps.
+    let deleted = family_documents::deleted_elements(rf);
     let mut deleted_forms: BTreeSet<i64> = BTreeSet::new();
     for_each_object_where(
         rf,
@@ -382,10 +381,8 @@ pub fn attach(
                 return;
             };
             let id = x.frame.header.id as i64;
-            if !declared.is_empty() && !declared.contains(&id) {
-                if FORM_CLASSES.iter().any(|(c, _)| c == class) {
-                    deleted_forms.insert(id);
-                }
+            if FORM_CLASSES.iter().any(|(c, _)| c == class) && deleted.holds(id, &x.stream) {
+                deleted_forms.insert(id);
                 return;
             }
             let part = crate::partition_room_parameters::partition_number(&x.stream);
@@ -468,7 +465,6 @@ pub fn attach(
     forms
         .retain(|f| newest.get(&(f.tag, f.id)) == Some(&f.part) && !unplaced_forms.contains(&f.id));
     out.forms_unplaced = unplaced_forms.len();
-    out.forms_deleted = deleted_forms.len();
     // Decoded solids of the family's own document, and which forms belong
     // to a nested family's document instead (files without keyed sections).
     let docs = family_documents::read_with_host(rf, true).ok();
@@ -477,7 +473,10 @@ pub fn attach(
             !d.nested_objects.contains(&f.id) && !d.host_samples.contains(&(HOST_DOCUMENT, f.id))
         });
         nested.retain(|i| !d.nested_objects.contains(i));
+        // A nested family's forms are its document's, not deleted ones.
+        deleted_forms.retain(|i| !d.nested_objects.contains(i));
     }
+    out.forms_deleted = deleted_forms.len();
     forms.sort_by_key(|f| f.id);
     for f in &forms {
         *out.forms_found.entry(f.kind.to_string()).or_default() += 1;
@@ -919,10 +918,10 @@ enum Stretch {
     BeyondLimits,
 }
 
-/// Map `vertices`' box onto `stored` axis by axis, when they differ by more
-/// than the box tolerance and [`NESTED_FACET_ALLOWANCE`], and every stretch
-/// is within the limits (an axis either box is flat along keeps its size and
-/// is only moved).
+/// Map `vertices`' box onto `stored` axis by axis, when `stored` lies inside
+/// it and they differ by more than the box tolerance and
+/// [`NESTED_FACET_ALLOWANCE`], and every stretch is within the limits (an axis
+/// either box is flat along keeps its size).
 fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2]) -> Stretch {
     let Some([lo, hi]) = bbox_of(vertices) else {
         return Stretch::Fits;
@@ -932,6 +931,12 @@ fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2]) -> Stretch {
         .fold(0.0, f64::max);
     let tol = family_documents::BBOX_TOLERANCE.max(family_documents::SOLVED_BBOX_FRACTION * size);
     if (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= tol && (hi[k] - stored[1][k]).abs() <= tol) {
+        return Stretch::Fits;
+    }
+    // Revit's stored box holds all the instance draws, so only a body larger
+    // than it is another size; one smaller can be lines and reference planes
+    // the box also holds.
+    if (0..3).any(|k| stored[0][k] < lo[k] - tol || stored[1][k] > hi[k] + tol) {
         return Stretch::Fits;
     }
     let factor: [f64; 3] = std::array::from_fn(|k| {
@@ -1188,7 +1193,8 @@ mod tests {
     }
 
     /// A nested body of its family's saved 4 ft type takes its instance's
-    /// 3 ft stored box; one within the facet allowance keeps its own.
+    /// 3 ft stored box; one within the facet allowance, or inside its stored
+    /// box, keeps its own.
     #[test]
     fn nested_bodies_take_their_stored_box() {
         let mut v = vec![[-1.5, 0.1, 0.0], [2.5, 0.24, 7.0]];
@@ -1199,9 +1205,15 @@ mod tests {
         let faceted = [[0.0, 0.0, 0.0], [0.97, 1.0, 0.5]];
         assert_eq!(stretch_to_box(&mut round, faceted), Stretch::Fits);
         assert_eq!(round[1], [1.0, 1.0, 0.5]);
-        let mut other = vec![[0.0; 3], [1.0, 1.0, 1.0]];
+        // A larger stored box can hold lines and reference planes too.
+        let mut small = vec![[0.0; 3], [1.0, 1.0, 1.0]];
         assert_eq!(
-            stretch_to_box(&mut other, [[0.0; 3], [10.0, 1.0, 1.0]]),
+            stretch_to_box(&mut small, [[0.0; 3], [10.0, 1.0, 1.0]]),
+            Stretch::Fits
+        );
+        let mut other = vec![[0.0; 3], [10.0, 1.0, 1.0]];
+        assert_eq!(
+            stretch_to_box(&mut other, [[0.0; 3], [1.0, 1.0, 1.0]]),
             Stretch::BeyondLimits
         );
     }
