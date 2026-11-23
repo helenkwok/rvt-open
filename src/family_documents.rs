@@ -1303,17 +1303,7 @@ fn extrusion_solid(
         sign * plane.m[1][2],
         sign * plane.m[2][2],
     ];
-    let mut pieces = Vec::new();
-    let mut extremes = Vec::new();
-    let alone = sketch.curves.len() == 1;
-    for id in &sketch.curves {
-        let (pts, closed, ext) = polyline(&whole_turn(curves.get(id)?, alone));
-        extremes.extend(ext);
-        pieces.push((pts, closed));
-    }
-    if pieces.is_empty() {
-        return None;
-    }
+    let (pieces, extremes) = sketch_pieces(sketch, curves)?;
     let rings = loops(&pieces)?;
     let mut solid = prism(&rings, n, e.start, e.end)?;
     solid.material_id = (e.material > 0).then_some(e.material);
@@ -1536,6 +1526,37 @@ fn sketch_pieces(
         pieces.push((pts, closed));
     }
     (!pieces.is_empty()).then_some((pieces, extremes))
+}
+
+/// The rings an extrusion's sketch assembles into, for a synthetic sketch of
+/// circular arcs (`centre, radius, [start, end]` in the xy plane) and lines:
+/// the profile an extrusion extrudes, `None` where it draws no solid.
+#[cfg(feature = "unstable-research")]
+pub fn sketch_rings(
+    arcs: &[([f64; 3], f64, [f64; 2])],
+    lines: &[[[f64; 3]; 2]],
+) -> Option<Vec<Vec<[f64; 3]>>> {
+    let arcs = arcs.iter().map(|&(center, radius, t)| Curve::Arc {
+        center,
+        x: [1.0, 0.0, 0.0],
+        y: [0.0, 1.0, 0.0],
+        radius,
+        t,
+    });
+    let lines = lines.iter().map(|[a, b]| {
+        let dir: [f64; 3] = std::array::from_fn(|k| b[k] - a[k]);
+        Curve::Line {
+            origin: *a,
+            dir,
+            t: [0.0, 1.0],
+        }
+    });
+    let curves: BTreeMap<i64, Curve> = (1..).zip(arcs.chain(lines)).collect();
+    let sketch = RawSketch {
+        plane: 0,
+        curves: curves.keys().copied().collect(),
+    };
+    loops(&sketch_pieces(&sketch, &curves)?.0)
 }
 
 fn plane_normal(sketch: &RawSketch, planes: &BTreeMap<i64, RawPlane>) -> Option<[f64; 3]> {

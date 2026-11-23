@@ -231,6 +231,8 @@ mod native_current_records;
 mod native_partitions_walk;
 #[path = "../native_phases.rs"]
 mod native_phases;
+#[path = "../near_circle_sketch.rs"]
+mod near_circle_sketch;
 #[path = "../parameter_diagnostics.rs"]
 mod parameter_diagnostics;
 #[path = "../partition_record_chain.rs"]
