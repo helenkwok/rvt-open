@@ -139,6 +139,13 @@ struct Shell {
 /// where the mesh is not closed (a directed edge not matched by as many
 /// reversed).
 fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
+    shells_of(mesh, true)
+}
+
+/// The shells of `mesh` ([`mesh_shells`]); where `whole` is false, also of a
+/// mesh that is not closed as a whole, whose open parts then count for
+/// their area only.
+fn shells_of(mesh: &Mesh, whole: bool) -> Option<Vec<Shell>> {
     let weld = |v: u32| -> [i64; 3] {
         let p = mesh.vertices[v as usize];
         std::array::from_fn(|k| (p[k] / WELD_FEET).round() as i64)
@@ -176,9 +183,10 @@ fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
         let from = directed.partition_point(|&k| k < key);
         directed[from..].partition_point(|&k| k == key)
     };
-    if directed
-        .chunk_by(|a, b| a == b)
-        .any(|run| count(edge(run[0] & u64::from(u32::MAX), run[0] >> 32)) != run.len())
+    if whole
+        && directed
+            .chunk_by(|a, b| a == b)
+            .any(|run| count(edge(run[0] & u64::from(u32::MAX), run[0] >> 32)) != run.len())
     {
         return None;
     }
@@ -352,13 +360,12 @@ fn shape_shells(shape: &SolidShape) -> Option<Vec<Shell>> {
             Some(a)
         }
         other => match body_geometry::face_set_mesh(other) {
-            // Measured on the triangles as written. Drawn two-sided, a mesh
-            // closed only up to T-junctions (a cut face split on one side of
-            // an edge and not the other) falls apart into a shell per
-            // triangle; with those edges split it is closed.
-            Some(mesh) => mesh_shells(&mesh)
-                .or_else(|| mesh_shells(&conformed(&mesh)))
-                .or_else(|| mesh_shells(&body_geometry::solid_mesh(other)?)),
+            // Measured on the triangles as written, never drawn two-sided: a
+            // mesh closed only up to T-junctions (a cut face split on one
+            // side of an edge and not the other) would fall apart into a
+            // shell per triangle. With those edges split it is closed; what
+            // is still open counts for its area only.
+            Some(mesh) => mesh_shells(&mesh).or_else(|| shells_of(&conformed(&mesh), false)),
             None => mesh_shells(&body_geometry::solid_mesh(other)?),
         },
     }

@@ -1,7 +1,8 @@
 //! A mesh closed only up to T-junctions (a face split on one side of an
 //! edge and not on the other, as a void cut leaves it) is measured as the
 //! closed solid it is, and a void cut's result has no T-junctions left, so
-//! it is drawn one-sided. A watertight body keeps its quantities.
+//! it is drawn one-sided. A watertight body keeps its quantities, and an
+//! open part of a face set counts for its area only.
 
 use rvt::ifc::entities::{BrepTriangle, IfcEntity, SolidShape};
 use rvt::ifc::quantities::measure;
@@ -146,6 +147,23 @@ fn an_open_surface_far_from_the_origin_has_no_volume() {
     ];
     let (volume, _) = quantities(face_set(v, &[[0, 1, 2], [0, 2, 3]]));
     assert_eq!(volume, None);
+}
+
+#[test]
+fn a_closed_body_beside_an_open_face_keeps_its_volume() {
+    // A 1 ft cube and, apart from it, one square face: the cube is a solid,
+    // the face counts for its area only.
+    let (mut v, mut t) = cuboid([100.0, 100.0, 100.0], [101.0, 101.0, 101.0]);
+    v.extend([
+        [110.0, 100.0, 100.0],
+        [111.0, 100.0, 100.0],
+        [111.0, 101.0, 100.0],
+        [110.0, 101.0, 100.0],
+    ]);
+    t.extend([[8, 9, 10], [8, 10, 11]]);
+    let (volume, surface) = quantities(face_set(v, &t));
+    assert!((volume.expect("measured") - 1.0).abs() < 1e-9);
+    assert!((surface - 7.0).abs() < 1e-9, "surface {surface}");
 }
 
 #[test]

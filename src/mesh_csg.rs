@@ -423,8 +423,9 @@ pub fn conform(
         unmatched.sort_unstable();
         // Only an end of another unmatched edge can lie inside one.
         let mut ends: Vec<u32> = unmatched.iter().flat_map(|&(a, b)| [a, b]).collect();
-        ends.sort_unstable_by(|&a, &b| points[a as usize][0].total_cmp(&points[b as usize][0]));
+        ends.sort_unstable();
         ends.dedup();
+        ends.sort_unstable_by(|&a, &b| points[a as usize][0].total_cmp(&points[b as usize][0]));
         let mut splits: BTreeMap<(u32, u32), Vec<u32>> = BTreeMap::new();
         for &(a, b) in &unmatched {
             let (pa, pb) = (points[a as usize], points[b as usize]);
