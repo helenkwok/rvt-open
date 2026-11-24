@@ -53,7 +53,7 @@ Nothing is sent anywhere.
 
 1. Open a file locally (drop / picker / demo gallery, or `?demo=<id>` in the address).
 2. Read File status: Decode confidence, Export confidence, and IFC bar.
-3. Inspect decoded entities in the tree or viewport; a material shows its render appearance (swatch, schema, bitmaps).
+3. Inspect decoded entities in the tree or viewport; a material reads its render appearance (swatch, schema, bitmaps) on request.
 4. Export IFC / glTF / 3D PDF / plan only after checking the quality label; IFCX, its appearance layer, Fragments, OpenUSD and the appearance assets are written from the file itself in the worker, as `rvt-ifc` writes them.
 5. Download diagnostics for scaffold or partial exports.
 
@@ -63,7 +63,7 @@ Each card says in a line what the sample shows. The samples, all redistributable
 
 | Sample | Source | Shows |
 |---|---|---|
-| Einhoven (2023), Core Interior (2024) | magnetar-io/revit-test-datasets, MIT (`_project_corpus/`) | a curved curtain wall with see-through panels; 15 levels, 1,000 elements, plans and sections |
+| Einhoven (2023), Core Interior (2024) | magnetar-io/revit-test-datasets, MIT (`_project_corpus/`) | a curtain wall of 24 framed panels and a wall with 2 windows; 15 levels, 1,000 elements, plans and sections |
 | Door family (2020) | the same, `Revit/Families/Doors` | a door family in its template's sample wall, the opening cut |
 | RAC basic sample family (2024, 2026) | phi-ag/rvt (`_corpus/`) | a family's forms, materials and their render appearances |
 | Tiny reference models (2018 to 2026) | this project's release assets fixtures-tiny-1 and -2, MIT (`tools/ci/fetch-tiny-models.sh _tiny`) | stairs and railings, a curtain wall, flipped doors and windows in their host, columns and beams, ducts and pipes, family instances, rooms, a hip roof |

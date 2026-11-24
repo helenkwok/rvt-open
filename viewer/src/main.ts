@@ -3082,38 +3082,59 @@ function materialLooks(): Promise<Map<string, MaterialLook>> | null {
   return appearanceFor.looks;
 }
 
-/** Adds the material's render appearance (swatch, schema, bitmaps) to its group once read. */
+/**
+ * A button that reads the material's render appearance (swatch, schema,
+ * bitmaps) and shows it in the group. Read on request: the worker reads the
+ * file again for it, which a large project takes a while to do.
+ */
 function addAppearance(box: HTMLElement, name: string): void {
-  const looks = materialLooks();
-  if (!looks) return;
-  void looks
-    .then((map) => {
-      const look = map.get(name);
-      if (!look || !box.isConnected) return;
-      const row = document.createElement('div');
-      row.className = 'info-appearance';
-      row.dataset.appearance = look.schema ?? '';
-      if (look.swatch) {
-        const img = document.createElement('img');
-        img.className = 'info-swatch';
-        img.src = look.swatch;
-        img.alt = `Render appearance swatch of ${name}`;
-        row.appendChild(img);
-      }
-      box.appendChild(row);
-      if (look.asset) box.appendChild(infoRow('Appearance', look.asset));
-      if (look.schema) box.appendChild(infoRow('Schema', look.schema));
-      if (look.bitmaps.length > 0) box.appendChild(infoRow('Bitmaps', look.bitmaps.join(', ')));
-    })
-    .catch(() => undefined);
+  if (!currentFile || !worker) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'info-appearance-btn';
+  btn.textContent = 'Show render appearance';
+  btn.addEventListener('click', () => {
+    const looks = materialLooks();
+    if (!looks) return;
+    btn.disabled = true;
+    btn.textContent = 'Reading render appearance…';
+    void looks
+      .then((map) => {
+        if (!box.isConnected) return;
+        const look = map.get(name);
+        if (!look) {
+          btn.textContent = 'No render appearance';
+          return;
+        }
+        btn.remove();
+        const row = document.createElement('div');
+        row.className = 'info-appearance';
+        row.dataset.appearance = look.schema ?? '';
+        if (look.swatch) {
+          const img = document.createElement('img');
+          img.className = 'info-swatch';
+          img.src = look.swatch;
+          img.alt = `Render appearance swatch of ${name}`;
+          row.appendChild(img);
+        }
+        box.appendChild(row);
+        if (look.asset) box.appendChild(infoRow('Appearance', look.asset));
+        if (look.schema) box.appendChild(infoRow('Schema', look.schema));
+        if (look.bitmaps.length > 0) box.appendChild(infoRow('Bitmaps', look.bitmaps.join(', ')));
+      })
+      .catch((err: unknown) => {
+        btn.textContent = `Render appearance not read: ${err instanceof Error ? err.message : String(err)}`;
+      });
+  });
+  box.appendChild(btn);
 }
 
 function materialGroup(material: PanelMaterial): HTMLElement {
   const box = infoGroup('material', 'Material');
-  addAppearance(box, material.name);
   const shared = `${material.element_count} element${material.element_count === 1 ? '' : 's'}`;
   if (!sceneSupportsHighlight()) {
     box.appendChild(infoRow(material.name, shared));
+    addAppearance(box, material.name);
     return box;
   }
   const btn = jumpButton(
@@ -3132,6 +3153,7 @@ function materialGroup(material: PanelMaterial): HTMLElement {
   btn.dataset.materialIndex = String(material.index);
   btn.setAttribute('aria-pressed', 'false');
   box.appendChild(btn);
+  addAppearance(box, material.name);
   return box;
 }
 

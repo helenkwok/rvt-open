@@ -10,7 +10,7 @@
 - **The viewer exports IFCX, an IFCX appearance layer, Fragments, OpenUSD
   and the appearance assets**, written from the file in the worker as
   `rvt-ifc --ifcx`, `--ifcx-appearance`, `--frag`, `--usdc` and
-  `--appearance` write them, and Element info shows a material's render
-  appearance: the swatch Revit saved with it, its schema and the bitmap
-  files its texture slots name. The wasm package gains `appearance_json` and
+  `--appearance` write them, and Element info reads a material's render
+  appearance on request: the swatch Revit saved with it, its schema and the
+  bitmap files its texture slots name. The wasm package gains `appearance_json` and
   `convert_ifcx_appearance`.

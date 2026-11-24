@@ -54,6 +54,14 @@ async function selectFirst(page: Page, ifcType: string): Promise<void> {
   await expect(page.locator('#info .info-row', { hasText: 'ElementId' }).first()).toBeVisible();
 }
 
+/** Asks the selected element's material for its render appearance and waits for it. */
+async function showAppearance(page: Page) {
+  const material = page.locator('#info .info-group-material');
+  await material.getByRole('button', { name: 'Show render appearance' }).click();
+  await expect(material.locator('.info-row', { hasText: 'Appearance' })).toBeVisible();
+  return material;
+}
+
 const examples: Example[] = [
   {
     id: 'door-family-2020',
@@ -68,15 +76,11 @@ const examples: Example[] = [
     id: 'rac-basic-2024',
     file: 'rac_basic_sample_family_2024.rfa',
     classes: ['IfcFurniture'],
-    // A form's material shows its render appearance: the swatch Revit saved and its schema.
+    // A form's material reads its render appearance asset on request.
     check: async (page) => {
       await selectFirst(page, 'IFCFURNITURE');
-      const material = page.locator('#info .info-group-material');
-      await expect(material).toBeVisible();
-      const swatch = material.locator('img.info-swatch');
-      await expect(swatch).toBeVisible();
-      expect(await swatch.evaluate((img) => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
-      await expect(material.locator('.info-row', { hasText: 'Schema' })).toContainText(/Schema/);
+      const material = await showAppearance(page);
+      await expect(material.locator('.info-row', { hasText: 'Appearance' })).toContainText('Laminate - Ivory, Matte');
     },
   },
   {
@@ -97,10 +101,15 @@ const examples: Example[] = [
     id: 'tiny-doors-windows-2024',
     file: 'tiny-2024-16-door-window-flips.rvt',
     classes: ['IfcDoor', 'IfcWindow', 'IfcWall'],
-    // A door names the wall that hosts it.
+    // A door names the wall that hosts it, and its material shows the swatch Revit saved with its appearance.
     check: async (page) => {
       await selectFirst(page, 'IFCDOOR');
       await expect(page.locator('#info-relations')).toContainText('Hosted by');
+      const material = await showAppearance(page);
+      await expect(material.locator('.info-row', { hasText: 'Schema' })).toContainText('WallPaintSchema');
+      const swatch = material.locator('img.info-swatch');
+      await expect(swatch).toBeVisible();
+      expect(await swatch.evaluate((img) => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     },
   },
   {
@@ -206,7 +215,8 @@ const exportsDemo = path.join(demos, 'rac_basic_sample_family_2024.rfa');
 
     const appearance = JSON.parse((await bytesOf(await downloadOf(page, '#export-appearance'))).toString('utf8'));
     expect(appearance.materials.length).toBeGreaterThan(0);
-    expect(appearance.assets.some((a: { swatch?: { image?: string } | null }) => !!a.swatch?.image)).toBe(true);
+    expect(appearance.assets.length).toBeGreaterThan(0);
+    expect(appearance.unread).toEqual([]);
     await expect(page.locator('#status')).toHaveText(/Exported rac_basic_sample_family_2024\.appearance\.json/);
   },
 );

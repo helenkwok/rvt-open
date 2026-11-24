@@ -289,6 +289,10 @@ a {
   right: 0;
   z-index: var(--rv-z-menu);
   width: 320px;
+  /* The menu scrolls rather than run off a short window. */
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: grid;
   gap: 2px;
   padding: 8px;
@@ -1524,6 +1528,21 @@ a {
   font-size: var(--rv-fs-xs);
   font-weight: var(--rv-fw-bold);
   color: var(--rv-text);
+}
+.info-appearance-btn {
+  margin-top: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: var(--rv-fs-xs);
+  color: var(--rv-text);
+  background: transparent;
+  border: 1px solid var(--rv-line-soft);
+  border-radius: var(--rv-radius-sm);
+  cursor: pointer;
+}
+.info-appearance-btn:disabled {
+  cursor: default;
+  color: var(--rv-text-2);
 }
 /* A material's render appearance swatch, as Revit saved it with the asset. */
 .info-appearance {

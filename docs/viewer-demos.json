@@ -16,12 +16,11 @@
       "element_count_hint": 37,
       "thumbnail": "demos/thumbnails/einhoven_2023.png",
       "capture": "viewer/demo-captures/einhoven-2023.png",
-      "description": "Real Revit 2023 project from magnetar-io/revit-test-datasets (MIT). A curved curtain wall of 24 panels on its one Level, a wall and 2 windows, 26 of them drawn from the meshes Revit saved; glass panels are drawn see-through, as the glTF export writes a transparent material. This is the file the CI browser regression gates.",
+      "description": "Real Revit 2023 project from magnetar-io/revit-test-datasets (MIT). A curtain wall of 24 framed panels on its one Level, as Revit 2023's own IFC export aggregates them, and a wall with 2 windows; 26 bodies are drawn from the meshes Revit saved. This is the file the CI browser regression gates.",
       "tags": [
         "real-project",
         "magnetar",
-        "architectural",
-        "transparency"
+        "architectural"
       ],
       "loadable": true,
       "expected_quality": "Geometry",
@@ -32,7 +31,7 @@
         "_project_corpus/Revit/Revit_IFC5_Einhoven.rvt",
         "../_project_corpus/Revit/Revit_IFC5_Einhoven.rvt"
       ],
-      "shows": "Curved curtain wall, see-through glass panels"
+      "shows": "Curtain wall of 24 framed panels, wall with 2 windows"
     },
     {
       "id": "core-interior-2024",
@@ -92,7 +91,7 @@
         "../_project_corpus/Revit/Families/Doors/I_Single-Flush.rfa"
       ],
       "source_path": "Revit/Families/Doors/I_Single-Flush.rfa",
-      "shows": "Door family in its sample wall, opening cut"
+      "shows": "Frame and leaf, sample host wall, opening cut"
     },
     {
       "id": "rac-basic-2024",
@@ -101,9 +100,9 @@
       "revit_version": 2024,
       "format": "rfa",
       "size_bytes": 1080832,
-      "element_count_hint": 88,
+      "element_count_hint": 4,
       "thumbnail": "demos/thumbnails/rac_basic_2024.png",
-      "description": "Family file: a table whose top and legs are drawn from the family's own extrusions, in their materials (Laminate - Ivory, Matte; Wood - Birch). Select the top or a leg to see its material's render appearance: the swatch Revit saved, the appearance schema and the bitmap files it names. Floor plan, ceiling plan, sections and elevations draw from the 3D model.",
+      "description": "Family file: a table whose top and legs are drawn from the family's own extrusions, in their materials (Laminate - Ivory, Matte; Wood - Birch). Select the top or a leg and ask for its material's render appearance: the appearance asset it names and any bitmap files its texture slots name. Floor plan, ceiling plan, sections and elevations draw from the 3D model.",
       "tags": [
         "family",
         "furniture",
@@ -113,14 +112,14 @@
       ],
       "loadable": true,
       "expected_quality": "Geometry",
-      "expected_quality_note": "The family's two forms are drawn from its own data; materials carry their render appearance (swatch, schema, bitmaps) in Element info.",
+      "expected_quality_note": "The family's two forms are drawn from its own data; a material reads its render appearance asset in Element info.",
       "license": "phi-ag/rvt sample redistributable (see the phi-ag/rvt LICENSE)",
       "provenance": "phi-ag/rvt examples/Autodesk/racbasicsamplefamily-2024.rfa",
       "source_candidates": [
         "_corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa",
         "../_corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa"
       ],
-      "shows": "Family forms, materials, render appearance swatches",
+      "shows": "Family forms, materials, render appearances",
       "capture": "viewer/demo-captures/rac-basic-2024.png"
     },
     {
@@ -130,7 +129,7 @@
       "revit_version": 2026,
       "format": "rfa",
       "size_bytes": 1093120,
-      "element_count_hint": 88,
+      "element_count_hint": 4,
       "thumbnail": "demos/thumbnails/rac_basic_2026.png",
       "description": "The same family saved by Revit 2026: the same forms, materials and appearances read from another release.",
       "tags": [
@@ -218,7 +217,7 @@
       "element_count_hint": 7,
       "thumbnail": "demos/thumbnails/tiny-doors-windows-2024.png",
       "capture": "viewer/demo-captures/tiny-doors-windows-2024.png",
-      "description": "One 14 m wall hosting four doors (no flip, hand, facing, both) and two windows, each drawn from the mesh Revit saved and cut into its host. Element info jumps between a door and its host wall. Built from scratch in Revit 2024 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "description": "One 14 m wall hosting four doors (no flip, hand, facing, both) and two windows, each drawn from the mesh Revit saved and cut into its host. Element info jumps between a door and its host wall, and a door's material shows the swatch Revit saved with its render appearance. Built from scratch in Revit 2024 from its default template; its Revit API answer key ships beside it in the release asset.",
       "tags": [
         "tiny-model",
         "doors",
