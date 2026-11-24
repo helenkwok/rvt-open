@@ -74,6 +74,8 @@
 # and the pairs once held out (holdout-*, bimcollab-*, spent-*), of which only
 # counts leave the runner, are never looked up or stored: the Actions cache is
 # not private to the workflows that may change it.
+# A name in MEASURE_SCORERS or PROBE_SCORER that is no step and no scorer
+# file stops the run before anything is exported, with status 2.
 # A scorer that fails is recorded, not fatal: its output is the evidence. A
 # scorer the run names (MEASURE_SCORERS), or a probe's scorer, that exits
 # non-zero is also listed in OUT_DIR/scorer-failures.txt (model, scorer, exit
@@ -555,6 +557,21 @@ measure_sample() { # sample
 # 2x, so a probe would stop sooner than it always has.
 read -ra PROBES <<< "${PROBE:-}"
 read -ra PROBE_SCORERS <<< "${PROBE_SCORER:-}"
+# Every name in MEASURE_SCORERS and PROBE_SCORER must be a step or a scorer
+# that exists: a misspelt one ran nothing on any model and the run ended with
+# status 0, as if it had passed. "none" and "-" name no step.
+bad=()
+for s in "${STEPS[@]:-}"; do
+  [ -z "$s" ] || [ "$s" = - ] || listed "$s" || [ -f "$SCORERS/$s.py" ] || bad+=("MEASURE_SCORERS names $s, which is no step and no $SCORERS/$s.py")
+done
+for s in "${PROBE_SCORERS[@]:-}"; do
+  [ -z "$s" ] || [ "$s" = - ] || [ "$s" = none ] || [ -f "${PROBE_SCORER_DIR:-$SCORERS}/$s.py" ] \
+    || bad+=("PROBE_SCORER names $s, which is no ${PROBE_SCORER_DIR:-$SCORERS}/$s.py")
+done
+if [ "${#bad[@]}" -gt 0 ]; then
+  printf '::error::%s\n' "${bad[@]}" >&2
+  exit 2
+fi
 # A scorer that reads a probe's output, named in MEASURE_SCORERS, would be given
 # the IFC as that output, find nothing in it and report zeros with success.
 for s in "${STEPS[@]:-}"; do

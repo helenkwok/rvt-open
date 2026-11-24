@@ -149,10 +149,10 @@ pub use export_pipeline::{
 pub use from_decoded::{BuilderOptions, ElementInput, build_ifc_model};
 pub use graph::{GraphOptions, IfcxGraph};
 pub use ifcx_writer::{
-    DIAGNOSTIC_KEYS, GLTF_MATERIAL_KEY, LossLedger, TEXTURE_COORDINATES_KEY, write_ifcx,
-    write_ifcx_graph, write_ifcx_graph_layers, write_ifcx_graph_layers_at,
-    write_ifcx_graph_layers_to, write_ifcx_graph_texture_layer, write_ifcx_graph_with_ledger,
-    write_ifcx_texture_layer, write_ifcx_with_ledger,
+    APPEARANCE_KEY, DIAGNOSTIC_KEYS, GLTF_MATERIAL_KEY, LossLedger, TEXTURE_COORDINATES_KEY,
+    write_ifcx, write_ifcx_graph, write_ifcx_graph_appearance_layer, write_ifcx_graph_layers,
+    write_ifcx_graph_layers_at, write_ifcx_graph_layers_to, write_ifcx_graph_texture_layer,
+    write_ifcx_graph_with_ledger, write_ifcx_texture_layer, write_ifcx_with_ledger,
 };
 pub use step_writer::{write_step, write_step_graph};
 pub use usd_writer::{
@@ -504,6 +504,7 @@ pub struct MaterialInfo {
 /// by the texture coordinates of its mesh
 /// ([`entities::SolidShape::TriangulatedFaceSet`]'s `uvs`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub struct MaterialTexture {
     /// The image file's bytes.
     pub image: Vec<u8>,
@@ -516,6 +517,12 @@ pub struct MaterialTexture {
     /// where the source gives it (the texture coordinates already hold it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_feet: Option<[f64; 2]>,
+    /// The source's own record of how the image is placed (scale, offset,
+    /// rotation, repeat, tint...), kept as read, for a reader that has one
+    /// (none fills it yet). The `.frag` texture sidecar carries it, with
+    /// absolute paths cut to file names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<serde_json::Value>,
 }
 
 impl MaterialTexture {
@@ -534,6 +541,7 @@ impl MaterialTexture {
             mime_type: mime_type.to_string(),
             name,
             size_feet,
+            mapping: None,
         })
     }
 

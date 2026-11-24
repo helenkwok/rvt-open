@@ -414,3 +414,493 @@ fn a_chunk_past_the_end_ends_the_alpha_search() {
     let texture = MaterialTexture::new(png, None, None).expect("png");
     assert!(!texture.has_alpha());
 }
+
+/// The `.frag` read back: per sample (item local id, mesh item, material
+/// local id, triangles of its shell), and the material count.
+fn frag_samples(frag: &[u8]) -> (Vec<(u32, u32, u32, usize)>, usize) {
+    use std::io::Read;
+    let mut raw = Vec::new();
+    flate2::read::ZlibDecoder::new(frag)
+        .read_to_end(&mut raw)
+        .expect("zlib");
+    let b = super::frag_writer::Fb(&raw);
+    let root = b.deref(0);
+    let (ids_at, _) = b.vector(root, 4);
+    let meshes = b.table_at(root, 6);
+    let (items_at, _) = b.vector(meshes, 1);
+    let (samples_at, n_samples) = b.vector(meshes, 2);
+    let (reprs_at, _) = b.vector(meshes, 3);
+    let (_, n_materials) = b.vector(meshes, 4);
+    let (shells_at, _) = b.vector(meshes, 6);
+    let (mat_ids_at, _) = b.vector(meshes, 9);
+    let samples = (0..n_samples)
+        .map(|i| {
+            let at = samples_at + 16 * i;
+            let (mesh_item, material, repr) = (b.u32(at), b.u32(at + 4), b.u32(at + 8));
+            let item = b.u32(ids_at + 4 * b.u32(items_at + 4 * mesh_item));
+            let shell = b.deref(shells_at + 4 * b.u32(reprs_at + 32 * repr));
+            // small shells list their triangles in field 0, big ones in 3.
+            let triangles = b.vector(shell, 0).1.max(b.vector(shell, 3).1);
+            (
+                item as u32,
+                mesh_item as u32,
+                b.u32(mat_ids_at + 4 * material) as u32,
+                triangles,
+            )
+        })
+        .collect();
+    (samples, n_materials)
+}
+
+/// The sidecar as JSON.
+fn sidecar_json(t: &rvt::ifc::frag_writer::FragTextures) -> serde_json::Value {
+    let mut json = Vec::new();
+    t.write_json(&mut json).expect("json");
+    serde_json::from_slice(&json).expect("parse")
+}
+
+/// Every sample the sidecar names is that `.frag` sample: its item, mesh
+/// item, material and (with coordinates) its shell's triangle count.
+fn check_against_frag(frag: &[u8], doc: &serde_json::Value) {
+    use sha2::Digest;
+    let digest: String = sha2::Sha256::digest(frag)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(
+        doc["fragSha256"],
+        digest.as_str(),
+        "the sidecar names its .frag"
+    );
+    let (samples, _) = frag_samples(frag);
+    for s in doc["samples"].as_array().expect("samples") {
+        let i = s["sample"].as_u64().expect("sample") as usize;
+        let (item, mesh_item, material, triangles) = samples[i];
+        assert_eq!(s["item"], item);
+        assert_eq!(s["meshItem"], mesh_item);
+        assert_eq!(s["material"], material);
+        if let Some(uv) = s["uv"].as_array() {
+            assert_eq!(s["triangles"], triangles, "sample {i}");
+            assert_eq!(uv.len(), triangles * 6, "one [u, v] per corner");
+        }
+    }
+}
+
+#[test]
+fn frag_sidecar_puts_the_images_back() {
+    use rvt::ifc::frag_writer::{TEXTURE_SIDECAR_FORMAT, write_frag_graph_textured};
+    use rvt::ifc::gltf::DisplayOptions;
+    use rvt::ifc::{GraphOptions, IfcxGraph};
+    let display = DisplayOptions::default();
+    let mut m = model();
+    // the plain material takes the checker's colour: the textured one must
+    // still get a material of its own.
+    m.materials[2].color_packed = m.materials[0].color_packed;
+    let graph = IfcxGraph::from_model(&m, GraphOptions::default());
+    let (frag, stats, textures) = write_frag_graph_textured(&graph, &display).expect("frag");
+    let textures = textures.expect("a sidecar");
+    let doc = sidecar_json(&textures);
+    save("frag/textures.frag", &frag);
+    save(
+        "frag/textures.frag.textures.json",
+        doc.to_string().as_bytes(),
+    );
+    for (name, bytes) in &textures.images {
+        save(&format!("frag/{name}"), bytes);
+    }
+    check_against_frag(&frag, &doc);
+    let (_, n_materials) = frag_samples(&frag);
+    assert_eq!(n_materials, stats.materials);
+    assert_eq!(stats.textured_materials, 3, "checker, glass, bare");
+    assert_eq!(
+        stats.materials, 4,
+        "the plain colour stays apart: {stats:?}"
+    );
+    assert_eq!(stats.textured_duplicate_keys, 0);
+    assert_eq!(stats.textured_corners_defaulted, 0);
+    assert_eq!(stats.textured_samples_skipped, 0);
+    assert_eq!(stats.textured_samples, stats.textured_samples_with_uvs);
+    assert_eq!(textures.images.len(), 2, "one file per distinct image");
+    assert_eq!(doc["format"], TEXTURE_SIDECAR_FORMAT);
+    assert_eq!(doc["version"], 1);
+    assert_eq!(doc["model"], graph.id.as_str());
+    let materials = doc["materials"].as_array().expect("materials");
+    assert_eq!(materials.len(), 3);
+    for e in materials {
+        let image = e["image"].as_str().expect("image");
+        assert!(
+            textures.images.iter().any(|(f, _)| f == image),
+            "{image} written"
+        );
+        assert_eq!(e["repeatSizeFeet"], serde_json::json!([2.0, 2.0]));
+        if e["name"] == "Glass" {
+            assert_eq!(e["imageHasAlpha"], true);
+            assert_eq!(e["doubleSided"], true);
+            assert_eq!(e["color"][3], 128, "half transparent");
+        }
+    }
+    // every triangle of every textured mesh of the graph, once.
+    let samples = doc["samples"].as_array().expect("samples");
+    let triangles: u64 = samples.iter().filter_map(|s| s["triangles"].as_u64()).sum();
+    let textured: usize = graph
+        .nodes
+        .values()
+        .filter_map(|n| n.mesh.as_deref())
+        .filter(|m| m.texture.is_some())
+        .map(|m| m.face_vertex_indices.len() / 3)
+        .sum();
+    assert_eq!(triangles as usize, textured);
+    // a square's two triangles (0, 1, 2) and (0, 2, 3), corner by corner,
+    // at the start of its sample (samples follow the graph's order).
+    let square: Vec<f64> = vec![0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0];
+    let starts = |s: &serde_json::Value| {
+        let uv: Vec<f64> = s["uv"]
+            .as_array()
+            .expect("uv")
+            .iter()
+            .filter_map(|v| v.as_f64())
+            .collect();
+        uv.starts_with(&square)
+    };
+    assert!(samples.iter().any(starts));
+    // a source's own placement record goes through, absolute paths cut.
+    let mut native = m.clone();
+    let record = serde_json::json!({"texture_RealWorldScaleX": 2.0, "bitmap": "C:\\lib\\Mats\\oak.png", "rel": "1/Mats/oak.png"});
+    native.materials[0]
+        .texture
+        .as_mut()
+        .expect("texture")
+        .mapping = Some(record);
+    let graph = IfcxGraph::from_model(&native, GraphOptions::default());
+    let (_, _, textures) = write_frag_graph_textured(&graph, &display).expect("frag");
+    let doc = sidecar_json(&textures.expect("sidecar"));
+    let kept = serde_json::json!({"texture_RealWorldScaleX": 2.0, "bitmap": "oak.png", "rel": "1/Mats/oak.png"});
+    assert!(
+        doc["materials"]
+            .as_array()
+            .expect("materials")
+            .iter()
+            .any(|e| e["mapping"] == kept)
+    );
+    // the entry point without the sidecar writes the same .frag and counts.
+    let (bytes, plain_stats) =
+        rvt::ifc::frag_writer::write_frag_graph_with(&graph, &display).expect("frag");
+    let (with, with_stats, _) = write_frag_graph_textured(&graph, &display).expect("frag");
+    assert_eq!(bytes, with);
+    assert_eq!(plain_stats, with_stats);
+    // no textures: no sidecar, and one material per colour as before.
+    let mut plain = m.clone();
+    for mat in &mut plain.materials {
+        mat.texture = None;
+    }
+    let graph = IfcxGraph::from_model(&plain, GraphOptions::default());
+    let (_, stats, none) = write_frag_graph_textured(&graph, &display).expect("frag");
+    assert!(none.is_none());
+    assert_eq!(stats.textured_materials, 0);
+}
+
+#[test]
+fn frag_merges_an_items_textured_bodies_of_one_material() {
+    use rvt::ifc::frag_writer::write_frag_graph_textured;
+    use rvt::ifc::{GraphOptions, IfcxGraph};
+    let m = model();
+    let mut graph = IfcxGraph::from_model(&m, GraphOptions::default());
+    let (_, before, textures) =
+        write_frag_graph_textured(&graph, &Default::default()).expect("frag");
+    let before_doc = sidecar_json(&textures.expect("sidecar"));
+    let sum = |d: &serde_json::Value| -> u64 {
+        d["samples"]
+            .as_array()
+            .expect("samples")
+            .iter()
+            .filter_map(|s| s["triangles"].as_u64())
+            .sum()
+    };
+    // a second body of a textured element, in the same material, a foot up.
+    let (element, body) = graph
+        .nodes
+        .iter()
+        .find_map(|(p, n)| {
+            let b = n.children.values().find(|c| {
+                graph
+                    .nodes
+                    .get(*c)
+                    .and_then(|b| b.mesh.as_deref())
+                    .is_some_and(|m| m.texture.is_some())
+            })?;
+            Some((p.clone(), b.clone()))
+        })
+        .expect("a textured body");
+    let mut copy = graph.nodes[&body].clone();
+    let mesh = copy.mesh.as_deref_mut().expect("mesh");
+    for p in &mut mesh.points {
+        p[2] += 0.3048;
+    }
+    let added = (mesh.face_vertex_indices.len() / 3) as u64;
+    let path = "00000000-0000-4000-8000-00000000d0d0".to_string();
+    graph.nodes.insert(path.clone(), copy);
+    graph
+        .nodes
+        .get_mut(&element)
+        .expect("element")
+        .children
+        .insert("Body99".into(), path);
+    let (frag, stats, textures) =
+        write_frag_graph_textured(&graph, &Default::default()).expect("frag");
+    let doc = sidecar_json(&textures.expect("sidecar"));
+    check_against_frag(&frag, &doc);
+    assert_eq!(
+        stats.textured_bodies_merged,
+        before.textured_bodies_merged + 1,
+        "{stats:?}"
+    );
+    assert_eq!(stats.textured_duplicate_keys, 0);
+    // the same samples as before, one holding the added triangles too.
+    assert_eq!(stats.textured_samples, before.textured_samples);
+    assert_eq!(sum(&doc), sum(&before_doc) + added);
+}
+
+#[test]
+fn frag_samples_without_coordinates_get_a_projection() {
+    use rvt::ifc::entities::ProfileDef;
+    use rvt::ifc::frag_writer::write_frag_graph_textured;
+    use rvt::ifc::{GraphOptions, IfcxGraph};
+    let m = model();
+    let mut graph = IfcxGraph::from_model(&m, GraphOptions::default());
+    let textured: Vec<(String, String)> = graph
+        .nodes
+        .iter()
+        .flat_map(|(p, n)| {
+            n.children
+                .values()
+                .filter(|c| {
+                    graph
+                        .nodes
+                        .get(*c)
+                        .and_then(|b| b.mesh.as_deref())
+                        .is_some_and(|m| m.texture.is_some())
+                })
+                .map(move |c| (p.clone(), c.clone()))
+        })
+        .collect();
+    let mut elements: Vec<&String> = textured.iter().map(|(e, _)| e).collect();
+    elements.dedup();
+    assert!(elements.len() >= 2, "two textured elements to change");
+    // one body loses its texture coordinates...
+    let (_, body) = textured
+        .iter()
+        .find(|(e, _)| e == elements[0])
+        .expect("body");
+    graph
+        .nodes
+        .get_mut(body)
+        .and_then(|n| n.mesh.as_deref_mut())
+        .expect("mesh")
+        .st
+        .clear();
+    // ...and another element becomes a pipe, a circle extrusion.
+    graph
+        .nodes
+        .get_mut(elements[1])
+        .expect("element")
+        .solid_shape = Some(Box::new(SolidShape::PlacedExtrusion {
+        profile: ProfileDef::Circle { radius_feet: 0.25 },
+        origin_feet: [0.0; 3],
+        axis: [1.0, 0.0, 0.0],
+        ref_direction: [0.0, 1.0, 0.0],
+        depth_feet: 4.0,
+    }));
+    let (frag, stats, textures) =
+        write_frag_graph_textured(&graph, &Default::default()).expect("frag");
+    let doc = sidecar_json(&textures.expect("sidecar"));
+    check_against_frag(&frag, &doc);
+    assert_eq!(stats.circle_extrusions, 1);
+    let projected: Vec<&serde_json::Value> = doc["samples"]
+        .as_array()
+        .expect("samples")
+        .iter()
+        .filter(|s| s["uv"].is_null())
+        .collect();
+    assert_eq!(projected.len(), 2, "the bare body and the pipe");
+    for s in projected {
+        assert_eq!(s["projection"]["kind"], "box");
+        let metres = 2.0 * 0.3048;
+        assert_eq!(
+            s["projection"]["repeatSizeMetres"],
+            serde_json::json!([metres, metres])
+        );
+    }
+    assert_eq!(stats.textured_samples - stats.textured_samples_with_uvs, 2);
+}
+
+#[test]
+fn frag_cuts_a_big_textured_shell_below_the_loader_buffer() {
+    use rvt::ifc::frag_writer::{TEXTURED_SHELL_TRIANGLES, write_frag_graph_textured};
+    use rvt::ifc::{GraphOptions, IfcxGraph};
+    // a 110 x 100 grid of 0.3 ft squares: 22,000 triangles in one textured
+    // body, wide enough that the loader draws it whole rather than as lines.
+    let (nx, ny) = (110u32, 100u32);
+    let mut vertices = Vec::new();
+    let mut uvs = Vec::new();
+    for j in 0..=ny {
+        for i in 0..=nx {
+            let (x, y) = (f64::from(i) * 0.3, f64::from(j) * 0.3);
+            vertices.push([x, y, 0.0]);
+            uvs.push([x / 2.0, y / 2.0]);
+        }
+    }
+    let triangles: Vec<BrepTriangle> = (0..ny)
+        .flat_map(|j| (0..nx).map(move |i| (i, j)))
+        .flat_map(|(i, j)| {
+            let a = j * (nx + 1) + i;
+            let c = a + nx + 1;
+            [BrepTriangle(a, a + 1, c + 1), BrepTriangle(a, c + 1, c)]
+        })
+        .collect();
+    let mut m = model();
+    m.entities = vec![element(
+        "Grid",
+        Some(0),
+        SolidShape::TriangulatedFaceSet {
+            vertices_feet: vertices,
+            triangles,
+            face_materials: Vec::new(),
+            uvs,
+        },
+    )];
+    let graph = IfcxGraph::from_model(&m, GraphOptions::default());
+    let (frag, stats, textures) =
+        write_frag_graph_textured(&graph, &Default::default()).expect("frag");
+    let textures = textures.expect("sidecar");
+    let doc = sidecar_json(&textures);
+    save("frag/big.frag", &frag);
+    save("frag/big.frag.textures.json", doc.to_string().as_bytes());
+    for (name, bytes) in &textures.images {
+        save(&format!("frag/{name}"), bytes);
+    }
+    check_against_frag(&frag, &doc);
+    // the graph draws the grid's back too: twice the triangles, in pieces.
+    let total: usize = graph
+        .nodes
+        .values()
+        .filter_map(|n| n.mesh.as_deref())
+        .filter(|m| m.texture.is_some())
+        .map(|m| m.face_vertex_indices.len() / 3)
+        .sum();
+    assert!(total >= 22_000, "{total}");
+    let pieces = total.div_ceil(TEXTURED_SHELL_TRIANGLES);
+    assert_eq!(stats.textured_shells_split, pieces - 1, "{stats:?}");
+    assert_eq!(stats.textured_duplicate_keys, 0);
+    let samples = doc["samples"].as_array().expect("samples");
+    assert_eq!(samples.len(), pieces);
+    let counts: Vec<u64> = samples
+        .iter()
+        .map(|s| s["triangles"].as_u64().expect("t"))
+        .collect();
+    assert_eq!(counts.iter().sum::<u64>() as usize, total);
+    assert!(
+        counts
+            .iter()
+            .all(|t| *t as usize <= TEXTURED_SHELL_TRIANGLES)
+    );
+    // each piece has a material of its own, the same image.
+    let materials = doc["materials"].as_array().expect("materials");
+    assert_eq!(materials.len(), pieces);
+    assert!(
+        materials
+            .iter()
+            .all(|m| m["image"] == materials[0]["image"])
+    );
+    let distinct: std::collections::BTreeSet<String> =
+        samples.iter().map(|s| s["material"].to_string()).collect();
+    assert_eq!(distinct.len(), pieces);
+}
+
+#[test]
+fn frag_sidecar_files_replace_an_earlier_runs() {
+    use rvt::ifc::frag_writer::write_frag_graph_textured;
+    use rvt::ifc::{GraphOptions, IfcxGraph};
+    let dir = std::env::temp_dir().join(format!("rvt-frag-textures-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("textures")).expect("dir");
+    let frag = dir.join("m.frag");
+    let sidecar = dir.join("m.frag.textures.json");
+    // a file of the user's, which no run may remove.
+    std::fs::write(dir.join("textures/keep.png"), b"mine").expect("write");
+    let write = |m: &IfcModel| {
+        let graph = IfcxGraph::from_model(m, GraphOptions::default());
+        let (bytes, _, textures) =
+            write_frag_graph_textured(&graph, &Default::default()).expect("frag");
+        std::fs::write(&frag, bytes).expect("frag");
+        rvt::cli::write_frag_textures(&frag, textures.as_ref()).expect("sidecar")
+    };
+    let images = || -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir.join("textures"))
+            .expect("dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    let m = model();
+    assert_eq!(write(&m), Some(sidecar.clone()));
+    assert!(sidecar.is_file());
+    assert_eq!(
+        images().len(),
+        3,
+        "two images and the user's file: {:?}",
+        images()
+    );
+    // the glass loses its image: its file goes, the other stays.
+    let mut fewer = m.clone();
+    fewer.materials[1].texture = None;
+    write(&fewer);
+    assert_eq!(images().len(), 2, "{:?}", images());
+    // no textures: the sidecar and its images go, the user's file stays.
+    let mut plain = m.clone();
+    for mat in &mut plain.materials {
+        mat.texture = None;
+    }
+    assert_eq!(write(&plain), None);
+    assert!(!sidecar.exists(), "no stale sidecar");
+    assert_eq!(images(), vec!["keep.png".to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn frag_sidecar_keeps_images_another_output_names() {
+    use rvt::ifc::frag_writer::write_frag_graph_textured;
+    use rvt::ifc::{GraphOptions, IfcxGraph};
+    let dir = std::env::temp_dir().join(format!("rvt-frag-shared-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let write = |name: &str, m: &IfcModel| {
+        let graph = IfcxGraph::from_model(m, GraphOptions::default());
+        let (bytes, _, textures) =
+            write_frag_graph_textured(&graph, &Default::default()).expect("frag");
+        let frag = dir.join(name);
+        std::fs::write(&frag, bytes).expect("frag");
+        rvt::cli::write_frag_textures(&frag, textures.as_ref()).expect("sidecar");
+    };
+    let images = || {
+        std::fs::read_dir(dir.join("textures"))
+            .expect("dir")
+            .count()
+    };
+    let m = model();
+    write("a.frag", &m);
+    write("b.frag", &m);
+    assert_eq!(images(), 2, "both outputs share the two images");
+    // a loses its textures: b still names both images, so both stay.
+    let mut plain = m.clone();
+    for mat in &mut plain.materials {
+        mat.texture = None;
+    }
+    write("a.frag", &plain);
+    assert!(!dir.join("a.frag.textures.json").exists());
+    assert_eq!(images(), 2, "b's images stay");
+    // b loses them too: now nothing names them, and they go.
+    write("b.frag", &plain);
+    assert_eq!(images(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

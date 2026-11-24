@@ -432,6 +432,168 @@ pub fn write_ifcx_graph_texture_layer(
     Ok((text, files))
 }
 
+// ------------------------------------------------------------ appearance
+
+/// The key of a render appearance asset's record in the appearance layer:
+/// the [`crate::appearance::AppearanceAsset`] record as JSON text, every
+/// property, kind and connected asset as saved.
+pub const APPEARANCE_KEY: &str = "rvtopen::revit::AppearanceAsset";
+
+/// The render appearance of each material of the graph as an IFCX layer to
+/// compose over the main file (header id `<id>/appearance`). The main file
+/// writes no material nodes (its elements carry the colour), so the layer
+/// writes them: each material with an appearance asset is a node of its own
+/// (`IfcMaterial`, its name) whose child `appearance` is the asset's node,
+/// which holds its record ([`APPEARANCE_KEY`]), written once however many
+/// materials use it; each element of the main file associated with such a
+/// material (directly, through a layer, profile or constituent set) gets the
+/// material as its child `Material` (`Material1`, ... for more). A material
+/// is matched by name ([`crate::appearance::Appearance::asset_of`]). The main
+/// file does not change. Returns the layer and how many of the graph's
+/// materials it wrote, each with its `appearance` link. `timestamp` as
+/// [`write_ifcx_graph_layers_at`].
+pub fn write_ifcx_graph_appearance_layer(
+    graph: &IfcxGraph,
+    appearance: &crate::appearance::Appearance,
+    timestamp: Option<i64>,
+) -> Result<(String, usize), IfcxError> {
+    if let Some(e) = graph.errors.first() {
+        return Err(IfcxError(e.clone()));
+    }
+    let mut data = Vec::new();
+    let mut written = std::collections::BTreeSet::new();
+    let mut linked = std::collections::BTreeSet::new();
+    for (i, path) in graph.order.materials.iter().enumerate() {
+        let Some(info) = graph.material(i) else {
+            continue;
+        };
+        let Some(asset) = appearance.asset_of(&info.name) else {
+            continue;
+        };
+        let asset_path = uuid5(&format!("{}/appearance/{}", graph.id, asset.element_id));
+        if written.insert(asset.element_id) {
+            let text =
+                serde_json::to_string(asset).map_err(|e| IfcxError(format!("writing: {e}")))?;
+            data.push(json!({"path": asset_path, "attributes": {APPEARANCE_KEY: text}}));
+        }
+        let uri =
+            "https://identifier.buildingsmart.org/uri/buildingsmart/ifc/4.3/class/IfcMaterial";
+        data.push(json!({
+            "path": path,
+            "attributes": {
+                "bsi::ifc::class": {"code": "IfcMaterial", "uri": uri},
+                "bsi::ifc::prop::Name": info.name,
+            },
+            "children": {"appearance": asset_path},
+        }));
+        linked.insert(path.as_str());
+    }
+    for (element, materials) in material_users(graph) {
+        let node = &graph.nodes[element];
+        let mut children = Map::new();
+        for m in materials.into_iter().filter(|m| linked.contains(m)) {
+            let name = (0..)
+                .map(|k| match k {
+                    0 => "Material".to_string(),
+                    k => format!("Material{k}"),
+                })
+                .find(|n| !node.children.contains_key(n) && !children.contains_key(n))
+                .unwrap_or_default();
+            children.insert(name, json!(m));
+        }
+        if !children.is_empty() {
+            data.push(json!({"path": element, "children": children}));
+        }
+    }
+    let mut schemas = Map::new();
+    if !data.is_empty() {
+        schemas.insert(
+            APPEARANCE_KEY.into(),
+            json!({"value": {"dataType": "String"}}),
+        );
+    }
+    let doc = json!({
+        "header": {
+            "id": format!("{}/appearance", graph.id),
+            "ifcxVersion": "ifcx_alpha",
+            "dataVersion": "1.0.0",
+            "author": "rvt-open",
+            "timestamp": super::step_writer::iso_timestamp_from(
+                timestamp.unwrap_or_else(default_timestamp)),
+        },
+        "imports": [{"uri": IFC_IMPORT}, {"uri": PROP_IMPORT}, {"uri": USD_IMPORT}],
+        "schemas": schemas,
+        "data": data,
+    });
+    let text = serde_json::to_string(&doc).map_err(|e| IfcxError(format!("writing: {e}")))?;
+    Ok((text, linked.len()))
+}
+
+/// Each element node of the main file and the materials associated with it,
+/// in the order the IFC4 output lists them: its own material, its layer set's
+/// or profile set's, then the constituent sets naming it.
+fn material_users(graph: &IfcxGraph) -> std::collections::BTreeMap<&str, Vec<&str>> {
+    fn attr<'g>(graph: &'g IfcxGraph, path: &str, k: &str) -> Option<&'g Value> {
+        graph
+            .nodes
+            .get(path)?
+            .attributes
+            .get(&format!("{IFC4_PREFIX}{k}"))
+    }
+    fn strings(v: Option<&Value>) -> impl Iterator<Item = &str> {
+        v.and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+    }
+    // the materials of the layer or profile set at `set`
+    fn set_materials<'g>(graph: &'g IfcxGraph, set: Option<&'g Value>, list: &str) -> Vec<&'g str> {
+        set.and_then(Value::as_str)
+            .and_then(|p| attr(graph, p, list))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x["material_index"].as_str())
+            .collect()
+    }
+    let mut users: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for (path, _) in graph.nodes.iter().filter(|(_, n)| n.ifcx) {
+        let mut ms: Vec<&str> = attr(graph, path, "material_index")
+            .and_then(Value::as_str)
+            .into_iter()
+            .collect();
+        ms.extend(set_materials(
+            graph,
+            attr(graph, path, "material_layer_set_index"),
+            "layers",
+        ));
+        ms.extend(set_materials(
+            graph,
+            attr(graph, path, "material_profile_set_index"),
+            "profiles",
+        ));
+        if !ms.is_empty() {
+            users.insert(path, ms);
+        }
+    }
+    for path in graph.nodes.keys() {
+        let ms: Vec<&str> = strings(attr(graph, path, "material_indices")).collect();
+        if ms.is_empty() {
+            continue;
+        }
+        for e in strings(attr(graph, path, "elements")) {
+            if graph.nodes.get(e).is_some_and(|n| n.ifcx) {
+                users.entry(e).or_default().extend(&ms);
+            }
+        }
+    }
+    for ms in users.values_mut() {
+        let mut seen = std::collections::BTreeSet::new();
+        ms.retain(|m| seen.insert(*m));
+    }
+    users
+}
+
 // ---------------------------------------------------------------- ids
 
 /// SHA-1 (RFC 3174), for uuid5 only.
