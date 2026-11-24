@@ -157,6 +157,7 @@
 /// This crate's version (`CARGO_PKG_VERSION`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod appearance;
 pub mod arc_wall_record;
 pub mod basic_file_info;
 pub mod beam_reference_levels;

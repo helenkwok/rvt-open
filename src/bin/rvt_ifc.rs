@@ -10,8 +10,8 @@ use clap::{Parser, ValueEnum};
 use rvt::{
     RevitFile,
     ifc::{
-        ExportConvention, ExportDiagnostics, ExportQualityMode, write_ifcx_graph_layers_to,
-        write_usda_graph, write_usdc_graph,
+        ExportConvention, ExportDiagnostics, ExportQualityMode, write_ifcx_graph_appearance_layer,
+        write_ifcx_graph_layers_to, write_usda_graph, write_usdc_graph,
     },
     walker::WalkerLimits,
 };
@@ -278,6 +278,17 @@ struct Args {
     /// from the project template; a larger file).
     #[arg(long, requires = "ifcx", conflicts_with = "no_ifcx_revit_elements")]
     ifcx_unused_types: bool,
+    /// Also write each material's render appearance asset as an IFCX layer
+    /// to this path: the asset's whole property tree as saved, on a node
+    /// per material that the material's elements link to. The `--ifcx` file
+    /// does not change.
+    #[arg(long, value_name = "PATH", requires = "ifcx")]
+    ifcx_appearance: Option<PathBuf>,
+    /// Write every material's render appearance asset as JSON to this path:
+    /// its schema, every property with its kind and value, the connected
+    /// textures and procedurals with their placement, and its swatch.
+    #[arg(long, value_name = "PATH", conflicts_with = "placeholder")]
+    appearance: Option<PathBuf>,
     /// Also write the model as ThatOpen Fragments (`.frag`, the public
     /// @thatopen/fragments 3.6.0 schema) to this path: the IFCX graph's
     /// items, properties, tree and meshes.
@@ -506,6 +517,20 @@ fn run(args: Args) -> anyhow::Result<()> {
             args.input.display()
         );
     }
+    for (flag, path) in [
+        ("--appearance", &args.appearance),
+        ("--ifcx-appearance", &args.ifcx_appearance),
+    ] {
+        if path
+            .as_ref()
+            .is_some_and(|p| rvt::cli::same_file(p, &args.input))
+        {
+            anyhow::bail!(
+                "refusing to overwrite the input {}; pass another {flag} path",
+                args.input.display()
+            );
+        }
+    }
     let mut rf = RevitFile::open_with_limits(
         &args.input,
         rvt::cli::open_limits(
@@ -636,6 +661,40 @@ fn run(args: Args) -> anyhow::Result<()> {
             })
     } else {
         Vec::new()
+    };
+    // A requested appearance output that cannot be read: the other outputs
+    // are still written, then the run fails.
+    let mut appearance_error = None;
+    let appearance = if args.appearance.is_some() || args.ifcx_appearance.is_some() {
+        rvt::control::stage("appearance assets");
+        match rvt::appearance::read(&mut rf) {
+            Ok(appearance) => {
+                if !appearance.unread.is_empty() {
+                    eprintln!(
+                        "rvt-ifc: warning: {} material or appearance asset records not read in full (listed under \"unread\")",
+                        appearance.unread.len()
+                    );
+                }
+                if let Some(p) = &args.appearance {
+                    rvt::cli::write_output(p, serde_json::to_vec(&appearance)?)?;
+                    report.output("appearance", p);
+                    eprintln!(
+                        "rvt-ifc: wrote {} appearance assets of {} materials to {}",
+                        appearance.assets.len(),
+                        appearance.materials.len(),
+                        p.display()
+                    );
+                }
+                Some(appearance)
+            }
+            Err(e) => {
+                eprintln!("rvt-ifc: warning: appearance assets not written: {e:#}");
+                appearance_error = Some(format!("{e:#}"));
+                None
+            }
+        }
+    } else {
+        None
     };
     // Everything below is written from the graph: free the file (its
     // inflated streams and memos) before it is built, and the model after.
@@ -790,6 +849,18 @@ fn run(args: Args) -> anyhow::Result<()> {
                 p.display()
             );
         }
+        if let (Some(p), Some(appearance)) = (&args.ifcx_appearance, &appearance) {
+            let (layer, matched) =
+                write_ifcx_graph_appearance_layer(&graph, appearance, ifcx_time)?;
+            rvt::cli::write_output(p, layer.as_bytes())?;
+            report.output("ifcx-appearance", p);
+            eprintln!(
+                "rvt-ifc: wrote {} IFCX appearance bytes to {} ({matched} of {} materials written with their appearance asset)",
+                layer.len(),
+                p.display(),
+                graph.order.materials.len()
+            );
+        }
         if let Some(ledger_path) = &args.ifcx_ledger {
             rvt::cli::write_output(ledger_path, serde_json::to_vec_pretty(&ledger)?)?;
         }
@@ -806,7 +877,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         report.output("diagnostics", diagnostics_path);
     }
     if let Some(report_path) = &args.report {
-        if unread > 0 {
+        if unread > 0 || appearance_error.is_some() {
             report.status = rvt::ifc::run_report::RunStatus::Partial;
         }
         report.seconds = started.elapsed().as_secs_f64();
@@ -833,6 +904,9 @@ fn run(args: Args) -> anyhow::Result<()> {
             "note: no project name extracted; output IFC uses \"Untitled\". \
              Title typically comes from PartAtom — this file may not have one."
         );
+    }
+    if let Some(e) = appearance_error {
+        anyhow::bail!("the appearance assets asked for were not written: {e}");
     }
     Ok(())
 }

@@ -67,6 +67,8 @@ pub(crate) fn all_shards(check: &str, k: usize, n: usize, value: &str) -> Option
         .collect()
 }
 
+#[path = "../appearance_assets.rs"]
+mod appearance_assets;
 #[path = "../arc_wall_corpus.rs"]
 mod arc_wall_corpus;
 #[path = "../assoc_levels_2022.rs"]
