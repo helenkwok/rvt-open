@@ -1053,7 +1053,7 @@ type Look = ([u8; 4], Option<(usize, u32)>);
 
 /// The texture sidecar (see [`write_frag_graph_textured`]); `None` without
 /// textured samples.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn texture_sidecar(
     graph: &IfcxGraph,
     frag: &[u8],
