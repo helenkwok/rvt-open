@@ -385,26 +385,42 @@ pub fn conform(
     triangles: &[[u32; 3]],
     tolerance: f64,
 ) -> (Vec<V3>, Vec<[u32; 3]>, Vec<usize>) {
+    // Each point joins the first earlier point within `tolerance` in its
+    // grid cell or a neighbouring one (rounding alone parts two near points
+    // that straddle a cell boundary).
     let mut points: Vec<V3> = Vec::new();
-    let mut welded: HashMap<[i64; 3], u32> = HashMap::new();
     let mut tris: Vec<[u32; 3]> = Vec::with_capacity(triangles.len());
     let mut from: Vec<usize> = Vec::with_capacity(triangles.len());
-    for (i, t) in triangles.iter().enumerate() {
-        let w = t.map(|v| {
-            let p = vertices[v as usize];
-            *welded
-                .entry(p.map(|c| (c / tolerance).round() as i64))
-                .or_insert_with(|| {
-                    points.push(p);
-                    (points.len() - 1) as u32
-                })
-        });
-        if w[0] != w[1] && w[1] != w[2] && w[2] != w[0] {
-            tris.push(w);
-            from.push(i);
+    {
+        let mut cells: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+        let mut weld = |p: V3| -> u32 {
+            let cell = p.map(|c| (c / tolerance).floor() as i64);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        let near = [cell[0] + dx, cell[1] + dy, cell[2] + dz];
+                        for &q in cells.get(&near).into_iter().flatten() {
+                            let d = sub(points[q as usize], p);
+                            if dot(d, d) <= tolerance * tolerance {
+                                return q;
+                            }
+                        }
+                    }
+                }
+            }
+            points.push(p);
+            let n = (points.len() - 1) as u32;
+            cells.entry(cell).or_default().push(n);
+            n
+        };
+        for (i, t) in triangles.iter().enumerate() {
+            let w = t.map(|v| weld(vertices[v as usize]));
+            if w[0] != w[1] && w[1] != w[2] && w[2] != w[0] {
+                tris.push(w);
+                from.push(i);
+            }
         }
     }
-    drop(welded);
     // A split can expose another (two faces split the same edge at
     // different points): a few passes settle it.
     for _ in 0..4 {
