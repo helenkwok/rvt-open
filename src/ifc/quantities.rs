@@ -166,7 +166,8 @@ fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
                 continue;
             }
             directed.push(edge(s, e));
-            users.push((edge(s.min(e), s.max(e)), i));
+            // The triangle, and whether it runs the edge from its lower end.
+            users.push((edge(s.min(e), s.max(e)), 2 * i + usize::from(s < e)));
         }
     }
     drop(tris);
@@ -195,8 +196,29 @@ fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
     }
     for list in users.chunk_by(|a, b| a.0 == b.0) {
         if let [(_, a), (_, b)] = *list {
-            let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+            let (ra, rb) = (find(&mut parent, a / 2), find(&mut parent, b / 2));
             parent[ra] = rb;
+        }
+    }
+    // A shell is closed where each of its edges is run as often each way by
+    // its own triangles. One that is not (a triangle of a mesh drawn on both
+    // sides, cut off from its neighbours) encloses nothing: its tetrahedra
+    // to the origin are no volume, so it counts for its area only.
+    let mut open = vec![false; mesh.triangles.len()];
+    for list in users.chunk_by(|a, b| a.0 == b.0) {
+        let mut runs: Vec<(usize, i64)> = Vec::with_capacity(list.len());
+        for &(_, t) in list {
+            let root = find(&mut parent, t / 2);
+            let way = if t % 2 == 1 { 1 } else { -1 };
+            match runs.iter_mut().find(|(r, _)| *r == root) {
+                Some(r) => r.1 += way,
+                None => runs.push((root, way)),
+            }
+        }
+        for (root, net) in runs {
+            if net != 0 {
+                open[root] = true;
+            }
         }
     }
     drop(users);
@@ -222,7 +244,9 @@ fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
             .get(i)
             .copied()
             .unwrap_or(NO_FACE_MATERIAL);
-        let g = groups.entry(find(&mut parent, i)).or_default();
+        let root = find(&mut parent, i);
+        let volume = if open[root] { 0.0 } else { volume };
+        let g = groups.entry(root).or_default();
         g.0 += volume;
         g.1 += area;
         *g.2.entry(material).or_default() += area;
@@ -305,7 +329,33 @@ fn shape_shells(shape: &SolidShape) -> Option<Vec<Shell>> {
             }
             Some(a)
         }
-        other => mesh_shells(&body_geometry::solid_mesh(other)?),
+        other => match body_geometry::face_set_mesh(other) {
+            // Measured on the triangles as written. Drawn two-sided, a mesh
+            // closed only up to T-junctions (a cut face split on one side of
+            // an edge and not the other) falls apart into a shell per
+            // triangle; with those edges split it is closed.
+            Some(mesh) => mesh_shells(&mesh)
+                .or_else(|| mesh_shells(&conformed(&mesh)))
+                .or_else(|| mesh_shells(&body_geometry::solid_mesh(other)?)),
+            None => mesh_shells(&body_geometry::solid_mesh(other)?),
+        },
+    }
+}
+
+/// `mesh` with its T-junctions split ([`crate::mesh_csg::conform`]).
+fn conformed(mesh: &Mesh) -> Mesh {
+    let (vertices, triangles, from) =
+        crate::mesh_csg::conform(&mesh.vertices, &mesh.triangles, WELD_FEET);
+    let face_materials = if mesh.face_materials.is_empty() {
+        Vec::new()
+    } else {
+        from.iter().map(|&i| mesh.face_materials[i]).collect()
+    };
+    Mesh {
+        vertices,
+        triangles,
+        face_materials,
+        uvs: Vec::new(),
     }
 }
 

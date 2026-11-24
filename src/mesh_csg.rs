@@ -5,8 +5,12 @@
 //! A family's void forms cut the solids they meet; Revit's saved graphics
 //! hold the result, and a family read from its forms (releases whose graphics
 //! are not read) cuts them here. The result is a closed mesh where both
-//! inputs are; split faces may meet at T-junctions, which a renderer draws
-//! without cracks.
+//! inputs are. A face split on one side of an edge and not on the other
+//! leaves a T-junction (a point inside an edge of the neighbouring face);
+//! [`conform`] splits those edges, so every edge of the result is met by its
+//! reverse and the mesh reads as closed.
+
+use std::collections::{BTreeMap, HashMap};
 
 /// Points nearer a plane than this (feet) lie on it.
 const EPSILON: f64 = 1e-6;
@@ -365,5 +369,133 @@ pub fn difference(
         let [p, q, r] = t.map(|i| vertices[i as usize]);
         dot(cross(sub(q, p), sub(r, p)), cross(sub(q, p), sub(r, p))) > 1e-18
     });
+    let (vertices, triangles, _) = conform(&vertices, &triangles, EPSILON);
     Some((vertices, triangles))
+}
+
+/// `triangles` with their T-junctions split: points nearer than `tolerance`
+/// (feet) are welded into one, and each edge not met by as many reversed
+/// edges is split at every point lying on it (within `tolerance`), its
+/// triangle fanned around the new points (from the opposite corner where
+/// one edge is split, else from its centroid). Returns the vertices, the
+/// triangles and, per triangle, the index of the triangle it came from.
+/// Edges that no point splits (a real gap) stay unmatched.
+pub fn conform(
+    vertices: &[V3],
+    triangles: &[[u32; 3]],
+    tolerance: f64,
+) -> (Vec<V3>, Vec<[u32; 3]>, Vec<usize>) {
+    let mut points: Vec<V3> = Vec::new();
+    let mut welded: HashMap<[i64; 3], u32> = HashMap::new();
+    let mut tris: Vec<[u32; 3]> = Vec::with_capacity(triangles.len());
+    let mut from: Vec<usize> = Vec::with_capacity(triangles.len());
+    for (i, t) in triangles.iter().enumerate() {
+        let w = t.map(|v| {
+            let p = vertices[v as usize];
+            *welded
+                .entry(p.map(|c| (c / tolerance).round() as i64))
+                .or_insert_with(|| {
+                    points.push(p);
+                    (points.len() - 1) as u32
+                })
+        });
+        if w[0] != w[1] && w[1] != w[2] && w[2] != w[0] {
+            tris.push(w);
+            from.push(i);
+        }
+    }
+    drop(welded);
+    // A split can expose another (two faces split the same edge at
+    // different points): a few passes settle it.
+    for _ in 0..4 {
+        let mut count: HashMap<(u32, u32), i64> = HashMap::new();
+        for t in &tris {
+            for k in 0..3 {
+                *count.entry((t[k], t[(k + 1) % 3])).or_default() += 1;
+            }
+        }
+        let open = |a: u32, b: u32| count.get(&(a, b)) > count.get(&(b, a));
+        let mut unmatched: Vec<(u32, u32)> = count
+            .keys()
+            .copied()
+            .filter(|&(a, b)| open(a, b))
+            .collect();
+        if unmatched.is_empty() {
+            break;
+        }
+        unmatched.sort_unstable();
+        // Only an end of another unmatched edge can lie inside one.
+        let mut ends: Vec<u32> = unmatched.iter().flat_map(|&(a, b)| [a, b]).collect();
+        ends.sort_unstable_by(|&a, &b| points[a as usize][0].total_cmp(&points[b as usize][0]));
+        ends.dedup();
+        let mut splits: BTreeMap<(u32, u32), Vec<u32>> = BTreeMap::new();
+        for &(a, b) in &unmatched {
+            let (pa, pb) = (points[a as usize], points[b as usize]);
+            let d = sub(pb, pa);
+            let len2 = dot(d, d);
+            let lo = pa[0].min(pb[0]) - tolerance;
+            let hi = pa[0].max(pb[0]) + tolerance;
+            let start = ends.partition_point(|&v| points[v as usize][0] < lo);
+            let mut on: Vec<(f64, u32)> = ends[start..]
+                .iter()
+                .take_while(|&&v| points[v as usize][0] <= hi)
+                .filter(|&&v| v != a && v != b)
+                .filter_map(|&v| {
+                    let pv = points[v as usize];
+                    let t = dot(sub(pv, pa), d) / len2;
+                    let foot = lerp(pa, pb, t);
+                    let off = sub(pv, foot);
+                    let margin = tolerance / len2.sqrt();
+                    (t > margin && t < 1.0 - margin && dot(off, off) < tolerance * tolerance)
+                        .then_some((t, v))
+                })
+                .collect();
+            if !on.is_empty() {
+                on.sort_by(|x, y| x.0.total_cmp(&y.0));
+                splits.insert((a, b), on.into_iter().map(|(_, v)| v).collect());
+            }
+        }
+        if splits.is_empty() {
+            break;
+        }
+        let mut next = Vec::with_capacity(tris.len());
+        let mut next_from = Vec::with_capacity(tris.len());
+        for (t, &f) in tris.iter().zip(&from) {
+            let inner: [Option<&Vec<u32>>; 3] =
+                std::array::from_fn(|k| splits.get(&(t[k], t[(k + 1) % 3])));
+            let split_edges: Vec<usize> = (0..3).filter(|&k| inner[k].is_some()).collect();
+            if split_edges.is_empty() {
+                next.push(*t);
+                next_from.push(f);
+                continue;
+            }
+            // The triangle's outline with the points on its edges, in order.
+            let mut ring: Vec<u32> = Vec::new();
+            for k in 0..3 {
+                ring.push(t[k]);
+                ring.extend(inner[k].into_iter().flatten());
+            }
+            let fan: Vec<[u32; 3]> = if let [k] = split_edges[..] {
+                // From the corner opposite the one split edge.
+                let apex = t[(k + 2) % 3];
+                let at = ring.iter().position(|&v| v == apex).unwrap_or(0);
+                let n = ring.len();
+                (1..n - 1)
+                    .map(|j| [apex, ring[(at + j) % n], ring[(at + j + 1) % n]])
+                    .collect()
+            } else {
+                let c = [0, 1, 2].map(|k| points[t[k] as usize]);
+                points.push(std::array::from_fn(|i| (c[0][i] + c[1][i] + c[2][i]) / 3.0));
+                let centre = (points.len() - 1) as u32;
+                (0..ring.len())
+                    .map(|j| [centre, ring[j], ring[(j + 1) % ring.len()]])
+                    .collect()
+            };
+            next_from.extend(std::iter::repeat_n(f, fan.len()));
+            next.extend(fan);
+        }
+        tris = next;
+        from = next_from;
+    }
+    (points, tris, from)
 }

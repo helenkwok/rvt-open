@@ -1771,10 +1771,11 @@ pub fn one_layer_solid_meshes(
         .then(|| vec![mesh])
 }
 
-/// A solid shape's body in element-local feet.
-pub fn solid_mesh(shape: &SolidShape) -> Option<Mesh> {
+/// A faceted or triangulated shape's triangles as written, one side only
+/// and in their own winding (`None` for any other shape, or no triangle).
+/// [`solid_mesh`] draws them outward, or two-sided where the mesh is open.
+pub fn face_set_mesh(shape: &SolidShape) -> Option<Mesh> {
     match shape {
-        SolidShape::ExtrudedArea(extrusion) => extrusion_mesh(extrusion),
         SolidShape::FacetedBrep {
             vertices_feet,
             triangles,
@@ -1818,7 +1819,18 @@ pub fn solid_mesh(shape: &SolidShape) -> Option<Mesh> {
                 face_materials,
                 uvs,
             };
-            (!mesh.is_empty()).then(|| mesh.outward_or_two_sided())
+            (!mesh.is_empty()).then_some(mesh)
+        }
+        _ => None,
+    }
+}
+
+/// A solid shape's body in element-local feet.
+pub fn solid_mesh(shape: &SolidShape) -> Option<Mesh> {
+    match shape {
+        SolidShape::ExtrudedArea(extrusion) => extrusion_mesh(extrusion),
+        SolidShape::FacetedBrep { .. } | SolidShape::TriangulatedFaceSet { .. } => {
+            face_set_mesh(shape).map(Mesh::outward_or_two_sided)
         }
         SolidShape::SweptPath {
             profile,
