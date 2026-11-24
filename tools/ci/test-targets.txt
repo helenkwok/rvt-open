@@ -75,6 +75,7 @@ real      element_provenance_offsets
 real      element_record_stages
 real      element_records_2025
 real      family_blend_transitions
+real      family_voids_and_sample_walls
 real      export_decisions_counts
 real      family_instance_ports
 real      fitting_nominal_diameter

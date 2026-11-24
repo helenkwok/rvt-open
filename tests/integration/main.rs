@@ -161,6 +161,8 @@ mod export_decisions_counts;
 mod family_blend_transitions;
 #[path = "../family_instance_ports.rs"]
 mod family_instance_ports;
+#[path = "../family_voids_and_sample_walls.rs"]
+mod family_voids_and_sample_walls;
 #[path = "../field_type_coverage.rs"]
 mod field_type_coverage;
 #[path = "../fitting_nominal_diameter.rs"]

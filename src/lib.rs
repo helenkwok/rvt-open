@@ -186,6 +186,7 @@ pub mod ifc;
 mod le_bytes;
 pub mod level_bind;
 pub mod memory;
+pub(crate) mod mesh_csg;
 pub mod metadata;
 pub mod object_graph;
 pub mod parse_mode;
