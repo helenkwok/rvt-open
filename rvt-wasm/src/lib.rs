@@ -1400,7 +1400,9 @@ impl Drop for StageHook {
 /// Open once and return every output: `{ ifc, ifcx, ifcx_diagnostics,
 /// ifcx_ledger, frag, frag_stats, usda, usdc, glb, schedule_csv,
 /// elements_json, diagnostics_json, info_json, materials_takeoff_csv,
-/// manifest_json, manifest }`.
+/// manifest_json, manifest }`, and for a model with textured materials the
+/// `.frag`'s texture sidecar `frag_textures` (JSON) with its images as
+/// `frag_texture:<path>` (`<path>` as the sidecar names it).
 /// Text outputs are strings, binary ones `Uint8Array`s; `manifest` (and the
 /// same as JSON text, `manifest_json`) lists each output's size plus the
 /// export counts and warnings.
@@ -1481,7 +1483,8 @@ fn table_format(name: &str) -> Result<rvt::ifc::table_formats::TableFormat, JsVa
 /// outputs named are made. Names: those of [`convert_all`] (`ifc`, `ifcx`,
 /// `ifcx_diagnostics`, `ifcx_ledger`, `frag`, `frag_stats`, `usda`, `usdc`,
 /// `glb`, `schedule_csv`, `elements_json`, `diagnostics_json`, `info_json`,
-/// `materials_takeoff_csv`), the element table `elements_jsonl`,
+/// `materials_takeoff_csv`, `frag_textures` and its `frag_texture:<path>`
+/// images), the element table `elements_jsonl`,
 /// `elements_xlsx`, `elements_parquet` and `elements_sqlite` (the last in
 /// the 32-bit build only), and `manifest`. Each handle is truncated, written from offset 0 and
 /// flushed; the page closes it.
@@ -1802,6 +1805,7 @@ fn convert_all_with(
         "ifcx_ledger",
         "frag",
         "frag_stats",
+        "frag_textures",
         "usda",
         "usdc",
     ];
@@ -1833,11 +1837,25 @@ fn convert_all_with(
             )?;
         }
         tick("Fragments")?;
-        if wants_any(sink, &["frag", "frag_stats"]) {
-            let (frag, stats) =
-                rvt::ifc::frag_writer::write_frag_graph_with(&graph, &p.raw.display())
+        if wants_any(sink, &["frag", "frag_stats", "frag_textures"]) {
+            let (frag, stats, textures) =
+                rvt::ifc::frag_writer::write_frag_graph_textured(&graph, &p.raw.display())
                     .map_err(err_str)?;
             emit(sink, "frag", Out::Bytes(frag))?;
+            // the sidecar the format has no place for, and its images
+            // (`frag_texture:<path>`, path relative to the sidecar).
+            if let Some(t) = textures {
+                let mut json = Vec::new();
+                t.write_json(&mut json).map_err(err_str)?;
+                emit(
+                    sink,
+                    "frag_textures",
+                    Out::Text(String::from_utf8(json).map_err(err_str)?),
+                )?;
+                for (name, image) in t.images {
+                    emit(sink, &format!("frag_texture:{name}"), Out::Bytes(image))?;
+                }
+            }
             frag_stats = serde_json::to_string_pretty(&stats).map_err(err_str)?;
             emit(sink, "frag_stats", Out::Text(frag_stats.clone()))?;
         }

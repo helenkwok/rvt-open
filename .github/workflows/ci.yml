@@ -649,6 +649,33 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: full-decode, path: "${{ runner.temp }}/full-decode", if-no-files-found: ignore }
 
+  # The .frag texture sidecar drawn by the public loader: the synthetic
+  # models of tests/material_textures.rs (one with a shell cut into pieces)
+  # in @thatopen/fragments with examples/frag-textures, every sample's run
+  # of vertices taking its texture coordinates exactly.
+  frag-textures:
+    name: .frag textures in the public loader
+    needs: scope
+    if: needs.scope.outputs.skip != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile, save-if: false }
+      - name: Write the synthetic models' .frag files and sidecars
+        run: RVT_TEXTURE_OUT="$PWD/examples/frag-textures/public" cargo test --profile ci --test integration -- material_textures::frag
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24.22.1" }
+      - name: Draw them with their sidecars
+        working-directory: examples/frag-textures
+        run: |
+          npm ci --ignore-scripts
+          ../../tools/ci/retry.sh 3 npx playwright install --with-deps chromium
+          npx playwright test
+
   tiny-models:
     name: tiny reference models
     needs: tiny-export
