@@ -13,7 +13,9 @@
 //!
 //! [`read`] keeps every property and every field of the stored objects,
 //! names and kinds as saved, with values as JSON: nothing is dropped or
-//! translated. What it cannot read is listed in the `unread` field of [`Appearance`]. The
+//! translated. What it cannot read is listed in the `unread` field of [`Appearance`]
+//! (a record) or of the [`Asset`] or [`AssetProperty`] (an entry of one of its
+//! lists, at its saved position). The
 //! images a bitmap names are not in the file (they are paths into a material
 //! library); only a swatch is.
 
@@ -108,6 +110,9 @@ pub struct Asset {
     pub properties: Vec<AssetProperty>,
     /// The object's other fields (library, scene, asset type, ...), as saved.
     pub fields: Map<String, Value>,
+    /// Entries of its property list not read, at their saved positions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unread: Vec<UnreadEntry>,
 }
 
 /// A property of an asset.
@@ -129,6 +134,25 @@ pub struct AssetProperty {
     /// Its other fields (a distance's unit, ...), as saved.
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub fields: Map<String, Value>,
+    /// Entries of its child and connected lists not read, at their saved
+    /// positions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unread: Vec<UnreadEntry>,
+}
+
+/// An entry of a saved list (`m_aAProperties`, `m_aChild`, `m_aConnected`)
+/// not read. Entries read are in their typed list in saved order; these say
+/// where the others were.
+#[derive(Debug, Clone, Serialize)]
+pub struct UnreadEntry {
+    /// The saved list.
+    pub list: String,
+    /// The entry's position in the saved list.
+    pub index: usize,
+    /// The saved pointer where it points at no object, or a marker: `cycle`,
+    /// `depth_limit`, or `budget_exceeded` (with `entries_not_read`, the
+    /// entries from this one on, where the budget ran out in the list).
+    pub entry: Value,
 }
 
 /// A swatch image saved with an appearance asset.
@@ -141,7 +165,8 @@ pub struct Swatch {
     /// The image file's bytes (PNG), written as base64 in JSON.
     #[serde(serialize_with = "base64")]
     pub image: Vec<u8>,
-    /// The image object's other fields (dpi, size in feet), as saved.
+    /// The image object's other fields (dpi, size in feet, a width or
+    /// height that is not a whole number), as saved.
     pub fields: Map<String, Value>,
 }
 
@@ -348,17 +373,25 @@ fn swatch(t: &Fv) -> Option<Swatch> {
         .iter()
         .map(|b| b.as_u64().and_then(|b| u8::try_from(b).ok()))
         .collect::<Option<Vec<u8>>>()?;
+    let (width, height) = (t["m_width"].as_u64(), t["m_height"].as_u64());
+    // a dimension is left out of `fields` only where it was read as one
+    let mut taken = vec!["m_compressedImage"];
+    for (key, read) in [("m_width", width.is_some()), ("m_height", height.is_some())] {
+        if read {
+            taken.push(key);
+        }
+    }
     let mut fields = Map::new();
     if let Fv::Object(o) = t {
         for (k, v) in o.iter() {
-            if !["m_compressedImage", "m_width", "m_height"].contains(&k) {
+            if !taken.contains(&k) {
                 fields.insert(k.to_string(), v.to_json());
             }
         }
     }
     Some(Swatch {
-        width: t["m_width"].as_u64(),
-        height: t["m_height"].as_u64(),
+        width,
+        height,
         image,
         fields,
     })
@@ -366,8 +399,8 @@ fn swatch(t: &Fv) -> Option<Swatch> {
 
 /// Turns a graph's objects into records. Every object it follows is on
 /// `path` while it is read, so a pointer back to one gives a `cycle` marker;
-/// every object and value costs one of [`NODE_BUDGET`], so shared pointers
-/// cannot make the work grow past it.
+/// every object, value and list entry costs one of [`NODE_BUDGET`], so shared
+/// pointers cannot make the work grow past it.
 struct Reader<'a> {
     g: &'a ObjectGraph,
     edges: BTreeMap<(usize, usize), usize>,
@@ -457,23 +490,54 @@ impl<'a> Reader<'a> {
         out
     }
 
+    /// Read each entry of the saved list `list` with `read`, which gives
+    /// the entry to record where it is not read. Each entry costs one of the
+    /// budget; where it runs out, one marker stands for the rest.
+    fn entries(
+        &self,
+        list: &str,
+        items: &[Fv],
+        unread: &mut Vec<UnreadEntry>,
+        mut read: impl FnMut(&Fv) -> Result<(), Value>,
+    ) {
+        for (index, item) in items.iter().enumerate() {
+            let (entry, stop) = if self.spend() {
+                match read(item) {
+                    Ok(()) => continue,
+                    Err(entry) => (entry, false),
+                }
+            } else {
+                let rest = items.len() - index;
+                (
+                    json!({"budget_exceeded": true, "entries_not_read": rest}),
+                    true,
+                )
+            };
+            unread.push(UnreadEntry {
+                list: list.to_string(),
+                index,
+                entry,
+            });
+            if stop {
+                return;
+            }
+        }
+    }
+
     /// An asset whose fields `f` belong to object `owner`.
     fn asset(&self, owner: usize, class: &str, f: &Fv) -> Asset {
         let mut properties = Vec::new();
         let mut fields = Map::new();
+        let mut unread = Vec::new();
         if let Fv::Object(o) = f {
             for (k, v) in o.iter() {
                 match (k, v.as_array()) {
                     ("m_aAProperties", Some(items)) => {
-                        for p in items {
-                            match self.target(owner, p) {
-                                Some((j, _)) => match self.property(j) {
-                                    Ok(p) => properties.push(p),
-                                    Err(marker) => push(&mut fields, "unread_properties", marker),
-                                },
-                                None => push(&mut fields, "unresolved_properties", p.to_json()),
-                            }
-                        }
+                        self.entries(k, items, &mut unread, |p| {
+                            let (j, _) = self.target(owner, p).ok_or_else(|| p.to_json())?;
+                            properties.push(self.property(j)?);
+                            Ok(())
+                        });
                     }
                     _ => {
                         fields.insert(k.to_string(), self.value(owner, v));
@@ -491,6 +555,7 @@ impl<'a> Reader<'a> {
             schema,
             properties,
             fields,
+            unread,
         }
     }
 
@@ -515,6 +580,7 @@ impl<'a> Reader<'a> {
             children: Vec::new(),
             connected: Vec::new(),
             fields: Map::new(),
+            unread: Vec::new(),
         };
         if let Fv::Object(f) = &o.fields {
             for (k, v) in f.iter() {
@@ -522,26 +588,21 @@ impl<'a> Reader<'a> {
                     ("m_sName", _) if v.is_string() => {}
                     ("m_value", _) => p.value = self.value(i, v),
                     ("m_aChild" | "m_aConnected", Some(items)) => {
-                        for q in items {
-                            let Some((j, t)) = self.target(i, q) else {
-                                push(&mut p.fields, &format!("unresolved_{k}"), q.to_json());
-                                continue;
-                            };
+                        let (children, connected) = (&mut p.children, &mut p.connected);
+                        self.entries(k, items, &mut p.unread, |q| {
+                            let (j, t) = self.target(i, q).ok_or_else(|| q.to_json())?;
                             if k == "m_aChild" {
-                                match self.property(j) {
-                                    Ok(c) => p.children.push(c),
-                                    Err(marker) => push(&mut p.fields, "unread_m_aChild", marker),
-                                }
+                                children.push(self.property(j)?);
                             } else {
                                 let class = &self.g.objects[j].class_name;
-                                match self.visit(j, || Ok(self.asset(j, class, t)), Err) {
-                                    Ok(a) => p.connected.push(a),
-                                    Err(marker) => {
-                                        push(&mut p.fields, "unread_m_aConnected", marker)
-                                    }
-                                }
+                                connected.push(self.visit(
+                                    j,
+                                    || Ok(self.asset(j, class, t)),
+                                    Err,
+                                )?);
                             }
-                        }
+                            Ok(())
+                        });
                     }
                     _ => {
                         p.fields.insert(k.to_string(), self.value(i, v));
@@ -583,13 +644,6 @@ impl<'a> Reader<'a> {
             ),
             _ => v.to_json(),
         }
-    }
-}
-
-/// Append `v` to the array `fields[key]`.
-fn push(fields: &mut Map<String, Value>, key: &str, v: Value) {
-    if let Value::Array(items) = fields.entry(key).or_insert_with(|| json!([])) {
-        items.push(v);
     }
 }
 

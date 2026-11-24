@@ -279,8 +279,9 @@ struct Args {
     #[arg(long, requires = "ifcx", conflicts_with = "no_ifcx_revit_elements")]
     ifcx_unused_types: bool,
     /// Also write each material's render appearance asset as an IFCX layer
-    /// to this path: the asset's whole property tree as saved, on the
-    /// material's node. The `--ifcx` file does not change.
+    /// to this path: the asset's whole property tree as saved, on a node
+    /// per material that the material's elements link to. The `--ifcx` file
+    /// does not change.
     #[arg(long, value_name = "PATH", requires = "ifcx")]
     ifcx_appearance: Option<PathBuf>,
     /// Write every material's render appearance asset as JSON to this path:
@@ -515,6 +516,20 @@ fn run(args: Args) -> anyhow::Result<()> {
             "refusing to overwrite the input {}; pass -o <path>",
             args.input.display()
         );
+    }
+    for (flag, path) in [
+        ("--appearance", &args.appearance),
+        ("--ifcx-appearance", &args.ifcx_appearance),
+    ] {
+        if path
+            .as_ref()
+            .is_some_and(|p| rvt::cli::same_file(p, &args.input))
+        {
+            anyhow::bail!(
+                "refusing to overwrite the input {}; pass another {flag} path",
+                args.input.display()
+            );
+        }
     }
     let mut rf = RevitFile::open_with_limits(
         &args.input,
@@ -840,7 +855,7 @@ fn run(args: Args) -> anyhow::Result<()> {
             rvt::cli::write_output(p, layer.as_bytes())?;
             report.output("ifcx-appearance", p);
             eprintln!(
-                "rvt-ifc: wrote {} IFCX appearance bytes to {} ({matched} of {} materials matched by name)",
+                "rvt-ifc: wrote {} IFCX appearance bytes to {} ({matched} of {} materials written with their appearance asset)",
                 layer.len(),
                 p.display(),
                 graph.order.materials.len()

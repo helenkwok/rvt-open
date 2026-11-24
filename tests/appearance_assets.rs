@@ -346,7 +346,9 @@ fn cyclic_graph_ends_with_a_cycle_marker() {
     );
     let inner = &asset.asset.properties[0].connected[0];
     assert!(inner.properties.is_empty());
-    assert_eq!(inner.fields["unread_properties"][0]["cycle"], true);
+    assert_eq!(inner.unread[0].list, "m_aAProperties");
+    assert_eq!(inner.unread[0].index, 0);
+    assert_eq!(inner.unread[0].entry["cycle"], true);
 }
 
 #[test]
@@ -430,7 +432,8 @@ fn records_not_read_are_listed() {
         ),
     );
     let asset = &a.assets[0].asset;
-    assert_eq!(asset.fields["unresolved_properties"][0]["offset"], 99);
+    assert_eq!(asset.unread[0].index, 0);
+    assert_eq!(asset.unread[0].entry["offset"], 99);
     assert_eq!(asset.fields["m_sLibrary"], "lib");
 }
 
@@ -581,4 +584,338 @@ fn rvt_ifc_fails_when_the_requested_appearance_cannot_be_read() {
     assert!(stderr.contains("appearance assets not written"), "{stderr}");
     assert!(ifc.exists() && !json.exists(), "{stderr}");
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// An entry of a property, child or connected list that is not read keeps
+/// its saved position, outside the saved fields: `[A, ?, B]` and `[?, A, B]`
+/// give different records, and a saved field whose name a diagnostic once
+/// used is kept as saved.
+#[test]
+fn unread_list_entries_keep_their_positions() {
+    let asset_with = |list: serde_json::Value| {
+        let g = graph(
+            &[
+                element(1),
+                (
+                    "AppearanceAsset",
+                    serde_json::json!({"m_Name": "p", "m_color": 0, "m_transparency": 0.0,
+                        "m_Asset": {"m_aAProperties": list, "unresolved_properties": "saved"}}),
+                ),
+                (
+                    "APropertyString",
+                    serde_json::json!({"m_sName": "A", "m_value": "a",
+                        "m_aChild": [ptr(98), ptr(3)], "m_aConnected": [ptr(97)]}),
+                ),
+                (
+                    "APropertyString",
+                    serde_json::json!({"m_sName": "B", "m_value": "b"}),
+                ),
+            ],
+            &[(0, 1, 1), (1, 10, 2), (1, 11, 3), (2, 3, 3)],
+        );
+        let mut a = Appearance::default();
+        a.add_graph(9, "AppearanceAssetElem", &g);
+        assert!(a.unread.is_empty(), "{:?}", a.unread);
+        a.assets.remove(0).asset
+    };
+    let first = asset_with(serde_json::json!([ptr(10), ptr(99), ptr(11)]));
+    let second = asset_with(serde_json::json!([ptr(99), ptr(10), ptr(11)]));
+    for asset in [&first, &second] {
+        let names: Vec<&str> = asset.properties.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["A", "B"]);
+        assert_eq!(asset.unread.len(), 1);
+        assert_eq!(asset.unread[0].list, "m_aAProperties");
+        assert_eq!(asset.unread[0].entry["offset"], 99);
+        assert_eq!(asset.fields["unresolved_properties"], "saved");
+    }
+    assert_eq!((first.unread[0].index, second.unread[0].index), (1, 0));
+    // the child list [?, B] and the connected list [?]
+    let a = &first.properties[0];
+    assert_eq!(a.children.len(), 1);
+    assert_eq!(a.children[0].name, "B");
+    let unread: Vec<(&str, usize, u64)> = a
+        .unread
+        .iter()
+        .map(|u| {
+            (
+                u.list.as_str(),
+                u.index,
+                u.entry["offset"].as_u64().unwrap_or(0),
+            )
+        })
+        .collect();
+    assert_eq!(unread, [("m_aChild", 0, 98), ("m_aConnected", 0, 97)]);
+    assert!(a.fields.is_empty(), "{:?}", a.fields);
+    let json = serde_json::to_value(&first).expect("JSON");
+    assert_eq!(json["unread"][0]["index"], 1);
+}
+
+/// Every list entry counts against the node budget, one that points at no
+/// object too: 2,000 references to one property of 2,000 unresolved children
+/// stop at the budget (one marker for the rest of the list) instead of
+/// recording 4,000,000 entries.
+#[test]
+fn unresolved_entries_count_against_the_budget() {
+    let n = 2000;
+    let children: Vec<serde_json::Value> = (0..n).map(|k| ptr(1000 + k)).collect();
+    let refs: Vec<serde_json::Value> = (0..n).map(|_| ptr(10)).collect();
+    let g = graph(
+        &[
+            element(1),
+            (
+                "AppearanceAsset",
+                serde_json::json!({"m_Name": "b", "m_color": 0, "m_transparency": 0.0,
+                    "m_Asset": {"m_aAProperties": refs}}),
+            ),
+            (
+                "APropertyList",
+                serde_json::json!({"m_sName": "shared", "m_aChild": children, "m_aConnected": []}),
+            ),
+        ],
+        &[(0, 1, 1), (1, 10, 2)],
+    );
+    let mut a = Appearance::default();
+    a.add_graph(12, "AppearanceAssetElem", &g);
+    assert!(a.unread.iter().any(|u| u.reason.contains("node budget")));
+    let asset = &a.assets[0].asset;
+    let recorded: usize = asset.unread.len().saturating_add(
+        asset
+            .properties
+            .iter()
+            .map(|p| p.unread.len())
+            .sum::<usize>(),
+    );
+    assert!(recorded <= 1_000_001, "{recorded}");
+    let last = asset.unread.last().expect("a marker");
+    assert_eq!(last.entry["budget_exceeded"], true);
+    assert_eq!(
+        last.entry["entries_not_read"].as_u64(),
+        Some((n - last.index) as u64)
+    );
+    // properties read under the budget keep their children's saved pointers
+    assert_eq!(asset.properties[0].unread.len(), n);
+    assert_eq!(asset.properties[0].unread[5].entry["offset"], 1005);
+}
+
+/// A swatch width or height that is not a whole number is kept as saved,
+/// with the image.
+#[test]
+fn swatch_dimensions_not_read_are_kept() {
+    let g = graph(
+        &[
+            (
+                "AppearanceAssetElem",
+                serde_json::json!({"m_pAppearanceAsset": ptr(1), "m_pThumbnail": ptr(2)}),
+            ),
+            (
+                "AppearanceAsset",
+                serde_json::json!({"m_Name": "s", "m_color": 0, "m_transparency": 0.0,
+                    "m_Asset": {"m_aAProperties": []}}),
+            ),
+            (
+                "Thumbnail",
+                serde_json::json!({"m_compressedImage": [137, 80], "m_width": -1, "m_height": 4}),
+            ),
+        ],
+        &[(0, 1, 1), (0, 2, 2)],
+    );
+    let mut a = Appearance::default();
+    a.add_graph(13, "AppearanceAssetElem", &g);
+    let swatch = a.assets[0].swatch.as_ref().expect("swatch");
+    assert_eq!((swatch.width, swatch.height), (None, Some(4)));
+    assert_eq!(swatch.image, [137, 80]);
+    assert_eq!(swatch.fields["m_width"], -1);
+    assert!(!swatch.fields.contains_key("m_height"));
+    assert!(!a.assets[0].element_fields.contains_key("m_pThumbnail"));
+}
+
+/// `--appearance` or `--ifcx-appearance` naming the input file is refused
+/// before anything is read, and the input is left as it was.
+#[test]
+fn rvt_ifc_refuses_an_appearance_path_that_is_the_input() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("corpus/tier1/architectural-2024/architectural-2024.rvt");
+    if !source.exists() {
+        return;
+    }
+    let out = std::env::temp_dir().join(format!("appearance-input-{}", std::process::id()));
+    std::fs::create_dir_all(&out).expect("dir");
+    let input = out.join("m.rvt");
+    std::fs::copy(&source, &input).expect("copies");
+    let before = std::fs::read(&input).expect("reads");
+    for flags in [
+        vec!["--appearance".to_string()],
+        vec![
+            "--ifcx".to_string(),
+            out.join("m.ifcx").display().to_string(),
+            "--ifcx-appearance".to_string(),
+        ],
+    ] {
+        let flag = flags.last().cloned().unwrap_or_default();
+        let run = std::process::Command::new(env!("CARGO_BIN_EXE_rvt-ifc"))
+            .arg(&input)
+            .arg("-o")
+            .arg(out.join("m.ifc"))
+            .args(&flags)
+            .arg(&input)
+            .output()
+            .expect("runs");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!run.status.success(), "{stderr}");
+        assert!(
+            stderr.contains("refusing to overwrite the input"),
+            "{stderr}"
+        );
+        assert!(stderr.contains(&flag), "{stderr}");
+        assert!(!out.join("m.ifc").exists(), "{stderr}");
+        assert_eq!(std::fs::read(&input).expect("reads"), before);
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// The IFCX appearance layer writes each material it counts as a node of
+/// its own (IfcMaterial, its name, its `appearance`), and links it from the
+/// elements of the main file associated with it, directly or through a
+/// layer set; a material with no asset is not written or counted.
+#[test]
+fn ifcx_appearance_layer_writes_the_materials_it_links() {
+    use rvt::ifc::entities::{IfcEntity, MaterialLayer, MaterialLayerSet};
+    use rvt::ifc::{IfcModel, MaterialInfo};
+    let mut a = Appearance::default();
+    a.add_graph(
+        100,
+        "AppearanceAssetElem",
+        &graph(
+            &[
+                element(1),
+                (
+                    "AppearanceAsset",
+                    serde_json::json!({"m_Name": "Oak", "m_color": 0, "m_transparency": 0.0,
+                        "m_Asset": {"m_aAProperties": []}}),
+                ),
+            ],
+            &[(0, 1, 1)],
+        ),
+    );
+    for (id, name) in [(1, "wood"), (2, "paint")] {
+        a.add_graph(
+            id,
+            "MaterialElem",
+            &graph(
+                &[
+                    ("MaterialElem", serde_json::json!({"m_pMaterial": ptr(1)})),
+                    (
+                        "Material",
+                        serde_json::json!({"m_name": name, "m_appearanceAssetId": {"m_id": {"m_id64": 100}}}),
+                    ),
+                ],
+                &[(0, 1, 1)],
+            ),
+        );
+    }
+    let wall =
+        |name: &str, material: Option<usize>, layers: Option<usize>| IfcEntity::BuildingElement {
+            ifc_type: "IfcWall".into(),
+            name: name.into(),
+            type_guid: None,
+            predefined_type: None,
+            storey_index: Some(0),
+            material_index: material,
+            property_set: None,
+            location_feet: Some([0.0, 0.0, 0.0]),
+            rotation_radians: None,
+            extrusion: None,
+            host_element_index: None,
+            material_layer_set_index: layers,
+            material_profile_set_index: None,
+            solid_shape: None,
+            representation_map_index: None,
+        };
+    let mut model = IfcModel {
+        project_name: Some("appearance".into()),
+        ..Default::default()
+    };
+    model.building_storeys.push(rvt::ifc::Storey {
+        name: "L1".into(),
+        elevation_feet: 0.0,
+    });
+    for name in ["wood", "paint", "no asset"] {
+        model.materials.push(MaterialInfo {
+            name: name.into(),
+            color_packed: Some(0),
+            transparency: None,
+            texture: None,
+        });
+    }
+    model.material_layer_sets.push(MaterialLayerSet {
+        name: "set".into(),
+        layers: [1, 2, 0]
+            .iter()
+            .map(|m| MaterialLayer {
+                material_index: Some(*m),
+                thickness_feet: 0.1,
+                name: None,
+            })
+            .collect(),
+        description: None,
+    });
+    model.entities.push(wall("w0", Some(0), None));
+    model.entities.push(wall("w1", None, Some(0)));
+    model.entities.push(wall("w2", Some(2), None));
+    let graph = rvt::ifc::IfcxGraph::from_model(&model, rvt::ifc::GraphOptions::default());
+    let (layer, written) =
+        rvt::ifc::write_ifcx_graph_appearance_layer(&graph, &a, Some(0)).expect("writes");
+    let layer: serde_json::Value = serde_json::from_str(&layer).expect("JSON");
+    let data = layer["data"].as_array().expect("data");
+    let materials: Vec<&serde_json::Value> = data
+        .iter()
+        .filter(|n| n["attributes"]["bsi::ifc::class"]["code"] == "IfcMaterial")
+        .collect();
+    assert_eq!(written, 2);
+    assert_eq!(materials.len(), written);
+    let asset = data
+        .iter()
+        .find(|n| n["attributes"][rvt::ifc::APPEARANCE_KEY].is_string())
+        .expect("asset node");
+    let path_of = |name: &str| {
+        let m = materials
+            .iter()
+            .find(|m| m["attributes"]["bsi::ifc::prop::Name"] == name)
+            .expect("material node");
+        assert_eq!(m["children"]["appearance"], asset["path"]);
+        m["path"].clone()
+    };
+    let (wood, paint) = (path_of("wood"), path_of("paint"));
+    // every path a link names is a node of the main file or of the layer
+    let main: serde_json::Value = serde_json::from_str(
+        &rvt::ifc::write_ifcx_graph_layers_at(&graph, Some(0))
+            .expect("main")
+            .0,
+    )
+    .expect("JSON");
+    let mut paths: std::collections::BTreeSet<String> = main["data"]
+        .as_array()
+        .into_iter()
+        .chain(Some(data))
+        .flatten()
+        .filter_map(|n| n["path"].as_str().map(str::to_string))
+        .collect();
+    paths.insert(String::new());
+    let links: Vec<&serde_json::Value> =
+        data.iter().filter(|n| n["attributes"].is_null()).collect();
+    assert_eq!(links.len(), 2);
+    let mut kids: Vec<Vec<serde_json::Value>> = Vec::new();
+    for l in &links {
+        assert!(paths.contains(l["path"].as_str().unwrap_or("")));
+        let c = l["children"].as_object().expect("children");
+        kids.push(
+            ["Material", "Material1", "Material2"]
+                .iter()
+                .filter_map(|k| c.get(*k).cloned())
+                .collect(),
+        );
+    }
+    kids.sort_by_key(Vec::len);
+    // w0: its own material; w1: its layers that have an asset, in order
+    assert_eq!(kids, [vec![wood.clone()], vec![paint, wood]]);
 }
