@@ -22,20 +22,20 @@ use std::io::Read;
 use std::path::PathBuf;
 
 /// A FlatBuffers table or vector position in `b`.
-struct Fb<'a>(&'a [u8]);
+pub(crate) struct Fb<'a>(pub(crate) &'a [u8]);
 
 impl Fb<'_> {
-    fn u16(&self, p: usize) -> usize {
+    pub(crate) fn u16(&self, p: usize) -> usize {
         u16::from_le_bytes(self.0[p..p + 2].try_into().unwrap()) as usize
     }
-    fn u32(&self, p: usize) -> usize {
+    pub(crate) fn u32(&self, p: usize) -> usize {
         u32::from_le_bytes(self.0[p..p + 4].try_into().unwrap()) as usize
     }
-    fn deref(&self, p: usize) -> usize {
+    pub(crate) fn deref(&self, p: usize) -> usize {
         p + self.u32(p)
     }
     /// Where field `id` of the table at `t` is, if set.
-    fn field(&self, t: usize, id: usize) -> Option<usize> {
+    pub(crate) fn field(&self, t: usize, id: usize) -> Option<usize> {
         let soff = i32::from_le_bytes(self.0[t..t + 4].try_into().unwrap());
         let vt = (t as i64 - i64::from(soff)) as usize;
         if 4 + 2 * id >= self.u16(vt) {
@@ -47,17 +47,17 @@ impl Fb<'_> {
         }
     }
     /// The vector a field points to: (first element, length).
-    fn vector(&self, t: usize, id: usize) -> (usize, usize) {
+    pub(crate) fn vector(&self, t: usize, id: usize) -> (usize, usize) {
         let Some(f) = self.field(t, id) else {
             return (0, 0);
         };
         let v = self.deref(f);
         (v + 4, self.u32(v))
     }
-    fn table_at(&self, t: usize, id: usize) -> usize {
+    pub(crate) fn table_at(&self, t: usize, id: usize) -> usize {
         self.deref(self.field(t, id).expect("required table"))
     }
-    fn string(&self, p: usize) -> &str {
+    pub(crate) fn string(&self, p: usize) -> &str {
         let s = self.deref(p);
         std::str::from_utf8(&self.0[s + 4..s + 4 + self.u32(s)]).unwrap()
     }

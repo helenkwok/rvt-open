@@ -37,12 +37,31 @@ pub const FORM_SOLID_BODY_SOURCE: &str = "family_form_decoded_solid";
 pub const FORM_SOLVED_BODY_SOURCE: &str = "family_form_solved_solid";
 /// `BodySource` of a form drawn as its stored bounding box.
 pub const FORM_BOX_BODY_SOURCE: &str = "family_form_bounding_box";
+/// `BodySource` of the family template's sample host wall.
+pub const SAMPLE_WALL_BODY_SOURCE: &str = "family_sample_host_wall";
 /// `BodySource` of a nested instance drawn from its saved graphics here.
 pub const NESTED_SAVED_MESH_BODY_SOURCE: &str = "family_nested_saved_mesh";
 
 /// `BodySource` of a nested instance drawn from its family's decoded
 /// document.
 pub const NESTED_DOCUMENT_BODY_SOURCE: &str = "family_nested_document";
+/// `BodySource` of such an instance stretched to its own stored box: its
+/// family's document draws that family's saved type, and the instance's type
+/// can be another size (a door's panel of 4 ft in a 3 ft door).
+pub const NESTED_DOCUMENT_SCALED_BODY_SOURCE: &str = "family_nested_document_scaled";
+/// A stretch beyond these factors is another shape, not another size.
+const NESTED_SCALE_LIMITS: (f64, f64) = (0.2, 5.0);
+/// A body within this fraction of its stored box fits it.
+const NESTED_FACET_ALLOWANCE: f64 = 0.05;
+/// A solved factor above 1 by no more than this is rounding, not growth.
+const NESTED_ROUNDOFF: f64 = 1e-6;
+/// How well a turn must tell a body's own axes apart to shrink it along them
+/// (the determinant of `|l|^T |l|` over the axes solved: 1 on the axes, 0.41
+/// at 25 degrees, 0.25 at 60, 0.1 at about 36 and 54, 0 at 45).
+const NESTED_TURN_DETERMINED: f64 = 0.1;
+
+/// Why a form whose voids removed all of it is not drawn.
+const REMOVED_BY_VOID: &str = "removed_by_void";
 
 /// The storey a family's elements are placed in.
 pub const FAMILY_STOREY: &str = "Ref. Level";
@@ -89,6 +108,27 @@ pub struct FamilySummary {
     pub forms_hidden: usize,
     /// Void forms (they cut; their result is in the cut forms' graphics).
     pub voids: usize,
+    /// Forms of groups no instance places (a group type's own copy of its
+    /// members): not drawn, as Revit draws none.
+    #[serde(default)]
+    pub forms_unplaced: usize,
+    /// Forms of deleted elements (their last copies in an older partition,
+    /// the element table listing none of them): not drawn.
+    #[serde(default)]
+    pub forms_deleted: usize,
+    /// Solids a decoded void was cut from.
+    #[serde(default)]
+    pub void_cuts: usize,
+    /// Sample host walls drawn (with the family's openings cut in them).
+    #[serde(default)]
+    pub sample_walls: usize,
+    /// Openings of those walls that could not be cut (the wall is drawn
+    /// with the others only).
+    #[serde(default)]
+    pub sample_wall_openings_uncut: usize,
+    /// Solids a void meets whose cut gave up: drawn uncut.
+    #[serde(default)]
+    pub void_cuts_failed: usize,
     /// Instances of nested families, and how many this pass drew.
     pub nested_instances: usize,
     pub nested_drawn: usize,
@@ -98,6 +138,18 @@ pub struct FamilySummary {
     /// Undecoded forms of nested families drawn as their stored boxes.
     #[serde(default)]
     pub nested_form_boxes: usize,
+    /// Of `nested_drawn`, instances stretched to their own stored box.
+    #[serde(default)]
+    pub nested_scaled: usize,
+    /// Of `nested_drawn`, instances whose stored box differs from their
+    /// body by a stretch beyond the limits: drawn as their document draws them.
+    #[serde(default)]
+    pub nested_size_mismatch: usize,
+    /// Of `nested_drawn`, turned instances whose stored box is smaller than
+    /// their turned body but whose turn does not tell which own axes to
+    /// shrink: drawn as their document draws them.
+    #[serde(default)]
+    pub nested_size_undetermined: usize,
     /// Of `nested_drawn`, forms of their families' documents not in the
     /// mesh, by why (an instance counted once per reason).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -322,6 +374,10 @@ pub fn attach(
     // The newest partition each object was read from: older copies of a
     // record a file keeps in earlier partitions are not current.
     let mut newest: BTreeMap<(u16, i64), u32> = BTreeMap::new();
+    let mut unplaced_forms: BTreeSet<i64> = BTreeSet::new();
+    // Deleted elements' last copies an older partition keeps.
+    let deleted = family_documents::deleted_elements(rf);
+    let mut deleted_forms: BTreeSet<i64> = BTreeSet::new();
     for_each_object_where(
         rf,
         |_, _| true,
@@ -339,6 +395,10 @@ pub fn attach(
                 return;
             };
             let id = x.frame.header.id as i64;
+            if FORM_CLASSES.iter().any(|(c, _)| c == class) && deleted.holds(id, &x.stream) {
+                deleted_forms.insert(id);
+                return;
+            }
             let part = crate::partition_room_parameters::partition_number(&x.stream);
             match newest.get(&(x.frame.header.tag, id)) {
                 Some(p) if *p > part => return,
@@ -356,8 +416,16 @@ pub fn attach(
                 }
                 return;
             }
+            // A group type's own copy of its members (no instance places
+            // the group): Revit draws none of them.
+            let unplaced = id_of(root, "m_unplacedOwnerId").is_some_and(|o| o > 0);
+            // Each accepted copy (the newest so far) decides.
             if class == "FamilyInstance" {
-                nested.insert(id);
+                if unplaced {
+                    nested.remove(&id);
+                } else {
+                    nested.insert(id);
+                }
                 return;
             }
             if class == "MaterialElem" {
@@ -392,6 +460,11 @@ pub fn attach(
                     }
                 }
             }
+            if unplaced {
+                unplaced_forms.insert(id);
+                return;
+            }
+            unplaced_forms.remove(&id);
             forms.push(Form {
                 id,
                 tag: x.frame.header.tag,
@@ -403,7 +476,9 @@ pub fn attach(
             });
         },
     )?;
-    forms.retain(|f| newest.get(&(f.tag, f.id)) == Some(&f.part));
+    forms
+        .retain(|f| newest.get(&(f.tag, f.id)) == Some(&f.part) && !unplaced_forms.contains(&f.id));
+    out.forms_unplaced = unplaced_forms.len();
     // Decoded solids of the family's own document, and which forms belong
     // to a nested family's document instead (files without keyed sections).
     let docs = family_documents::read_with_host(rf, true).ok();
@@ -412,7 +487,10 @@ pub fn attach(
             !d.nested_objects.contains(&f.id) && !d.host_samples.contains(&(HOST_DOCUMENT, f.id))
         });
         nested.retain(|i| !d.nested_objects.contains(i));
+        // A nested family's forms are its document's, not deleted ones.
+        deleted_forms.retain(|i| !d.nested_objects.contains(i));
     }
+    out.forms_deleted = deleted_forms.len();
     forms.sort_by_key(|f| f.id);
     for f in &forms {
         *out.forms_found.entry(f.kind.to_string()).or_default() += 1;
@@ -500,6 +578,9 @@ pub fn attach(
 
     if let Some(d) = &docs {
         out.solve_failures = d.stats.solve_failures.clone();
+        out.void_cuts = d.stats.void_cuts;
+        out.sample_wall_openings_uncut = d.stats.wall_openings_uncut;
+        out.void_cuts_failed = d.stats.void_cuts_failed;
     }
     let solids: BTreeMap<i64, Vec<&family_documents::FamilySolid>> = {
         let mut m: BTreeMap<i64, Vec<&family_documents::FamilySolid>> = BTreeMap::new();
@@ -530,6 +611,10 @@ pub fn attach(
         };
         let (shape, source) = match (shape, solids.get(&form.id)) {
             (Some(s), _) => (Some(s), source),
+            // Its voids removed the whole form: nothing to draw.
+            (None, Some(list)) if list.iter().all(|s| s.triangles.is_empty()) => {
+                (None, REMOVED_BY_VOID)
+            }
             (None, Some(list)) => {
                 let mut vertices = Vec::new();
                 let mut triangles = Vec::new();
@@ -566,10 +651,22 @@ pub fn attach(
             && source != FORM_SOLID_BODY_SOURCE
             && source != FORM_SOLVED_BODY_SOURCE
         {
-            let reason = if !saved_graphics {
+            let reason = if source == REMOVED_BY_VOID {
+                REMOVED_BY_VOID
+            } else if !saved_graphics {
                 "saved_graphics_off"
             } else if release < 2015 {
-                "release_before_2015"
+                // No saved graphics are read before 2015: why the form did
+                // not decode.
+                docs.as_ref()
+                    .and_then(|d| d.docs.get(&HOST_DOCUMENT))
+                    .and_then(|d| d.form_failures.get(&form.id).copied())
+                    .map_or("not_decoded", |why| match why {
+                        "geometry" => "geometry_not_decoded",
+                        "fields" => "fields_not_read",
+                        "bbox_mismatch" => "solve_misses_stored_box",
+                        w => w,
+                    })
             } else if out.saved_graphics_error.is_some() {
                 "saved_graphics_error"
             } else {
@@ -643,6 +740,51 @@ pub fn attach(
         });
     }
 
+    // The template's sample host wall, as the family editor shows it.
+    for wall in docs
+        .as_ref()
+        .and_then(|d| d.docs.get(&HOST_DOCUMENT))
+        .map(|d| d.sample_walls.as_slice())
+        .unwrap_or_default()
+    {
+        let (vertices, triangles) = super::saved_meshes::tidy_mesh(
+            wall.vertices.clone(),
+            wall.triangles
+                .iter()
+                .map(|t| BrepTriangle(t[0], t[1], t[2]))
+                .collect(),
+        );
+        model.entities.push(IfcEntity::BuildingElement {
+            ifc_type: "IFCWALL".into(),
+            name: format!("{label}:sample host wall {}", wall.form_id),
+            type_guid: Some(wall.form_id.to_string()),
+            predefined_type: None,
+            storey_index: None,
+            material_index: None,
+            property_set: Some(PropertySet {
+                name: "RvtFamilyGeometry".into(),
+                properties: vec![Property {
+                    name: "BodySource".into(),
+                    value: PropertyValue::Text(SAMPLE_WALL_BODY_SOURCE.into()),
+                }],
+            }),
+            location_feet: Some([0.0; 3]),
+            rotation_radians: None,
+            extrusion: None,
+            host_element_index: None,
+            material_layer_set_index: None,
+            material_profile_set_index: None,
+            solid_shape: Some(SolidShape::TriangulatedFaceSet {
+                vertices_feet: vertices,
+                triangles,
+                face_materials: Vec::new(),
+                uvs: Vec::new(),
+            }),
+            representation_map_index: None,
+        });
+        out.sample_walls += 1;
+    }
+
     // Nested instances before 2023, from their saved graphics.
     if release < 2023 {
         for (id, index) in &nested_entities {
@@ -706,6 +848,25 @@ pub fn attach(
                 }
                 continue;
             }
+            // The instance's own stored box is the size of its type; the
+            // document draws its family's saved type, which can be another.
+            // Revit stores the box of the instance's turned own box (on a ring
+            // of chairs measured, those turned by 25 and 60 degrees store the
+            // box of their family's box turned, 10% to 19% larger than their
+            // turned body), so the body's own box is turned the same way
+            // before the two are compared.
+            let mut source = NESTED_DOCUMENT_BODY_SOURCE;
+            if let Some(stored) = boxes.get(id) {
+                match stretch_nested_to_box(&mut body.vertices, *stored, &pose_affine(pose)) {
+                    NestedStretch::Fits => {}
+                    NestedStretch::Stretched => {
+                        source = NESTED_DOCUMENT_SCALED_BODY_SOURCE;
+                        out.nested_scaled += 1;
+                    }
+                    NestedStretch::BeyondLimits => out.nested_size_mismatch += 1,
+                    NestedStretch::Undetermined => out.nested_size_undetermined += 1,
+                }
+            }
             let material_index = body
                 .material
                 .and_then(|(_, m)| material_names.get(&m))
@@ -721,7 +882,7 @@ pub fn attach(
                     name: "RvtFamilyGeometry".into(),
                     properties: vec![Property {
                         name: "BodySource".into(),
-                        value: PropertyValue::Text(NESTED_DOCUMENT_BODY_SOURCE.into()),
+                        value: PropertyValue::Text(source.into()),
                     }],
                 }),
                 location_feet: Some([0.0; 3]),
@@ -766,8 +927,182 @@ pub fn attach(
     Ok(out)
 }
 
+/// What [`stretch_nested_to_box`] did.
+#[derive(Debug, PartialEq)]
+pub enum NestedStretch {
+    /// The body fits its stored box (or is smaller, or within the facet
+    /// allowance): left as it is.
+    Fits,
+    /// The body was shrunk onto its stored box.
+    Stretched,
+    /// The factors are beyond the limits or would enlarge an axis: left as
+    /// it is.
+    BeyondLimits,
+    /// The stored box is smaller than the turned body's, but its turn does
+    /// not tell which of the body's own axes to shrink (near 45 degrees, a
+    /// box's width and depth add up the same either way).
+    Undetermined,
+}
+
+/// Fit a nested instance's body (`vertices`, placed by `map`) to its stored
+/// box. `stored` is axis-aligned in the host's frame, and is the box of the
+/// instance's own box turned by `map`, so the body's own box (in its family's
+/// frame) is turned likewise and compared with it. When `stored` lies inside
+/// that turned box and differs from it by more than the box tolerance and
+/// `NESTED_FACET_ALLOWANCE` (5%), the body is shrunk along its own axes by the
+/// factors whose turned box is `stored` (each within the limits; an axis
+/// either box is flat along keeps its size), and centred on `stored`. A
+/// mirrored map keeps its reflection: only the size changes.
+pub fn stretch_nested_to_box(
+    vertices: &mut [[f64; 3]],
+    stored: [[f64; 3]; 2],
+    map: &Affine,
+) -> NestedStretch {
+    let (l, t) = map;
+    let Some(inv) = inverse3(l) else {
+        return NestedStretch::Fits;
+    };
+    let own: Vec<[f64; 3]> = vertices
+        .iter()
+        .map(|v| std::array::from_fn(|k| (0..3).map(|j| inv[k][j] * (v[j] - t[j])).sum()))
+        .collect();
+    let Some([olo, ohi]) = bbox_of(&own) else {
+        return NestedStretch::Fits;
+    };
+    let a: [[f64; 3]; 3] = std::array::from_fn(|k| std::array::from_fn(|j| l[k][j].abs()));
+    let ow: [f64; 3] = std::array::from_fn(|j| ohi[j] - olo[j]);
+    let oc: [f64; 3] = std::array::from_fn(|j| (olo[j] + ohi[j]) / 2.0);
+    let pc: [f64; 3] = std::array::from_fn(|k| t[k] + (0..3).map(|j| l[k][j] * oc[j]).sum::<f64>());
+    let pw: [f64; 3] = std::array::from_fn(|k| (0..3).map(|j| a[k][j] * ow[j]).sum());
+    let (lo, hi): ([f64; 3], [f64; 3]) = (
+        std::array::from_fn(|k| pc[k] - pw[k] / 2.0),
+        std::array::from_fn(|k| pc[k] + pw[k] / 2.0),
+    );
+    let sw: [f64; 3] = std::array::from_fn(|k| stored[1][k] - stored[0][k]);
+    let size = sw.iter().copied().fold(0.0, f64::max);
+    let tol = family_documents::BBOX_TOLERANCE.max(family_documents::SOLVED_BBOX_FRACTION * size);
+    if (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= tol && (hi[k] - stored[1][k]).abs() <= tol) {
+        return NestedStretch::Fits;
+    }
+    // Revit's stored box holds all the instance draws, so only a body larger
+    // than it is another size; one smaller can be lines and reference planes
+    // the box also holds.
+    if (0..3).any(|k| stored[0][k] < lo[k] - tol || stored[1][k] > hi[k] + tol) {
+        return NestedStretch::Fits;
+    }
+    // Own widths x with |l| x = stored widths: an own axis the body is flat
+    // along keeps its width, and a host axis the stored box is flat along
+    // is not matched.
+    let rows: Vec<usize> = (0..3).filter(|&k| sw[k] > tol).collect();
+    let free: Vec<usize> = (0..3)
+        .filter(|&j| ow[j] > tol && rows.iter().any(|&k| a[k][j] > 1e-6))
+        .collect();
+    let rhs: Vec<f64> = rows
+        .iter()
+        .map(|&k| {
+            sw[k]
+                - (0..3)
+                    .filter(|j| !free.contains(j))
+                    .map(|j| a[k][j] * ow[j])
+                    .sum::<f64>()
+        })
+        .collect();
+    let Some(x) = least_squares(
+        &rows
+            .iter()
+            .map(|&k| free.iter().map(|&j| a[k][j]).collect())
+            .collect::<Vec<Vec<f64>>>(),
+        &rhs,
+    ) else {
+        return NestedStretch::Undetermined;
+    };
+    let mut factor = [1.0; 3];
+    for (i, &j) in free.iter().enumerate() {
+        factor[j] = x[i] / ow[j];
+    }
+    // The factors must give the stored box back.
+    let fw: [f64; 3] = std::array::from_fn(|k| (0..3).map(|j| a[k][j] * ow[j] * factor[j]).sum());
+    if rows.iter().any(|&k| (fw[k] - sw[k]).abs() > tol) {
+        return NestedStretch::Undetermined;
+    }
+    // Within a few percent is the display's facets (a round form's stored
+    // box is that of its faceted display), not another size.
+    let near = NESTED_FACET_ALLOWANCE * size;
+    if factor
+        .iter()
+        .all(|f| (f - 1.0).abs() <= NESTED_FACET_ALLOWANCE)
+        && (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= near.max(tol))
+    {
+        return NestedStretch::Fits;
+    }
+    // Only a shrink: a body larger than its box along one own axis and
+    // smaller along another is another shape (the facet allowance decides
+    // only whether to leave the whole body as it is, above).
+    if !factor
+        .iter()
+        .all(|f| (NESTED_SCALE_LIMITS.0..=1.0 + NESTED_ROUNDOFF).contains(f))
+    {
+        return NestedStretch::BeyondLimits;
+    }
+    let sc: [f64; 3] = std::array::from_fn(|k| (stored[0][k] + stored[1][k]) / 2.0);
+    for (v, o) in vertices.iter_mut().zip(&own) {
+        let p: [f64; 3] = std::array::from_fn(|j| (o[j] - oc[j]) * factor[j]);
+        *v = std::array::from_fn(|k| sc[k] + (0..3).map(|j| l[k][j] * p[j]).sum::<f64>());
+    }
+    NestedStretch::Stretched
+}
+
+/// The inverse of `l`, when it is not singular.
+fn inverse3(l: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let d = det(l);
+    if d.abs() < 1e-9 {
+        return None;
+    }
+    let c = |r: usize, s: usize| {
+        let (r0, r1) = ((r + 1) % 3, (r + 2) % 3);
+        let (s0, s1) = ((s + 1) % 3, (s + 2) % 3);
+        l[r0][s0] * l[r1][s1] - l[r0][s1] * l[r1][s0]
+    };
+    Some(std::array::from_fn(|i| {
+        std::array::from_fn(|j| c(j, i) / d)
+    }))
+}
+
+/// The `x` that best solves `m x = b` (rows of `m`), when it is well
+/// determined: the normal matrix's determinant, for columns of up to unit
+/// length, at least [`NESTED_TURN_DETERMINED`]. An empty `m` gives an empty
+/// `x`.
+fn least_squares(m: &[Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
+    let n = m.first().map_or(0, Vec::len);
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let mut ata = [[0.0; 3]; 3];
+    let mut atb = [0.0; 3];
+    for (row, bk) in m.iter().zip(b) {
+        for i in 0..n {
+            atb[i] += row[i] * bk;
+            for j in 0..n {
+                ata[i][j] += row[i] * row[j];
+            }
+        }
+    }
+    for (i, r) in ata.iter_mut().enumerate().skip(n) {
+        r[i] = 1.0;
+    }
+    if det(&ata) < NESTED_TURN_DETERMINED {
+        return None;
+    }
+    let inv = inverse3(&ata)?;
+    Some(
+        (0..n)
+            .map(|i| (0..n).map(|j| inv[i][j] * atb[j]).sum())
+            .collect(),
+    )
+}
+
 /// A linear map (rows) and a translation: `p -> l * p + t`.
-type Affine = ([[f64; 3]; 3], [f64; 3]);
+pub type Affine = ([[f64; 3]; 3], [f64; 3]);
 
 /// An instance's placement as a map from its family's coordinates. A
 /// flipped instance mirrors its family across the family's own axis before
@@ -799,9 +1134,8 @@ fn det(l: &[[f64; 3]; 3]) -> f64 {
         + l[0][2] * (l[1][0] * l[2][1] - l[1][1] * l[2][0])
 }
 
-/// The mesh of one nested instance: its family's decoded solids and, in a
-/// family file without keyed sections, those of the families that family
-/// places in turn.
+/// The mesh of one nested instance: its family's decoded solids and those
+/// of the families that family places in turn.
 #[derive(Default)]
 struct NestedBody {
     vertices: Vec<[f64; 3]>,
@@ -886,8 +1220,16 @@ impl NestedBody {
             match *why {
                 // A void is left uncut, as the file's own forms are.
                 "void" => self.uncut = true,
-                // Its nested families are placed below when their poses are known.
-                "nested_family" if placed.is_some() => {}
+                // Its voids were cut from the solids above.
+                "void_cut" => {}
+                // Its nested families are placed below when their poses
+                // are known; those without one are missing.
+                "nested_family" if placed.is_some() => {
+                    let short = n.saturating_sub(placed.map_or(0, |p| p.len()));
+                    if short > 0 {
+                        *self.missing.entry("nested_pose".into()).or_default() += short;
+                    }
+                }
                 w => *self.missing.entry(w.to_string()).or_default() += n,
             }
         }
@@ -895,7 +1237,7 @@ impl NestedBody {
             return;
         }
         for pose in placed.into_iter().flat_map(|p| p.values()) {
-            match d.document_of_symbol(pose.symbol) {
+            match d.document_of_symbol_in(guid, pose.symbol) {
                 Some((sub, _)) => {
                     self.collect(d, sub, compose(&map, &pose_affine(pose)), depth + 1)
                 }

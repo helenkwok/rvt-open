@@ -12,7 +12,7 @@ rvt-open is a clean-room toolkit for Autodesk Revit project, family and template
 |---|---|
 | Read Revit 2008 to 2027 files | Opens every release from 2008 to 2027 and reports its release, worksharing state, previews and embedded schema; elements are decoded from 2010 on. Support per release is in [Support](#support). |
 | Export IFCX first | IFCX (buildingSMART IFC5 alpha, following the published `ifcx.tsp`), plus IFC4, ThatOpen Fragments (`.frag`), OpenUSD (`.usda`, `.usdc`), glTF 2.0 binary, plan SVG and CSV schedules, from one command. |
-| Get real geometry and materials | Family geometry from the family documents embedded in a project; saved meshes for doors, windows and other elements where the file stores them; saved materials and their colours in every format. |
+| Get real geometry and materials | Family geometry from the family documents embedded in a project; saved meshes for doors, windows and other elements where the file stores them; saved materials and their colours in every format; material images where the format holds them, and beside the `.frag` where it does not ([`docs/frag-textures.md`](docs/frag-textures.md)). |
 | Convert in the browser | The `rvt-wasm` package reads a file inside the page and converts it; errors are readable messages, not `unreachable`. |
 | Let an agent ask about a file | The [MCP server](docs/mcp.md), `rvt-open-mcp`: local, read-only, over stdio, built from source with `cargo build --release -p rvt-open-mcp`. |
 
