@@ -157,6 +157,7 @@
 /// This crate's version (`CARGO_PKG_VERSION`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod appearance;
 pub mod arc_wall_record;
 pub mod basic_file_info;
 pub mod beam_reference_levels;
@@ -186,6 +187,7 @@ pub mod ifc;
 mod le_bytes;
 pub mod level_bind;
 pub mod memory;
+pub(crate) mod mesh_csg;
 pub mod metadata;
 pub mod object_graph;
 pub mod parse_mode;

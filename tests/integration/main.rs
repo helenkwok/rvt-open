@@ -67,6 +67,8 @@ pub(crate) fn all_shards(check: &str, k: usize, n: usize, value: &str) -> Option
         .collect()
 }
 
+#[path = "../appearance_assets.rs"]
+mod appearance_assets;
 #[path = "../arc_wall_corpus.rs"]
 mod arc_wall_corpus;
 #[path = "../assoc_levels_2022.rs"]
@@ -161,6 +163,8 @@ mod export_decisions_counts;
 mod family_blend_transitions;
 #[path = "../family_instance_ports.rs"]
 mod family_instance_ports;
+#[path = "../family_voids_and_sample_walls.rs"]
+mod family_voids_and_sample_walls;
 #[path = "../field_type_coverage.rs"]
 mod field_type_coverage;
 #[path = "../fitting_nominal_diameter.rs"]

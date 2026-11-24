@@ -75,6 +75,7 @@ real      element_provenance_offsets
 real      element_record_stages
 real      element_records_2025
 real      family_blend_transitions
+real      family_voids_and_sample_walls
 real      export_decisions_counts
 real      family_instance_ports
 real      fitting_nominal_diameter
@@ -183,6 +184,7 @@ cli       rvt_info_cli
 cli       rvt_inspect_cli
 cli       rvt_schedule_cli
 
+real      appearance_assets
 contract  binary_inventory
 contract  builtin_catalog_sources
 contract  field_type_coverage
