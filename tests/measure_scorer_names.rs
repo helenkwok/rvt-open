@@ -161,6 +161,14 @@ fn a_named_scorer_that_fails_writes_its_report_and_ends_with_status_1() {
     let dir = scratch("fails");
     fs::write(dir.join("models/RE1-Architecture.rvt"), b"").unwrap();
     fs::write(dir.join("models/RE1-Architecture.ifc"), b"").unwrap();
+    // The same recording exporter as the refusal test: an accepted run calls it.
+    script(
+        &dir.join("bin/rvt-ifc"),
+        &format!(
+            "#!/bin/sh\necho invoked >> '{}'\n",
+            dir.join("invoked").display()
+        ),
+    );
     script(
         &dir.join("bin/examples/fake_probe"),
         "#!/bin/sh\necho probe output\n",
@@ -192,6 +200,7 @@ fn a_named_scorer_that_fails_writes_its_report_and_ends_with_status_1() {
         );
         let failures = fs::read_to_string(dir.join("out/scorer-failures.txt")).unwrap_or_default();
         assert_eq!(failures.contains("probe_score"), code == 1, "{failures}");
+        assert!(dir.join("invoked").exists(), "{scorer}: no export ran");
     }
     let _ = fs::remove_dir_all(&dir);
 }
