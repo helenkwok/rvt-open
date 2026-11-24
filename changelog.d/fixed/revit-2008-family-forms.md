@@ -15,10 +15,10 @@
   drawn as a spline keeps the spline in its control data (a Hermite spline or
   a NURBS curve) and a straight line between its ends as its curve; the
   straight line was drawn, so a chair's bent tubes came out straight. The
-  spline is now evaluated and thinned to the points its shape needs. On the
-  manufacturer families 13 gain a solved extrusion that was a box, one nested
-  box becomes its solid, and every overall size stays the same (60 of 61
-  families with a CAD view still within 1% of it).
+  spline is now evaluated and thinned to the points its shape needs. On 65
+  manufacturer families 12 gain 13 solved extrusions that were boxes, one
+  nested box becomes its solid, and every overall size stays the same (60 of
+  61 families with a CAD view still within 1% of it).
 - **A sweep whose path crosses its profile's plane more than once is swept
   from the segment beside the profile.** The first crossing was taken, so a
   U-shaped seat cushion was pushed along the opposite side of the U and
