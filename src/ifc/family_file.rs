@@ -947,7 +947,7 @@ pub enum NestedStretch {
 /// instance's own box turned by `map`, so the body's own box (in its family's
 /// frame) is turned likewise and compared with it. When `stored` lies inside
 /// that turned box and differs from it by more than the box tolerance and
-/// [`NESTED_FACET_ALLOWANCE`], the body is shrunk along its own axes by the
+/// `NESTED_FACET_ALLOWANCE` (5%), the body is shrunk along its own axes by the
 /// factors whose turned box is `stored` (each within the limits; an axis
 /// either box is flat along keeps its size), and centred on `stored`. A
 /// mirrored map keeps its reflection: only the size changes.
