@@ -31,12 +31,15 @@ fn a_lone_arc_just_short_of_a_turn_closes() {
 #[test]
 fn an_arc_and_its_chord_make_one_ring_with_the_chord() {
     let chord = [at(TAU - GAP), at(GAP)];
+    // Each arc direction with the chord drawn either way round.
     for (t, line) in [
         ([GAP, TAU - GAP], chord),
+        ([GAP, TAU - GAP], [chord[1], chord[0]]),
+        ([TAU - GAP, GAP], chord),
         ([TAU - GAP, GAP], [chord[1], chord[0]]),
     ] {
         let rings = sketch_rings(&[([0.0; 3], 1.0, t)], &[line]).expect("a ring");
-        assert_eq!(rings.len(), 1, "{t:?}");
+        assert_eq!(rings.len(), 1, "{t:?} {line:?}");
         let ring = &rings[0];
         // 32 steps of the arc, closed by the chord: its two ends are both
         // corners of the ring, with no point of the arc between them.
