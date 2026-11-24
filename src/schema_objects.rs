@@ -904,7 +904,8 @@ pub fn header_records(
             .map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")))
     };
     while p < end {
-        let marker = buf[p..end.min(p + w)].iter().all(|&b| b == 0xff) && p + w + 8 <= end;
+        // An id-less record (Revit 2008) has no marker prefix: try it as a record.
+        let marker = w > 0 && buf[p..end.min(p + w)].iter().all(|&b| b == 0xff) && p + w + 8 <= end;
         let taken = if marker {
             match u64_at(p + w) {
                 Some(1) if p + w + 12 <= end && u32_at(buf, p + w + 8) == Some(0) => Some(w + 12),
@@ -1569,6 +1570,25 @@ mod tests {
         // size for its id and overlaps it: every second one is lost.
         let (narrow, _) = frames(&buf, IdWidth::Narrow);
         assert_eq!(narrow.len(), 2);
+    }
+
+    #[test]
+    fn header_records_reads_id_less_records() {
+        let mut buf = Vec::new();
+        for x in [3u32, 4] {
+            let mut payload = 7u16.to_le_bytes().to_vec();
+            payload.extend(x.to_le_bytes());
+            buf.extend((payload.len() as u32).to_le_bytes());
+            buf.extend(&payload);
+            buf.extend((payload.len() as u32).to_le_bytes());
+        }
+        let got = header_records(&layouts(), "P", &buf, 0..buf.len(), IdWidth::Absent);
+        assert_eq!(got.records.len(), 2);
+        assert!(got.markers.is_empty() && got.rest.is_empty());
+        assert_eq!(
+            got.records[1].root().unwrap().get("m_x"),
+            Some(&Value::Int(4))
+        );
     }
 
     #[test]

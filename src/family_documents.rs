@@ -462,6 +462,13 @@ fn hermite_of(crv: &Fields, names: &BTreeMap<u16, String>) -> Option<Curve> {
     Some(Curve::Hermite { nodes, t })
 }
 
+/// The highest NURBS degree and most control points evaluated (each
+/// point costs about degree squared work; the splines measured are cubic
+/// with at most a few dozen points): a larger one keeps the line between
+/// its ends.
+const MAX_NURBS_DEGREE: usize = 7;
+const MAX_NURBS_POINTS: usize = 1024;
+
 /// A `GNurbSpline` whose knots fit its control points and degree.
 fn nurbs_of(crv: &Fields, names: &BTreeMap<u16, String>) -> Option<Curve> {
     if names.get(&crv.tag)?.as_str() != "GNurbSpline" {
@@ -489,7 +496,8 @@ fn nurbs_of(crv: &Fields, names: &BTreeMap<u16, String>) -> Option<Curve> {
         Value::List(l) if l.len() == 2 => [float_of(&l[0])?, float_of(&l[1])?],
         _ => return None,
     };
-    let fits = degree >= 1
+    let fits = (1..=MAX_NURBS_DEGREE).contains(&degree)
+        && points.len() <= MAX_NURBS_POINTS
         && points.len() > degree
         && knots.len() == points.len() + degree + 1
         && knots.windows(2).all(|w| w[1] >= w[0])
@@ -1520,17 +1528,9 @@ fn polyline(c: &Curve) -> (Vec<[f64; 3]>, bool, Vec<[f64; 3]>) {
             (pts, closed, ext)
         }
         Curve::Hermite { nodes, t } => {
-            let (t0, t1) = (t[0], t[1]);
-            let spans = nodes
-                .windows(2)
-                .filter(|w| w[1].0 > t0.min(t1) && w[0].0 < t0.max(t1))
-                .count()
-                .max(1);
-            let n = SPLINE_STEPS * spans;
-            let pts = spline_points(
-                (0..=n).map(|i| hermite_at(nodes, t0 + (t1 - t0) * i as f64 / n as f64)),
-            );
-            (pts.clone(), false, pts)
+            let at = span_parameters(*t, nodes.iter().map(|n| n.0));
+            let dense: Vec<[f64; 3]> = at.iter().map(|&s| hermite_at(nodes, s)).collect();
+            (spline_points(&dense), false, dense)
         }
         Curve::Nurbs {
             degree,
@@ -1538,32 +1538,51 @@ fn polyline(c: &Curve) -> (Vec<[f64; 3]>, bool, Vec<[f64; 3]>) {
             knots,
             t,
         } => {
-            let n = SPLINE_STEPS * points.len();
-            let pts = spline_points((0..=n).map(|i| {
-                nurbs_at(
-                    *degree,
-                    points,
-                    knots,
-                    t[0] + (t[1] - t[0]) * i as f64 / n as f64,
-                )
-            }));
-            (pts.clone(), false, pts)
+            let at = span_parameters(*t, knots.iter().copied());
+            let dense: Vec<[f64; 3]> = at
+                .iter()
+                .map(|&s| nurbs_at(*degree, points, knots, s))
+                .collect();
+            (spline_points(&dense), false, dense)
         }
     }
 }
 
-/// Points a spline is evaluated at per segment (Hermite) or control point
-/// (NURBS), before [`spline_points`] keeps the ones its shape needs.
+/// Points a spline is evaluated at in each node interval (Hermite) or knot
+/// span (NURBS), before [`spline_points`] keeps the ones its shape needs.
 const SPLINE_STEPS: usize = 32;
+
+/// The parameters a spline between end parameters `t` is evaluated at:
+/// [`SPLINE_STEPS`] in each interval between the breaks (node parameters or
+/// knots) inside it, both ends of every interval included, so a short span
+/// is sampled as well as a long one; in the direction from `t[0]` to `t[1]`.
+fn span_parameters(t: [f64; 2], breaks: impl Iterator<Item = f64>) -> Vec<f64> {
+    let (lo, hi) = (t[0].min(t[1]), t[0].max(t[1]));
+    let mut cuts: Vec<f64> = breaks.filter(|b| *b > lo && *b < hi).collect();
+    cuts.push(lo);
+    cuts.push(hi);
+    cuts.sort_by(f64::total_cmp);
+    cuts.dedup();
+    let mut at = vec![lo];
+    for w in cuts.windows(2) {
+        at.extend(
+            (1..=SPLINE_STEPS).map(|i| w[0] + (w[1] - w[0]) * i as f64 / SPLINE_STEPS as f64),
+        );
+    }
+    if t[0] > t[1] {
+        at.reverse();
+    }
+    at
+}
 
 /// A spline's evaluated points thinned to those its shape needs: each
 /// dropped point lies within 1/500 of the curve's span of the kept chord
 /// (Douglas-Peucker), so a seat's spline outline swept along a spline path
 /// stays a few thousand triangles, not hundreds of thousands.
-fn spline_points(dense: impl Iterator<Item = [f64; 3]>) -> Vec<[f64; 3]> {
-    let pts: Vec<[f64; 3]> = dense.collect();
+/// The curve's extremes are taken from all its evaluated points.
+fn spline_points(pts: &[[f64; 3]]) -> Vec<[f64; 3]> {
     let Some([lo, hi]) = bounds(pts.iter().copied()) else {
-        return pts;
+        return pts.to_vec();
     };
     let tol = dist(lo, hi) / 500.0;
     let mut keep = vec![false; pts.len()];
@@ -1592,9 +1611,9 @@ fn spline_points(dense: impl Iterator<Item = [f64; 3]>) -> Vec<[f64; 3]> {
             }
         }
     }
-    pts.into_iter()
+    pts.iter()
         .zip(keep)
-        .filter_map(|(p, k)| k.then_some(p))
+        .filter_map(|(p, k)| k.then_some(*p))
         .collect()
 }
 
@@ -2710,10 +2729,17 @@ fn solve_form(f: &RawForm, ctx: &SolveCtx) -> Result<(FamilySolid, Bounds), &'st
                 .iter()
                 .fold([0.0; 3], |a, p| std::array::from_fn(|k| a[k] + p[k]));
             let c: [f64; 3] = std::array::from_fn(|k| c[k] / rings[0].len().max(1) as f64);
+            // Measured at the segment's crossing; a segment lying in the plane
+            // at its nearest point.
             let away = |i: usize| {
                 let (p0, p1) = (path[i], path[(i + 1) % path.len()]);
                 let e = sub(p1, p0);
-                let t = (dot(sub(c, p0), e) / dot(e, e).max(1e-18)).clamp(0.0, 1.0);
+                let (a, b) = (side(p0), side(p1));
+                let t = if (a - b).abs() > tol {
+                    (a / (a - b)).clamp(0.0, 1.0)
+                } else {
+                    (dot(sub(c, p0), e) / dot(e, e).max(1e-18)).clamp(0.0, 1.0)
+                };
                 dist(c, std::array::from_fn(|k| p0[k] + e[k] * t))
             };
             let s = (0..segs)
@@ -3456,6 +3482,65 @@ mod probe_forms {
         assert_eq!(pts, vec![[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]]);
         // Between nodes it follows the cubic: tangents (0, 3) and (0, -3)
         // over a unit span bulge 0.75 at the middle.
+        // A short span between two long ones is sampled too.
+        let spike = Curve::Hermite {
+            nodes: vec![
+                (0.0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+                (0.001, [0.001, 1.0, 0.0], [1.0, 0.0, 0.0]),
+                (0.002, [0.002, 0.0, 0.0], [1.0, 0.0, 0.0]),
+                (1.0, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+            ],
+            t: [0.0, 1.0],
+        };
+        let (pts, _, ext) = polyline(&spike);
+        assert!(pts.iter().any(|p| (p[1] - 1.0).abs() < 1e-12), "{pts:?}");
+        assert!(ext.len() >= pts.len());
+        // A degree beyond the limit keeps the straight line.
+        let names: BTreeMap<u16, String> = [(1, "GNurbSpline".to_string())].into();
+        let nurbs = |degree: i64| Fields {
+            tag: 1,
+            span: 0..0,
+            spans: vec![0..0; 5],
+            values: vec![
+                (
+                    "m_endParams".into(),
+                    Value::List(vec![Value::Float(0.0), Value::Float(1.0)]),
+                ),
+                ("m_Degree".into(), Value::Int(degree)),
+                (
+                    "m_ctrlPoints".into(),
+                    Value::List(
+                        (0..=degree)
+                            .map(|i| {
+                                Value::Object(Fields {
+                                    tag: 2,
+                                    span: 0..0,
+                                    spans: vec![0..0; 2],
+                                    values: vec![
+                                        ("m_w".into(), Value::Float(1.0)),
+                                        (
+                                            "m_Point".into(),
+                                            Value::List(vec![Value::Float(i as f64); 3]),
+                                        ),
+                                    ],
+                                })
+                            })
+                            .collect(),
+                    ),
+                ),
+                (
+                    "m_Knots".into(),
+                    Value::List(
+                        (0..2 * (degree + 1))
+                            .map(|i| Value::Float(if i <= degree { 0.0 } else { 1.0 }))
+                            .collect(),
+                    ),
+                ),
+                ("m_Closed".into(), Value::Bool(false)),
+            ],
+        };
+        assert!(nurbs_of(&nurbs(3), &names).is_some());
+        assert!(nurbs_of(&nurbs(8), &names).is_none());
         let bulge = [
             (0.0, [0.0; 3], [0.0, 3.0, 0.0]),
             (1.0, [1.0, 0.0, 0.0], [0.0, -3.0, 0.0]),
