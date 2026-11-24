@@ -230,7 +230,10 @@ fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
     let open = open_roots(&mut parent);
     if open.iter().any(|&o| o) {
         for list in users.chunk_by(|a, b| a.0 == b.0) {
-            let roots: Vec<usize> = list.iter().map(|&(_, t)| find(&mut parent, t / 2)).collect();
+            let roots: Vec<usize> = list
+                .iter()
+                .map(|&(_, t)| find(&mut parent, t / 2))
+                .collect();
             if roots.iter().any(|&r| open[r]) {
                 for pair in roots.windows(2) {
                     let (ra, rb) = (find(&mut parent, pair[0]), find(&mut parent, pair[1]));
