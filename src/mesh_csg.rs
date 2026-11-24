@@ -327,7 +327,7 @@ fn polygons(vertices: &[V3], triangles: &[[u32; 3]]) -> Vec<Polygon> {
 }
 
 /// `a` minus `b`, as vertices and triangles, or `None` when the cut gives
-/// up (see [`MAX_POLYGONS`]). Both must be closed, outward-wound meshes.
+/// up (past a bound on the polygons it makes). Both must be closed, outward-wound meshes.
 pub fn difference(
     a: (&[V3], &[[u32; 3]]),
     b: (&[V3], &[[u32; 3]]),
