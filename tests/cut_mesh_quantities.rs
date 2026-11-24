@@ -167,6 +167,29 @@ fn a_closed_body_beside_an_open_face_keeps_its_volume() {
 }
 
 #[test]
+fn closed_bodies_touching_an_open_face_keep_their_volume_in_any_order() {
+    // Two 1 ft cubes and, between them, an open square sharing an edge with
+    // each: the cubes are solids whatever order the triangles come in.
+    let (mut v, mut t) = cuboid([100.0, 100.0, 100.0], [101.0, 101.0, 101.0]);
+    let (v2, t2) = cuboid([102.0, 100.0, 100.0], [103.0, 101.0, 101.0]);
+    t.extend(t2.iter().map(|t| t.map(|i| i + 8)));
+    v.extend(v2);
+    // The square from x = 101 to 102 at z = 100, its edges the first cube's
+    // (1, 3) and the second's (8, 10).
+    let sheet = [[1, 8, 10], [1, 10, 3]];
+    for sheet_first in [false, true] {
+        let tris: Vec<[u32; 3]> = if sheet_first {
+            sheet.iter().chain(&t).copied().collect()
+        } else {
+            t.iter().chain(&sheet).copied().collect()
+        };
+        let (volume, surface) = quantities(face_set(v.clone(), &tris));
+        assert!((volume.expect("measured") - 2.0).abs() < 1e-9, "sheet first {sheet_first}");
+        assert!((surface - 13.0).abs() < 1e-9, "surface {surface}");
+    }
+}
+
+#[test]
 fn a_void_cut_leaves_no_t_junctions_and_is_drawn_one_sided() {
     // A pocket cut into the top of a 2 ft cube: the cutter's planes split
     // the top face across its whole width, where the sides are not split.

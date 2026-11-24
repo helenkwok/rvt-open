@@ -211,10 +211,11 @@ fn shells_of(mesh: &Mesh, whole: bool) -> Option<Vec<Shell>> {
     // A shell is closed where each of its edges is run as often each way by
     // its own triangles. A closed surface can still fall apart into open
     // pieces (a sliver welded flat adds two users to an edge, so the edge
-    // joins nothing): open shells are joined to every shell they share an
-    // edge with, and what is still open (a triangle of a mesh drawn on both
-    // sides, a surface) encloses nothing. Its tetrahedra to the origin are no
-    // volume, so it counts for its area only.
+    // joins nothing): open shells that share an edge are joined (a closed
+    // shell keeps to itself, whatever touches it), and what is still open (a
+    // triangle of a mesh drawn on both sides, a surface) encloses nothing.
+    // Its tetrahedra to the origin are no volume, so it counts for its area
+    // only.
     let open_roots = |parent: &mut Vec<usize>| -> Vec<bool> {
         let mut open = vec![false; parent.len()];
         for list in users.chunk_by(|a, b| a.0 == b.0) {
@@ -237,16 +238,17 @@ fn shells_of(mesh: &Mesh, whole: bool) -> Option<Vec<Shell>> {
     };
     let open = open_roots(&mut parent);
     if open.iter().any(|&o| o) {
+        // Only open roots are joined, each to an open root, so every root
+        // met here is one the flags were found for: no order dependence.
         for list in users.chunk_by(|a, b| a.0 == b.0) {
             let roots: Vec<usize> = list
                 .iter()
                 .map(|&(_, t)| find(&mut parent, t / 2))
+                .filter(|&r| open[r])
                 .collect();
-            if roots.iter().any(|&r| open[r]) {
-                for pair in roots.windows(2) {
-                    let (ra, rb) = (find(&mut parent, pair[0]), find(&mut parent, pair[1]));
-                    parent[ra] = rb;
-                }
+            for pair in roots.windows(2) {
+                let (ra, rb) = (find(&mut parent, pair[0]), find(&mut parent, pair[1]));
+                parent[ra] = rb;
             }
         }
     }
@@ -910,7 +912,16 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
                 } else {
                     let mut by: BTreeMap<String, (f64, f64)> = BTreeMap::new();
                     let scale = if gross > 0.0 { net / gross } else { 0.0 };
-                    for s in &solid {
+                    // Every shell's surface counts for its material; only a
+                    // solid's volume does.
+                    let solid_or_open = shells.iter().map(|s| {
+                        let counts = s.area == 0.0 || s.volume.abs() > 1e-6 * s.area.powf(1.5);
+                        Shell {
+                            volume: if counts { s.volume } else { 0.0 },
+                            ..*s
+                        }
+                    });
+                    for s in solid_or_open {
                         let name = model
                             .materials
                             .get(s.material)
