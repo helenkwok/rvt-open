@@ -945,6 +945,27 @@ pub fn measure(model: &IfcModel) -> Vec<ElementQuantities> {
                         .collect();
                 }
             }
+            // No solid: each surface still counts for the material it is
+            // drawn in.
+            if q.materials.is_empty() {
+                let mut by: BTreeMap<String, f64> = BTreeMap::new();
+                for s in &shells {
+                    let name = model
+                        .materials
+                        .get(s.material)
+                        .map_or_else(|| own.clone(), |m| m.name.clone());
+                    *by.entry(name).or_default() += s.area;
+                }
+                q.materials = by
+                    .into_iter()
+                    .map(|(material, a)| MaterialPart {
+                        material,
+                        volume_cuft: 0.0,
+                        area_sqft: a,
+                        layer_width_feet: None,
+                    })
+                    .collect();
+            }
         }
         if q.materials.is_empty() {
             q.materials.push(MaterialPart {

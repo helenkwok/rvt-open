@@ -5,8 +5,8 @@
 //! open part of a face set counts for its area only.
 
 use rvt::ifc::entities::{BrepTriangle, IfcEntity, SolidShape};
-use rvt::ifc::quantities::measure;
-use rvt::ifc::{IfcModel, Storey, body_geometry};
+use rvt::ifc::quantities::{ElementQuantities, measure};
+use rvt::ifc::{IfcModel, MaterialInfo, Storey, body_geometry};
 use rvt::mesh_csg::difference;
 use std::collections::HashMap;
 
@@ -78,7 +78,22 @@ fn face_set(v: Vec<V3>, t: &[[u32; 3]]) -> SolidShape {
 /// The net volume (cubic feet) and surface (square feet) the takeoff gives
 /// a proxy drawn as `shape`.
 fn quantities(shape: SolidShape) -> (Option<f64>, f64) {
+    let q = measured(shape, &[]);
+    (q.net_volume_cuft, q.surface_sqft)
+}
+
+/// What the takeoff gives a proxy drawn as `shape`, in a model with these
+/// materials.
+fn measured(shape: SolidShape, materials: &[&str]) -> ElementQuantities {
     let mut model = IfcModel::default();
+    for name in materials {
+        model.materials.push(MaterialInfo {
+            name: (*name).into(),
+            color_packed: Some(0),
+            transparency: None,
+            texture: None,
+        });
+    }
     model.building_storeys.push(Storey {
         name: "L1".into(),
         elevation_feet: 0.0,
@@ -100,9 +115,9 @@ fn quantities(shape: SolidShape) -> (Option<f64>, f64) {
         solid_shape: Some(shape),
         representation_map_index: None,
     });
-    let q = measure(&model);
+    let mut q = measure(&model);
     assert_eq!(q.len(), 1);
-    (q[0].net_volume_cuft, q[0].surface_sqft)
+    q.remove(0)
 }
 
 /// A 2 ft cube far from the origin whose top face is split at the middle of
@@ -190,6 +205,28 @@ fn closed_bodies_touching_an_open_face_keep_their_volume_in_any_order() {
         );
         assert!((surface - 13.0).abs() < 1e-9, "surface {surface}");
     }
+}
+
+#[test]
+fn an_open_face_counts_for_the_material_it_is_drawn_in() {
+    let v = vec![
+        [100.0, 100.0, 100.0],
+        [101.0, 100.0, 100.0],
+        [101.0, 101.0, 100.0],
+        [100.0, 101.0, 100.0],
+    ];
+    let shape = SolidShape::TriangulatedFaceSet {
+        vertices_feet: v,
+        triangles: vec![BrepTriangle(0, 1, 2), BrepTriangle(0, 2, 3)],
+        face_materials: vec![0, 0],
+        uvs: Vec::new(),
+    };
+    let q = measured(shape, &["Glass"]);
+    assert_eq!(q.net_volume_cuft, None);
+    assert_eq!(q.materials.len(), 1);
+    assert_eq!(q.materials[0].material, "Glass");
+    assert!((q.materials[0].area_sqft - 1.0).abs() < 1e-9);
+    assert_eq!(q.materials[0].volume_cuft, 0.0);
 }
 
 #[test]
