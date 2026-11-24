@@ -312,7 +312,8 @@ fn profile_field(
 
 /// Revit 2008 keeps a sweep's profile fields on the sweep itself, not in
 /// `m_profileData`: those of a form with no `m_profileData`.
-fn own_profile_fields(
+#[doc(hidden)]
+pub fn own_profile_fields(
     root: &Fields,
     sketch_ids: &mut BTreeMap<String, i64>,
     doubles: &mut BTreeMap<String, f64>,
@@ -335,8 +336,9 @@ fn target<'a>(x: &'a SchemaObject, v: &'a Value) -> Option<&'a Fields> {
     }
 }
 
+#[doc(hidden)]
 #[derive(Debug, Clone)]
-enum Curve {
+pub enum Curve {
     Line {
         origin: [f64; 3],
         dir: [f64; 3],
@@ -387,32 +389,36 @@ struct RawExtrusion {
 }
 
 /// A sweep, revolution, blend or swept blend.
-struct RawForm {
-    guid: Guid,
-    id: i64,
-    tag: u16,
-    part: u32,
-    kind: &'static str,
-    material: i64,
-    cutting: bool,
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct RawForm {
+    pub guid: Guid,
+    pub id: i64,
+    pub tag: u16,
+    pub part: u32,
+    pub kind: &'static str,
+    pub material: i64,
+    pub cutting: bool,
     /// Every `...SketchId` field of the form and its profile data.
-    sketch_ids: BTreeMap<String, i64>,
+    pub sketch_ids: BTreeMap<String, i64>,
     /// Its double parameters by id, and its profile offsets by field name.
-    doubles: BTreeMap<String, f64>,
+    pub doubles: BTreeMap<String, f64>,
     /// The path is picked 3D edges, not a sketch.
-    path3d: bool,
+    pub path3d: bool,
 }
 
-#[derive(Clone)]
-struct RawSketch {
-    plane: i64,
-    curves: Vec<i64>,
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct RawSketch {
+    pub plane: i64,
+    pub curves: Vec<i64>,
 }
 
-#[derive(Clone)]
-struct RawPlane {
-    m: [[f64; 3]; 3],
-    flip_z: bool,
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct RawPlane {
+    pub m: [[f64; 3]; 3],
+    pub flip_z: bool,
 }
 
 fn curve_of(x: &SchemaObject, names: &BTreeMap<u16, String>) -> Option<Curve> {
@@ -470,7 +476,8 @@ const MAX_NURBS_DEGREE: usize = 7;
 const MAX_NURBS_POINTS: usize = 1024;
 
 /// A `GNurbSpline` whose knots fit its control points and degree.
-fn nurbs_of(crv: &Fields, names: &BTreeMap<u16, String>) -> Option<Curve> {
+#[doc(hidden)]
+pub fn nurbs_of(crv: &Fields, names: &BTreeMap<u16, String>) -> Option<Curve> {
     if names.get(&crv.tag)?.as_str() != "GNurbSpline" {
         return None;
     }
@@ -543,7 +550,8 @@ fn nurbs_at(degree: usize, points: &[([f64; 3], f64)], knots: &[f64], s: f64) ->
 }
 
 /// The point of a Hermite spline at parameter `s`.
-fn hermite_at(nodes: &[(f64, [f64; 3], [f64; 3])], s: f64) -> [f64; 3] {
+#[doc(hidden)]
+pub fn hermite_at(nodes: &[(f64, [f64; 3], [f64; 3])], s: f64) -> [f64; 3] {
     let i = nodes
         .windows(2)
         .position(|w| s <= w[1].0)
@@ -1457,7 +1465,8 @@ fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 /// A curve's points from its start to its end, and whether it closes on
 /// itself, with the exact extreme points along each axis for bounding boxes.
-fn polyline(c: &Curve) -> (Vec<[f64; 3]>, bool, Vec<[f64; 3]>) {
+#[doc(hidden)]
+pub fn polyline(c: &Curve) -> (Vec<[f64; 3]>, bool, Vec<[f64; 3]>) {
     use std::f64::consts::TAU;
     match c {
         Curve::Line { origin, dir, t } => {
@@ -2503,17 +2512,18 @@ fn rotate_about(p: [f64; 3], o: [f64; 3], axis: [f64; 3], angle: f64) -> [f64; 3
 }
 
 /// What the solvers read besides the form.
-#[derive(Default)]
-struct SolveCtx {
-    sketches: BTreeMap<i64, RawSketch>,
-    planes: BTreeMap<i64, RawPlane>,
-    curves: BTreeMap<i64, Curve>,
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct SolveCtx {
+    pub sketches: BTreeMap<i64, RawSketch>,
+    pub planes: BTreeMap<i64, RawPlane>,
+    pub curves: BTreeMap<i64, Curve>,
     /// `Path3d` / `PathFromFace` curves by element id.
-    paths3d: BTreeMap<i64, Vec<Curve>>,
+    pub paths3d: BTreeMap<i64, Vec<Curve>>,
     /// `ProfileRefPlane.m_attachmentPoint` by element id.
-    profile_planes: BTreeMap<i64, [f64; 3]>,
+    pub profile_planes: BTreeMap<i64, [f64; 3]>,
     /// A profile family symbol's document curves, by host symbol id.
-    profile_curves: BTreeMap<i64, Vec<Curve>>,
+    pub profile_curves: BTreeMap<i64, Vec<Curve>>,
 }
 
 /// A profile family's loops (drawn in its document's XY plane) placed on the
@@ -2565,7 +2575,8 @@ fn place_profile(
     )
 }
 
-fn solve_form(f: &RawForm, ctx: &SolveCtx) -> Result<(FamilySolid, Bounds), &'static str> {
+#[doc(hidden)]
+pub fn solve_form(f: &RawForm, ctx: &SolveCtx) -> Result<(FamilySolid, Bounds), &'static str> {
     let (sketches, planes, curves) = (&ctx.sketches, &ctx.planes, &ctx.curves);
     let sketch = |name: &str| -> Result<&RawSketch, &'static str> {
         let id = f.sketch_ids.get(name).ok_or("sketch_field")?;
@@ -2958,45 +2969,6 @@ fn solve_form(f: &RawForm, ctx: &SolveCtx) -> Result<(FamilySolid, Bounds), &'st
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_2008_sweep_reads_its_profile_fields_from_itself() {
-        let fields = |values: Vec<(&str, Value)>| Fields {
-            tag: 0,
-            span: 0..0,
-            spans: vec![0..0; values.len()],
-            values: values
-                .into_iter()
-                .map(|(n, v)| (n.to_string(), v))
-                .collect(),
-        };
-        let own = fields(vec![
-            ("m_id", Value::Id(50)),
-            ("m_yOffset", Value::Float(0.5)),
-            ("m_pathSketchId", Value::Id(51)),
-            ("m_profileSketchId", Value::Id(-1)),
-            ("m_profileFamSymId", Value::Id(40)),
-            ("m_profileRefPlaneId", Value::Id(52)),
-            ("m_flippedX", Value::Bool(true)),
-            ("m_maxSegmentAngle", Value::Float(2.5)),
-        ]);
-        let (mut ids, mut doubles) = (BTreeMap::new(), BTreeMap::new());
-        own_profile_fields(&own, &mut ids, &mut doubles);
-        assert_eq!(ids.get("m_profileFamSymId"), Some(&40));
-        assert_eq!(ids.get("m_profileRefPlaneId"), Some(&52));
-        assert_eq!(ids.len(), 2, "{ids:?}");
-        assert_eq!(doubles.get("m_yOffset"), Some(&0.5));
-        assert_eq!(doubles.get("m_flippedX"), Some(&1.0));
-        assert!(!doubles.contains_key("m_maxSegmentAngle"));
-        // A later sweep's fields are in `m_profileData`: its own are not read.
-        let later = fields(vec![
-            ("m_profileData", Value::List(Vec::new())),
-            ("m_profileFamSymId", Value::Id(7)),
-        ]);
-        let (mut ids, mut doubles) = (BTreeMap::new(), BTreeMap::new());
-        own_profile_fields(&later, &mut ids, &mut doubles);
-        assert!(ids.is_empty() && doubles.is_empty());
-    }
 
     fn square(z: f64) -> Vec<(Vec<[f64; 3]>, bool)> {
         let c = [[0.0, 0.0, z], [2.0, 0.0, z], [2.0, 1.0, z], [0.0, 1.0, z]];
@@ -3397,155 +3369,6 @@ mod probe_forms {
         );
         assert!((bbox[1][0] - 2.5).abs() < 1e-9 && (bbox[0][0]).abs() < 1e-9);
         assert!((bbox[1][1] - 2.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn a_u_shaped_path_is_swept_from_the_segment_beside_its_profile() {
-        let (mut sk, mut pl, mut cv) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-        // The plane x = 1 crosses the path's first and last segments; the
-        // profile sits on the last.
-        let profile = ring(&[
-            [1.0, 1.5, -0.5],
-            [1.0, 2.5, -0.5],
-            [1.0, 2.5, 0.5],
-            [1.0, 1.5, 0.5],
-        ]);
-        sketch_of(
-            10,
-            20,
-            [1.0, 0.0, 0.0],
-            &profile,
-            100,
-            &mut sk,
-            &mut pl,
-            &mut cv,
-        );
-        let path = [
-            ([0.0, 0.0, 0.0], [4.0, 0.0, 0.0]),
-            ([4.0, 0.0, 0.0], [4.0, 2.0, 0.0]),
-            ([4.0, 2.0, 0.0], [0.0, 2.0, 0.0]),
-        ];
-        sketch_of(
-            11,
-            21,
-            [0.0, 0.0, 1.0],
-            &path,
-            200,
-            &mut sk,
-            &mut pl,
-            &mut cv,
-        );
-        let f = form(
-            "sweep",
-            &[("m_profileSketchId", 10), ("m_pathSketchId", 11)],
-            &[],
-        );
-        let (solid, bbox) = solve_form(&f, &ctx_of(sk, pl, cv)).unwrap();
-        let v = solid_volume(&solid).abs();
-        assert!((v - 10.0).abs() < 1e-9, "volume {v}");
-        assert!((bbox[0][1] + 0.5).abs() < 1e-9 && (bbox[1][1] - 2.5).abs() < 1e-9);
-        assert!((bbox[0][0]).abs() < 1e-9 && (bbox[1][0] - 4.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn splines_are_drawn_through_their_points() {
-        // A quarter circle as a rational quadratic NURBS.
-        let w = std::f64::consts::FRAC_1_SQRT_2;
-        let quarter = Curve::Nurbs {
-            degree: 2,
-            points: vec![
-                ([1.0, 0.0, 0.0], 1.0),
-                ([1.0, 1.0, 0.0], w),
-                ([0.0, 1.0, 0.0], 1.0),
-            ],
-            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
-            t: [0.0, 1.0],
-        };
-        let (pts, closed, _) = polyline(&quarter);
-        assert!(!closed && pts.len() > 4, "{}", pts.len());
-        for p in &pts {
-            assert!((dot(*p, *p).sqrt() - 1.0).abs() < 1e-9, "{p:?}");
-        }
-        assert!(dist(pts[0], [1.0, 0.0, 0.0]) < 1e-12);
-        assert!(dist(*pts.last().unwrap(), [0.0, 1.0, 0.0]) < 1e-12);
-        // A Hermite spline with its tangents along its chord is that line,
-        // kept as its two ends.
-        let straight = Curve::Hermite {
-            nodes: vec![
-                (0.0, [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]),
-                (1.0, [2.0, 0.0, 0.0], [2.0, 0.0, 0.0]),
-                (2.0, [4.0, 0.0, 0.0], [2.0, 0.0, 0.0]),
-            ],
-            t: [0.0, 2.0],
-        };
-        let (pts, _, _) = polyline(&straight);
-        assert_eq!(pts, vec![[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]]);
-        // Between nodes it follows the cubic: tangents (0, 3) and (0, -3)
-        // over a unit span bulge 0.75 at the middle.
-        // A short span between two long ones is sampled too.
-        let spike = Curve::Hermite {
-            nodes: vec![
-                (0.0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
-                (0.001, [0.001, 1.0, 0.0], [1.0, 0.0, 0.0]),
-                (0.002, [0.002, 0.0, 0.0], [1.0, 0.0, 0.0]),
-                (1.0, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
-            ],
-            t: [0.0, 1.0],
-        };
-        let (pts, _, ext) = polyline(&spike);
-        assert!(pts.iter().any(|p| (p[1] - 1.0).abs() < 1e-12), "{pts:?}");
-        assert!(ext.len() >= pts.len());
-        // A degree beyond the limit keeps the straight line.
-        let names: BTreeMap<u16, String> = [(1, "GNurbSpline".to_string())].into();
-        let nurbs = |degree: i64| Fields {
-            tag: 1,
-            span: 0..0,
-            spans: vec![0..0; 5],
-            values: vec![
-                (
-                    "m_endParams".into(),
-                    Value::List(vec![Value::Float(0.0), Value::Float(1.0)]),
-                ),
-                ("m_Degree".into(), Value::Int(degree)),
-                (
-                    "m_ctrlPoints".into(),
-                    Value::List(
-                        (0..=degree)
-                            .map(|i| {
-                                Value::Object(Fields {
-                                    tag: 2,
-                                    span: 0..0,
-                                    spans: vec![0..0; 2],
-                                    values: vec![
-                                        ("m_w".into(), Value::Float(1.0)),
-                                        (
-                                            "m_Point".into(),
-                                            Value::List(vec![Value::Float(i as f64); 3]),
-                                        ),
-                                    ],
-                                })
-                            })
-                            .collect(),
-                    ),
-                ),
-                (
-                    "m_Knots".into(),
-                    Value::List(
-                        (0..2 * (degree + 1))
-                            .map(|i| Value::Float(if i <= degree { 0.0 } else { 1.0 }))
-                            .collect(),
-                    ),
-                ),
-                ("m_Closed".into(), Value::Bool(false)),
-            ],
-        };
-        assert!(nurbs_of(&nurbs(3), &names).is_some());
-        assert!(nurbs_of(&nurbs(8), &names).is_none());
-        let bulge = [
-            (0.0, [0.0; 3], [0.0, 3.0, 0.0]),
-            (1.0, [1.0, 0.0, 0.0], [0.0, -3.0, 0.0]),
-        ];
-        assert!(dist(hermite_at(&bulge, 0.5), [0.5, 0.75, 0.0]) < 1e-12);
     }
 
     #[test]

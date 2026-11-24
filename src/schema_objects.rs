@@ -1007,7 +1007,8 @@ pub fn for_each_object(
 
 /// An object written without an id ([`IdWidth::Absent`]) takes its root's
 /// `m_id`, so every reader keys it by its ElementId as on later releases.
-fn take_element_id(object: &mut SchemaObject) {
+#[doc(hidden)]
+pub fn take_element_id(object: &mut SchemaObject) {
     if object.frame.header.width != IdWidth::Absent {
         return;
     }
@@ -1528,121 +1529,6 @@ mod tests {
             Some(&Value::Int(12))
         );
         assert!(docs.iter().all(|d| d.graph.exact));
-    }
-
-    /// Before Revit 2012 `ElementId` is tag 19 and tag 20 is `Identifier`,
-    /// the class it holds: an id field still reads as an id.
-    /// `objects` (class 7 payloads) framed as Revit 2008 writes them, with no
-    /// id: `Adler-32 · size · payload · size`.
-    fn id_less(objects: &[u32]) -> Vec<u8> {
-        let mut buf = Vec::new();
-        for x in objects {
-            let mut payload = 7u16.to_le_bytes().to_vec();
-            payload.extend(x.to_le_bytes());
-            let mut sum = simd_adler32::Adler32::new();
-            sum.write(&payload);
-            buf.extend(sum.finish().to_le_bytes());
-            buf.extend((payload.len() as u32).to_le_bytes());
-            buf.extend(&payload);
-            buf.extend((payload.len() as u32).to_le_bytes());
-        }
-        buf
-    }
-
-    #[test]
-    fn revit_2008_objects_have_no_id() {
-        assert_eq!(IdWidth::of_release(2008), IdWidth::Absent);
-        assert_eq!(IdWidth::of_release(2010), IdWidth::Narrow);
-        assert_eq!(IdWidth::of_release(0), IdWidth::Narrow);
-        let buf = id_less(&[1, 2, 3, 4, 5]);
-        let (found, gaps) = frames(&buf, IdWidth::Absent);
-        assert_eq!(found.len(), 5);
-        assert!(gaps.is_empty(), "{gaps:?}");
-        for (k, f) in found.iter().enumerate() {
-            let o = read_frame(&layouts(), "P", &buf, f.clone());
-            assert!(o.exact, "{:?}", o.stopped);
-            assert_eq!(
-                o.root().and_then(|r| r.get("m_x")),
-                Some(&Value::Int(k as i64 + 1))
-            );
-        }
-        // Read with a u32 id, each object takes the one before's trailing
-        // size for its id and overlaps it: every second one is lost.
-        let (narrow, _) = frames(&buf, IdWidth::Narrow);
-        assert_eq!(narrow.len(), 2);
-    }
-
-    #[test]
-    fn header_records_reads_id_less_records() {
-        let mut buf = Vec::new();
-        for x in [3u32, 4] {
-            let mut payload = 7u16.to_le_bytes().to_vec();
-            payload.extend(x.to_le_bytes());
-            buf.extend((payload.len() as u32).to_le_bytes());
-            buf.extend(&payload);
-            buf.extend((payload.len() as u32).to_le_bytes());
-        }
-        let got = header_records(&layouts(), "P", &buf, 0..buf.len(), IdWidth::Absent);
-        assert_eq!(got.records.len(), 2);
-        assert!(got.markers.is_empty() && got.rest.is_empty());
-        assert_eq!(
-            got.records[1].root().unwrap().get("m_x"),
-            Some(&Value::Int(4))
-        );
-    }
-
-    #[test]
-    fn an_id_less_object_takes_its_root_m_id() {
-        let mut classes = BTreeMap::new();
-        let object = |tag| SchemaFieldType::Object {
-            tag,
-            modifier: 0,
-            count: None,
-        };
-        let field = |name: &str, ty| SchemaField {
-            name: name.into(),
-            ty,
-            flags: 0,
-        };
-        let int = SchemaFieldType::Scalar {
-            kind: 4,
-            modifier: 0,
-            count: None,
-        };
-        for (tag, name, fields) in [
-            (19, "ElementId", vec![field("m_id", object(20))]),
-            (20, "Identifier", vec![field("m_id", int)]),
-            (8, "Elem", vec![field("m_id", object(19))]),
-        ] {
-            classes.insert(
-                tag,
-                SchemaLayout {
-                    tag,
-                    name: name.into(),
-                    base: None,
-                    fields,
-                },
-            );
-        }
-        let layouts = SchemaLayouts { classes };
-        let mut buf = 8u16.to_le_bytes().to_vec();
-        buf.extend(2368i32.to_le_bytes());
-        for (width, want) in [(IdWidth::Absent, 2368), (IdWidth::Narrow, 5)] {
-            let frame = Frame {
-                header: ObjectHeader {
-                    id: if width == IdWidth::Absent { 0 } else { 5 },
-                    width,
-                    adler: 0,
-                    size: buf.len() as u32,
-                    tag: 8,
-                },
-                span: 0..buf.len(),
-                payload: 0..buf.len(),
-            };
-            let mut o = read_frame(&layouts, "Partitions/0", &buf, frame);
-            take_element_id(&mut o);
-            assert_eq!(o.frame.header.id, want);
-        }
     }
 
     #[test]

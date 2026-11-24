@@ -194,6 +194,7 @@ contract  json_schema_contracts
 contract  material_textures
 real      memory_staging
 contract  project_count_fixtures
+contract  revit_2008_family_forms
 contract  spline_profile_steps
 contract  support_matrix
 contract  witness_registry skip=ifc_lite_gate_is_wired_and_version_pinned,ifcopenshell_gate_script_is_wired

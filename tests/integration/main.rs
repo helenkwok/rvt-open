@@ -271,6 +271,8 @@ mod reproducible_outputs;
 mod resave_stable_ids;
 #[path = "../resource_limits_cli.rs"]
 mod resource_limits_cli;
+#[path = "../revit_2008_family_forms.rs"]
+mod revit_2008_family_forms;
 #[path = "../revit_2016.rs"]
 mod revit_2016;
 #[path = "../revit_global_ids.rs"]
