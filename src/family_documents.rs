@@ -69,6 +69,8 @@ pub const SOLVED_BBOX_FRACTION: f64 = 0.01;
 pub struct FamilySolid {
     /// Of a revolution, a point on its axis and the axis's unit direction.
     pub revolution_axis: Option<[[f64; 3]; 2]>,
+    /// Of a revolution, the angle it turns through (radians).
+    pub revolution_sweep: f64,
     pub vertices: Vec<[f64; 3]>,
     pub triangles: Vec<[u32; 3]>,
     /// The host material element the form names, `None` for "by category".
@@ -483,14 +485,12 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         .is_ok_and(|b| b.version <= LAST_FACETED_BOX_RELEASE);
     let mut extrusions: Vec<RawExtrusion> = Vec::new();
     let mut forms: Vec<RawForm> = Vec::new();
-    // curves per document, 3D path curves and profile-plane
-    // attachment points, by element id.
+    // Curves per document; and sketches, planes, curves, 3D path curves
+    // and profile-plane attachment points by id space and element id (each
+    // keyed document numbers its own elements, as for the stored boxes
+    // below), so a form reads the geometry of its own document.
     let mut doc_curves: BTreeMap<Guid, BTreeMap<i64, Curve>> = BTreeMap::new();
-    let mut paths3d: BTreeMap<i64, Vec<Curve>> = BTreeMap::new();
-    let mut profile_planes: BTreeMap<i64, [f64; 3]> = BTreeMap::new();
-    let mut sketches: BTreeMap<i64, RawSketch> = BTreeMap::new();
-    let mut planes: BTreeMap<i64, RawPlane> = BTreeMap::new();
-    let mut curves: BTreeMap<i64, Curve> = BTreeMap::new();
+    let mut ctxs: BTreeMap<Option<Guid>, SolveCtx> = BTreeMap::new();
     // Stored boxes by id space and id: each keyed document numbers its own
     // elements, while a file without keyed sections (its nested families'
     // documents too) has one space, `None`.
@@ -514,7 +514,8 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     // Walls, and the openings (host wall, sketch) each document cuts.
     let mut walls: BTreeSet<(Guid, i64)> = BTreeSet::new();
     // Keyed by document and opening: a newer copy replaces an older one.
-    let mut openings: BTreeMap<(Guid, i64), Option<(i64, i64)>> = BTreeMap::new();
+    // (host wall, its sketch when the record names one)
+    let mut openings: BTreeMap<(Guid, i64), Option<(i64, Option<i64>)>> = BTreeMap::new();
     // A family file's deleted elements: see [`deleted_elements`].
     let deleted = if host_is_family {
         deleted_elements(rf)
@@ -840,7 +841,10 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                             }
                         }
                     }
-                    sketches.insert(id, RawSketch { plane, curves: ids });
+                    ctxs.entry(space)
+                        .or_default()
+                        .sketches
+                        .insert(id, RawSketch { plane, curves: ids });
                 }
                 ("SketchPlane", Some(_)) => {
                     let Some(trf) = root.get("m_oTrf").and_then(|t| target(x, t)) else {
@@ -859,7 +863,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                         };
                         m[r] = v;
                     }
-                    planes.insert(
+                    ctxs.entry(space).or_default().planes.insert(
                         id,
                         RawPlane {
                             m,
@@ -870,11 +874,13 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                 ("CurveElem", Some(g)) => {
                     if let Some(c) = curve_of(x, &names) {
                         doc_curves.entry(g).or_default().insert(id, c.clone());
-                        curves.insert(id, c);
+                        ctxs.entry(space).or_default().curves.insert(id, c);
                     } else {
                         // A newer copy that does not decode leaves no older
                         // copy's curve behind.
-                        curves.remove(&id);
+                        if let Some(c) = ctxs.get_mut(&space) {
+                            c.curves.remove(&id);
+                        }
                         if let Some(m) = doc_curves.get_mut(&g) {
                             m.remove(&id);
                         }
@@ -888,19 +894,19 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                         .filter_map(|o| curve_from_fields(o, &names))
                         .collect();
                     if !list.is_empty() {
-                        paths3d.insert(id, list);
+                        ctxs.entry(space).or_default().paths3d.insert(id, list);
                     }
                 }
                 ("SWall", Some(g)) => {
                     walls.insert((g, id));
                 }
                 ("Opening", Some(g)) => {
-                    let refs = id_of(root, "m_hostId").zip(id_of(root, "m_sketchId"));
+                    let refs = id_of(root, "m_hostId").map(|h| (h, id_of(root, "m_sketchId")));
                     openings.insert((g, id), refs);
                 }
                 ("ProfileRefPlane", Some(_)) => {
                     if let Some(p) = root.get("m_attachmentPoint").and_then(vec3_of) {
-                        profile_planes.insert(id, p);
+                        ctxs.entry(space).or_default().profile_planes.insert(id, p);
                     }
                 }
                 _ => {}
@@ -952,17 +958,49 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     // Void forms, with their box when they solve: a void cuts the
     // document's own solids only where its box meets theirs.
     let mut voids: Vec<(Guid, i64, Option<FamilySolid>)> = Vec::new();
+    // A form's profile family's curves, found through its own document's
+    // symbols when it is keyed (a sectionless file's, and a keyed file's
+    // host's, through the file's), kept with the form's id space.
+    for f in &forms {
+        let Some(sym) = f.sketch_ids.get("m_profileFamSymId") else {
+            continue;
+        };
+        let doc = match out.doc_symbol_family.get(&(f.guid, *sym)) {
+            Some(fam) => out.doc_family_guid.get(&(f.guid, *fam)),
+            None => out
+                .symbol_family
+                .get(sym)
+                .and_then(|fam| out.family_guid.get(fam)),
+        }
+        .and_then(|g| doc_curves.get(g));
+        if let Some(c) = doc {
+            ctxs.entry(space_of(f.guid))
+                .or_default()
+                .profile_curves
+                .insert(*sym, c.values().cloned().collect());
+        }
+    }
+    out.stats.paths_3d = ctxs.values().map(|c| c.paths3d.len()).sum();
+    out.stats.profile_families = ctxs.values().map(|c| c.profile_curves.len()).sum();
+    let no_ctx = SolveCtx::default();
+    let ctx_of = |g: Guid| ctxs.get(&space_of(g)).unwrap_or(&no_ctx);
     for e in &extrusions {
+        let SolveCtx {
+            sketches,
+            planes,
+            curves,
+            ..
+        } = ctx_of(e.guid);
         let doc = out.docs.entry(e.guid).or_default();
         if e.cutting {
             voids.push((
                 e.guid,
                 e.id,
-                extrusion_solid(e, &sketches, &planes, &curves).map(|(s, _)| s),
+                extrusion_solid(e, sketches, planes, curves).map(|(s, _)| s),
             ));
             continue;
         }
-        let solid = extrusion_solid(e, &sketches, &planes, &curves);
+        let solid = extrusion_solid(e, sketches, planes, curves);
         let Some((solid, bbox)) = solid else {
             *doc.undecoded.entry("extrusion_geometry").or_default() += 1;
             doc.form_failures.insert(e.id, "geometry");
@@ -974,7 +1012,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
         // Before 2012 the stored box may lie inside the decoded one by the
         // arcs' facet sag, never outside it.
         let sag = if faceted_boxes {
-            ARC_FACET_SAG * max_arc_radius(e, &sketches, &curves)
+            ARC_FACET_SAG * max_arc_radius(e, sketches, curves)
         } else {
             0.0
         };
@@ -994,36 +1032,14 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             ..solid
         });
     }
-    let mut profile_curves = BTreeMap::new();
     for f in &forms {
-        if let Some(sym) = f.sketch_ids.get("m_profileFamSymId") {
-            let doc = out
-                .symbol_family
-                .get(sym)
-                .and_then(|fam| out.family_guid.get(fam))
-                .and_then(|g| doc_curves.get(g));
-            if let Some(c) = doc {
-                profile_curves.insert(*sym, c.values().cloned().collect());
-            }
-        }
-    }
-    out.stats.paths_3d = paths3d.len();
-    out.stats.profile_families = profile_curves.len();
-    let ctx = SolveCtx {
-        sketches,
-        planes,
-        curves,
-        paths3d,
-        profile_planes,
-        profile_curves,
-    };
-    for f in &forms {
+        let ctx = ctx_of(f.guid);
         let doc = out.docs.entry(f.guid).or_default();
         if f.cutting {
-            voids.push((f.guid, f.id, solve_form(f, &ctx).ok().map(|(s, _)| s)));
+            voids.push((f.guid, f.id, solve_form(f, ctx).ok().map(|(s, _)| s)));
             continue;
         }
-        match solve_form(f, &ctx) {
+        match solve_form(f, ctx) {
             Err(why) => {
                 *doc.undecoded.entry(f.kind).or_default() += 1;
                 doc.form_failures.insert(f.id, why);
@@ -1048,7 +1064,15 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                         // its corners and across its flats).
                         || solid
                             .revolution_axis
-                            .is_some_and(|a| revolution_box_matches(stored, &bbox, a, &solid.vertices))
+                            .is_some_and(|a| {
+                                revolution_box_matches(
+                                    stored,
+                                    &bbox,
+                                    a,
+                                    solid.revolution_sweep,
+                                    &solid.vertices,
+                                )
+                            })
                         // A faceted stored box lies inside by the facet sag
                         // of the form's arcs, the revolution's own among them
                         // (its radius is at most the form's size).
@@ -1056,7 +1080,7 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
                             && box_matches(
                                 stored,
                                 &bbox,
-                                ARC_FACET_SAG * size.max(form_arc_radius(f, &ctx)),
+                                ARC_FACET_SAG * size.max(form_arc_radius(f, ctx)),
                             ))
                 });
                 if !matches {
@@ -1165,15 +1189,17 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
             continue;
         };
         let reach = dist(b[0], b[1]) + 1.0;
-        let cut_by: Vec<i64> = openings
+        // An opening without a sketch is not cut, and counted as such.
+        let cut_by: Vec<Option<i64>> = openings
             .iter()
             .filter_map(|((og, _), refs)| match refs {
                 Some((h, k)) if og == g && h == wall => Some(*k),
                 _ => None,
             })
             .collect();
+        let ctx = ctx_of(*g);
         for sketch in &cut_by {
-            let cutter = ctx.sketches.get(sketch).and_then(|sk| {
+            let cutter = sketch.and_then(|k| ctx.sketches.get(&k)).and_then(|sk| {
                 let n = plane_normal(sk, &ctx.planes)?;
                 let (pieces, _) = sketch_pieces(sk, &ctx.curves)?;
                 prism(&loops(&pieces)?, n, -reach, reach)
@@ -1207,10 +1233,19 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
 /// GUID) are two elements, and nothing in the records links them. Only the
 /// one unambiguous pairing is made.
 fn adopt_orphan_document(out: &mut FamilyDocuments, family_owner: &BTreeMap<i64, i64>, host: i64) {
+    // A family's own document keeps its forms even when a void cut them
+    // away whole (it is still that family's document); an orphan is adopted
+    // only for what it draws, so one whose forms were all cut away does not
+    // count, nor make another orphan's pairing ambiguous.
     let has_forms = |g: &Guid| {
         out.docs
             .get(g)
             .is_some_and(|d| !d.solids.is_empty() || !d.unsolved_boxes.is_empty())
+    };
+    let draws = |g: &Guid| {
+        out.docs.get(g).is_some_and(|d| {
+            d.solids.iter().any(|s| !s.triangles.is_empty()) || !d.unsolved_boxes.is_empty()
+        })
     };
     let used: BTreeSet<i64> = out
         .instances
@@ -1227,7 +1262,7 @@ fn adopt_orphan_document(out: &mut FamilyDocuments, family_owner: &BTreeMap<i64,
         .iter()
         .filter(|(f, o)| **o < 0 && **f != host && !named.contains(f))
         .map(|(f, _)| *f)
-        .filter(|f| has_forms(&owned_document(*f)))
+        .filter(|f| draws(&owned_document(*f)))
         .collect();
     if let ([family], [root]) = (without.as_slice(), orphans.as_slice()) {
         out.family_guid.insert(*family, owned_document(*root));
@@ -1655,7 +1690,10 @@ impl Deleted {
     }
 }
 
-/// [`Deleted`] of `rf` (nothing deleted when the table does not read).
+/// [`Deleted`] of `rf` (nothing deleted when the table does not read, or
+/// reads with no element: a family always has elements, so an empty table
+/// tells nothing, and treating it as the live set would drop every form an
+/// older partition holds).
 pub(crate) fn deleted_elements(rf: &mut RevitFile) -> Deleted {
     let declared = crate::elem_table::declared_element_ids(rf)
         .map(|ids| ids.into_iter().map(i64::from).collect())
@@ -1781,13 +1819,22 @@ fn mesh_volume(vertices: &[[f64; 3]], triangles: &[[u32; 3]]) -> f64 {
 /// axis it may lie inside the solved box by [`REVOLUTION_FACET_SAG`] of the
 /// revolution's radius (its vertices' farthest distance from its axis),
 /// scaled by how far that axis is from the revolution's (none along the axis
-/// itself, where facets change nothing).
-fn revolution_box_matches(
+/// itself, where facets change nothing). A revolution through less than a
+/// sixth of a turn (`sweep`, radians) is at least one facet across, so it
+/// lies inside by at most that one chord's sag, 1 - cos(sweep / 2).
+#[doc(hidden)]
+pub fn revolution_box_matches(
     stored: &Bounds,
     solved: &Bounds,
     [on_axis, axis]: [[f64; 3]; 2],
+    sweep: f64,
     vertices: &[[f64; 3]],
 ) -> bool {
+    let share = if sweep < std::f64::consts::PI / 3.0 {
+        1.0 - (sweep / 2.0).cos()
+    } else {
+        REVOLUTION_FACET_SAG
+    };
     let radius = vertices
         .iter()
         .map(|v| {
@@ -1798,7 +1845,7 @@ fn revolution_box_matches(
         .fold(0.0, f64::max);
     (0..3).all(|k| {
         let radial = (1.0 - axis[k] * axis[k]).max(0.0).sqrt();
-        let sag = REVOLUTION_FACET_SAG * radius * radial;
+        let sag = share * radius * radial;
         let ok = |gap: f64| (-BBOX_TOLERANCE..=BBOX_TOLERANCE + sag).contains(&gap);
         ok(stored[0][k] - solved[0][k]) && ok(solved[1][k] - stored[1][k])
     })
@@ -2360,6 +2407,7 @@ fn solve_form(f: &RawForm, ctx: &SolveCtx) -> Result<(FamilySolid, Bounds), &'st
             Ok((
                 FamilySolid {
                     revolution_axis: Some([o, d]),
+                    revolution_sweep: sweep.abs(),
                     ..solid
                 },
                 bbox,

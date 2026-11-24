@@ -53,6 +53,8 @@ pub const NESTED_DOCUMENT_SCALED_BODY_SOURCE: &str = "family_nested_document_sca
 const NESTED_SCALE_LIMITS: (f64, f64) = (0.2, 5.0);
 /// A body within this fraction of its stored box fits it.
 const NESTED_FACET_ALLOWANCE: f64 = 0.05;
+/// A solved factor above 1 by no more than this is rounding, not growth.
+const NESTED_ROUNDOFF: f64 = 1e-6;
 /// How well a turn must tell a body's own axes apart to shrink it along them
 /// (the determinant of `|l|^T |l|` over the axes solved: 1 on the axes, 0.41
 /// at 25 degrees, 0.25 at 60, 0.1 at about 36 and 54, 0 at 45).
@@ -1034,10 +1036,11 @@ pub fn stretch_nested_to_box(
         return NestedStretch::Fits;
     }
     // Only a shrink: a body larger than its box along one own axis and
-    // smaller along another is another shape.
+    // smaller along another is another shape (the facet allowance decides
+    // only whether to leave the whole body as it is, above).
     if !factor
         .iter()
-        .all(|f| (NESTED_SCALE_LIMITS.0..=1.0 + NESTED_FACET_ALLOWANCE).contains(f))
+        .all(|f| (NESTED_SCALE_LIMITS.0..=1.0 + NESTED_ROUNDOFF).contains(f))
     {
         return NestedStretch::BeyondLimits;
     }

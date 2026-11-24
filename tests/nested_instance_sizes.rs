@@ -301,16 +301,34 @@ fn never_stretches_up() {
         [0.0; 3],
         [1.3, 0.75, 1.0],
     );
-    let mut vs = plank.placed(&plank.map);
-    let before = vs.clone();
-    let stored = plank.stored(&plank.map);
-    let turned_body = bbox(&plank.stored_unshrunk());
-    assert!((0..3).all(|k| stored[0][k] >= turned_body[0][k] && stored[1][k] <= turned_body[1][k]));
-    assert_eq!(
-        stretch_nested_to_box(&mut vs, stored, &plank.map),
-        NestedStretch::BeyondLimits
-    );
-    assert_eq!(vs, before);
+    // Grown by a few percent only, within the facet allowance: still another
+    // shape once another axis shrinks, never an enlargement.
+    for grown in [1.3, 1.03125] {
+        let plank = Case {
+            factors: [grown, 0.75, 1.0],
+            ..Case::new(
+                "plank",
+                &[([0.0, 0.0, 0.0], [1.0, 4.0, 0.5])],
+                plank.map.0,
+                [0.0; 3],
+                [1.0; 3],
+            )
+        };
+        let mut vs = plank.placed(&plank.map);
+        let before = vs.clone();
+        let stored = plank.stored(&plank.map);
+        let turned_body = bbox(&plank.stored_unshrunk());
+        assert!(
+            (0..3).all(|k| stored[0][k] >= turned_body[0][k] && stored[1][k] <= turned_body[1][k]),
+            "{grown}"
+        );
+        assert_eq!(
+            stretch_nested_to_box(&mut vs, stored, &plank.map),
+            NestedStretch::BeyondLimits,
+            "{grown}"
+        );
+        assert_eq!(vs, before, "{grown}");
+    }
 }
 
 impl Case {
