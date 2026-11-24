@@ -762,6 +762,10 @@ jobs:
       - name: Family samples for the demo gallery
         uses: ./.github/actions/fetch-corpus
         with: { repository: phi-ag/rvt, path: _corpus }
+      # This project's tiny reference models (release assets, MIT): the gallery's stairs, curtain wall, doors, rooms and other examples.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
+      - run: tools/ci/fetch-tiny-models.sh _tiny
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _bim4lca, key: "bim4lca-office-terrain-${{ hashFiles('research/bim4lca-models.tsv') }}" }
       # Read by byte range from the archive and checked against its pin; an unreachable host skips that test.
@@ -778,10 +782,10 @@ jobs:
           pnpm install --frozen-lockfile
           ../tools/ci/retry.sh 3 pnpm exec playwright install --with-deps chromium
           pnpm run build
-          for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt; do
+          for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt I_Single-Flush.rfa rac_basic_sample_family_2024.rfa tiny-2026-13-stairs.rvt tiny-2024-14-curtain-wall.rvt tiny-2024-16-door-window-flips.rvt tiny-2025-12-columns-beams.rvt tiny-2024-21-mep-basics.rvt tiny-2025-22-families.rvt tiny-2023-4-rooms.rvt tiny-2018-1-hip-roof.rvt; do
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          specs=(tests/viewer-regression.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts)
+          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts)
           if [ "${{ matrix.leg }}" = 2 ]; then
             pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
           else

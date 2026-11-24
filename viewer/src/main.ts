@@ -73,6 +73,16 @@ const exportGlbBtn = $('export-glb') as HTMLButtonElement;
 const exportIfcBtn = $('export-ifc') as HTMLButtonElement;
 const exportSvgBtn = $('export-svg') as HTMLButtonElement;
 const exportPdf3dBtn = $('export-pdf3d') as HTMLButtonElement;
+/** Exports the wasm build writes from the file itself, as rvt-ifc does, in the worker. */
+const fileExportBtns = (
+  [
+    ['export-ifcx', 'ifcx', '.ifcx', 'application/json', 'IFCX'],
+    ['export-ifcx-appearance', 'ifcx-appearance', '.appearance.ifcx', 'application/json', 'IFCX appearance layer'],
+    ['export-frag', 'frag', '.frag', 'application/octet-stream', 'Fragments'],
+    ['export-usdc', 'usdc', '.usdc', 'application/octet-stream', 'OpenUSD'],
+    ['export-appearance', 'appearance', '.appearance.json', 'application/json', 'appearance assets'],
+  ] as const
+).map(([id, format, ext, type, label]) => ({ btn: $(id) as HTMLButtonElement, format, ext, type, label }));
 const exportQualityEl = $('export-quality');
 const exportModeEl = $('export-mode') as HTMLSelectElement;
 const savedMeshesEl = $('saved-meshes') as HTMLInputElement;
@@ -1439,6 +1449,8 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
   exportIfcBtn.disabled = true;
   exportSvgBtn.disabled = true;
   exportPdf3dBtn.disabled = true;
+  for (const e of fileExportBtns) e.btn.disabled = true;
+  appearanceFor = null;
   setExportHint('Exports unlock when the file is read');
   downloadDiagnosticsBtn.disabled = true;
   downloadScheduleBtn.disabled = true;
@@ -1632,6 +1644,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     exportIfcBtn.disabled = false;
     exportSvgBtn.disabled = false;
     exportPdf3dBtn.disabled = false;
+    for (const e of fileExportBtns) e.btn.disabled = false;
     setExportHint(null);
     downloadDiagnosticsBtn.disabled = false;
     // The schedules follow the model: an element schedule whenever any
@@ -2993,8 +3006,111 @@ function layersGroup(layers: PanelLayers): HTMLElement {
   return box;
 }
 
+/** What the element-info panel shows of a material's render appearance. */
+interface MaterialLook {
+  asset: string | null;
+  schema: string | null;
+  swatch: string | null;
+  bitmaps: string[];
+}
+
+/** The open file's appearances by material name, read once per file (appearance_json). */
+let appearanceFor: { file: File; looks: Promise<Map<string, MaterialLook>> } | null = null;
+
+interface AppearanceAssetJson {
+  class?: string;
+  schema?: string | null;
+  properties?: AppearancePropertyJson[];
+}
+interface AppearancePropertyJson {
+  name: string;
+  value?: unknown;
+  children?: AppearancePropertyJson[];
+  connected?: AppearanceAssetJson[];
+}
+
+/** The file names of every bitmap the asset's texture slots name, at any depth. */
+function bitmapNames(asset: AppearanceAssetJson | undefined): string[] {
+  const out = new Set<string>();
+  const stack: AppearancePropertyJson[] = [...(asset?.properties ?? [])];
+  while (stack.length > 0) {
+    const p = stack.pop()!;
+    if (p.name === 'unifiedbitmap_Bitmap' && typeof p.value === 'string') {
+      for (const path of p.value.split('|')) {
+        const base = path.split(/[\\/]/).pop()?.trim();
+        if (base) out.add(base);
+      }
+    }
+    stack.push(...(p.children ?? []));
+    for (const c of p.connected ?? []) stack.push(...(c.properties ?? []));
+  }
+  return [...out].sort();
+}
+
+function materialLooks(): Promise<Map<string, MaterialLook>> | null {
+  const file = currentFile;
+  if (!file || !worker) return null;
+  if (appearanceFor?.file !== file) {
+    const looks = convertInWorker('appearance').then((text) => {
+      const json = JSON.parse(text as string) as {
+        materials: { name: string; appearance_asset_id?: number | null }[];
+        assets: {
+          element_id: number;
+          name?: string | null;
+          asset: AppearanceAssetJson;
+          swatch?: { image: string } | null;
+        }[];
+      };
+      const byId = new Map(json.assets.map((a) => [a.element_id, a]));
+      const map = new Map<string, MaterialLook>();
+      for (const m of json.materials) {
+        const a = m.appearance_asset_id != null ? byId.get(m.appearance_asset_id) : undefined;
+        if (!a) continue;
+        map.set(m.name, {
+          asset: a.name ?? null,
+          schema: a.asset.schema ?? null,
+          swatch: a.swatch?.image ? `data:image/png;base64,${a.swatch.image}` : null,
+          bitmaps: bitmapNames(a.asset),
+        });
+      }
+      return map;
+    });
+    appearanceFor = { file, looks };
+    // A failed read is not retried for this file; the panel just shows no appearance.
+    looks.catch(() => undefined);
+  }
+  return appearanceFor.looks;
+}
+
+/** Adds the material's render appearance (swatch, schema, bitmaps) to its group once read. */
+function addAppearance(box: HTMLElement, name: string): void {
+  const looks = materialLooks();
+  if (!looks) return;
+  void looks
+    .then((map) => {
+      const look = map.get(name);
+      if (!look || !box.isConnected) return;
+      const row = document.createElement('div');
+      row.className = 'info-appearance';
+      row.dataset.appearance = look.schema ?? '';
+      if (look.swatch) {
+        const img = document.createElement('img');
+        img.className = 'info-swatch';
+        img.src = look.swatch;
+        img.alt = `Render appearance swatch of ${name}`;
+        row.appendChild(img);
+      }
+      box.appendChild(row);
+      if (look.asset) box.appendChild(infoRow('Appearance', look.asset));
+      if (look.schema) box.appendChild(infoRow('Schema', look.schema));
+      if (look.bitmaps.length > 0) box.appendChild(infoRow('Bitmaps', look.bitmaps.join(', ')));
+    })
+    .catch(() => undefined);
+}
+
 function materialGroup(material: PanelMaterial): HTMLElement {
   const box = infoGroup('material', 'Material');
+  addAppearance(box, material.name);
   const shared = `${material.element_count} element${material.element_count === 1 ? '' : 's'}`;
   if (!sceneSupportsHighlight()) {
     box.appendChild(infoRow(material.name, shared));
@@ -4577,6 +4693,7 @@ const drawing = initDrawing({
     exportIfcBtn,
     exportSvgBtn,
     exportPdf3dBtn,
+    ...fileExportBtns.map((e) => e.btn),
     downloadDiagnosticsBtn,
     downloadScheduleBtn,
     downloadRoomsBtn,
@@ -4823,6 +4940,57 @@ exportPdf3dBtn.addEventListener('click', () => {
   })();
 });
 
+/**
+ * Runs one of the worker's file exports (`convert` in worker.ts) on the open
+ * file, with the page's saved-meshes option, and resolves with its text or
+ * bytes. The worker reads the file again, as the command line does.
+ */
+let convertReq = 0;
+async function convertInWorker(format: (typeof fileExportBtns)[number]['format']): Promise<string | Uint8Array> {
+  const file = currentFile;
+  const w = worker;
+  if (!file || !w) throw new Error('no file is open');
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const req = ++convertReq;
+  return new Promise((resolve, reject) => {
+    const onMessage = (ev: MessageEvent): void => {
+      const m = ev.data as { type: string; req?: number; out?: string | Uint8Array; message?: string };
+      if ((m.type !== 'convert' && m.type !== 'convert-error') || m.req !== req) return;
+      w.removeEventListener('message', onMessage as EventListener);
+      if (m.type === 'convert') resolve(m.out as string | Uint8Array);
+      else reject(new Error(m.message ?? 'export failed'));
+    };
+    w.addEventListener('message', onMessage as EventListener);
+    w.postMessage(
+      { type: 'convert', bytes, format, options: { saved_meshes: savedMeshesEl.checked }, req },
+      [bytes.buffer as ArrayBuffer],
+    );
+  });
+}
+
+for (const e of fileExportBtns) {
+  e.btn.addEventListener('click', () => {
+    if (!model) return;
+    void (async () => {
+      const name = `${lastFileStem}${e.ext}`;
+      setStatus(`Writing ${name}…`);
+      setStatusBusy(true);
+      try {
+        const out = await convertInWorker(e.format);
+        download(name, new Blob([typeof out === 'string' ? out : (out.buffer as ArrayBuffer)], { type: e.type }));
+        setStatus(`Exported ${name}`);
+        toast(`Exported ${name}`, 'ok');
+      } catch (err) {
+        const message = (err as Error).message ?? String(err);
+        setStatus(`${e.label} export failed: ${message}`);
+        toast(`${e.label} export failed. ${message}`, 'bad');
+      } finally {
+        setStatusBusy(false);
+      }
+    })();
+  });
+}
+
 exportSvgBtn.addEventListener('click', () => {
   if (!model) return;
   void (async () => {
@@ -4948,6 +5116,8 @@ interface DemoEntry {
   element_count_hint?: number;
   thumbnail?: string;
   tags?: string[];
+  /** What the demo shows, in a few words, on its card. */
+  shows?: string;
 }
 
 interface DemoCatalog {
@@ -5127,13 +5297,19 @@ function fillDemoCard(card: HTMLElement, demo: DemoEntry, loadable: boolean): vo
     bits.push('Reference download, not opened by the RVT parser');
   }
   meta.textContent = bits.filter(Boolean).join(' · ');
-  card.title = [demo.provenance, demo.expected_quality_note]
+  card.title = [demo.description, demo.provenance, demo.expected_quality_note]
     .filter(Boolean)
     .join('\n');
   const quality = document.createElement('span');
   quality.className = `demo-quality ${qualityPillClass(demo.expected_quality)}`;
   quality.textContent = `Expected: ${demo.expected_quality ?? 'Unknown'}`;
   body.appendChild(title);
+  if (demo.shows) {
+    const shows = document.createElement('div');
+    shows.className = 'demo-shows';
+    shows.textContent = demo.shows;
+    body.appendChild(shows);
+  }
   body.appendChild(meta);
   card.appendChild(body);
   card.appendChild(quality);
@@ -5147,6 +5323,13 @@ async function initDemoGallery(): Promise<void> {
     }
     const catalog = (await response.json()) as DemoCatalog;
     renderDemoGallery(catalog);
+    // `?demo=<id>` opens that sample, as a click on its card does (the site's links use it).
+    const asked = new URLSearchParams(window.location.search).get('demo');
+    const demo = catalog.demos.find((d) => d.id === asked && d.loadable && d.available);
+    if (demo) {
+      const card = demoListEl.querySelector<HTMLElement>(`[data-demo-id="${CSS.escape(demo.id)}"]`) ?? undefined;
+      void loadDemoFile(demo, card);
+    }
   } catch (err) {
     demoAttributionEl.textContent =
       'Demo catalog unavailable in this build. Drop a local .rvt / .rfa instead.';
@@ -5259,7 +5442,7 @@ function renderSupportGrid(): void {
     const outside = document.createElement('li');
     outside.className = 'support-legend-note';
     outside.textContent =
-      'Revit 2014 and earlier: outside the 1.0 range (2024 to 2027), measured only on a contributor\'s local files.';
+      'Revit 2014 and earlier: outside the 1.0 range (2015 to 2027), measured only on a contributor\'s local files.';
     supportLegendEl.appendChild(outside);
   }
   const note = document.createElement('li');

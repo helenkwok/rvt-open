@@ -882,6 +882,12 @@ a {
   font-weight: var(--rv-fw-semibold);
   line-height: var(--rv-lh-tight);
 }
+.demo-card .demo-shows {
+  margin-top: 2px;
+  font-size: var(--rv-fs-xs);
+  line-height: var(--rv-lh-tight);
+  color: var(--rv-text);
+}
 .demo-card .demo-meta {
   margin-top: 3px;
   overflow: hidden;
@@ -1518,6 +1524,18 @@ a {
   font-size: var(--rv-fs-xs);
   font-weight: var(--rv-fw-bold);
   color: var(--rv-text);
+}
+/* A material's render appearance swatch, as Revit saved it with the asset. */
+.info-appearance {
+  padding: 6px 0;
+}
+.info-swatch {
+  display: block;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--rv-radius-sm, 4px);
+  border: 1px solid var(--rv-line-soft);
+  image-rendering: auto;
 }
 .info-row {
   display: grid;

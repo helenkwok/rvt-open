@@ -749,6 +749,8 @@ describing the error.
 | `openRvtBytesWithDiagnosticsAndLimits` | `bytes`, `limits` | `{ model, diagnostics }` | The same with explicit reader resource limits |
 | `convert_ifc` | `bytes`, `options` | `string` | IFC4 STEP document from file bytes |
 | `convert_ifcx` | `bytes`, `options` | `string` | IFCX document from file bytes |
+| `convert_ifcx_appearance` | `bytes`, `options` | `string` | The IFCX layer of render appearance assets over `convert_ifcx`'s document, as `rvt-ifc --ifcx-appearance` writes it |
+| `appearance_json` | `bytes` | `string` | Every material's render appearance asset as JSON, as `rvt-ifc --appearance` writes it: schema, properties, texture slots and swatch (PNG, base64) |
 | `convert_frag` | `bytes`, `options` | `Uint8Array` | ThatOpen Fragments file from file bytes |
 | `convert_usda` | `bytes`, `options` | `string` | OpenUSD text from file bytes |
 | `convert_usdc` | `bytes`, `options` | `Uint8Array` | Binary OpenUSD from file bytes |

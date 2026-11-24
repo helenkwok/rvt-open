@@ -100,11 +100,14 @@
         <h2>In the browser</h2>
         <p>The <a href="viewer/">viewer</a> opens a Revit file inside the page with the WebAssembly build. Nothing is uploaded: the file is parsed in the tab and discarded when the tab closes. The page has no analytics, no CDNs and no telemetry, and its Content-Security-Policy limits connections to the page's own files. See the <a href="https://github.com/helenkwok/rvt-open/blob/main/docs/viewer-privacy-posture.md">viewer privacy posture</a>.</p>
         <ul class="ticks">
-          <li>Scene tree, categories and element properties</li>
-          <li>Export IFC, glTF, 3D PDF, plan SVG and CSV schedules</li>
+          <li>Scene tree, categories, element properties and saved parameters</li>
+          <li>Each material's render appearance: its swatch, schema and bitmaps</li>
+          <li>Floor plans, sections and elevations drawn from the 3D model</li>
+          <li>Export IFCX and its appearance layer, IFC4, Fragments, OpenUSD, glTF, 3D PDF, plan SVG and CSV schedules</li>
           <li>No account, no upload</li>
         </ul>
-        <p class="note">In the browser, wasm32 has a 4 GiB memory ceiling, so files over about 130 MB can exceed it. Use the command line for those.</p>
+        <p>Open a sample: <a href="viewer/?demo=tiny-stairs-2026">stairs</a>, <a href="viewer/?demo=tiny-curtain-wall-2024">a curtain wall</a>, <a href="viewer/?demo=tiny-doors-windows-2024">doors and windows in their wall</a>, <a href="viewer/?demo=door-family-2020">a door family in its sample wall</a>, <a href="viewer/?demo=rac-basic-2024">a family's materials and appearances</a>, <a href="viewer/?demo=tiny-rooms-2023">rooms</a> or <a href="viewer/?demo=core-interior-2024">a 15-level project</a>.</p>
+        <p class="note">The viewer runs the 64-bit decoder where the browser supports memory64 (up to 16 GiB) and the 32-bit one elsewhere (4 GiB); a browser can give a tab less. Use the command line for the largest files.</p>
         <p class="actions"><a class="button primary" href="viewer/">Open the viewer</a></p>
       </div>
       <div class="card" id="quick-start">

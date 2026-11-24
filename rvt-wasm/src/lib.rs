@@ -1216,6 +1216,33 @@ pub fn convert_usdc(bytes: &js_sys::Uint8Array, options: JsValue) -> Result<Vec<
     rvt::ifc::write_usdc_graph(&graph).map_err(err_str)
 }
 
+/// Every material's render appearance asset as JSON, as `rvt-ifc
+/// --appearance` writes it: each asset's schema and properties as saved, the
+/// assets in its texture slots (bitmaps with their library paths, scale and
+/// offset) and its swatch image (PNG, base64).
+#[wasm_bindgen]
+pub fn appearance_json(bytes: &js_sys::Uint8Array) -> Result<String, JsValue> {
+    let mut rf = open(bytes)?;
+    let appearance = rvt::appearance::read(&mut rf).map_err(err_str)?;
+    serde_json::to_string(&appearance).map_err(err_str)
+}
+
+/// The IFCX layer of render appearance assets over [`convert_ifcx`]'s file,
+/// as `rvt-ifc --ifcx-appearance` writes it.
+#[wasm_bindgen]
+pub fn convert_ifcx_appearance(
+    bytes: &js_sys::Uint8Array,
+    options: JsValue,
+) -> Result<String, JsValue> {
+    let p = parse_opts(options)?;
+    let mut rf = open(bytes)?;
+    let appearance = rvt::appearance::read(&mut rf).map_err(err_str)?;
+    let (graph, _, _) = ifc_pipeline(rf, &p.convert, true)?;
+    let (layer, _) =
+        rvt::ifc::write_ifcx_graph_appearance_layer(&graph, &appearance, None).map_err(err_str)?;
+    Ok(layer)
+}
+
 /// glTF binary, as `rvt-gltf [--saved-meshes]` writes it.
 #[wasm_bindgen]
 pub fn convert_glb(bytes: &js_sys::Uint8Array, options: JsValue) -> Result<Vec<u8>, JsValue> {

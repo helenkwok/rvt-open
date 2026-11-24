@@ -6,8 +6,10 @@
  * writes catalog.json + SVG thumbnails. Safe to run without the LFS
  * corpus — loadable RFAs are skipped with a warning; tier1 fixtures
  * copy from corpus/tier1/; real-project samples copy from
- * the magnetar-io/revit-test-datasets checkout (_project_corpus/) and are
- * refused when their bytes do not match the sha256 pinned in the catalog.
+ * the magnetar-io/revit-test-datasets checkout (_project_corpus/) and the
+ * tiny reference models from the release assets fixtures-tiny-1 and -2
+ * (tools/ci/fetch-tiny-models.sh _tiny) are refused when their bytes
+ * do not match the sha256 pinned in the catalog.
  *
  * Privacy: only redistributable files are staged. Nothing is uploaded.
  */
@@ -26,8 +28,10 @@ const thumbDir = path.join(publicDemos, 'thumbnails');
 
 /** Known in-repo tier1 fixtures. */
 const TIER1_IDS = new Set(['architectural-2024', 'structural-2023', 'mep-2024']);
-/** Catalog tag for MIT real-project samples (magnetar-io/revit-test-datasets). */
-const REAL_PROJECT_TAG = 'real-project';
+/** Catalog tags for MIT samples from magnetar-io/revit-test-datasets (projects and families). */
+const MAGNETAR_TAGS = ['real-project', 'magnetar'];
+/** Catalog tag for this project's tiny reference models (release assets, MIT). */
+const TINY_TAG = 'tiny-model';
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -103,20 +107,20 @@ function sha256File(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
-function stageRealProject(demo, destAbs) {
+/**
+ * Copies a pinned public sample (`source` names where it comes from, for the
+ * sidecar) after checking its sha256.
+ */
+function stagePinned(demo, destAbs, source) {
   const base = path.basename(demo.file);
   const envSample = process.env.RVT_VIEWER_SAMPLE;
   const candidates = [
     ...(demo.source_candidates ?? []),
     ...(envSample && path.basename(envSample) === base ? [envSample] : []),
-    path.join('_project_corpus', 'Revit', base),
   ];
   const src = resolveExisting(candidates);
   if (!src) {
-    return {
-      ok: false,
-      note: `real-project source missing for ${demo.id} (checkout magnetar-io/revit-test-datasets with LFS into _project_corpus/)`,
-    };
+    return { ok: false, note: `source missing for ${demo.id} (${source.missing})` };
   }
   if (demo.sha256) {
     const actual = sha256File(src);
@@ -128,11 +132,11 @@ function stageRealProject(demo, destAbs) {
     }
   }
   const size = copyFile(src, destAbs);
-  const licenseDest = destAbs.replace(/\.rvt$/i, '.license.json');
+  const licenseDest = destAbs.replace(/\.(rvt|rfa)$/i, '.license.json');
   const sidecar = {
-    source_url: 'https://github.com/magnetar-io/revit-test-datasets',
-    source_repo: 'magnetar-io/revit-test-datasets',
-    source_path: `Revit/${base}`,
+    source_url: source.url,
+    source_repo: source.repo,
+    source_path: source.path,
     license: 'MIT',
     sha256: demo.sha256 ?? sha256File(src),
     bytes: size,
@@ -177,8 +181,24 @@ function main() {
     let sizeBytes = demo.size_bytes ?? null;
     let stageNote = 'not staged';
 
-    if ((demo.tags ?? []).includes(REAL_PROJECT_TAG)) {
-      const result = stageRealProject(demo, destAbs);
+    const tags = demo.tags ?? [];
+    const pinned = MAGNETAR_TAGS.some((t) => tags.includes(t))
+      ? {
+          url: 'https://github.com/magnetar-io/revit-test-datasets',
+          repo: 'magnetar-io/revit-test-datasets',
+          path: demo.source_path ?? `Revit/${path.basename(demo.file)}`,
+          missing: 'checkout magnetar-io/revit-test-datasets with LFS into _project_corpus/',
+        }
+      : tags.includes(TINY_TAG)
+        ? {
+            url: 'https://github.com/helenkwok/rvt-open/releases',
+            repo: 'helenkwok/rvt-open',
+            path: demo.provenance,
+            missing: 'run tools/ci/fetch-tiny-models.sh _tiny',
+          }
+        : null;
+    if (pinned) {
+      const result = stagePinned(demo, destAbs, pinned);
       available = result.ok;
       sizeBytes = result.size ?? sizeBytes;
       stageNote = result.note;
