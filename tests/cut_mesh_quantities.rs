@@ -184,7 +184,10 @@ fn closed_bodies_touching_an_open_face_keep_their_volume_in_any_order() {
             t.iter().chain(&sheet).copied().collect()
         };
         let (volume, surface) = quantities(face_set(v.clone(), &tris));
-        assert!((volume.expect("measured") - 2.0).abs() < 1e-9, "sheet first {sheet_first}");
+        assert!(
+            (volume.expect("measured") - 2.0).abs() < 1e-9,
+            "sheet first {sheet_first}"
+        );
         assert!((surface - 13.0).abs() < 1e-9, "surface {surface}");
     }
 }
