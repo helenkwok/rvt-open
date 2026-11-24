@@ -201,26 +201,45 @@ fn mesh_shells(mesh: &Mesh) -> Option<Vec<Shell>> {
         }
     }
     // A shell is closed where each of its edges is run as often each way by
-    // its own triangles. One that is not (a triangle of a mesh drawn on both
-    // sides, cut off from its neighbours) encloses nothing: its tetrahedra
-    // to the origin are no volume, so it counts for its area only.
-    let mut open = vec![false; mesh.triangles.len()];
-    for list in users.chunk_by(|a, b| a.0 == b.0) {
-        let mut runs: Vec<(usize, i64)> = Vec::with_capacity(list.len());
-        for &(_, t) in list {
-            let root = find(&mut parent, t / 2);
-            let way = if t % 2 == 1 { 1 } else { -1 };
-            match runs.iter_mut().find(|(r, _)| *r == root) {
-                Some(r) => r.1 += way,
-                None => runs.push((root, way)),
+    // its own triangles. A closed surface can still fall apart into open
+    // pieces (a sliver welded flat adds two users to an edge, so the edge
+    // joins nothing): open shells are joined to every shell they share an
+    // edge with, and what is still open (a triangle of a mesh drawn on both
+    // sides, a surface) encloses nothing. Its tetrahedra to the origin are no
+    // volume, so it counts for its area only.
+    let open_roots = |parent: &mut Vec<usize>| -> Vec<bool> {
+        let mut open = vec![false; parent.len()];
+        for list in users.chunk_by(|a, b| a.0 == b.0) {
+            let mut runs: Vec<(usize, i64)> = Vec::with_capacity(list.len());
+            for &(_, t) in list {
+                let root = find(parent, t / 2);
+                let way = if t % 2 == 1 { 1 } else { -1 };
+                match runs.iter_mut().find(|(r, _)| *r == root) {
+                    Some(r) => r.1 += way,
+                    None => runs.push((root, way)),
+                }
+            }
+            for (root, net) in runs {
+                if net != 0 {
+                    open[root] = true;
+                }
             }
         }
-        for (root, net) in runs {
-            if net != 0 {
-                open[root] = true;
+        open
+    };
+    let open = open_roots(&mut parent);
+    if open.iter().any(|&o| o) {
+        for list in users.chunk_by(|a, b| a.0 == b.0) {
+            let roots: Vec<usize> = list.iter().map(|&(_, t)| find(&mut parent, t / 2)).collect();
+            if roots.iter().any(|&r| open[r]) {
+                for pair in roots.windows(2) {
+                    let (ra, rb) = (find(&mut parent, pair[0]), find(&mut parent, pair[1]));
+                    parent[ra] = rb;
+                }
             }
         }
     }
+    let open = open_roots(&mut parent);
     drop(users);
     let mut groups: BTreeMap<usize, (f64, f64, BTreeMap<usize, f64>)> = BTreeMap::new();
     for (i, &[a, b, c]) in mesh.triangles.iter().enumerate() {
