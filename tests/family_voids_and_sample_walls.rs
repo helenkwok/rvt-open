@@ -106,22 +106,31 @@ fn a_door_family_draws_its_sample_wall_with_the_opening() {
     assert_eq!(crossings(w, along, mid, hi[2] - 0.497), 2, "solid wall");
 }
 
-/// Faces a line across the wall through (`u` on axis `along`, height `z`)
-/// passes through.
+/// Points where a line across the wall through (`u` on axis `along`, height
+/// `z`) meets its faces: a hit on an edge two triangles share (or a corner)
+/// is one point, counted once, so the count does not depend on how the
+/// faces are triangulated.
 fn crossings(s: &FamilySolid, along: usize, u: f64, z: f64) -> usize {
-    s.triangles
+    let across = 1 - along;
+    let mut depths: Vec<f64> = s
+        .triangles
         .iter()
-        .filter(|t| {
-            let p = t.map(|i| {
-                let v = s.vertices[i as usize];
-                (v[along], v[2])
-            });
+        .filter_map(|t| {
+            let v = t.map(|i| s.vertices[i as usize]);
+            let p = v.map(|v| (v[along], v[2]));
             let side =
                 |a: (f64, f64), b: (f64, f64)| (b.0 - a.0) * (z - a.1) - (b.1 - a.1) * (u - a.0);
-            let (d0, d1, d2) = (side(p[0], p[1]), side(p[1], p[2]), side(p[2], p[0]));
-            (d0 > 0.0 && d1 > 0.0 && d2 > 0.0) || (d0 < 0.0 && d1 < 0.0 && d2 < 0.0)
+            let d = [side(p[1], p[2]), side(p[2], p[0]), side(p[0], p[1])];
+            let area: f64 = d.iter().sum();
+            let inside =
+                (d.iter().all(|x| *x >= 0.0) || d.iter().all(|x| *x <= 0.0)) && area.abs() > 1e-12;
+            // Where on the line: the barycentric mix of the corners' depths.
+            inside.then(|| (0..3).map(|i| d[i] / area * v[i][across]).sum())
         })
-        .count()
+        .collect();
+    depths.sort_by(f64::total_cmp);
+    depths.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    depths.len()
 }
 
 fn family_summary(name: &str) -> Option<rvt::ifc::family_file::FamilySummary> {
