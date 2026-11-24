@@ -1036,9 +1036,11 @@ pub fn read_with_host(rf: &mut RevitFile, host_is_family: bool) -> Result<Family
     for f in &forms {
         let ctx = ctx_of(f.guid);
         let doc = out.docs.entry(f.guid).or_default();
+        if f.cutting {
+            voids.push((f.guid, f.id, solve_form(f, ctx).ok().map(|(s, _)| s)));
+            continue;
+        }
         match solve_form(f, ctx) {
-            Err(_) if f.cutting => voids.push((f.guid, f.id, None)),
-            Ok((solid, _)) if f.cutting => voids.push((f.guid, f.id, Some(solid))),
             Err(why) => {
                 *doc.undecoded.entry(f.kind).or_default() += 1;
                 doc.form_failures.insert(f.id, why);
