@@ -332,13 +332,72 @@ pub fn write_frag_textures(
     } else if path.is_file() {
         std::fs::remove_file(&path)?;
     }
-    for name in earlier.iter().filter(|n| !now.contains(&n.as_str())) {
+    let gone: Vec<&String> = earlier
+        .iter()
+        .filter(|n| !now.contains(&n.as_str()))
+        .collect();
+    // an image another output in the folder still names (another `.frag`'s
+    // sidecar, an IFCX file) stays: names are content hashes, so outputs share.
+    let named = named_elsewhere(dir, &path, &gone);
+    for name in gone.into_iter().filter(|n| !named.contains(n)) {
         let file = dir.join(name);
         if file.is_file() {
             std::fs::remove_file(file)?;
         }
     }
     Ok(textures.map(|_| path))
+}
+
+/// Which of `names` a file in `dir` other than `except` contains, read in
+/// chunks. An unreadable file counts as naming them all.
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+fn named_elsewhere<'a>(
+    dir: &std::path::Path,
+    except: &std::path::Path,
+    names: &[&'a String],
+) -> Vec<&'a String> {
+    use std::io::Read;
+    let mut found: Vec<&String> = Vec::new();
+    if names.is_empty() {
+        return found;
+    }
+    let overlap = names.iter().map(|n| n.len()).max().unwrap_or(0);
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return names.to_vec();
+    };
+    for entry in entries.flatten() {
+        let file = entry.path();
+        if file == except || !file.is_file() {
+            continue;
+        }
+        let Ok(mut f) = std::fs::File::open(&file) else {
+            return names.to_vec();
+        };
+        let mut buf = vec![0u8; overlap];
+        let mut held = 0;
+        let mut chunk = vec![0u8; 1 << 20];
+        loop {
+            let n = match f.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => return names.to_vec(),
+            };
+            buf.truncate(held);
+            buf.extend_from_slice(&chunk[..n]);
+            for name in names {
+                if !found.contains(name) && buf.windows(name.len()).any(|w| w == name.as_bytes()) {
+                    found.push(name);
+                }
+            }
+            if found.len() == names.len() {
+                return found;
+            }
+            let keep = overlap.min(buf.len());
+            buf.drain(..buf.len() - keep);
+            held = buf.len();
+        }
+    }
+    found
 }
 
 /// A writer that counts the bytes it passes on.

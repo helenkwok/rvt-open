@@ -1778,6 +1778,7 @@ fn convert_all_with(
         "ifcx_ledger",
         "frag",
         "frag_stats",
+        "frag_textures",
         "usda",
         "usdc",
     ];

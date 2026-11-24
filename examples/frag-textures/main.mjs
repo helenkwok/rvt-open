@@ -1,5 +1,5 @@
 // Demo: a .frag with or without its texture sidecar, or a .glb, from one camera.
-// ?frag=/m.frag[&textures=0] | ?glb=/m.glb, &az=<deg>&el=<deg>&zoom=<factor>
+// ?frag=/m.frag[&textures=0][&dispose=1] | ?glb=/m.glb, &az=<deg>&el=<deg>&zoom=<factor>
 import * as THREE from "three";
 import * as FRAGS from "@thatopen/fragments";
 import workerUrl from "@thatopen/fragments/worker?url";
@@ -41,6 +41,7 @@ if (q.get("glb")) {
   const fragUrl = q.get("frag");
   const buffer = await (await fetch(fragUrl)).arrayBuffer();
   const fragments = new FRAGS.FragmentsModels(workerUrl);
+  let applied;
   if (q.get("textures") !== "0") {
     const url = new URL(`${fragUrl}.textures.json`, location.href);
     const res = await fetch(url);
@@ -49,7 +50,8 @@ if (q.get("glb")) {
     if (res.ok && (res.headers.get("content-type") ?? "").includes("json")) {
       const sidecar = await res.json();
       state.samplesWithUv = sidecar.samples.filter((s) => s.uv).length;
-      state.counts = (await applyFragTextures(fragments, "m", sidecar, url, buffer)).counts;
+      applied = await applyFragTextures(fragments, "m", sidecar, url, buffer);
+      state.counts = applied.counts;
       state.sidecar = "applied";
     } else {
       state.sidecar = "none";
@@ -63,7 +65,23 @@ if (q.get("glb")) {
     renderer.render(scene, camera);
     await new Promise((r) => setTimeout(r, 50));
   }
+  if (applied) {
+    state.images = await applied.images(); // rejects when an image fails
+    const textured = () => {
+      let n = 0;
+      model.object.traverse((o) => {
+        const m = Array.isArray(o.material) ? o.material[0] : o.material;
+        if (m?.userData?.fragTextured) n++;
+      });
+      return n;
+    };
+    state.texturedTiles = textured();
+    // ?dispose=1: take the textures off again (checks that every tile gets its material back)
+    if (q.get("dispose") === "1") {
+      applied.dispose();
+      state.texturedTilesAfterDispose = textured();
+    }
+  }
 }
-await new Promise((r) => setTimeout(r, 1500)); // images
 renderer.render(scene, camera);
 state.ready = true;

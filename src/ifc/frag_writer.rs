@@ -118,7 +118,7 @@ pub fn write_frag_graph_with(
     graph: &IfcxGraph,
     display: &super::gltf::DisplayOptions,
 ) -> Result<(Vec<u8>, FragStats), IfcxError> {
-    write_frag(graph, display).map(|(bytes, stats, _)| (bytes, stats))
+    write_frag(graph, display, false).map(|(bytes, stats, _)| (bytes, stats))
 }
 
 /// [`write_frag_graph_with`], and the textures the format cannot hold, as
@@ -132,7 +132,7 @@ pub fn write_frag_graph_textured(
     graph: &IfcxGraph,
     display: &super::gltf::DisplayOptions,
 ) -> Result<(Vec<u8>, FragStats, Option<FragTextures>), IfcxError> {
-    write_frag(graph, display)
+    write_frag(graph, display, true)
 }
 
 /// The `format` of the texture sidecar.
@@ -248,9 +248,12 @@ pub struct Projection {
     pub repeat_size_metres: [f64; 2],
 }
 
+/// `sidecar` off: the same `.frag` and counts, with no sidecar made (no
+/// image copies, coordinates or hash).
 fn write_frag(
     graph: &IfcxGraph,
     display: &super::gltf::DisplayOptions,
+    sidecar: bool,
 ) -> Result<(Vec<u8>, FragStats, Option<FragTextures>), IfcxError> {
     if let Some(e) = graph.errors.first() {
         return Err(IfcxError(e.clone()));
@@ -916,6 +919,7 @@ fn write_frag(
         &textured,
         &items,
         &mut stats,
+        sidecar,
     );
     Ok((frag, stats, sidecar))
 }
@@ -1058,6 +1062,7 @@ fn texture_sidecar(
     textured: &[(usize, u32, u32, u32, Option<&super::graph::UsdMesh>)],
     items: &[Item],
     stats: &mut FragStats,
+    keep: bool,
 ) -> Option<FragTextures> {
     use sha2::Digest;
     if textured.is_empty() {
@@ -1080,31 +1085,35 @@ fn texture_sidecar(
         let Some(texture) = info.texture.as_ref() else {
             continue;
         };
-        let file = image_of
-            .entry(m)
-            .or_insert_with(|| {
-                let mut name = format!("textures/{}", texture.file_name());
-                let mut n = 0;
-                loop {
-                    match images.iter().find(|(f, _)| *f == name) {
-                        None => {
-                            images.push((name.clone(), texture.image.clone()));
-                            break name;
-                        }
-                        Some((_, bytes)) if *bytes == texture.image => break name,
-                        Some(_) => {
-                            n += 1;
-                            let stem = texture.file_name();
-                            let stem = stem
-                                .rsplit_once('.')
-                                .map_or(stem.as_str(), |(s, _)| s)
-                                .to_string();
-                            name = format!("textures/{stem}-{n}.{}", texture.extension());
+        let file = if !keep {
+            String::new()
+        } else {
+            image_of
+                .entry(m)
+                .or_insert_with(|| {
+                    let mut name = format!("textures/{}", texture.file_name());
+                    let mut n = 0;
+                    loop {
+                        match images.iter().find(|(f, _)| *f == name) {
+                            None => {
+                                images.push((name.clone(), texture.image.clone()));
+                                break name;
+                            }
+                            Some((_, bytes)) if *bytes == texture.image => break name,
+                            Some(_) => {
+                                n += 1;
+                                let stem = texture.file_name();
+                                let stem = stem
+                                    .rsplit_once('.')
+                                    .map_or(stem.as_str(), |(s, _)| s)
+                                    .to_string();
+                                name = format!("textures/{stem}-{n}.{}", texture.extension());
+                            }
                         }
                     }
-                }
-            })
-            .clone();
+                })
+                .clone()
+        };
         repeat.insert(index as u32, texture.size_feet);
         entries.push(SidecarMaterial {
             material: *id,
@@ -1127,6 +1136,7 @@ fn texture_sidecar(
     stats.textured_materials = entries.len();
     let mut samples = Vec::new();
     let mut keys = std::collections::HashSet::new();
+    let mut counted = 0;
     for (item, mesh_item, sample, material, mesh) in textured {
         if !repeat.contains_key(material) {
             stats.textured_samples_skipped += 1;
@@ -1134,14 +1144,21 @@ fn texture_sidecar(
         }
         // one [u, v] per triangle corner, in the order the shell's profiles
         // list them: the order the public loader lays out a shell's vertices.
+        // (counted, not kept, without `keep`)
         let uv: Option<Vec<f32>> = mesh.map(|m| {
-            let mut uv = Vec::with_capacity(m.face_vertex_indices.len() / 3 * 6);
+            let mut uv = Vec::with_capacity(if keep {
+                m.face_vertex_indices.len() / 3 * 6
+            } else {
+                0
+            });
             for i in m.face_vertex_indices.chunks_exact(3).flatten() {
                 let c = m.st.get(*i as usize).copied().unwrap_or([f64::NAN; 2]);
                 if !c.iter().all(|x| x.is_finite()) {
                     stats.textured_corners_defaulted += 1;
                 }
-                uv.extend(c.map(|x| if x.is_finite() { x as f32 } else { 0.0 }));
+                if keep {
+                    uv.extend(c.map(|x| if x.is_finite() { x as f32 } else { 0.0 }));
+                }
             }
             uv
         });
@@ -1158,6 +1175,10 @@ fn texture_sidecar(
             stats.textured_samples_with_uvs += 1;
             None
         };
+        if !keep {
+            counted += 1;
+            continue;
+        }
         samples.push(SidecarSample {
             item: items[*item].id,
             mesh_item: *mesh_item,
@@ -1168,7 +1189,10 @@ fn texture_sidecar(
             projection,
         });
     }
-    stats.textured_samples = samples.len();
+    stats.textured_samples = samples.len() + counted;
+    if !keep {
+        return None;
+    }
     let digest = sha2::Sha256::digest(frag);
     Some(FragTextures {
         format: TEXTURE_SIDECAR_FORMAT,

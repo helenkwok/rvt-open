@@ -582,6 +582,12 @@ fn frag_sidecar_puts_the_images_back() {
             .iter()
             .any(|e| e["mapping"] == kept)
     );
+    // the entry point without the sidecar writes the same .frag and counts.
+    let (bytes, plain_stats) =
+        rvt::ifc::frag_writer::write_frag_graph_with(&graph, &display).expect("frag");
+    let (with, with_stats, _) = write_frag_graph_textured(&graph, &display).expect("frag");
+    assert_eq!(bytes, with);
+    assert_eq!(plain_stats, with_stats);
     // no textures: no sidecar, and one material per colour as before.
     let mut plain = m.clone();
     for mat in &mut plain.materials {
@@ -858,5 +864,43 @@ fn frag_sidecar_files_replace_an_earlier_runs() {
     assert_eq!(write(&plain), None);
     assert!(!sidecar.exists(), "no stale sidecar");
     assert_eq!(images(), vec!["keep.png".to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn frag_sidecar_keeps_images_another_output_names() {
+    use rvt::ifc::frag_writer::write_frag_graph_textured;
+    use rvt::ifc::{GraphOptions, IfcxGraph};
+    let dir = std::env::temp_dir().join(format!("rvt-frag-shared-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let write = |name: &str, m: &IfcModel| {
+        let graph = IfcxGraph::from_model(m, GraphOptions::default());
+        let (bytes, _, textures) =
+            write_frag_graph_textured(&graph, &Default::default()).expect("frag");
+        let frag = dir.join(name);
+        std::fs::write(&frag, bytes).expect("frag");
+        rvt::cli::write_frag_textures(&frag, textures.as_ref()).expect("sidecar");
+    };
+    let images = || {
+        std::fs::read_dir(dir.join("textures"))
+            .expect("dir")
+            .count()
+    };
+    let m = model();
+    write("a.frag", &m);
+    write("b.frag", &m);
+    assert_eq!(images(), 2, "both outputs share the two images");
+    // a loses its textures: b still names both images, so both stay.
+    let mut plain = m.clone();
+    for mat in &mut plain.materials {
+        mat.texture = None;
+    }
+    write("a.frag", &plain);
+    assert!(!dir.join("a.frag.textures.json").exists());
+    assert_eq!(images(), 2, "b's images stay");
+    // b loses them too: now nothing names them, and they go.
+    write("b.frag", &plain);
+    assert_eq!(images(), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }

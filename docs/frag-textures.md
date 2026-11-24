@@ -5,7 +5,7 @@ ThatOpen Fragments 3.6 stores a material as one RGBA colour: it has no texture c
 - `rvt-ifc --frag out.frag` writes `out.frag.textures.json`, and the images under `textures/` next to it, when any sample is drawn in a textured material. A model without textures gets no sidecar, and a sidecar an earlier run left beside the `.frag` is removed, with the images it named that the new run does not write (only names of this writer's form are touched).
 - In Rust: `rvt::ifc::frag_writer::write_frag_graph_textured` returns the `.frag`, its counts, and the sidecar (`FragTextures`, written with `write_json` as it is made) with its images; `rvt::cli::write_frag_textures` writes them as `rvt-ifc` does. The `.frag` is the one `write_frag_graph_with` writes, so a reader that ignores the sidecar still draws each textured material's average colour.
 - In the browser: `convert_all` and `convert_to_handles` give the sidecar as `frag_textures` and each image as `frag_texture:<path>`.
-- The images are the same files, by the same names (`textures/<hash>.<ext>`), as the IFCX texture layer writes, so both can share one folder.
+- The images are the same files, by the same names (`textures/<hash>.<ext>`), as the IFCX texture layer writes, so both can share one folder. When a run no longer needs an image, it is removed only if no other file in the folder (another `.frag`'s sidecar, an IFCX file) still names it.
 
 ## What changes in the `.frag`
 
@@ -71,7 +71,7 @@ Texture coordinates are given per corner, not per point, because the public load
 1. when a tile is drawn in a textured material (its `userData.localId` names it), replaces that model's entry in the material list with a `MeshStandardMaterial` drawing the image; highlight materials are left as they are;
 2. gives the tile a `uv` attribute, through `model.tiles.onItemSet`: the tile's `id` attribute names the item of each vertex, and each run of one item's vertices takes its sample's corner coordinates.
 
-It returns `{ counts, dispose }`: counts of what it matched (runs given exact coordinates, runs whose length did not match, runs drawn with a box projection), so a page can check the alignment, and `dispose()`, which removes its listeners, puts the original materials back and frees the textures. CI draws the synthetic models of `tests/material_textures.rs` with it and requires every sample with coordinates to match exactly. The demo page draws a `.frag` with and without its sidecar, or a `.glb` of the same model, from the same camera:
+It returns `{ counts, images, dispose }`: counts of what it matched (runs given exact coordinates, runs whose length did not match, runs drawn with a box projection), so a page can check the alignment; `images()`, which resolves once every image the drawn tiles asked for has loaded (and rejects when one fails), so a page renders again after it; and `dispose()`, which removes its listeners, puts the original materials back on the material list and on every tile it changed, and frees the textures. CI draws the synthetic models of `tests/material_textures.rs` with it and requires every sample with coordinates to match exactly. The demo page draws a `.frag` with and without its sidecar, or a `.glb` of the same model, from the same camera:
 
 ```sh
 cd examples/frag-textures && npm ci && npx vite

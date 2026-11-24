@@ -12,5 +12,15 @@ for (const name of ["textures", "big"]) {
     expect(state.samplesWithUv).toBeGreaterThan(0);
     expect(state.counts.exact).toBe(state.samplesWithUv);
     expect(state.counts.unaligned).toBe(0);
+    expect(state.images).toBeGreaterThan(0);
+    expect(state.texturedTiles).toBeGreaterThan(0);
   });
 }
+
+test("dispose puts every tile's own material back", async ({ page }) => {
+  await page.goto("http://localhost:5197/?frag=/frag/textures.frag&dispose=1");
+  await page.waitForFunction(() => window.__state?.ready, null, { timeout: 100_000 });
+  const state = await page.evaluate(() => window.__state);
+  expect(state.texturedTiles).toBeGreaterThan(0);
+  expect(state.texturedTilesAfterDispose).toBe(0);
+});

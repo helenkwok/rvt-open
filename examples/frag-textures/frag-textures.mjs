@@ -24,11 +24,13 @@ export async function sha256(bytes) {
  * @param sidecar the parsed `<name>.frag.textures.json`
  * @param baseUrl the sidecar's URL (image paths are relative to it)
  * @param fragBytes the `.frag` file's bytes: the sidecar must be its own
- * @returns `{ counts, dispose }`. `counts`: `exact` runs of an item's
+ * @returns `{ counts, images, dispose }`. `counts`: `exact` runs of an item's
  *   vertices given their coordinates, `unaligned` runs whose length did not
  *   match their samples', `projected` runs drawn with a box projection.
- *   `dispose()` removes the listeners, puts the original materials back and
- *   frees the textures.
+ *   `images()` resolves, with the number of images, once every image the
+ *   drawn tiles asked for has loaded, and rejects when one fails.
+ *   `dispose()` removes the listeners, puts the original materials back on
+ *   the list and on the tiles, and frees the textures.
  */
 export async function applyFragTextures(fragments, modelId, sidecar, baseUrl, fragBytes) {
   if (sidecar?.format !== SIDECAR_FORMAT || !SIDECAR_VERSIONS.includes(sidecar.version)) {
@@ -51,18 +53,23 @@ export async function applyFragTextures(fragments, modelId, sidecar, baseUrl, fr
   const counts = { tiles: 0, vertices: 0, exact: 0, unaligned: 0, projected: 0 };
   const swapped = new Map(); // material list key -> [original, textured]
   const list = fragments.models.materials.list;
+  const loads = []; // one promise per image
+  const tiles = []; // [mesh, original material] per textured tile
   const map = (entry) => {
     if (!maps.has(entry.image)) {
-      const t = loader.load(new URL(entry.image, baseUrl).href);
+      let done, fail;
+      loads.push(new Promise((res, rej) => { done = res; fail = rej; }));
+      const t = loader.load(new URL(entry.image, baseUrl).href, () => done(), undefined,
+        () => fail(new Error(`texture image ${entry.image} did not load`)));
       t.colorSpace = THREE.SRGBColorSpace;
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       maps.set(entry.image, t);
     }
     return maps.get(entry.image);
   };
-  // this model's material for a tile: swap it in the list once.
+  // this model's [original, textured] material for a tile: swap it in the list once.
   const textured = (original, entry) => {
-    for (const [, pair] of swapped) if (pair[0] === original || pair[1] === original) return pair[1];
+    for (const [, pair] of swapped) if (pair[0] === original || pair[1] === original) return pair;
     let key;
     for (const [k, v] of list) if (v === original) { key = k; break; }
     const opacity = entry.color[3] / 255;
@@ -81,7 +88,7 @@ export async function applyFragTextures(fragments, modelId, sidecar, baseUrl, fr
     m.userData = { ...original.userData, fragTextured: true };
     swapped.set(key ?? original.uuid, [original, m]);
     if (key !== undefined) list.set(key, m);
-    return m;
+    return [original, m];
   };
 
   const onTile = ({ value: mesh }) => {
@@ -89,7 +96,8 @@ export async function applyFragTextures(fragments, modelId, sidecar, baseUrl, fr
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const entry = materials.get(mats[0]?.userData?.localId);
     if (!entry || g.isLODGeometry || mats[0].isLodMaterial || !g.attributes.id?.array || !g.attributes.position?.array) return;
-    const m = textured(mats[0], entry);
+    const [original, m] = textured(mats[0], entry);
+    tiles.push([mesh, original]);
     if (Array.isArray(mesh.material)) mesh.material[0] = m;
     else mesh.material = m;
     const ids = g.attributes.id.array;
@@ -131,6 +139,11 @@ export async function applyFragTextures(fragments, modelId, sidecar, baseUrl, fr
   const dispose = () => {
     fragments.models.list.onItemSet.remove(onModel);
     for (const model of watched) model.tiles.onItemSet.remove(onTile);
+    for (const [mesh, original] of tiles) {
+      if (Array.isArray(mesh.material)) mesh.material[0] = original;
+      else mesh.material = original;
+    }
+    tiles.length = 0;
     for (const [key, [original, m]] of swapped) {
       if (list.get(key) === m) list.set(key, original);
       m.dispose();
@@ -139,7 +152,16 @@ export async function applyFragTextures(fragments, modelId, sidecar, baseUrl, fr
     swapped.clear();
     maps.clear();
   };
-  return { counts, dispose };
+  // tiles drawn while waiting may ask for more images: wait for those too.
+  const images = async () => {
+    let n;
+    do {
+      n = loads.length;
+      await Promise.all(loads);
+    } while (n !== loads.length);
+    return n;
+  };
+  return { counts, images, dispose };
 }
 
 // Box projection on the axis plane facing each vertex's normal, one repeat
