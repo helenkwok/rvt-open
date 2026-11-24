@@ -171,7 +171,7 @@ fn split(
         FRONT => front.push(p),
         BACK => back.push(p),
         _ => {
-            let mut kept = 0;
+            let mut kept: usize = 0;
             let (mut f, mut b) = (Vec::new(), Vec::new());
             let n = p.points.len();
             for i in 0..n {
