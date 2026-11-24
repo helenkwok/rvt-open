@@ -291,7 +291,9 @@ struct Args {
     appearance: Option<PathBuf>,
     /// Also write the model as ThatOpen Fragments (`.frag`, the public
     /// @thatopen/fragments 3.6.0 schema) to this path: the IFCX graph's
-    /// items, properties, tree and meshes.
+    /// items, properties, tree and meshes. A model with textured materials
+    /// also gets `<PATH>.textures.json` beside it (the images under
+    /// `textures/`), which the format has no place for.
     #[arg(long, value_name = "PATH", conflicts_with = "placeholder")]
     frag: Option<PathBuf>,
 
@@ -780,7 +782,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     eprintln!("rvt-ifc: wrote {written} bytes to {}", out_path.display());
     if let Some(frag_path) = &args.frag {
         rvt::control::stage("write frag");
-        let (bytes, stats) = rvt::ifc::frag_writer::write_frag_graph_with(
+        let (bytes, stats, textures) = rvt::ifc::frag_writer::write_frag_graph_textured(
             &graph,
             &rvt::ifc::gltf::DisplayOptions {
                 rooms: args.frag_rooms,
@@ -789,6 +791,14 @@ fn run(args: Args) -> anyhow::Result<()> {
         )?;
         rvt::cli::write_output(frag_path, &bytes)?;
         report.output("frag", frag_path);
+        if let Some(path) = rvt::cli::write_frag_textures(frag_path, textures.as_ref())? {
+            report.output("frag-textures", &path);
+            eprintln!(
+                "rvt-ifc: wrote the .frag's textures ({} images) to {}",
+                textures.as_ref().map_or(0, |t| t.images.len()),
+                path.display()
+            );
+        }
         eprintln!(
             "rvt-ifc: wrote {} Fragments bytes to {}",
             bytes.len(),

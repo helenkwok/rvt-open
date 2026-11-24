@@ -53,6 +53,12 @@ pub const NESTED_DOCUMENT_SCALED_BODY_SOURCE: &str = "family_nested_document_sca
 const NESTED_SCALE_LIMITS: (f64, f64) = (0.2, 5.0);
 /// A body within this fraction of its stored box fits it.
 const NESTED_FACET_ALLOWANCE: f64 = 0.05;
+/// A solved factor above 1 by no more than this is rounding, not growth.
+const NESTED_ROUNDOFF: f64 = 1e-6;
+/// How well a turn must tell a body's own axes apart to shrink it along them
+/// (the determinant of `|l|^T |l|` over the axes solved: 1 on the axes, 0.41
+/// at 25 degrees, 0.25 at 60, 0.1 at about 36 and 54, 0 at 45).
+const NESTED_TURN_DETERMINED: f64 = 0.1;
 
 /// Why a form whose voids removed all of it is not drawn.
 const REMOVED_BY_VOID: &str = "removed_by_void";
@@ -139,6 +145,11 @@ pub struct FamilySummary {
     /// body by a stretch beyond the limits: drawn as their document draws them.
     #[serde(default)]
     pub nested_size_mismatch: usize,
+    /// Of `nested_drawn`, turned instances whose stored box is smaller than
+    /// their turned body but whose turn does not tell which own axes to
+    /// shrink: drawn as their document draws them.
+    #[serde(default)]
+    pub nested_size_undetermined: usize,
     /// Of `nested_drawn`, forms of their families' documents not in the
     /// mesh, by why (an instance counted once per reason).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -839,24 +850,21 @@ pub fn attach(
             }
             // The instance's own stored box is the size of its type; the
             // document draws its family's saved type, which can be another.
-            // Only an instance on the family's axes is compared: a turned
-            // one's stored box is that of its turned box, larger than its body
-            // (on a ring of chairs measured, by 10% to 19% for the eight turned
-            // by 25 and 60 degrees).
+            // Revit stores the box of the instance's turned own box (on a ring
+            // of chairs measured, those turned by 25 and 60 degrees store the
+            // box of their family's box turned, 10% to 19% larger than their
+            // turned body), so the body's own box is turned the same way
+            // before the two are compared.
             let mut source = NESTED_DOCUMENT_BODY_SOURCE;
-            let on_axes = pose
-                .matrix
-                .iter()
-                .flatten()
-                .all(|v| v.abs() <= 1e-6 || (v.abs() - 1.0).abs() <= 1e-6);
-            if let Some(stored) = boxes.get(id).filter(|_| on_axes) {
-                match stretch_to_box(&mut body.vertices, *stored) {
-                    Stretch::Fits => {}
-                    Stretch::Stretched => {
+            if let Some(stored) = boxes.get(id) {
+                match stretch_nested_to_box(&mut body.vertices, *stored, &pose_affine(pose)) {
+                    NestedStretch::Fits => {}
+                    NestedStretch::Stretched => {
                         source = NESTED_DOCUMENT_SCALED_BODY_SOURCE;
                         out.nested_scaled += 1;
                     }
-                    Stretch::BeyondLimits => out.nested_size_mismatch += 1,
+                    NestedStretch::BeyondLimits => out.nested_size_mismatch += 1,
+                    NestedStretch::Undetermined => out.nested_size_undetermined += 1,
                 }
             }
             let material_index = body
@@ -919,43 +927,104 @@ pub fn attach(
     Ok(out)
 }
 
-/// What [`stretch_to_box`] did.
+/// What [`stretch_nested_to_box`] did.
 #[derive(Debug, PartialEq)]
-enum Stretch {
+pub enum NestedStretch {
+    /// The body fits its stored box (or is smaller, or within the facet
+    /// allowance): left as it is.
     Fits,
+    /// The body was shrunk onto its stored box.
     Stretched,
+    /// The factors are beyond the limits or would enlarge an axis: left as
+    /// it is.
     BeyondLimits,
+    /// The stored box is smaller than the turned body's, but its turn does
+    /// not tell which of the body's own axes to shrink (near 45 degrees, a
+    /// box's width and depth add up the same either way).
+    Undetermined,
 }
 
-/// Map `vertices`' box onto `stored` axis by axis, when `stored` lies inside
-/// it and they differ by more than the box tolerance and
-/// [`NESTED_FACET_ALLOWANCE`], and every stretch is within the limits (an axis
-/// either box is flat along keeps its size).
-fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2]) -> Stretch {
-    let Some([lo, hi]) = bbox_of(vertices) else {
-        return Stretch::Fits;
+/// Fit a nested instance's body (`vertices`, placed by `map`) to its stored
+/// box. `stored` is axis-aligned in the host's frame, and is the box of the
+/// instance's own box turned by `map`, so the body's own box (in its family's
+/// frame) is turned likewise and compared with it. When `stored` lies inside
+/// that turned box and differs from it by more than the box tolerance and
+/// `NESTED_FACET_ALLOWANCE` (5%), the body is shrunk along its own axes by the
+/// factors whose turned box is `stored` (each within the limits; an axis
+/// either box is flat along keeps its size), and centred on `stored`. A
+/// mirrored map keeps its reflection: only the size changes.
+pub fn stretch_nested_to_box(
+    vertices: &mut [[f64; 3]],
+    stored: [[f64; 3]; 2],
+    map: &Affine,
+) -> NestedStretch {
+    let (l, t) = map;
+    let Some(inv) = inverse3(l) else {
+        return NestedStretch::Fits;
     };
-    let size = (0..3)
-        .map(|k| stored[1][k] - stored[0][k])
-        .fold(0.0, f64::max);
+    let own: Vec<[f64; 3]> = vertices
+        .iter()
+        .map(|v| std::array::from_fn(|k| (0..3).map(|j| inv[k][j] * (v[j] - t[j])).sum()))
+        .collect();
+    let Some([olo, ohi]) = bbox_of(&own) else {
+        return NestedStretch::Fits;
+    };
+    let a: [[f64; 3]; 3] = std::array::from_fn(|k| std::array::from_fn(|j| l[k][j].abs()));
+    let ow: [f64; 3] = std::array::from_fn(|j| ohi[j] - olo[j]);
+    let oc: [f64; 3] = std::array::from_fn(|j| (olo[j] + ohi[j]) / 2.0);
+    let pc: [f64; 3] = std::array::from_fn(|k| t[k] + (0..3).map(|j| l[k][j] * oc[j]).sum::<f64>());
+    let pw: [f64; 3] = std::array::from_fn(|k| (0..3).map(|j| a[k][j] * ow[j]).sum());
+    let (lo, hi): ([f64; 3], [f64; 3]) = (
+        std::array::from_fn(|k| pc[k] - pw[k] / 2.0),
+        std::array::from_fn(|k| pc[k] + pw[k] / 2.0),
+    );
+    let sw: [f64; 3] = std::array::from_fn(|k| stored[1][k] - stored[0][k]);
+    let size = sw.iter().copied().fold(0.0, f64::max);
     let tol = family_documents::BBOX_TOLERANCE.max(family_documents::SOLVED_BBOX_FRACTION * size);
     if (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= tol && (hi[k] - stored[1][k]).abs() <= tol) {
-        return Stretch::Fits;
+        return NestedStretch::Fits;
     }
     // Revit's stored box holds all the instance draws, so only a body larger
     // than it is another size; one smaller can be lines and reference planes
     // the box also holds.
     if (0..3).any(|k| stored[0][k] < lo[k] - tol || stored[1][k] > hi[k] + tol) {
-        return Stretch::Fits;
+        return NestedStretch::Fits;
     }
-    let factor: [f64; 3] = std::array::from_fn(|k| {
-        let (have, want) = (hi[k] - lo[k], stored[1][k] - stored[0][k]);
-        if have <= tol || want <= tol {
-            1.0
-        } else {
-            want / have
-        }
-    });
+    // Own widths x with |l| x = stored widths: an own axis the body is flat
+    // along keeps its width, and a host axis the stored box is flat along
+    // is not matched.
+    let rows: Vec<usize> = (0..3).filter(|&k| sw[k] > tol).collect();
+    let free: Vec<usize> = (0..3)
+        .filter(|&j| ow[j] > tol && rows.iter().any(|&k| a[k][j] > 1e-6))
+        .collect();
+    let rhs: Vec<f64> = rows
+        .iter()
+        .map(|&k| {
+            sw[k]
+                - (0..3)
+                    .filter(|j| !free.contains(j))
+                    .map(|j| a[k][j] * ow[j])
+                    .sum::<f64>()
+        })
+        .collect();
+    let Some(x) = least_squares(
+        &rows
+            .iter()
+            .map(|&k| free.iter().map(|&j| a[k][j]).collect())
+            .collect::<Vec<Vec<f64>>>(),
+        &rhs,
+    ) else {
+        return NestedStretch::Undetermined;
+    };
+    let mut factor = [1.0; 3];
+    for (i, &j) in free.iter().enumerate() {
+        factor[j] = x[i] / ow[j];
+    }
+    // The factors must give the stored box back.
+    let fw: [f64; 3] = std::array::from_fn(|k| (0..3).map(|j| a[k][j] * ow[j] * factor[j]).sum());
+    if rows.iter().any(|&k| (fw[k] - sw[k]).abs() > tol) {
+        return NestedStretch::Undetermined;
+    }
     // Within a few percent is the display's facets (a round form's stored
     // box is that of its faceted display), not another size.
     let near = NESTED_FACET_ALLOWANCE * size;
@@ -964,24 +1033,76 @@ fn stretch_to_box(vertices: &mut [[f64; 3]], stored: [[f64; 3]; 2]) -> Stretch {
         .all(|f| (f - 1.0).abs() <= NESTED_FACET_ALLOWANCE)
         && (0..3).all(|k| (lo[k] - stored[0][k]).abs() <= near.max(tol))
     {
-        return Stretch::Fits;
+        return NestedStretch::Fits;
     }
+    // Only a shrink: a body larger than its box along one own axis and
+    // smaller along another is another shape (the facet allowance decides
+    // only whether to leave the whole body as it is, above).
     if !factor
         .iter()
-        .all(|f| (NESTED_SCALE_LIMITS.0..=NESTED_SCALE_LIMITS.1).contains(f))
+        .all(|f| (NESTED_SCALE_LIMITS.0..=1.0 + NESTED_ROUNDOFF).contains(f))
     {
-        return Stretch::BeyondLimits;
+        return NestedStretch::BeyondLimits;
     }
-    for v in vertices.iter_mut() {
-        for k in 0..3 {
-            v[k] = stored[0][k] + (v[k] - lo[k]) * factor[k];
+    let sc: [f64; 3] = std::array::from_fn(|k| (stored[0][k] + stored[1][k]) / 2.0);
+    for (v, o) in vertices.iter_mut().zip(&own) {
+        let p: [f64; 3] = std::array::from_fn(|j| (o[j] - oc[j]) * factor[j]);
+        *v = std::array::from_fn(|k| sc[k] + (0..3).map(|j| l[k][j] * p[j]).sum::<f64>());
+    }
+    NestedStretch::Stretched
+}
+
+/// The inverse of `l`, when it is not singular.
+fn inverse3(l: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let d = det(l);
+    if d.abs() < 1e-9 {
+        return None;
+    }
+    let c = |r: usize, s: usize| {
+        let (r0, r1) = ((r + 1) % 3, (r + 2) % 3);
+        let (s0, s1) = ((s + 1) % 3, (s + 2) % 3);
+        l[r0][s0] * l[r1][s1] - l[r0][s1] * l[r1][s0]
+    };
+    Some(std::array::from_fn(|i| {
+        std::array::from_fn(|j| c(j, i) / d)
+    }))
+}
+
+/// The `x` that best solves `m x = b` (rows of `m`), when it is well
+/// determined: the normal matrix's determinant, for columns of up to unit
+/// length, at least [`NESTED_TURN_DETERMINED`]. An empty `m` gives an empty
+/// `x`.
+fn least_squares(m: &[Vec<f64>], b: &[f64]) -> Option<Vec<f64>> {
+    let n = m.first().map_or(0, Vec::len);
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let mut ata = [[0.0; 3]; 3];
+    let mut atb = [0.0; 3];
+    for (row, bk) in m.iter().zip(b) {
+        for i in 0..n {
+            atb[i] += row[i] * bk;
+            for j in 0..n {
+                ata[i][j] += row[i] * row[j];
+            }
         }
     }
-    Stretch::Stretched
+    for (i, r) in ata.iter_mut().enumerate().skip(n) {
+        r[i] = 1.0;
+    }
+    if det(&ata) < NESTED_TURN_DETERMINED {
+        return None;
+    }
+    let inv = inverse3(&ata)?;
+    Some(
+        (0..n)
+            .map(|i| (0..n).map(|j| inv[i][j] * atb[j]).sum())
+            .collect(),
+    )
 }
 
 /// A linear map (rows) and a translation: `p -> l * p + t`.
-type Affine = ([[f64; 3]; 3], [f64; 3]);
+pub type Affine = ([[f64; 3]; 3], [f64; 3]);
 
 /// An instance's placement as a map from its family's coordinates. A
 /// flipped instance mirrors its family across the family's own axis before

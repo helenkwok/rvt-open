@@ -163,6 +163,8 @@ mod export_conventions;
 mod export_decisions_counts;
 #[path = "../family_blend_transitions.rs"]
 mod family_blend_transitions;
+#[path = "../family_form_checks.rs"]
+mod family_form_checks;
 #[path = "../family_instance_ports.rs"]
 mod family_instance_ports;
 #[path = "../family_voids_and_sample_walls.rs"]
@@ -217,6 +219,8 @@ mod level_parameters;
 mod level_shared_elevation;
 #[path = "../material_textures.rs"]
 mod material_textures;
+#[path = "../measure_scorer_names.rs"]
+mod measure_scorer_names;
 #[path = "../memory_staging.rs"]
 mod memory_staging;
 #[path = "../mep_categories.rs"]
@@ -237,6 +241,8 @@ mod native_current_records;
 mod native_partitions_walk;
 #[path = "../native_phases.rs"]
 mod native_phases;
+#[path = "../nested_instance_sizes.rs"]
+mod nested_instance_sizes;
 #[path = "../parameter_diagnostics.rs"]
 mod parameter_diagnostics;
 #[path = "../partition_record_chain.rs"]

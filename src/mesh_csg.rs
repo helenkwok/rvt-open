@@ -24,18 +24,47 @@ const MAX_POLYGONS: usize = 200_000;
 /// makes building quadratic while the polygon count stays small).
 const MAX_WORK: usize = 20_000_000;
 
-/// The work left; a cut that runs out returns `None`.
-struct Budget(std::cell::Cell<usize>);
+/// Polygons a cut may hold at once, the inputs and every piece a split adds
+/// (pieces clipping later drops still count): a split cascade is stopped
+/// while it grows, not only once it has.
+const MAX_PIECES: usize = 4 * MAX_POLYGONS;
+
+/// The work and the pieces left; a cut that runs out of either returns
+/// `None`.
+struct Budget {
+    work: std::cell::Cell<usize>,
+    pieces: std::cell::Cell<usize>,
+}
 
 impl Budget {
+    fn new(inputs: usize) -> Budget {
+        let b = Budget {
+            work: std::cell::Cell::new(MAX_WORK),
+            pieces: std::cell::Cell::new(MAX_PIECES),
+        };
+        b.take_pieces(inputs);
+        b
+    }
     /// Charge one classification; false once nothing is left.
     fn spend(&self) -> bool {
-        let left = self.0.get();
-        self.0.set(left.saturating_sub(1));
+        let left = self.work.get();
+        self.work.set(left.saturating_sub(1));
         left > 0
     }
+    /// Charge `n` new pieces; past the limit the work is spent too, so every
+    /// loop stops.
+    fn take_pieces(&self, n: usize) -> bool {
+        let left = self.pieces.get();
+        if n > left {
+            self.pieces.set(0);
+            self.work.set(0);
+            return false;
+        }
+        self.pieces.set(left - n);
+        true
+    }
     fn exhausted(&self) -> bool {
-        self.0.get() == 0
+        self.work.get() == 0
     }
 }
 
@@ -108,7 +137,8 @@ const COPLANAR: u8 = 0;
 const FRONT: u8 = 1;
 const BACK: u8 = 2;
 
-/// Split `p` by `plane` into the four lists.
+/// Split `p` by `plane` into the four lists; the pieces it adds (1 when it
+/// cut `p` in two, else 0).
 fn split(
     plane: &Plane,
     p: Polygon,
@@ -116,7 +146,7 @@ fn split(
     coplanar_back: &mut Vec<Polygon>,
     front: &mut Vec<Polygon>,
     back: &mut Vec<Polygon>,
-) {
+) -> usize {
     let mut kind = 0u8;
     let sides: Vec<u8> = p
         .points
@@ -145,6 +175,7 @@ fn split(
         FRONT => front.push(p),
         BACK => back.push(p),
         _ => {
+            let mut kept: usize = 0;
             let (mut f, mut b) = (Vec::new(), Vec::new());
             let n = p.points.len();
             for i in 0..n {
@@ -169,15 +200,19 @@ fn split(
                     points: f,
                     plane: p.plane,
                 });
+                kept += 1;
             }
             if b.len() >= 3 {
                 back.push(Polygon {
                     points: b,
                     plane: p.plane,
                 });
+                kept += 1;
             }
+            return kept.saturating_sub(1);
         }
     }
+    0
 }
 
 /// A BSP tree, nodes in an arena (no recursion on build depth).
@@ -218,7 +253,10 @@ impl Tree {
                 if !budget.spend() {
                     break;
                 }
-                split(&plane, p, &mut cf, &mut cb, &mut f, &mut b);
+                let added = split(&plane, p, &mut cf, &mut cb, &mut f, &mut b);
+                if !budget.take_pieces(added) {
+                    break;
+                }
             }
             self.nodes[at].polygons.extend(cf);
             self.nodes[at].polygons.extend(cb);
@@ -269,6 +307,10 @@ impl Tree {
         let mut out = Vec::new();
         let mut stack = vec![(0usize, polygons)];
         while let Some((at, polys)) = stack.pop() {
+            // Nothing to clip visits no subtree; a cut out of work stops.
+            if polys.is_empty() || budget.exhausted() {
+                continue;
+            }
             let node = &self.nodes[at];
             let Some(plane) = node.plane else {
                 out.extend(polys);
@@ -279,7 +321,10 @@ impl Tree {
                 if !budget.spend() {
                     break;
                 }
-                split(&plane, p, &mut cf, &mut cb, &mut f, &mut b);
+                let added = split(&plane, p, &mut cf, &mut cb, &mut f, &mut b);
+                if !budget.take_pieces(added) {
+                    break;
+                }
             }
             f.extend(cf);
             b.extend(cb);
@@ -298,6 +343,12 @@ impl Tree {
     /// Remove from this tree's polygons the parts inside `other`.
     fn clip_to(&mut self, other: &Tree, budget: &Budget) {
         for i in 0..self.nodes.len() {
+            if budget.exhausted() {
+                return;
+            }
+            if self.nodes[i].polygons.is_empty() {
+                continue;
+            }
             let polys = std::mem::take(&mut self.nodes[i].polygons);
             self.nodes[i].polygons = other.clip_polygons(polys, budget);
         }
@@ -327,7 +378,7 @@ fn polygons(vertices: &[V3], triangles: &[[u32; 3]]) -> Vec<Polygon> {
 }
 
 /// `a` minus `b`, as vertices and triangles, or `None` when the cut gives
-/// up (past a bound on the polygons it makes). Both must be closed, outward-wound meshes.
+/// up (see `MAX_POLYGONS`, `MAX_PIECES` and `MAX_WORK`). Both must be closed, outward-wound meshes.
 pub fn difference(
     a: (&[V3], &[[u32; 3]]),
     b: (&[V3], &[[u32; 3]]),
@@ -336,7 +387,10 @@ pub fn difference(
     if a.1.is_empty() {
         return Some((Vec::new(), Vec::new()));
     }
-    let budget = Budget(std::cell::Cell::new(MAX_WORK));
+    let budget = Budget::new(a.1.len() + b.1.len());
+    if budget.exhausted() {
+        return None;
+    }
     let mut ta = Tree::new(polygons(a.0, a.1), &budget);
     let mut tb = Tree::new(polygons(b.0, b.1), &budget);
     ta.invert();
@@ -345,7 +399,7 @@ pub fn difference(
     tb.invert();
     tb.clip_to(&ta, &budget);
     tb.invert();
-    if ta.count() + tb.count() > MAX_POLYGONS {
+    if budget.exhausted() || ta.count() + tb.count() > MAX_POLYGONS {
         return None;
     }
     ta.build(0, tb.all_polygons(), &budget);
@@ -364,10 +418,19 @@ pub fn difference(
             triangles.push([base, base + k, base + k + 1]);
         }
     }
-    // Drop slivers the splits left with no area.
+    // Drop the slivers a fan over a polygon's collinear split points leaves
+    // (no area but rounding): twice the area at most 1e-9 of the squared
+    // longest side, and at most 1e-9 square feet, so a small face with real
+    // area is kept however small it is.
     triangles.retain(|t| {
         let [p, q, r] = t.map(|i| vertices[i as usize]);
-        dot(cross(sub(q, p), sub(r, p)), cross(sub(q, p), sub(r, p))) > 1e-18
+        let c = cross(sub(q, p), sub(r, p));
+        let side2 = [sub(q, p), sub(r, q), sub(p, r)]
+            .iter()
+            .map(|e| dot(*e, *e))
+            .fold(0.0, f64::max);
+        let floor = 1e-9 * side2.min(1.0);
+        dot(c, c) > floor * floor
     });
     let (vertices, triangles, _) = conform(&vertices, &triangles, EPSILON);
     Some((vertices, triangles))
