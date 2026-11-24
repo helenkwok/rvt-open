@@ -17,9 +17,14 @@ fn scratch(tag: &str) -> PathBuf {
     fs::create_dir_all(dir.join("path")).unwrap();
     // The script calls `python`; a runner may only have `python3`.
     script(&dir.join("path/python"), "#!/bin/sh\nexec python3 \"$@\"\n");
-    // An existing definitions file, so the run never fetches it; its hash
-    // check fails, which the script does not stop on.
-    fs::write(dir.join("psets.csv"), "not the definitions\n").unwrap();
+    // An existing definitions file where the script reads it
+    // (RUNNER_TEMP), so the run never fetches it; its hash check fails,
+    // which the script does not stop on.
+    fs::write(
+        dir.join("ifc4-pset-definitions.csv"),
+        "not the definitions\n",
+    )
+    .unwrap();
     dir
 }
 
@@ -45,7 +50,7 @@ fn run(dir: &Path, env: &[(&str, &str)]) -> Output {
         .arg(dir.join("models"))
         .arg(dir.join("out"))
         .env("PATH", path)
-        .env("PSET_DEFINITIONS", dir.join("psets.csv"))
+        .env("RUNNER_TEMP", dir)
         .env("MEASURE_JOBS", "1")
         .env_remove("MEASURE_SCORERS")
         .env_remove("PROBE")
@@ -69,6 +74,15 @@ fn unknown_scorer_names_stop_the_run_with_status_2() {
         return;
     }
     let dir = scratch("unknown");
+    // A model and an exporter that records each call: a refused run exports nothing.
+    fs::write(dir.join("models/2024_Core_Interior.rvt"), b"").unwrap();
+    script(
+        &dir.join("bin/rvt-ifc"),
+        &format!(
+            "#!/bin/sh\necho invoked >> '{}'\n",
+            dir.join("invoked").display()
+        ),
+    );
     for (key, value, bad) in [
         (
             "MEASURE_SCORERS",
@@ -85,6 +99,7 @@ fn unknown_scorer_names_stop_the_run_with_status_2() {
             stderr(&o)
         );
         assert!(!dir.join("out/core-interior").exists());
+        assert!(!dir.join("invoked").exists(), "{key}={value} exported");
     }
     let o = run(
         &dir,
@@ -99,6 +114,7 @@ fn unknown_scorer_names_stop_the_run_with_status_2() {
         "{}",
         stderr(&o)
     );
+    assert!(!dir.join("invoked").exists(), "PROBE_SCORER exported");
     let _ = fs::remove_dir_all(&dir);
 }
 
