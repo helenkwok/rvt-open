@@ -415,11 +415,8 @@ pub fn conform(
             }
         }
         let open = |a: u32, b: u32| count.get(&(a, b)) > count.get(&(b, a));
-        let mut unmatched: Vec<(u32, u32)> = count
-            .keys()
-            .copied()
-            .filter(|&(a, b)| open(a, b))
-            .collect();
+        let mut unmatched: Vec<(u32, u32)> =
+            count.keys().copied().filter(|&(a, b)| open(a, b)).collect();
         if unmatched.is_empty() {
             break;
         }
