@@ -278,10 +278,11 @@ fn public_samples_sun_settings_hold_together() {
         .flatten()
         .map(|f| f.path())
         .filter(|p| p.extension().is_some_and(|e| e == "rvt"))
+        // both spellings of a name link to one file: read it once
+        .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
         .collect();
-    // both spellings of a name link to one file: read it once
     files.sort();
-    files.dedup_by_key(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()));
+    files.dedup();
     let mut problems = Vec::new();
     let mut read = 0;
     for p in &files {
