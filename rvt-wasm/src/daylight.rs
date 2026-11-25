@@ -145,7 +145,8 @@ pub fn daylight_prepare(model: JsValue, options: JsValue) -> Result<JsValue, JsV
 }
 
 /// The file's sun a viewer starts from, `{ source: "view" | "project", viewName, viewId,
-/// settingName, settingId, sunAndShadowType, start, end (seconds since 1970 UTC),
+/// settingName, settingId, sunAndShadowType, start, end (the clock time Revit shows,
+/// `YYYY-MM-DDTHH:MM`),
 /// timeInterval, azimuth, altitude (degrees), relativeToView, castShadows, ambientShadows,
 /// sunlightIntensity, shadowIntensity, displayStyle }`, or null where none was read.
 fn file_sun(model: &IfcModel) -> JsValue {
@@ -159,15 +160,16 @@ fn file_sun(model: &IfcModel) -> JsValue {
     if let Some(t) = &s.sun_and_shadow_type {
         set(&o, "sunAndShadowType", &t.as_str().into());
     }
-    if let Some(t) = &s.time_interval {
-        set(&o, "timeInterval", &t.as_str().into());
-    }
     for (k, v) in [
-        ("start", s.start_unix.map(|t| t as f64)),
-        ("end", s.end_unix.map(|t| t as f64)),
-        ("azimuth", s.azimuth),
-        ("altitude", s.altitude),
+        ("timeInterval", &s.time_interval),
+        ("start", &s.start),
+        ("end", &s.end),
     ] {
+        if let Some(v) = v {
+            set(&o, k, &v.as_str().into());
+        }
+    }
+    for (k, v) in [("azimuth", s.azimuth), ("altitude", s.altitude)] {
         if let Some(v) = v {
             set(&o, k, &v.into());
         }

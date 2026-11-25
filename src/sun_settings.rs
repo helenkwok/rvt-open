@@ -5,8 +5,8 @@
 //! - **`SunAndShadowSettings`** (the API's `SunAndShadowSettings`): one element per named
 //!   preset (solstices, equinoxes, solar studies, lighting presets) and one `<In-session, ...>`
 //!   copy per view that has its own setting. Fields: `m_sName`, `m_dAzimuth` and `m_dAltitude`
-//!   (radians, the Lighting mode's sun), `m_startDateTime` and `m_endDateTime` (seconds since
-//!   1970-01-01 UTC), `m_eSunStudyTimeInterval`, `m_type`, `m_activeFrame`, `m_idLevel` (the ground
+//!   (radians, the Lighting mode's sun), `m_startDateTime` and `m_endDateTime` (the clock
+//!   time Revit shows, packed into 32 bits, [`packed_date_time`]), `m_eSunStudyTimeInterval`, `m_type`, `m_activeFrame`, `m_idLevel` (the ground
 //!   plane's level), `m_bGroundPlane`, `m_bRelativeToView`, `m_sunriseToSunset`,
 //!   `m_sharedSetting`. Revit 2010 to 2012 name the dates `m_tDateAndTime` and `m_endDateAndTime`.
 //! - **Each view's display** (`DBView::m_pViewDisplayMgr`, a `ViewDisplayMgr`, 2014 on):
@@ -32,7 +32,14 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase")]
 pub struct SunSetting {
     pub id: u64,
+    /// The name Revit shows: its own, or `<In-session, Lighting>` (and so on) for a view's own
+    /// setting.
     pub name: String,
+    /// The name as stored (a view's own setting keeps the preset name it was made from, or
+    /// `<In-session: ...>`).
+    pub stored_name: String,
+    /// One of the project's named presets (`DBViewInfo::m_aidSunAndShadowSettings`).
+    pub is_preset: bool,
     /// The API's `SunAndShadowType`: `StillImage`, `OneDayStudy`, `MultiDayStudy` or
     /// `Lighting`; `None` for a stored value with no known name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,17 +47,18 @@ pub struct SunSetting {
     /// The stored type value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_value: Option<i64>,
-    /// Start and end as seconds since 1970-01-01 UTC (the API's `StartDateAndTime`,
-    /// `EndDateAndTime`), and the same in ISO 8601 UTC.
+    /// Start and end (the API's `StartDateAndTime`, `EndDateAndTime`) as the clock time Revit
+    /// shows, the project's local time: `YYYY-MM-DDTHH:MM`, no zone, to the minute.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_unix: Option<i64>,
+    pub start: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_unix: Option<i64>,
+    pub end: Option<String>,
+    /// The stored start and end values ([`packed_date_time`]).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_utc: Option<String>,
+    pub start_value: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_utc: Option<String>,
-    /// The API's `TimeInterval` name (`OneMinute` ... `OneMonth`), and its stored value.
+    pub end_value: Option<i64>,
+    /// The API's `TimeInterval` (`SunStudyTimeInterval`) name, and its stored value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_interval: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -136,11 +144,13 @@ pub struct ViewDisplay {
     /// The view's own `SunAndShadowSettings` (the API's `View.SunAndShadowSettings`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sun_setting_id: Option<u64>,
-    /// The API's `DisplayStyle` name, and the stored value it was read from.
+    /// The API's `DisplayStyle` name, from the stored values below.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_style: Option<String>,
+    /// The stored visual-style values: the manager's hidden-line and lighting flags and the
+    /// model display's surfaces and edges.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_style_value: Option<i64>,
+    pub style_values: Option<[i64; 4]>,
     pub cast_shadows: bool,
     pub ambient_shadows: bool,
     /// 0 to 100.
@@ -209,32 +219,36 @@ pub fn sun_and_shadow_type(v: i64) -> Option<&'static str> {
     })
 }
 
-/// The API's `SunStudyTimeInterval` names, by stored value.
+/// The API's `SunStudyTimeInterval` names, by stored value (the API reference gives each
+/// member's value; a negative one is stored as its 32-bit two's complement).
 pub fn time_interval(v: i64) -> Option<&'static str> {
+    let v = if v > i64::from(i32::MAX) {
+        v - (1 << 32)
+    } else {
+        v
+    };
     Some(match v {
-        0 => "FifteenMinutes",
-        1 => "ThirtyMinutes",
-        2 => "Hour",
-        3 => "OneDay",
-        4 => "OneWeek",
-        5 => "OneMonth",
-        6 => "FiveMinutes",
-        7 => "TenMinutes",
+        -4 => "Seconds15",
+        -3 => "Seconds30",
+        -2 => "Seconds45",
+        -1 => "Minute",
+        0 => "Minutes15",
+        1 => "Minutes30",
+        2 => "Minutes45",
+        3 => "Hour",
+        4 => "Day",
+        5 => "Week",
+        6 => "Month",
         _ => return None,
     })
 }
 
-/// The API's `DisplayStyle` names, by stored value.
-pub fn display_style(v: i64) -> Option<&'static str> {
+/// The API's `DisplayStyle` name of a view's stored style values (`ViewDisplay::style_values`:
+/// hidden-line flag, lighting flag, surfaces, edges).
+pub fn display_style(v: [i64; 4]) -> Option<&'static str> {
     Some(match v {
-        1 => "Wireframe",
-        2 => "HLR",
-        3 => "Shading",
-        4 => "ShadingWithEdges",
-        6 => "Rendering",
-        7 => "Realistic",
-        8 => "FlatColors",
-        9 => "RealisticWithEdges",
+        [0, 0, ..] => "Wireframe",
+        [1, 0, ..] => "HLR",
         _ => return None,
     })
 }
@@ -289,26 +303,29 @@ fn colour(f: &Fields, name: &str) -> Option<String> {
     ))
 }
 
-/// ISO 8601 UTC of seconds since 1970 (proleptic Gregorian).
-pub fn iso_utc(t: i64) -> String {
-    let days = t.div_euclid(86_400);
-    let secs = t.rem_euclid(86_400);
-    // civil from days (Howard Hinnant's algorithm)
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        secs / 3600,
-        secs / 60 % 60,
-        secs % 60
-    )
+/// A stored date and time, `YYYY-MM-DDTHH:MM`: one 32-bit value packing the minute (bits 0-5),
+/// hour (6-10), day (11-15), month (16-19) and year (20-31). `None` when a part is out of range.
+pub fn packed_date_time(v: i64) -> Option<String> {
+    let v = u32::try_from(v).ok()?;
+    let (minute, hour, day, month, year) = (
+        v & 63,
+        (v >> 6) & 31,
+        (v >> 11) & 31,
+        (v >> 16) & 15,
+        v >> 20,
+    );
+    (minute < 60 && hour < 24 && (1..=31).contains(&day) && (1..=12).contains(&month))
+        .then(|| format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}"))
+}
+
+/// The label Revit gives a view's own setting of each `SunAndShadowType`.
+fn in_session_label(t: Option<&str>) -> &'static str {
+    match t {
+        Some("StillImage") => "Still",
+        Some("OneDayStudy") => "Single Day",
+        Some("MultiDayStudy") => "Multi-Day",
+        _ => "Lighting",
+    }
 }
 
 fn sun_setting(id_: u64, f: &Fields) -> SunSetting {
@@ -318,13 +335,15 @@ fn sun_setting(id_: u64, f: &Fields) -> SunSetting {
     let iv = int(f, "m_eSunStudyTimeInterval").or_else(|| int(f, "m_sunStudyTimeInterval"));
     SunSetting {
         id: id_,
-        name: text(f, "m_sName").unwrap_or_default(),
+        name: String::new(),
+        stored_name: text(f, "m_sName").unwrap_or_default(),
+        is_preset: false,
         sun_and_shadow_type: ty.and_then(sun_and_shadow_type).map(str::to_string),
         type_value: ty,
-        start_unix: start,
-        end_unix: end,
-        start_utc: start.map(iso_utc),
-        end_utc: end.map(iso_utc),
+        start: start.and_then(packed_date_time),
+        end: end.and_then(packed_date_time),
+        start_value: start,
+        end_value: end,
         time_interval: iv.and_then(time_interval).map(str::to_string),
         time_interval_value: iv,
         active_frame: float(f, "m_activeFrame"),
@@ -361,7 +380,7 @@ fn view_display(
         view_template_id: id(root, "m_viewTemplateId"),
         sun_setting_id: None,
         display_style: None,
-        display_style_value: None,
+        style_values: None,
         cast_shadows: false,
         ambient_shadows: false,
         shadow_intensity: None,
@@ -373,10 +392,16 @@ fn view_display(
         exposure: None,
         lighting_scheme_id: id(root, "m_lightSchemeId"),
     };
-    let style = int(root, "m_modelDisplayMode");
-    v.display_style_value = style;
-    v.display_style = style.and_then(display_style).map(str::to_string);
     let Some(m) = mgr else { return v };
+    let model = sub(o, m, "m_model");
+    let values = [
+        i64::from(flag(m, "m_hlr")),
+        i64::from(flag(m, "m_lighting")),
+        model.and_then(|x| int(x, "m_surfaces")).unwrap_or(-1),
+        model.and_then(|x| int(x, "m_edges")).unwrap_or(-1),
+    ];
+    v.style_values = Some(values);
+    v.display_style = display_style(values).map(str::to_string);
     if let Some(l) = sub(o, m, "m_lights") {
         v.sun_setting_id = id(l, "m_sunAndShadowSettingsId");
         v.sunlight_intensity = int(l, "m_sunlightIntensity");
@@ -529,6 +554,20 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
     );
     if settings.is_empty() && views.is_empty() {
         return None;
+    }
+    // A view's own setting shows as `<In-session, ...>`, whatever name it keeps.
+    let owned: std::collections::BTreeSet<u64> =
+        views.values().filter_map(|v| v.sun_setting_id).collect();
+    for s in settings.values_mut() {
+        s.is_preset = presets.contains(&s.id);
+        s.name = if !owned.contains(&s.id) && !s.stored_name.starts_with("<In-session") {
+            s.stored_name.clone()
+        } else {
+            format!(
+                "<In-session, {}>",
+                in_session_label(s.sun_and_shadow_type.as_deref())
+            )
+        };
     }
     let mut out = SunAndDisplay {
         settings: settings.into_values().collect(),

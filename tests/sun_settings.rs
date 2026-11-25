@@ -37,7 +37,11 @@ fn dump_minutes(text: &str) -> Option<i64> {
         (h, "PM") => h + 12,
         (h, _) => h,
     };
-    // days from civil (Howard Hinnant)
+    Some(civil_minutes(year, month, day, h, m))
+}
+
+/// Minutes since 1970 of a civil date and time (days from civil, Howard Hinnant).
+fn civil_minutes(year: i64, month: i64, day: i64, h: i64, m: i64) -> i64 {
     let (y, mo) = if month <= 2 {
         (year - 1, month + 9)
     } else {
@@ -48,16 +52,27 @@ fn dump_minutes(text: &str) -> Option<i64> {
     let doy = (153 * mo + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = era * 146_097 + doe - 719_468;
-    Some(days * 1440 + h * 60 + m)
+    days * 1440 + h * 60 + m
 }
 
-/// Minutes between a dump's `DateTime` text and the stored instant (seconds since 1970 UTC),
-/// `None` when either is missing or the instant is not a whole minute. The dump writes a
-/// `DateTime` in the clock time of the machine it ran on, so within one model every offset is
-/// that machine's: one value, or two an hour apart across a daylight-saving change.
-fn clock_offset(unix: Option<i64>, text: Option<&str>) -> Option<i64> {
-    let (t, m) = (unix?, dump_minutes(text?)?);
-    (t % 60 == 0).then_some(m - t / 60)
+/// Minutes since 1970 of a decoded `YYYY-MM-DDTHH:MM`.
+fn decoded_minutes(s: &str) -> Option<i64> {
+    let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    Some(civil_minutes(
+        n(0..4)?,
+        n(5..7)?,
+        n(8..10)?,
+        n(11..13)?,
+        n(14..16)?,
+    ))
+}
+
+/// Minutes between a dump's `DateTime` text and the decoded clock time, `None` when either is
+/// missing. The API returns the stored clock time; the dump wrote it moved by the zone of the
+/// machine it ran on, so within one model every offset is that machine's: one value, or two an
+/// hour apart across a daylight-saving change.
+fn clock_offset(decoded: Option<&str>, text: Option<&str>) -> Option<i64> {
+    Some(dump_minutes(text?)? - decoded_minutes(decoded?)?)
 }
 
 fn tiny_models(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
@@ -167,8 +182,8 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
                     );
                 }
                 for (k, t) in [
-                    ("StartDateAndTime", s.start_unix),
-                    ("EndDateAndTime", s.end_unix),
+                    ("StartDateAndTime", s.start.as_deref()),
+                    ("EndDateAndTime", s.end.as_deref()),
                 ] {
                     match clock_offset(t, p[k]["text"].as_str()) {
                         Some(o) => offsets.push((o, format!("{name} {id} {k}"))),
@@ -202,10 +217,7 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
                 if p["DisplayStyle"].as_str() != v.display_style.as_deref() {
                     bad(
                         "DisplayStyle",
-                        format!(
-                            "{} vs stored {:?}",
-                            p["DisplayStyle"], v.display_style_value
-                        ),
+                        format!("{} vs stored {:?}", p["DisplayStyle"], v.style_values),
                     );
                 }
             }
@@ -246,7 +258,7 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
         *by_pair.entry((what.as_str(), detail.as_str())).or_default() += 1;
     }
     let mut pairs: Vec<_> = by_pair.into_iter().collect();
-    pairs.sort_by(|a, b| b.1.cmp(&a.1));
+    pairs.sort_by_key(|p| std::cmp::Reverse(p.1));
     for ((what, detail), n) in pairs.iter().take(60) {
         eprintln!("  {n:>6}  {what}: {detail}");
     }
@@ -261,7 +273,7 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
 
 /// Every public sample project (`RVT_AUTODESK_SAMPLES_DIR/<year>/*.rvt`, Autodesk's own
 /// downloads, 2015 to 2027): sun settings are read, each named preset and each view's own setting
-/// names a decoded `SunAndShadowSettings`, every start lies on a whole minute, and a project with
+/// names a decoded `SunAndShadowSettings`, every stored start and end is a date, and a project with
 /// a 3D view gives the viewer a sun (its default view's own setting, or a preset).
 #[test]
 fn public_samples_sun_settings_hold_together() {
@@ -305,9 +317,11 @@ fn public_samples_sun_settings_hold_together() {
             }
         }
         for s in &sun.settings {
-            if s.start_unix.is_some_and(|t| t % 60 != 0) {
+            if (s.start_value.is_some() && s.start.is_none())
+                || (s.end_value.is_some() && s.end.is_none())
+            {
                 problems.push(format!(
-                    "{name}: setting {} starts off a whole minute",
+                    "{name}: setting {} has a start or end that is not a date",
                     s.id
                 ));
             }

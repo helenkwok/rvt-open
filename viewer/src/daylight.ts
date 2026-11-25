@@ -72,9 +72,9 @@ export interface FileSun {
   settingId: number;
   sunAndShadowType?: string;
   timeInterval?: string;
-  /** Seconds since 1970 UTC. */
-  start?: number;
-  end?: number;
+  /** The project's clock time as Revit shows it, `YYYY-MM-DDTHH:MM`. */
+  start?: string;
+  end?: string;
   /** Degrees: the Lighting mode's sun. */
   azimuth?: number;
   altitude?: number;
@@ -155,19 +155,15 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
-/**
- * Date (`YYYY-MM-DD`) and hour (local standard time) of `unix` seconds in a zone `timeZone`
- * hours from UTC, as the panel's date and time fields take them.
- */
-export function localStandard(unix: number, timeZone: number): { date: string; hour: number } {
-  const d = new Date((unix + timeZone * 3600) * 1000);
-  const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-  return { date, hour: d.getUTCHours() + d.getUTCMinutes() / 60 };
+/** Date (`YYYY-MM-DD`) and hour of a stored clock time `YYYY-MM-DDTHH:MM`, or null. */
+export function clockTime(value: string): { date: string; hour: number } | null {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  return m ? { date: m[1], hour: Number(m[2]) + Number(m[3]) / 60 } : null;
 }
 
 /** The panel's time step (minutes) for a file's solar-study interval, if the panel has it. */
 export function stepOf(interval: string | undefined): number | null {
-  const m: Record<string, number> = { FiveMinutes: 5, FifteenMinutes: 15, ThirtyMinutes: 30, Hour: 60 };
+  const m: Record<string, number> = { Minutes15: 15, Minutes30: 30, Hour: 60 };
   return interval && interval in m ? m[interval] : null;
 }
 
@@ -538,7 +534,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
 
   /**
    * The file's sun setting (the default 3D view's own, else the project's first named preset) in
-   * the date, time and range fields, converted to local standard time with the site's time zone,
+   * the date, time and range fields, as the clock time Revit shows (the project's local time),
    * and its view's cast-shadows option. A Lighting setting stores a direction, not a date: the
    * fields keep their values and the note says so.
    */
@@ -552,29 +548,30 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     const where = sun.source === 'view' && sun.viewName
       ? `the view “${sun.viewName}” (sun setting “${sun.settingName}”)`
       : `the project’s sun setting “${sun.settingName}”`;
-    const tz = site.timeZone;
-    if (sun.sunAndShadowType === 'Lighting' || sun.start === undefined) {
+    const a = sun.start ? clockTime(sun.start) : null;
+    if (sun.sunAndShadowType === 'Lighting' || !a) {
       const dir = sun.azimuth !== undefined && sun.altitude !== undefined
         ? ` (azimuth ${fmt(sun.azimuth, 1)}°, altitude ${fmt(sun.altitude, 1)}°${sun.relativeToView ? ', relative to the view' : ''})`
         : '';
-      whenFrom('assumed', `${where[0].toUpperCase()}${where.slice(1)} is a Lighting sun${dir}: it stores a direction, not a date, so the date and time are assumed.`);
+      const what = sun.sunAndShadowType === 'Lighting' ? `is a Lighting sun${dir}: it stores a direction, not a date` : 'holds no date that could be read';
+      whenFrom('assumed', `${where[0].toUpperCase()}${where.slice(1)} ${what}, so the date and time are assumed.`);
     } else {
-      const a = localStandard(sun.start, tz);
       dateIn.value = a.date;
       // the file's time to the minute (the slider then moves by any amount)
       timeIn.step = 'any';
       timeIn.value = String(a.hour);
       timeOut.textContent = hhmm(Number(timeIn.value));
       const study = sun.sunAndShadowType === 'OneDayStudy' || sun.sunAndShadowType === 'MultiDayStudy';
-      if (study && sun.end !== undefined) {
-        toIn.value = localStandard(sun.end, tz).date;
+      const b = sun.end ? clockTime(sun.end) : null;
+      if (study && b) {
+        toIn.value = b.date;
         const step = stepOf(sun.timeInterval);
         if (step) stepSel.value = String(step);
       } else {
         toIn.value = a.date;
       }
       const kind = sun.sunAndShadowType ? ` (${sun.sunAndShadowType})` : '';
-      whenFrom('file', `Date and time from ${where}${kind}, in the site’s standard time.`);
+      whenFrom('file', `Date and time from ${where}${kind}, as Revit shows them (the site’s local time).`);
     }
   }
   shadowsBox.addEventListener('change', () => {

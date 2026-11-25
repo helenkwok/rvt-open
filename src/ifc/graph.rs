@@ -940,8 +940,8 @@ impl Builder {
         };
         for (k, v) in [
             ("sunAndShadowType", &s.sun_and_shadow_type),
-            ("startUtc", &s.start_utc),
-            ("endUtc", &s.end_utc),
+            ("start", &s.start),
+            ("end", &s.end),
             ("timeInterval", &s.time_interval),
         ] {
             if let Some(v) = v {
