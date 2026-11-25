@@ -28,6 +28,7 @@
 -1155221	Construction	IFCBOOLEAN	label
 -1155215	Dimensions	IFCBOOLEAN	label
 -1155210	Data	IFCBOOLEAN	label
+-1155152	Electrical - Circuiting	IFCINTEGER	label
 -1155150	Electrical - Circuiting	IFCINTEGER	label
 -1155118	Other	IFCLENGTHMEASURE	label
 -1155113	Electrical - Loads	IFCELECTRICCURRENTMEASURE	label
@@ -334,6 +335,7 @@
 -1018503	Structural	IFCVOLUMEMEASURE	label
 -1018502	Structural	IFCVOLUMEMEASURE	label
 -1018274	Construction	IFCIDENTIFIER	label
+-1017740	Construction	IFCIDENTIFIER	label
 -1017712	Structural	IFCMASSMEASURE	label
 -1017710	Dimensions	IFCLENGTHMEASURE	label
 -1017709	Dimensions	IFCLENGTHMEASURE	label
@@ -349,7 +351,7 @@
 -1017618	Layers	IFCIDENTIFIER	label
 -1017617	Layers	IFCLENGTHMEASURE	label
 -1017616	Layers	IFCLENGTHMEASURE	label
--1017614	Dimensions	IFCLENGTHMEASURE	label
+-1017614	Layers	IFCLENGTHMEASURE	label
 -1017613	Layers	IFCLENGTHMEASURE	label
 -1017612	Layers	IFCINTEGER	label
 -1017611	Layers	IFCIDENTIFIER	label
@@ -396,11 +398,13 @@
 -1012839	Constraints	IFCBOOLEAN	file+label
 -1012838	Constraints	IFCBOOLEAN	file+label
 -1012837	Construction	IFCLABEL	category+label
+-1012836	Construction	IFCLABEL	category+label
 -1012829	Constraints	IFCLENGTHMEASURE	file+label
 -1012828	Constraints	IFCLENGTHMEASURE	file+label
 -1012827	Constraints	IFCLENGTHMEASURE	file+label
 -1012825	Constraints	IFCLENGTHMEASURE	file+label
 -1012824	Materials and Finishes	IFCLABEL	category+label
+-1012823	Materials and Finishes	IFCLABEL	category+label
 -1012822	Materials and Finishes	IFCLABEL	category+label
 -1012819	Construction	IFCLABEL	category+label
 -1012809	Identity Data	IFCLABEL	label
@@ -412,6 +416,13 @@
 -1012502	Constraints	IFCLENGTHMEASURE	file+label
 -1012101	Phasing	IFCLABEL	label
 -1012100	Phasing	IFCLABEL	file+label
+-1012019	Identity Data	IFCTEXT	label
+-1012017	Identity Data	IFCTEXT	label
+-1012016	Identity Data	IFCTEXT	label
+-1012013	Identity Data	IFCTEXT	label
+-1012012	Dimensions	IFCVOLUMEMEASURE	label
+-1012011	Dimensions	IFCAREAMEASURE	label
+-1012009	Dimensions	IFCLENGTHMEASURE	label
 -1012007	Dimensions	IFCVOLUMEMEASURE	category+label
 -1012006	Dimensions	IFCAREAMEASURE	label
 -1012004	Dimensions	IFCAREAMEASURE	label
