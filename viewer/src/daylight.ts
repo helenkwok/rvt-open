@@ -64,6 +64,29 @@ interface FileSite {
   locationName: string;
 }
 
+/** The file's sun setting a viewer starts from (rvt-wasm `daylightPrepare`'s `sun`). */
+export interface FileSun {
+  source: 'view' | 'project';
+  settingName: string;
+  settingId: number;
+  sunAndShadowType?: string;
+  timeInterval?: string;
+  /** Seconds since 1970 UTC. */
+  start?: number;
+  end?: number;
+  /** Degrees: the Lighting mode's sun. */
+  azimuth?: number;
+  altitude?: number;
+  relativeToView: boolean;
+  viewName?: string;
+  viewId?: number;
+  castShadows?: boolean;
+  ambientShadows?: boolean;
+  sunlightIntensity?: number;
+  shadowIntensity?: number;
+  displayStyle?: string;
+}
+
 interface Prepared {
   positions: Float64Array;
   modifier: Uint32Array;
@@ -73,6 +96,7 @@ interface Prepared {
   zones: Zone[];
   byCategory: [string, number][];
   site: FileSite | null;
+  sun?: FileSun | null;
 }
 
 type Analysis = 'sun' | 'sunhours' | 'svf' | 'df';
@@ -123,6 +147,22 @@ function el<K extends keyof HTMLElementTagNameMap>(
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+/**
+ * Date (`YYYY-MM-DD`) and hour (local standard time) of `unix` seconds in a zone `timeZone`
+ * hours from UTC, as the panel's date and time fields take them.
+ */
+export function localStandard(unix: number, timeZone: number): { date: string; hour: number } {
+  const d = new Date((unix + timeZone * 3600) * 1000);
+  const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return { date, hour: d.getUTCHours() + d.getUTCMinutes() / 60 };
+}
+
+/** The panel's time step (minutes) for a file's solar-study interval, if the panel has it. */
+export function stepOf(interval: string | undefined): number | null {
+  const m: Record<string, number> = { FiveMinutes: 5, FifteenMinutes: 15, ThirtyMinutes: 30, Hour: 60 };
+  return interval && interval in m ? m[interval] : null;
 }
 
 /** Day of a non-leap year from an `<input type="date">` value (29 February counts as the 28th). */
@@ -319,6 +359,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const siteReset = el('button', { type: 'button', class: 'side-btn' }, 'Use the file’s site');
   siteReset.addEventListener('click', () => {
     applyFileSite(prepared?.site ?? null);
+    if (whenSourceNow === 'file') applyFileSun(prepared?.sun);
     void updateSun();
     if (pathBox.checked) void drawSunPath();
   });
@@ -353,7 +394,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const toRow = row('To', toIn);
   const stepRow = row('Step', stepSel);
   const pathsRow = row('Quality', pathsSel);
-  whenBox.append(row('Date', dateIn), timeRow, toRow, stepRow, pathsRow);
+  const whenNote = el('p', { class: 'option-hint', id: 'daylight-when-note' });
+  const whenSource = el('span', { class: 'daylight-source', id: 'daylight-when-source' });
+  const whenReset = el('button', { type: 'button', class: 'side-btn', id: 'daylight-when-reset', hidden: '' }, 'Use the file’s sun');
+  whenBox.append(row('Date', dateIn, whenSource), timeRow, toRow, stepRow, pathsRow, whenNote, whenReset);
   const gridBox = el('div', { class: 'daylight-grid' });
   gridBox.append(row('Grid spacing (m)', spacingIn), row('Sensor height (m)', offsetIn));
   const toggles = el('div', { class: 'daylight-toggles' });
@@ -426,11 +470,70 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
 
   timeIn.addEventListener('input', () => {
     timeOut.textContent = hhmm(Number(timeIn.value));
+    whenFrom('user');
     if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun();
   });
   dateIn.addEventListener('change', () => {
+    whenFrom('user');
     if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun();
   });
+  for (const i of [toIn, stepSel]) i.addEventListener('change', () => whenFrom('user'));
+  whenReset.addEventListener('click', () => {
+    applyFileSun(prepared?.sun);
+    if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun();
+  });
+
+  /** Says where the date, time and study range came from. */
+  let whenSourceNow: Source = 'assumed';
+  function whenFrom(s: Source, note?: string): void {
+    whenSourceNow = s;
+    whenSource.textContent = s === 'file' ? 'from the file' : s === 'user' ? 'set by you' : 'assumed';
+    whenSource.dataset.source = s;
+    if (note !== undefined) whenNote.textContent = note;
+    else if (s === 'user') whenNote.textContent = 'Date and time set by you.';
+    whenReset.hidden = s !== 'user' || !prepared?.sun;
+  }
+  whenFrom('assumed', 'The file’s sun setting was not read: the date and time are assumed.');
+
+  /**
+   * The file's sun setting (the default 3D view's own, else the project's first named preset) in
+   * the date, time and range fields, converted to local standard time with the site's time zone,
+   * and its view's cast-shadows option. A Lighting setting stores a direction, not a date: the
+   * fields keep their values and the note says so.
+   */
+  function applyFileSun(sun: FileSun | null | undefined, keepUser = false): void {
+    if (keepUser && whenSourceNow === 'user') return;
+    root.dataset.fileSun = sun ? JSON.stringify(sun) : '';
+    if (!sun) {
+      whenFrom('assumed', 'The file’s sun setting was not read: the date and time are assumed.');
+      return;
+    }
+    const where = sun.source === 'view' && sun.viewName
+      ? `the view “${sun.viewName}” (sun setting “${sun.settingName}”)`
+      : `the project’s sun setting “${sun.settingName}”`;
+    const tz = site.timeZone;
+    if (sun.sunAndShadowType === 'Lighting' || sun.start === undefined) {
+      const dir = sun.azimuth !== undefined && sun.altitude !== undefined
+        ? ` (azimuth ${fmt(sun.azimuth, 1)}°, altitude ${fmt(sun.altitude, 1)}°${sun.relativeToView ? ', relative to the view' : ''})`
+        : '';
+      whenFrom('assumed', `${where[0].toUpperCase()}${where.slice(1)} is a Lighting sun${dir}: it stores a direction, not a date, so the date and time are assumed.`);
+    } else {
+      const a = localStandard(sun.start, tz);
+      dateIn.value = a.date;
+      timeIn.value = String(Math.round(a.hour * 4) / 4);
+      timeOut.textContent = hhmm(Number(timeIn.value));
+      const study = sun.sunAndShadowType === 'OneDayStudy' || sun.sunAndShadowType === 'MultiDayStudy';
+      if (study && sun.end !== undefined) {
+        toIn.value = localStandard(sun.end, tz).date;
+        const step = stepOf(sun.timeInterval);
+        if (step) stepSel.value = String(step);
+      } else {
+        toIn.value = a.date;
+      }
+      const kind = sun.sunAndShadowType ? ` (${sun.sunAndShadowType})` : '';
+      whenFrom('file', `Date and time from ${where}${kind}, in the site’s standard time.`);
+    }
+  }
   shadowsBox.addEventListener('change', () => {
     if (shadowsBox.checked) void updateSun();
     else sunOff();
@@ -605,7 +708,11 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         prepared = m.prepared;
         preparedKey = key;
         preparedId++;
-        if (firstTime) applyFileSite(prepared.site, true);
+        if (firstTime) {
+          applyFileSite(prepared.site, true);
+          applyFileSun(prepared.sun, true);
+          if (prepared.sun?.castShadows && !shadowsBox.checked) void updateSun();
+        }
         if (root.dataset.state === 'preparing') {
           root.dataset.state = 'ready';
           status.textContent = `${(prepared.sensors.length / 6).toLocaleString('en')} sensors on ${prepared.zones.length} ${prepared.zones[0]?.kind === 'floor' ? 'floors (the model has no rooms)' : 'rooms'}, ${(prepared.positions.length / 9).toLocaleString('en')} triangles.`;
@@ -939,6 +1046,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     reset(): void {
       clearAll();
       applyFileSite(null);
+      applyFileSun(null);
     },
   };
 }

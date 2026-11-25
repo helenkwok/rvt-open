@@ -85,6 +85,7 @@ real      floor_plane_joint
 real      floor_outline_mesh
 real      frag_writer
 real      georeference
+real      sun_settings
 real      export_as_2018_2023
 real      schema_objects
 real      streamed_partition

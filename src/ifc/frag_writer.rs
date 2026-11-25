@@ -25,7 +25,8 @@
 //!   each standard set its `rvtopen::ifc::psetOf::<Prop>` names;
 //!   a set named `bsi::ifc::prop` only without one); a type's sets by
 //!   `HasPropertySets`;
-//! - `metadata.georeference`: the site's georeference;
+//! - `metadata.georeference`: the site's georeference; `metadata.sun`: the
+//!   file's sun setting a viewer starts from;
 //! - types by `IsDefinedBy` / `ObjectTypeOf`; the tree by `IsDecomposedBy` /
 //!   `Decomposes` (a spatial child, or any child of a non-spatial parent)
 //!   and `ContainsElements` / `ContainedInStructure`; the spatial structure
@@ -886,6 +887,14 @@ fn write_frag(
     // the `rvtopen::georeference` object) as `metadata.georeference`.
     if let Some(g) = graph.georeference_metadata() {
         meta["georeference"] = g;
+    }
+    // the file's sun setting a viewer starts from (`rvtopen::sun`) as `metadata.sun`.
+    if let Some(sun) = graph
+        .nodes
+        .values()
+        .find_map(|n| n.attributes.get(super::graph::SUN))
+    {
+        meta["sun"] = sun.clone();
     }
     meta["display"] = json!({"rooms": display.rooms, "edges": false});
     let metadata = fb.string(&meta.to_string());
