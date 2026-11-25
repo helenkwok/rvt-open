@@ -10,11 +10,11 @@
 //   libc, so a WebAssembly run differs from a native one as much as two native runs do.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const [wasmDir, dataArg] = process.argv.slice(2);
 if (!wasmDir) throw new Error('usage: check-demo.mjs WASM_DIR [DATA_DIR]');
-const data = dataArg ?? path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../daylight-rt/tests/data/demo-building');
+const data = dataArg ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../daylight-rt/tests/data/demo-building');
 const rd = (f) => readFileSync(path.join(data, f));
 const lib = (f) => readFileSync(path.join(wasmDir, f));
 

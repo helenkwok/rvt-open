@@ -294,6 +294,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   let overlay: THREE.InstancedMesh | null = null;
   const radiance = new Radiance(pool.count);
   let weather: Weather | null = null;
+  // a weather load that finishes after a newer selection or a model change is dropped
+  let weatherGen = 0;
   const helpers = new THREE.Group();
   helpers.name = 'daylight-helpers';
   host.scene.add(helpers);
@@ -477,8 +479,11 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   weatherIn.addEventListener('change', async () => {
     const f = weatherIn.files?.[0];
     if (!f) return;
+    const gen = ++weatherGen;
     try {
-      weather = parseWeather(f.name, await f.text(), new Date(f.lastModified).toISOString().slice(0, 10));
+      const w = parseWeather(f.name, await f.text(), new Date(f.lastModified).toISOString().slice(0, 10));
+      if (gen !== weatherGen) return;
+      weather = w;
       const pv = weather.provenance;
       weatherNote.textContent = `${f.name}: ${weather.hours.length.toLocaleString('en')} hours. ${Object.entries(pv)
         .filter(([k]) => k !== 'file')
@@ -486,6 +491,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         .join('; ')}.${weather.credit ? ` ${weather.credit}.` : ''}`;
       root.dataset.weather = String(weather.hours.length);
     } catch (e) {
+      if (gen !== weatherGen) return;
       weather = null;
       delete root.dataset.weather;
       weatherNote.textContent = e instanceof Error ? e.message : String(e);
@@ -847,7 +853,9 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       live();
       // the inputs this run uses, kept with its result
       const grid = gridOptions();
-      const siteUsed = Object.fromEntries(SITE_FIELDS.map((f) => [f.key, { value: site[f.key], source: source[f.key] }])) as Run['site'];
+      // one site for the whole run: edits made while it waits do not reach it
+      const siteNow = { ...site };
+      const siteUsed = Object.fromEntries(SITE_FIELDS.map((f) => [f.key, { value: siteNow[f.key], source: source[f.key] }])) as Run['site'];
       const n = p.sensors.length / 6;
       if (n === 0) throw new Error('the model has no rooms or floors to lay a sensor grid on');
       root.dataset.sensors = String(n);
@@ -862,7 +870,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         const step = Number(stepSel.value) || 15;
         extra.from = dateIn.value.slice(5);
         extra.to = (toIn.value || dateIn.value).slice(5);
-        params = await pool.ask<Float64Array>(decoder, { type: 'suns', site: siteArg(), from, to, step });
+        params = await pool.ask<Float64Array>(decoder, { type: 'suns', site: { ...siteNow }, from, to, step });
         live();
         kind = 'sun';
         scale = step / 60;
@@ -887,15 +895,16 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         const detail = DETAILS[detailSel.value as 'preview' | 'validated'];
         let sky: string;
         if (a === 'rad-pit') {
-          if (!weather) throw new Error('choose a weather file first (PVGIS JSON or EPW)');
+          const w = weather;
+          if (!w) throw new Error('choose a weather file first (PVGIS JSON or EPW)');
           const doy = dayOfYear(dateIn.value);
           const month = [31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365].findIndex((end) => doy <= end) + 1;
           const day = doy - [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334][month - 1];
-          const h = weatherAt(weather, month, day, Number(timeIn.value), site.timeZone);
+          const h = weatherAt(w, month, day, Number(timeIn.value), siteNow.timeZone);
           if (!h) throw new Error(`the weather file has no hour on ${dateIn.value.slice(5)}`);
-          sky = await radiance.perezSky(h.month, h.day, h.hour, site, h.dni, h.dhi);
+          sky = await radiance.perezSky(h.month, h.day, h.hour, siteNow, h.dni, h.dhi);
           live();
-          Object.assign(extra, { weatherHour: { month: h.month, day: h.day, hour: h.hour, dni: h.dni, dhi: h.dhi }, sky: 'Perez (gendaylit -W)', weather: weather.provenance, credit: weather.credit });
+          Object.assign(extra, { weatherHour: { month: h.month, day: h.day, hour: h.hour, dni: h.dni, dhi: h.dhi }, sky: 'Perez (gendaylit -W)', weather: w.provenance, credit: w.credit });
         } else {
           sky = await radiance.overcastSky();
           Object.assign(extra, { sky: 'CIE overcast, 10,000 lux horizontal (gensky -ang 45 0 -c -B 55.866)', groundReflectance: 0.2 });
@@ -906,7 +915,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         p.materials.forEach((m, i) => materials.set([m.kind === 'glass' ? 1 : 0, m.rgb[0], m.rgb[1], m.rgb[2]], i * 4));
         // gendaylit's sky has +Y toward true north: the scene and sensors turn by the angle to true north
         // (true = R(-angle) model). The overcast sky is the same all round, so the daylight factor needs no turn.
-        const turn = a === 'rad-pit' && site.trueNorth !== 0 ? (-site.trueNorth * Math.PI) / 180 : 0;
+        const turn = a === 'rad-pit' && siteNow.trueNorth !== 0 ? (-siteNow.trueNorth * Math.PI) / 180 : 0;
         const [ts, tc] = [Math.sin(turn), Math.cos(turn)];
         const rot = (src: Float64Array, stride: number): Float64Array => {
           if (turn === 0) return src;
@@ -918,7 +927,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
           }
           return out;
         };
-        if (turn !== 0) extra.trueNorthTurn = site.trueNorth;
+        if (turn !== 0) extra.trueNorthTurn = siteNow.trueNorth;
         const [matText, sceneText] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: rot(p.positions, 9), modifier: p.modifier, materials });
         live();
         const sens = rot(p.sensors, 6);
@@ -1062,6 +1071,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     pool.stop();
     radiance.stop();
     // weather belongs to a site: a new model starts without it
+    weatherGen++;
     weather = null;
     weatherIn.value = '';
     weatherNote.textContent = NO_WEATHER;
