@@ -100,7 +100,8 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
         !models.is_empty(),
         "no tiny model with an API dump under {dir:?}"
     );
-    let (mut settings, mut views, mut mismatches) = (0usize, 0usize, Vec::<String>::new());
+    let (mut settings, mut views, mut mismatches) =
+        (0usize, 0usize, Vec::<(String, String, String)>::new());
     for (rvt_path, dump_path) in &models {
         let name = rvt_path.display().to_string();
         let mut rf = rvt::RevitFile::open(rvt_path).expect("open");
@@ -111,26 +112,37 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
             let class = e["class"].as_str().unwrap_or("");
             let id = e["id"].as_u64().unwrap_or(0);
             let p = &e["properties"];
-            let mut bad = |what: &str| mismatches.push(format!("{name} {id} {what}"));
+            let mut bad = |what: &str, detail: String| {
+                mismatches.push((format!("{name} {id}"), what.to_string(), detail))
+            };
             if class.ends_with(".SunAndShadowSettings") {
                 settings += 1;
                 let Some(s) = sun.setting(id) else {
-                    bad("setting not decoded");
+                    bad("setting not decoded", String::new());
                     continue;
                 };
                 if p["Name"].as_str() != Some(s.name.as_str()) {
-                    bad("name");
+                    bad("name", format!("{} vs {}", p["Name"], s.name));
                 }
                 if p["SunAndShadowType"].as_str() != s.sun_and_shadow_type.as_deref() {
-                    bad("SunAndShadowType");
+                    bad(
+                        "SunAndShadowType",
+                        format!("{} vs stored {:?}", p["SunAndShadowType"], s.type_value),
+                    );
                 }
                 if p["TimeInterval"].as_str() != s.time_interval.as_deref() {
-                    bad("TimeInterval");
+                    bad(
+                        "TimeInterval",
+                        format!(
+                            "{} vs stored {:?}",
+                            p["TimeInterval"], s.time_interval_value
+                        ),
+                    );
                 }
                 for (k, v) in [("Azimuth", s.azimuth), ("Altitude", s.altitude)] {
                     let want = p[k].as_f64().map(f64::to_degrees);
                     if !matches!((want, v), (Some(a), Some(b)) if (a - b).abs() < 1e-9) {
-                        bad(k);
+                        bad(k, format!("{want:?} vs {v:?}"));
                     }
                 }
                 for (k, v) in [
@@ -140,13 +152,19 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
                     ("SharesSettings", s.shares_settings),
                 ] {
                     if p[k].as_bool() != Some(v) {
-                        bad(k);
+                        bad(k, format!("{} vs {v}", p[k]));
                     }
                 }
                 if p["UsesGroundPlane"].as_bool() == Some(true)
                     && p["GroundPlaneLevelId"]["element_id"].as_u64() != s.ground_plane_level_id
                 {
-                    bad("GroundPlaneLevelId");
+                    bad(
+                        "GroundPlaneLevelId",
+                        format!(
+                            "{} vs {:?}",
+                            p["GroundPlaneLevelId"], s.ground_plane_level_id
+                        ),
+                    );
                 }
                 for (k, t) in [
                     ("StartDateAndTime", s.start_unix),
@@ -154,26 +172,41 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
                 ] {
                     match clock_offset(t, p[k]["text"].as_str()) {
                         Some(o) => offsets.push((o, format!("{name} {id} {k}"))),
-                        None => bad(k),
+                        None => bad(k, format!("{} vs {t:?}", p[k]["text"])),
                     }
                 }
             } else if class.contains(".View") && p.get("SunlightIntensity").is_some() {
                 views += 1;
                 let Some(v) = sun.view(id) else {
-                    bad("view not decoded");
+                    bad("view not decoded", format!("{}", e["class"]));
                     continue;
                 };
                 if p["SunAndShadowSettings"]["element_id"].as_u64() != v.sun_setting_id {
-                    bad("SunAndShadowSettings");
+                    bad(
+                        "SunAndShadowSettings",
+                        format!("{} vs {:?}", p["SunAndShadowSettings"], v.sun_setting_id),
+                    );
                 }
                 if p["SunlightIntensity"].as_i64() != v.sunlight_intensity {
-                    bad("SunlightIntensity");
+                    bad(
+                        "SunlightIntensity",
+                        format!("{} vs {:?}", p["SunlightIntensity"], v.sunlight_intensity),
+                    );
                 }
                 if p["ShadowIntensity"].as_i64() != v.shadow_intensity {
-                    bad("ShadowIntensity");
+                    bad(
+                        "ShadowIntensity",
+                        format!("{} vs {:?}", p["ShadowIntensity"], v.shadow_intensity),
+                    );
                 }
                 if p["DisplayStyle"].as_str() != v.display_style.as_deref() {
-                    bad("DisplayStyle");
+                    bad(
+                        "DisplayStyle",
+                        format!(
+                            "{} vs stored {:?}",
+                            p["DisplayStyle"], v.display_style_value
+                        ),
+                    );
                 }
             }
         }
@@ -192,9 +225,10 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
         };
         for (o, what) in &offsets {
             if *o != mode && *o != other {
-                mismatches.push(format!(
-                    "{what} instant ({} min off the model's clock)",
-                    o - mode
+                mismatches.push((
+                    what.clone(),
+                    "instant".into(),
+                    format!("{} min off the model's clock", o - mode),
                 ));
             }
         }
@@ -204,11 +238,83 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
         models.len(),
         mismatches.len()
     );
+    // by field, then the commonest (field, Revit API value vs decoded) pairs
+    let mut by_field = std::collections::BTreeMap::<&str, usize>::new();
+    let mut by_pair = std::collections::BTreeMap::<(&str, &str), usize>::new();
+    for (_, what, detail) in &mismatches {
+        *by_field.entry(what.as_str()).or_default() += 1;
+        *by_pair.entry((what.as_str(), detail.as_str())).or_default() += 1;
+    }
+    let mut pairs: Vec<_> = by_pair.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1));
+    for ((what, detail), n) in pairs.iter().take(60) {
+        eprintln!("  {n:>6}  {what}: {detail}");
+    }
     assert!(settings > 0 && views > 0);
     assert!(
         mismatches.is_empty(),
-        "{} mismatches, first: {:?}",
+        "{} mismatches by field {by_field:?}, first: {:?}",
         mismatches.len(),
-        &mismatches[..mismatches.len().min(20)]
+        &mismatches[..mismatches.len().min(10)]
     );
+}
+
+/// Every public sample project (`RVT_AUTODESK_SAMPLES_DIR/<year>/*.rvt`, Autodesk's own
+/// downloads, 2015 to 2027): sun settings are read, each named preset and each view's own setting
+/// names a decoded `SunAndShadowSettings`, every start lies on a whole minute, and a project with
+/// a 3D view gives the viewer a sun (its default view's own setting, or a preset).
+#[test]
+fn public_samples_sun_settings_hold_together() {
+    let Some(dir) = std::env::var_os("RVT_AUTODESK_SAMPLES_DIR") else {
+        eprintln!("skip: RVT_AUTODESK_SAMPLES_DIR not set");
+        return;
+    };
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|y| std::fs::read_dir(y.path()).ok())
+        .flatten()
+        .flatten()
+        .map(|f| f.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "rvt"))
+        .collect();
+    // both spellings of a name link to one file: read it once
+    files.sort();
+    files.dedup_by_key(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()));
+    let mut problems = Vec::new();
+    let mut read = 0;
+    for p in &files {
+        let Ok(mut rf) = rvt::RevitFile::open(p) else {
+            continue;
+        };
+        let name = p.display().to_string();
+        let Some(sun) = rvt::sun_settings::read(&mut rf) else {
+            problems.push(format!("{name}: no sun settings read"));
+            continue;
+        };
+        read += 1;
+        for id in sun
+            .presets
+            .iter()
+            .chain(sun.views.iter().filter_map(|v| v.sun_setting_id.as_ref()))
+        {
+            if sun.setting(*id).is_none() {
+                problems.push(format!("{name}: setting {id} is named but not decoded"));
+            }
+        }
+        for s in &sun.settings {
+            if s.start_unix.is_some_and(|t| t % 60 != 0) {
+                problems.push(format!(
+                    "{name}: setting {} starts off a whole minute",
+                    s.id
+                ));
+            }
+        }
+        if sun.views.iter().any(|v| v.is_3d && !v.is_template) && sun.viewer_default().is_none() {
+            problems.push(format!("{name}: a 3D view but no sun for the viewer"));
+        }
+    }
+    eprintln!("{read} of {} sample files read", files.len());
+    assert!(problems.is_empty(), "{problems:#?}");
 }
