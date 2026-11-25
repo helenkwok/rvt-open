@@ -525,6 +525,7 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
     let mut settings: BTreeMap<u64, SunSetting> = BTreeMap::new();
     let mut views: BTreeMap<u64, ViewDisplay> = BTreeMap::new();
     let mut presets = Vec::new();
+    let mut newest: BTreeMap<(u16, u64), u32> = BTreeMap::new();
     let _ = for_each_object_where(
         rf,
         |f, _| wanted.contains_key(&f.header.tag),
@@ -538,9 +539,17 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
             }
             let class = wanted[&o.frame.header.tag].as_str();
             let oid = o.frame.header.id;
+            // A file saved several times keeps older copies of some elements in earlier
+            // partitions: the copy in the highest-numbered partition is the current one.
+            let part = crate::partition_room_parameters::partition_number(&o.stream);
+            match newest.get(&(o.frame.header.tag, oid)) {
+                Some(p) if *p > part => return,
+                _ => {
+                    newest.insert((o.frame.header.tag, oid), part);
+                }
+            }
             match class {
                 "SunAndShadowSettings" => {
-                    // the newest partition copy wins: later objects replace earlier ones
                     settings.insert(oid, sun_setting(oid, root));
                 }
                 "DBViewInfo" => {
