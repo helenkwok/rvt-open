@@ -583,6 +583,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "daylight-rt"
+version = "0.1.0"
+dependencies = [
+ "rvt-open",
+ "serde_json",
+]
+
+[[package]]
 name = "dhat"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1714,6 +1722,7 @@ dependencies = [
 name = "rvt-wasm"
 version = "0.1.0"
 dependencies = [
+ "daylight-rt",
  "getrandom 0.4.3",
  "js-sys",
  "rvt-dwg",

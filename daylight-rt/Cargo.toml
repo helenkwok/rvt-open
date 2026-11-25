@@ -1,0 +1,25 @@
+[package]
+name = "daylight-rt"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "Daylight and sun metrics for the browser viewer: a small ray tracer (sun hours, sky view factor, a daylight-factor preview under the CIE overcast sky), the solar position as Radiance's gensky computes it, sensor grids, and the Radiance scene text both engines read."
+authors = ["rvt-open contributors"]
+repository = "https://github.com/helenkwok/rvt-open"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["glb"]
+# Reading the scene and the sensor grids from a glTF binary (the viewer's own export).
+glb = ["dep:serde_json"]
+
+[dependencies]
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+# The demo building's scene is built from the reader's own glTF export in tests/demo_building.rs.
+rvt = { package = "rvt-open", path = "..", default-features = false }
