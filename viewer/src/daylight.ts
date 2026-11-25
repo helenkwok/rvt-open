@@ -480,7 +480,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   for (const i of [toIn, stepSel]) i.addEventListener('change', () => whenFrom('user'));
   whenReset.addEventListener('click', () => {
     applyFileSun(prepared?.sun);
-    if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun();
+    // the file's view options: shadows on or off as its view has them
+    const cast = prepared?.sun?.castShadows;
+    if (cast === false && shadowsBox.checked) {
+      shadowsBox.checked = false;
+      sunOff();
+    } else if (cast || analysisSel.value === 'sun' || shadowsBox.checked) void updateSun();
   });
 
   /** Says where the date, time and study range came from. */
@@ -520,7 +525,9 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     } else {
       const a = localStandard(sun.start, tz);
       dateIn.value = a.date;
-      timeIn.value = String(Math.round(a.hour * 4) / 4);
+      // the file's time to the minute (the slider then moves by any amount)
+      timeIn.step = 'any';
+      timeIn.value = String(a.hour);
       timeOut.textContent = hhmm(Number(timeIn.value));
       const study = sun.sunAndShadowType === 'OneDayStudy' || sun.sunAndShadowType === 'MultiDayStudy';
       if (study && sun.end !== undefined) {
@@ -711,7 +718,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         if (firstTime) {
           applyFileSite(prepared.site, true);
           applyFileSun(prepared.sun, true);
-          if (prepared.sun?.castShadows && !shadowsBox.checked) void updateSun();
+          // the file's view casts shadows, or shadows were already on with the assumed inputs
+          if (prepared.sun?.castShadows || shadowsBox.checked) void updateSun();
         }
         if (root.dataset.state === 'preparing') {
           root.dataset.state = 'ready';
