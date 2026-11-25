@@ -359,9 +359,17 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const toggles = el('div', { class: 'daylight-toggles' });
   const t1 = el('label', {});
   t1.append(shadowsBox, document.createTextNode(' Shadows'));
+  const cutBox = el('input', { type: 'checkbox', id: 'daylight-cut', checked: '' });
+  const cutIn = el('input', { type: 'number', step: '0.1', id: 'daylight-cut-height', 'aria-label': 'Cut height (m, the model’s own elevation)' });
+  const cutRow = el('label', { class: 'daylight-row' });
+  cutRow.append(el('span', {}, 'Cut the model at'), cutIn, el('span', { class: 'daylight-unit' }, 'm'));
+  const t3 = el('label', {});
+  t3.append(cutBox, document.createTextNode(' Cut the model above the grid'));
   const t2 = el('label', {});
   t2.append(pathBox, document.createTextNode(' Sun path'));
   toggles.append(t1, t2);
+  const cutBoxes = el('div', { class: 'daylight-cut' });
+  cutBoxes.append(t3, cutRow);
 
   const legend = el('div', { class: 'daylight-legend', id: 'daylight-legend', hidden: '' });
   const readout = el('p', { class: 'option-hint', id: 'daylight-readout', 'aria-live': 'polite' });
@@ -374,7 +382,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   for (const l of DAYLIGHT_LIMITS) ul.append(el('li', {}, l));
   limits.append(ul);
 
-  root.append(intro, siteBox, row('Analysis', analysisSel), whenBox, gridBox, toggles, runBtn, stopBtn, bar, status, legend, readout, table, exportJson, exportCsv, limits);
+  root.append(intro, siteBox, row('Analysis', analysisSel), whenBox, gridBox, toggles, cutBoxes, runBtn, stopBtn, bar, status, legend, readout, table, exportJson, exportCsv, limits);
 
   const showFields = (): void => {
     const a = analysisSel.value as Analysis;
@@ -469,7 +477,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       : `The sun is below the horizon (${fmt(alt, 1)}°) at ${hhmm(Number(timeIn.value))}.`;
     const r = host.renderer;
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.type = THREE.PCFShadowMap;
     const s = host.sun;
     s.position.copy(centre).addScaledVector(dir, radius * 2);
     s.target.position.copy(centre);
@@ -506,6 +514,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       helpers.add(ball);
     }
     root.dataset.shadows = 'on';
+    shadowsBox.checked = true;
     host.requestRender();
   }
 
@@ -590,7 +599,31 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     return preparing;
   }
 
+  // The cut: the model's meshes are clipped above a height (scene y), so the grid inside shows.
+  const cutPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  function setCut(on: boolean): void {
+    host.renderer.localClippingEnabled = on;
+    host.model()?.traverse((o) => {
+      const mats = (o as THREE.Mesh).material;
+      for (const m of Array.isArray(mats) ? mats : mats ? [mats] : []) {
+        m.clippingPlanes = on ? [cutPlane] : null;
+        m.needsUpdate = true;
+      }
+    });
+    if (on) root.dataset.cut = String(cutPlane.constant);
+    else delete root.dataset.cut;
+    host.requestRender();
+  }
+  cutBox.addEventListener('change', () => setCut(cutBox.checked && overlay !== null));
+  cutIn.addEventListener('change', () => {
+    const v = Number(cutIn.value);
+    if (!Number.isFinite(v)) return;
+    cutPlane.constant = v;
+    setCut(cutBox.checked && overlay !== null);
+  });
+
   function clearOverlay(): void {
+    if (overlay) setCut(false);
     if (overlay) {
       helpers.remove(overlay);
       overlay.geometry.dispose();
@@ -623,7 +656,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     overlay = mesh;
     helpers.add(mesh);
     root.dataset.overlay = String(n);
-    host.requestRender();
+    // cut half a storey above the highest sensors, unless a height was set
+    let top = -Infinity;
+    for (let i = 0; i < n; i++) top = Math.max(top, p.sensors[i * 6 + 2]);
+    if (cutIn.value === '') cutIn.value = (top + 0.6).toFixed(2);
+    cutPlane.constant = Number(cutIn.value);
+    setCut(cutBox.checked);
   }
 
   function zoneLabel(z: Zone | undefined): string {
@@ -632,7 +670,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       const parts = [z.number, z.roomName].filter((x) => x && x.length);
       return parts.length ? parts.join(' ') : z.name || 'Room';
     }
-    return z.name ? `Floor: ${z.name}` : 'Floor';
+    return z.name || 'Floor';
   }
 
   function showLegend(a: Analysis, lo: number, hi: number): void {
@@ -851,6 +889,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     root.dataset.state = 'idle';
     delete root.dataset.sensors;
     delete root.dataset.sunPath;
+    cutIn.value = '';
   }
 
   return {

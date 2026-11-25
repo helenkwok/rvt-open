@@ -149,3 +149,5 @@ _tiny/
 # ---- Pyodide job test tools (tools/ci/pyodide) ----
 tools/ci/pyodide/node_modules/
 tools/ci/pyodide/site-shots/
+# The CC0 demo models (tools/ci/fetch-cc0-models.sh _cc0), which the viewer's demo gallery also stages.
+_cc0/
