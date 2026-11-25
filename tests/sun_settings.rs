@@ -338,7 +338,12 @@ fn public_samples_sun_settings_hold_together() {
                 ));
             }
         }
-        if sun.views.iter().any(|v| v.is_3d && !v.is_template) && sun.viewer_default().is_none() {
+        if sun
+            .views
+            .iter()
+            .any(|v| v.is_3d && !v.is_template && v.name != "???")
+            && sun.viewer_default().is_none()
+        {
             problems.push(format!("{name}: a 3D view but no sun for the viewer"));
         }
     }

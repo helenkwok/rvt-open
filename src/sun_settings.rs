@@ -183,7 +183,7 @@ pub struct SunAndDisplay {
     /// Every project view with display options, by id.
     pub views: Vec<ViewDisplay>,
     /// The 3D view the viewer starts from: `{3D}` when the project has it, else the first
-    /// 3D view that is not a template.
+    /// 3D view that is neither a template nor one of Revit's internal views (named `???`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_view: Option<u64>,
 }
@@ -598,7 +598,11 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
         .views
         .iter()
         .find(|v| v.is_3d && !v.is_template && v.name == "{3D}")
-        .or_else(|| out.views.iter().find(|v| v.is_3d && !v.is_template))
+        .or_else(|| {
+            out.views
+                .iter()
+                .find(|v| v.is_3d && !v.is_template && v.name != "???")
+        })
         .map(|v| v.id);
     Some(out)
 }
