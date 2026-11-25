@@ -568,8 +568,13 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
     }
     // A view's own setting that is not a named preset shows as `<In-session, ...>`, whatever
     // name it keeps.
-    let owned: std::collections::BTreeSet<u64> =
-        views.values().filter_map(|v| v.sun_setting_id).collect();
+    // A preset that only views named `???` (Revit's internal views) use keeps its name, as the
+    // API gives it on the tiny reference models.
+    let owned: std::collections::BTreeSet<u64> = views
+        .values()
+        .filter(|v| v.name != "???")
+        .filter_map(|v| v.sun_setting_id)
+        .collect();
     for s in settings.values_mut() {
         s.is_preset = presets.contains(&s.id);
         let in_session =
