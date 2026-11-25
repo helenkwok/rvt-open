@@ -71,6 +71,11 @@ pub fn parse(texts: &[&str]) -> Result<Model, String> {
                         ),
                     };
                     let p: Vec<V> = reals.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
+                    if !convex(&p) {
+                        return Err(format!(
+                            "{id}: a concave polygon is not read (only triangles and convex polygons)"
+                        ));
+                    }
                     for k in 1..p.len() - 1 {
                         model.triangles.push(Triangle {
                             v: [p[0], p[k], p[k + 1]],
@@ -83,6 +88,23 @@ pub fn parse(texts: &[&str]) -> Result<Model, String> {
         }
     }
     Ok(model)
+}
+
+/// True when every corner turns the same way about the polygon's normal (a
+/// fan of its first vertex then covers exactly the polygon).
+fn convex(p: &[V]) -> bool {
+    if p.len() <= 3 {
+        return true;
+    }
+    let mut n = [0.0; 3];
+    for k in 0..p.len() {
+        let c = crate::cross(p[k], p[(k + 1) % p.len()]);
+        n = [n[0] + c[0], n[1] + c[1], n[2] + c[2]];
+    }
+    (0..p.len()).all(|k| {
+        let (a, b, c) = (p[k], p[(k + 1) % p.len()], p[(k + 2) % p.len()]);
+        crate::dot(crate::cross(crate::sub(b, a), crate::sub(c, b)), n) >= -1e-12
+    })
 }
 
 fn push_modifier(
@@ -211,5 +233,8 @@ mod tests {
         let s = parse_sensors("1 2 3 0 0 2\nbad\n");
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].n, [0.0, 0.0, 1.0]);
+        // a U-shaped polygon is refused rather than fanned across its notch
+        let u = "void plastic m\n0\n0\n5 .5 .5 .5 0 0\nm polygon u\n0\n0\n24 0 0 0 3 0 0 3 3 0 2 3 0 2 1 0 1 1 0 1 3 0 0 3 0\n";
+        assert!(parse(&[u]).is_err());
     }
 }
