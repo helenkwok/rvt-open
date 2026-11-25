@@ -16,7 +16,7 @@
 //!   `gensky -ang 45 0 -c -B 55.866`, `-ab 2 -aa 0.1 -ad 2048 -ar 64`, one
 //!   process and eight (the noise between two Radiance runs).
 //!
-//! `RVT_DAYLIGHT_DEMO_RVT` names the `.rvt` (the release asset `fixtures-cc0-1`)
+//! `RVT_DAYLIGHT_DEMO_RVT` names the `.rvt` (`research/cc0-models.tsv`)
 //! for the test that builds the scene from the file itself; it skips when unset,
 //! and `RVT_DAYLIGHT_REQUIRE=1` makes a missing file fail instead.
 
