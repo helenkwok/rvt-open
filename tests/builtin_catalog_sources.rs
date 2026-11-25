@@ -305,10 +305,16 @@ fn an_unlisted_sample_takes_the_release_of_its_saved_name() {
     let pairs = dir.join("pairs");
     std::fs::create_dir_all(&pairs).expect("dir");
     let write = |name: &str, text: &str| std::fs::write(pairs.join(name), text).expect(name);
-    for (m, set, n) in [("a", "Mechanical", 9), ("b__pf2024-variant", "Mechanical - Flow", 1)] {
+    for (m, set, n) in [
+        ("a", "Mechanical", 9),
+        ("b__pf2024-variant", "Mechanical - Flow", 1),
+    ] {
         write(&format!("{m}.pairs.tsv"), "#tag\n");
         write(&format!("{m}.names.tsv"), "#kind\tname\n");
-        write(&format!("{m}.props.tsv"), &format!("#s\n{set}\tThing\tIFCLENGTHMEASURE\t{n}\n"));
+        write(
+            &format!("{m}.props.tsv"),
+            &format!("#s\n{set}\tThing\tIFCLENGTHMEASURE\t{n}\n"),
+        );
     }
     std::fs::write(dir.join("releases.tsv"), "a\t2018\n").expect("releases");
     std::fs::write(dir.join("bip.tsv"), "WALL_THING\t-1001400\tThing\n").expect("bip");
