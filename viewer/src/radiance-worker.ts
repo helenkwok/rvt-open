@@ -9,7 +9,8 @@
  * worker compiles nothing and fetches only the program's small JS glue.
  *
  * Protocol:
- *   main → worker: { type: 'run', req, prog, glue (URL of <program>.js), module, args, files: { name: bytes }, stdin? }
+ *   main → worker: { type: 'run', req, prog, glue (URL of <program>.js), wasm (its .wasm), module?, args, files: { name: bytes }, stdin? }
+ *                  Without `module` the worker fetches and compiles `wasm` itself (?radiance-compile=each, to measure).
  *   worker → main: { type: 'done', req, out (stdout bytes), err (stderr text), ms }
  *   worker → main: { type: 'error', req, message }   (a non-zero exit included)
  */
@@ -19,7 +20,8 @@ interface RunMsg {
   req: number;
   prog: string;
   glue: string;
-  module: WebAssembly.Module;
+  wasm: string;
+  module?: WebAssembly.Module;
   args: string[];
   files: Record<string, Uint8Array>;
   stdin?: Uint8Array;
@@ -56,7 +58,8 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
       noInitialRun: true,
       // the page compiled the module: instantiate it, nothing is fetched or compiled here
       instantiateWasm: (imports: WebAssembly.Imports, done: (i: WebAssembly.Instance) => void) => {
-        void WebAssembly.instantiate(m.module, imports).then(done);
+        if (m.module) void WebAssembly.instantiate(m.module, imports).then(done);
+        else void WebAssembly.instantiateStreaming(fetch(m.wasm), imports).then((r) => done(r.instance));
         return {};
       },
       stdin: () => (stdin && i < stdin.length ? stdin[i++] : null),

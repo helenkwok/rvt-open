@@ -765,7 +765,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     const barEl = el('div', { class: 'daylight-ramp' });
     barEl.style.background = `linear-gradient(to right, ${RAMP.join(', ')})`;
     const labels = el('div', { class: 'daylight-ramp-labels' });
-    for (let k = 0; k <= 4; k++) labels.append(el('span', {}, `${fmt(lo + ((hi - lo) * k) / 4, a === 'svf' ? 3 : a === 'sunhours' ? 1 : 2)}${unit ? ` ${unit}` : ''}`));
+    for (let k = 0; k <= 4; k++) labels.append(el('span', {}, `${fmt(lo + ((hi - lo) * k) / 4, a === 'svf' ? 3 : a === 'sunhours' ? 1 : a === 'rad-pit' ? 0 : 2)}${unit ? ` ${unit}` : ''}`));
     legend.append(el('div', { class: 'daylight-legend-title' }, ANALYSES[a].label), barEl, labels);
   }
 

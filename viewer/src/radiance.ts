@@ -71,6 +71,8 @@ export class Radiance {
   private req = 0;
   private stopped = false;
   private pending = new Map<number, { resolve: (out: Uint8Array) => void; reject: (e: Error) => void }>();
+  /** `?radiance-compile=each` makes every worker fetch and compile each program itself, to measure against sharing. */
+  private compileEach = new URLSearchParams(location.search).get('radiance-compile') === 'each';
   constructor(private size: number) {}
 
   get count(): number {
@@ -138,13 +140,13 @@ export class Radiance {
 
   /** Runs `prog` in worker `k`; resolves with its standard output. */
   private async run(k: number, prog: string, args: string[], files: Record<string, Uint8Array>, stdin?: Uint8Array): Promise<Uint8Array> {
-    const module = await this.module(prog);
+    const module = this.compileEach ? undefined : await this.module(prog);
     if (this.stopped) throw new Error('stopped');
     const w = this.worker(k);
     const req = ++this.req;
     return new Promise<Uint8Array>((resolve, reject) => {
       this.pending.set(req, { resolve, reject });
-      w.postMessage({ type: 'run', req, prog, glue: `${RADIANCE_BASE}${prog}.js`, module, args: [...args], files, stdin });
+      w.postMessage({ type: 'run', req, prog, glue: `${RADIANCE_BASE}${prog}.js`, wasm: `${RADIANCE_BASE}${prog}.wasm`, module, args: [...args], files, stdin });
     });
   }
 
