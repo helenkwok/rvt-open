@@ -2226,7 +2226,10 @@ dl.info-group dd {
   color: var(--rv-text);
 }
 
-/* The Daylight panel (daylight.ts). */
+/* The Daylight panel (daylight.ts). Its rows and buttons set a display of their own, so `hidden` needs restating. */
+#daylight-panel [hidden] {
+  display: none !important;
+}
 #daylight-panel {
   padding: 4px 12px 12px;
   color: var(--rv-text-2);
@@ -2322,4 +2325,21 @@ dl.info-group dd {
 .daylight-limits ul {
   margin: 4px 0;
   padding-left: 16px;
+}
+.daylight-credit {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--rv-text-2);
+}
+.daylight-weather {
+  margin: 4px 0 6px;
+}
+.daylight-weather a {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--rv-accent);
+}
+.daylight-weather input[type='file'] {
+  max-width: 100%;
+  font-size: 11px;
 }

@@ -44,6 +44,7 @@ async function run(page: Page, analysis: string): Promise<number> {
   await expect(panel.locator('.daylight-source').first()).toHaveText('from the file');
   await expect(page.locator('#daylight-site-note')).toContainText('Boston');
 
+  await page.locator('#daylight-analysis').selectOption('sunhours');
   await page.locator('#daylight-date').fill('2026-03-20');
   await page.locator('#daylight-date-to').fill('2026-03-20');
   await page.locator('#daylight-step').selectOption('60');
@@ -73,8 +74,8 @@ async function run(page: Page, analysis: string): Promise<number> {
   expect(fs.readFileSync(await csv.path(), 'utf8').trim().split('\n')).toHaveLength(392);
 
   // the sun at 21 June, 15:00 standard time, and its shadows
-  await page.locator('#daylight-date').fill('2026-06-21');
   await page.locator('#daylight-analysis').selectOption('sun');
+  await page.locator('#daylight-date').fill('2026-06-21');
   await page.locator('#daylight-time').evaluate((e: HTMLInputElement) => {
     e.value = '15';
     e.dispatchEvent(new Event('input', { bubbles: true }));
