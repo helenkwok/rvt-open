@@ -96,7 +96,10 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
         return;
     };
     let models = tiny_models(Path::new(&dir));
-    assert!(!models.is_empty(), "no tiny model with an API dump under {dir:?}");
+    assert!(
+        !models.is_empty(),
+        "no tiny model with an API dump under {dir:?}"
+    );
     let (mut settings, mut views, mut mismatches) = (0usize, 0usize, Vec::<String>::new());
     for (rvt_path, dump_path) in &models {
         let name = rvt_path.display().to_string();
@@ -145,7 +148,10 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
                 {
                     bad("GroundPlaneLevelId");
                 }
-                for (k, t) in [("StartDateAndTime", s.start_unix), ("EndDateAndTime", s.end_unix)] {
+                for (k, t) in [
+                    ("StartDateAndTime", s.start_unix),
+                    ("EndDateAndTime", s.end_unix),
+                ] {
                     match clock_offset(t, p[k]["text"].as_str()) {
                         Some(o) => offsets.push((o, format!("{name} {id} {k}"))),
                         None => bad(k),
@@ -179,10 +185,17 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
         let Some(mode) = counts.iter().max_by_key(|(_, n)| **n).map(|(o, _)| *o) else {
             continue;
         };
-        let other = if counts.contains_key(&(mode + 60)) { mode + 60 } else { mode - 60 };
+        let other = if counts.contains_key(&(mode + 60)) {
+            mode + 60
+        } else {
+            mode - 60
+        };
         for (o, what) in &offsets {
             if *o != mode && *o != other {
-                mismatches.push(format!("{what} instant ({} min off the model's clock)", o - mode));
+                mismatches.push(format!(
+                    "{what} instant ({} min off the model's clock)",
+                    o - mode
+                ));
             }
         }
     }

@@ -190,9 +190,7 @@ impl SunAndDisplay {
     /// default view (whose options still apply with a preset), `None` without one.
     pub fn viewer_default(&self) -> Option<(&'static str, Option<&ViewDisplay>, &SunSetting)> {
         let default = self.default_view.and_then(|i| self.view(i));
-        if let Some((v, s)) =
-            default.and_then(|v| Some((v, self.setting(v.sun_setting_id?)?)))
-        {
+        if let Some((v, s)) = default.and_then(|v| Some((v, self.setting(v.sun_setting_id?)?))) {
             return Some(("view", Some(v), s));
         }
         let s = self.presets.iter().find_map(|i| self.setting(*i))?;
