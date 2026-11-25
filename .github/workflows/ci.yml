@@ -672,7 +672,8 @@ jobs:
           "$RUNNER_TEMP/ole/bin/python" tools/full-decode/full_decode.py "$m.rvt" "$m.api-dump.json" "$RUNNER_TEMP/facts.json" "$RUNNER_TEMP/full-decode" --floor tools/full-decode/floor.tsv
       # Every tiny model's sun settings and view display options against its Revit API dump.
       - name: Sun settings and view display against the Revit API dumps
-        run: cargo test --profile ci --test integration -- --nocapture sun_settings::
+        run: |
+          cargo test --profile ci --test integration -- --nocapture sun_settings::
         env: { RVT_TINY_DIR: "${{ github.workspace }}/_tiny", RVT_SUN_REQUIRE: "1" }
       - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

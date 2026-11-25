@@ -391,6 +391,17 @@ fn view_display(
         v.shadow_intensity = int(m, "m_nShadowIntensity");
         v.ambient_intensity = int(m, "m_nAmbientIntensity");
         v.cast_shadows = flag(m, "m_bCastShadows");
+        v.ambient_shadows = flag(m, "m_bUseAmbientLighting");
+        if let Some(t) = int(m, "m_backgroundType") {
+            v.background = Some(Background {
+                kind: kind_name(&BACKGROUND_KINDS, t),
+                type_value: t,
+                sky_color: colour(m, "m_skyColor"),
+                horizon_color: colour(m, "m_backgroundColor"),
+                ground_color: colour(m, "m_groundColor"),
+                image_path: None,
+            });
+        }
     }
     if let Some(s) = sub(o, m, "m_shadows") {
         v.cast_shadows = flag(s, "m_castShadows");
