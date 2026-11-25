@@ -293,9 +293,10 @@ fn public_samples_sun_settings_hold_together() {
         eprintln!("skip: RVT_AUTODESK_SAMPLES_DIR not set");
         return;
     };
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .into_iter()
-        .flatten()
+    // a set directory that cannot be listed fails the test rather than checking nothing
+    let years = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("RVT_AUTODESK_SAMPLES_DIR {dir:?} cannot be listed: {e}"));
+    let mut files: Vec<PathBuf> = years
         .flatten()
         .filter_map(|y| std::fs::read_dir(y.path()).ok())
         .flatten()
@@ -348,5 +349,10 @@ fn public_samples_sun_settings_hold_together() {
         }
     }
     eprintln!("{read} of {} sample files read", files.len());
+    assert!(
+        read > 0,
+        "no sample file under {dir:?} was read ({} found)",
+        files.len()
+    );
     assert!(problems.is_empty(), "{problems:#?}");
 }

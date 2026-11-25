@@ -161,9 +161,13 @@ export function clockTime(value: string): { date: string; hour: number } | null 
   return m ? { date: m[1], hour: Number(m[2]) + Number(m[3]) / 60 } : null;
 }
 
-/** The panel's time step (minutes) for a file's solar-study interval, if the panel has it. */
+/**
+ * The time step (minutes) of a file's solar-study interval (`SunStudyTimeInterval`), or null for
+ * one that is not a step within a day (Day, Week, Month: frames of a multi-day study), seconds, or
+ * an interval with no name.
+ */
 export function stepOf(interval: string | undefined): number | null {
-  const m: Record<string, number> = { Minutes15: 15, Minutes30: 30, Hour: 60 };
+  const m: Record<string, number> = { Minute: 1, Minutes15: 15, Minutes30: 30, Minutes45: 45, Hour: 60 };
   return interval && interval in m ? m[interval] : null;
 }
 
@@ -539,7 +543,11 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
    * fields keep their values and the note says so.
    */
   function applyFileSun(sun: FileSun | null | undefined, keepUser = false): void {
-    if (keepUser && whenSourceNow === 'user') return;
+    if (keepUser && whenSourceNow === 'user') {
+      // the user's date and time stay; the reset button shows now that the file's sun is known
+      whenReset.hidden = !sun;
+      return;
+    }
     root.dataset.fileSun = sun ? JSON.stringify(sun) : '';
     if (!sun) {
       whenFrom('assumed', 'The file’s sun setting was not read: the date and time are assumed.');
@@ -563,15 +571,23 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       timeOut.textContent = hhmm(Number(timeIn.value));
       const study = sun.sunAndShadowType === 'OneDayStudy' || sun.sunAndShadowType === 'MultiDayStudy';
       const b = sun.end ? clockTime(sun.end) : null;
+      const notes: string[] = [];
       if (study && b) {
         toIn.value = b.date;
         const step = stepOf(sun.timeInterval);
-        if (step) stepSel.value = String(step);
+        if (step) {
+          if (![...stepSel.options].some((o) => o.value === String(step))) stepSel.append(el('option', { value: String(step) }, `every ${step} min`));
+          stepSel.value = String(step);
+        } else {
+          notes.push(`The study’s interval (${sun.timeInterval ?? 'not named'}) is not a step within a day, so the step is kept.`);
+        }
+        // sun hours counts whole days: the study's clock range is shown, not applied
+        notes.push(`The study runs ${hhmm(a.hour)}–${hhmm(b.hour)} each day; sun hours counts whole days, so that range is not applied.`);
       } else {
         toIn.value = a.date;
       }
       const kind = sun.sunAndShadowType ? ` (${sun.sunAndShadowType})` : '';
-      whenFrom('file', `Date and time from ${where}${kind}, as Revit shows them (the site’s local time).`);
+      whenFrom('file', [`Dates and start time from ${where}${kind}, as Revit shows them (the site’s local time).`, ...notes].join(' '));
     }
   }
   shadowsBox.addEventListener('change', () => {
