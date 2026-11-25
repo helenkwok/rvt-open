@@ -48,6 +48,8 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
     if (!f) {
       f = import(/* @vite-ignore */ m.glue).then((g: { default: Factory }) => g.default);
       factories.set(m.glue, f);
+      // a failed import is not kept: the next run tries again
+      f.catch(() => factories.delete(m.glue));
     }
     const factory = await f;
     const out: number[] = [];
@@ -58,8 +60,9 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
       noInitialRun: true,
       // the page compiled the module: instantiate it, nothing is fetched or compiled here
       instantiateWasm: (imports: WebAssembly.Imports, done: (i: WebAssembly.Instance) => void) => {
-        if (m.module) void WebAssembly.instantiate(m.module, imports).then(done);
-        else void WebAssembly.instantiateStreaming(fetch(m.wasm), imports).then((r) => done(r.instance));
+        const fail = (e: unknown): void => send({ type: 'error', req: m.req, message: `${m.prog}: ${e instanceof Error ? e.message : String(e)}` });
+        if (m.module) WebAssembly.instantiate(m.module, imports).then(done, fail);
+        else WebAssembly.instantiateStreaming(fetch(m.wasm), imports).then((r) => done(r.instance), fail);
         return {};
       },
       stdin: () => (stdin && i < stdin.length ? stdin[i++] : null),

@@ -133,6 +133,9 @@ export class Radiance {
         if (m.type === 'done' && m.out) call.resolve(m.out);
         else call.reject(new Error(m.message ?? 'a Radiance program failed'));
       });
+      // a worker that dies outside a run's own error handling ends every run still waiting
+      w.addEventListener('error', () => this.stop());
+      w.addEventListener('messageerror', () => this.stop());
       this.workers.push(w);
     }
     return this.workers[k];
@@ -163,7 +166,6 @@ export class Radiance {
     detail: Detail,
     progress: (done: number, total: number) => void,
   ): Promise<{ lux: Float64Array; octreeBytes: number }> {
-    this.stopped = false;
     const [rayinit, skybright, perezlum] = await Promise.all(['rayinit.cal', 'skybright.cal', 'perezlum.cal'].map((f) => this.file(f)));
     const sceneOct = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], { 'materials.rad': enc(materials), 'scene.rad': enc(scene) });
     const oct = await this.run(0, 'oconv', ['-f', '-i', 'scene.oct', 'sky.rad', 'glow.rad'], { 'scene.oct': sceneOct, 'sky.rad': enc(sky), 'glow.rad': enc(GLOW) });
@@ -192,6 +194,11 @@ export class Radiance {
   }
 
   /** gensky's CIE overcast sky with 10,000 lux of unobstructed horizontal illuminance, so DF % = lux / 100. */
+  /** Clears an earlier Stop: call when a Radiance analysis starts. */
+  start(): void {
+    this.stopped = false;
+  }
+
   async overcastSky(): Promise<string> {
     return dec(await this.run(0, 'gensky', ['-ang', '45', '0', '-c', '-B', '55.866'], {}));
   }
@@ -203,8 +210,15 @@ export class Radiance {
   }
 }
 
-/** One hour of weather: its local standard time (mid-interval), direct normal and diffuse horizontal irradiance. */
+/** One hour of weather, timed by the middle of its interval in UTC (minutes from 1 January 00:00 of a non-leap year). */
 export interface WeatherHour {
+  utcMinute: number;
+  dni: number;
+  dhi: number;
+}
+
+/** The hour of weather chosen for a moment, in the site's local standard time. */
+export interface WeatherAt {
   month: number;
   day: number;
   hour: number;
@@ -227,16 +241,20 @@ export function pvgisUrl(lat: number, lon: number): string {
   return `https://re.jrc.ec.europa.eu/api/v5_3/tmy?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&usehorizon=1&outputformat=json`;
 }
 
-const isLeapDay = (m: number, d: number): boolean => m === 2 && d === 29;
+const YEAR_MIN = 365 * 24 * 60;
+const MONTH_START = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+const minuteOfYear = (month: number, day: number, hour: number): number => (MONTH_START[month - 1] + day - 1) * 1440 + hour * 60;
 
 /**
  * Reads a PVGIS TMY (JSON, `outputformat=json`) or an EnergyPlus weather file
- * (EPW). PVGIS times are UTC hour stamps, moved to local standard time with the
- * site's time zone and its stated irradiance time offset; EPW hours are local
- * standard time, each the hour ending at its stamp, so its middle is half an
- * hour earlier.
+ * (EPW), keeping every hour in UTC so the site's time zone applies when an
+ * hour is used. PVGIS stamps are UTC, plus its stated irradiance time offset;
+ * EPW hours are the file's local standard time (its LOCATION line's zone), each
+ * the hour ending at its stamp, so its middle is half an hour earlier. A 29
+ * February row is skipped, and an EPW row with the missing-value marker
+ * (9999) in direct normal or diffuse horizontal irradiance.
  */
-export function parseWeather(name: string, text: string, timeZone: number, fileDate: string): Weather {
+export function parseWeather(name: string, text: string, fileDate: string): Weather {
   const t = text.trimStart();
   if (t.startsWith('{')) {
     const j = JSON.parse(t) as {
@@ -252,13 +270,10 @@ export function parseWeather(name: string, text: string, timeZone: number, fileD
     for (const r of rows) {
       const m = /^(\d{4})(\d{2})(\d{2}):(\d{2})(\d{2})$/.exec(String(r['time(UTC)'] ?? ''));
       if (!m) continue;
-      // a UTC stamp in its (non-leap) year, moved to local standard time
-      const utc = Date.UTC(2001, Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
-      const local = new Date(utc + (timeZone + offset) * 3600_000);
-      const month = local.getUTCMonth() + 1;
-      const day = local.getUTCDate();
-      if (isLeapDay(month, day)) continue;
-      hours.push({ month, day, hour: local.getUTCHours() + local.getUTCMinutes() / 60, dni: Number(r['Gb(n)']) || 0, dhi: Number(r['Gd(h)']) || 0 });
+      const [month, day] = [Number(m[2]), Number(m[3])];
+      if (month === 2 && day === 29) continue;
+      const utcMinute = (minuteOfYear(month, day, Number(m[4]) + Number(m[5]) / 60 + offset) + YEAR_MIN) % YEAR_MIN;
+      hours.push({ utcMinute, dni: Number(r['Gb(n)']) || 0, dhi: Number(r['Gd(h)']) || 0 });
     }
     return {
       hours,
@@ -281,14 +296,20 @@ export function parseWeather(name: string, text: string, timeZone: number, fileD
   const lines = t.split(/\r?\n/);
   const head = (lines[0] ?? '').split(',');
   if (head[0] !== 'LOCATION') throw new Error(`${name}: neither a PVGIS JSON TMY nor an EPW file`);
+  const fileZone = Number(head[8]) || 0;
   const hours: WeatherHour[] = [];
+  let missing = 0;
   for (const l of lines.slice(8)) {
     const c = l.split(',');
     if (c.length < 16) continue;
-    const month = Number(c[1]);
-    const day = Number(c[2]);
-    if (isLeapDay(month, day)) continue;
-    hours.push({ month, day, hour: Number(c[3]) - 0.5, dni: Number(c[14]) || 0, dhi: Number(c[15]) || 0 });
+    const [month, day] = [Number(c[1]), Number(c[2])];
+    if (!(month >= 1 && month <= 12) || (month === 2 && day === 29)) continue;
+    const [dni, dhi] = [Number(c[14]), Number(c[15])];
+    if (!(dni >= 0 && dni < 9999 && dhi >= 0 && dhi < 9999)) {
+      missing++;
+      continue;
+    }
+    hours.push({ utcMinute: (minuteOfYear(month, day, Number(c[3]) - 0.5 - fileZone) + YEAR_MIN) % YEAR_MIN, dni, dhi });
   }
   return {
     hours,
@@ -300,24 +321,31 @@ export function parseWeather(name: string, text: string, timeZone: number, fileD
       dataSource: head[4] ?? null,
       latitude: Number(head[6]),
       longitude: Number(head[7]),
-      timeZone: Number(head[8]),
+      timeZone: fileZone,
       elevation: Number(head[9]),
+      hoursMissing: missing,
       loaded: fileDate,
     },
   };
 }
 
-/** The weather hour nearest local standard time `hour` on `month`/`day`. */
-export function weatherAt(w: Weather, month: number, day: number, hour: number): WeatherHour | null {
+/** The weather hour nearest local standard time `hour` on `month`/`day` at a site `timeZone` hours from UTC, within 90 minutes. */
+export function weatherAt(w: Weather, month: number, day: number, hour: number, timeZone: number): WeatherAt | null {
+  const want = (minuteOfYear(month, day, hour - timeZone) + YEAR_MIN) % YEAR_MIN;
   let best: WeatherHour | null = null;
   let gap = Infinity;
   for (const h of w.hours) {
-    if (h.month !== month || h.day !== day) continue;
-    const g = Math.abs(h.hour - hour);
+    const d = Math.abs(h.utcMinute - want);
+    const g = Math.min(d, YEAR_MIN - d);
     if (g < gap) {
       gap = g;
       best = h;
     }
   }
-  return best;
+  if (!best || gap > 90) return null;
+  const local = (best.utcMinute + timeZone * 60 + YEAR_MIN) % YEAR_MIN;
+  const doy = Math.floor(local / 1440);
+  let m = 11;
+  while (MONTH_START[m] > doy) m--;
+  return { month: m + 1, day: doy - MONTH_START[m] + 1, hour: (local % 1440) / 60, dni: best.dni, dhi: best.dhi };
 }

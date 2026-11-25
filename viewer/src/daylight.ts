@@ -182,6 +182,9 @@ class Pool {
         if (m.type === 'error') call.reject(new Error(m.message));
         else call.resolve(m.value);
       });
+      // a worker that dies outside a call's own error handling ends every call still waiting
+      w.addEventListener('error', () => this.stop());
+      w.addEventListener('messageerror', () => this.stop());
       this.workers.push(w);
     }
   }
@@ -310,8 +313,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       site[f.key] = v;
       source[f.key] = 'user';
       showSite();
-      if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun();
-      if (pathBox.checked) void drawSunPath();
+      if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun().catch(() => undefined);
+      if (pathBox.checked) void drawSunPath().catch(() => undefined);
     });
     const tag = el('span', { class: 'daylight-source' });
     row.append(el('span', {}, f.label), input, el('span', { class: 'daylight-unit' }, f.unit), tag);
@@ -323,8 +326,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const siteReset = el('button', { type: 'button', class: 'side-btn' }, 'Use the file’s site');
   siteReset.addEventListener('click', () => {
     applyFileSite(prepared?.site ?? null);
-    void updateSun();
-    if (pathBox.checked) void drawSunPath();
+    void updateSun().catch(() => undefined);
+    if (pathBox.checked) void drawSunPath().catch(() => undefined);
   });
   siteBox.append(siteNote, siteReset);
 
@@ -345,7 +348,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const weatherBox = el('div', { class: 'daylight-weather', id: 'daylight-weather' });
   const pvgisLink = el('a', { id: 'daylight-pvgis', target: '_blank', rel: 'noopener noreferrer' }, 'Get the typical year from PVGIS (JSON)');
   const weatherIn = el('input', { type: 'file', id: 'daylight-weather-file', accept: '.json,.epw', 'aria-label': 'Weather file (PVGIS JSON or EPW)' });
-  const weatherNote = el('p', { class: 'option-hint', id: 'daylight-weather-note' }, 'No weather file loaded. PVGIS does not answer requests from a web page, so the link opens its official service in a new tab: save the file it returns and choose it here. An EPW file of your own works too.');
+  const NO_WEATHER = 'No weather file loaded. PVGIS does not answer requests from a web page, so the link opens its official service in a new tab: save the file it returns and choose it here. An EPW file of your own works too.';
+  const weatherNote = el('p', { class: 'option-hint', id: 'daylight-weather-note' }, NO_WEATHER);
   pvgisLink.title = `Weather data from PVGIS: ${PVGIS_CREDIT}`;
   weatherBox.append(pvgisLink, weatherIn, weatherNote);
   const radNote = el('p', { class: 'option-hint', id: 'daylight-radiance-note' });
@@ -451,17 +455,17 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
 
   timeIn.addEventListener('input', () => {
     timeOut.textContent = hhmm(Number(timeIn.value));
-    if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun();
+    if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun().catch(() => undefined);
   });
   dateIn.addEventListener('change', () => {
-    if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun();
+    if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun().catch(() => undefined);
   });
   shadowsBox.addEventListener('change', () => {
-    if (shadowsBox.checked) void updateSun();
+    if (shadowsBox.checked) void updateSun().catch(() => undefined);
     else sunOff();
   });
   pathBox.addEventListener('change', () => {
-    if (pathBox.checked) void drawSunPath();
+    if (pathBox.checked) void drawSunPath().catch(() => undefined);
     else clearHelpers('path');
   });
 
@@ -469,7 +473,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     const f = weatherIn.files?.[0];
     if (!f) return;
     try {
-      weather = parseWeather(f.name, await f.text(), site.timeZone, new Date(f.lastModified).toISOString().slice(0, 10));
+      weather = parseWeather(f.name, await f.text(), new Date(f.lastModified).toISOString().slice(0, 10));
       const pv = weather.provenance;
       weatherNote.textContent = `${f.name}: ${weather.hours.length.toLocaleString('en')} hours. ${Object.entries(pv)
         .filter(([k]) => k !== 'file')
@@ -597,9 +601,11 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     host.requestRender();
   }
 
+  let pathReq = 0;
   async function drawSunPath(): Promise<void> {
     const decoder = host.decoder();
     if (!decoder) return;
+    const mine = ++pathReq;
     clearHelpers('path');
     const box = modelBox();
     const centre = new THREE.Vector3(box.getCenter(new THREE.Vector3()).x, box.min.y, box.getCenter(new THREE.Vector3()).z);
@@ -621,6 +627,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     const n = (site.trueNorth * Math.PI) / 180;
     const north = toScene(-Math.sin(n), Math.cos(n), 0);
     group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([centre, centre.clone().addScaledVector(north, radius * 1.1)]), new THREE.LineBasicMaterial({ color: 0xd23105 })));
+    if (mine !== pathReq) return;
     helpers.add(group);
     root.dataset.sunPath = 'on';
     host.requestRender();
@@ -870,6 +877,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       };
       let v: Float64Array;
       if (a === 'rad-df' || a === 'rad-pit') {
+        radiance.start();
         if (!(await radiance.available())) throw new Error('the Radiance build is not beside this page (radiance/)');
         const detail = DETAILS[detailSel.value as 'preview' | 'validated'];
         let sky: string;
@@ -878,7 +886,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
           const doy = dayOfYear(dateIn.value);
           const month = [31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365].findIndex((end) => doy <= end) + 1;
           const day = doy - [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334][month - 1];
-          const h = weatherAt(weather, month, day, Number(timeIn.value));
+          const h = weatherAt(weather, month, day, Number(timeIn.value), site.timeZone);
           if (!h) throw new Error(`the weather file has no hour on ${dateIn.value.slice(5)}`);
           sky = await radiance.perezSky(h.month, h.day, h.hour, site, h.dni, h.dhi);
           live();
@@ -891,11 +899,27 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         status.textContent = `Radiance on ${n.toLocaleString('en')} sensors with ${radiance.count} workers…`;
         const materials = new Float64Array(p.materials.length * 4);
         p.materials.forEach((m, i) => materials.set([m.kind === 'glass' ? 1 : 0, m.rgb[0], m.rgb[1], m.rgb[2]], i * 4));
-        const [matText, sceneText] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: p.positions, modifier: p.modifier, materials });
+        // gendaylit's sky has +Y toward true north: the scene and sensors turn by the angle to true north
+        // (true = R(-angle) model). The overcast sky is the same all round, so the daylight factor needs no turn.
+        const turn = a === 'rad-pit' && site.trueNorth !== 0 ? (-site.trueNorth * Math.PI) / 180 : 0;
+        const [ts, tc] = [Math.sin(turn), Math.cos(turn)];
+        const rot = (src: Float64Array, stride: number): Float64Array => {
+          if (turn === 0) return src;
+          const out = src.slice();
+          for (let i = 0; i + 1 < out.length; i += stride === 9 ? 3 : stride) {
+            const [x, y] = [src[i], src[i + 1]];
+            out[i] = x * tc - y * ts;
+            out[i + 1] = x * ts + y * tc;
+          }
+          return out;
+        };
+        if (turn !== 0) extra.trueNorthTurn = site.trueNorth;
+        const [matText, sceneText] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: rot(p.positions, 9), modifier: p.modifier, materials });
         live();
+        const sens = rot(p.sensors, 6);
         const pts: string[] = [];
         for (let i = 0; i < n; i++) {
-          const q = p.sensors.subarray(i * 6, i * 6 + 6);
+          const q = sens.subarray(i * 6, i * 6 + 6);
           pts.push(`${q[0].toFixed(4)} ${q[1].toFixed(4)} ${q[2].toFixed(4)} ${q[3]} ${q[4]} ${q[5]}`);
         }
         const r = await radiance.illuminance(matText, sceneText, sky, pts, detail, progress);
@@ -933,6 +957,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       root.dataset.mean = String(mean);
       status.textContent = `${ANALYSES[a].label}: ${n.toLocaleString('en')} sensors, mean ${fmt(mean, a === 'svf' ? 3 : 2)}${ANALYSES[a].unit ? ` ${ANALYSES[a].unit}` : ''}, ${pool.count} workers, ${fmt(ms / 1000, 1)} s.`;
     } catch (err) {
+      // a failed share leaves the others running: stop them
+      if (a.startsWith('rad-')) radiance.stop();
+      // a run the model change or Stop ended leaves the panel to what came after it
+      if (token !== runToken) return;
       const msg = err instanceof Error ? err.message : String(err);
       root.dataset.state = msg === 'stopped' ? 'idle' : 'error';
       status.textContent = msg === 'stopped' ? 'Stopped.' : `Daylight run failed: ${msg}`;
@@ -1027,6 +1055,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     clearHelpers('path');
     sunOff();
     pool.stop();
+    radiance.stop();
+    // weather belongs to a site: a new model starts without it
+    weather = null;
+    weatherIn.value = '';
+    weatherNote.textContent = NO_WEATHER;
+    delete root.dataset.weather;
     legend.hidden = table.hidden = true;
     exportJson.disabled = exportCsv.disabled = true;
     readout.textContent = status.textContent = '';

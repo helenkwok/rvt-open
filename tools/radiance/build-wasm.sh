@@ -12,7 +12,7 @@
 #
 # OUT_DIR receives <program>.js and <program>.wasm for each program, the files those programs read at run time
 # (rayinit.cal, skybright.cal, perezlum.cal), Radiance's License.txt and SOURCE.md. Needs docker and curl.
-# RADIANCE_DOCKER_ARGS adds options to the docker run (limits, a name).
+# RADIANCE_DOCKER_ARGS adds options to the docker run (limits, a name). Runs on Linux (GNU sha256sum and sed), as CI does.
 set -euo pipefail
 out=${1:?usage: build-wasm.sh OUT_DIR}
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -28,6 +28,7 @@ mkdir "$work/src"
 tar -xzf "$work/radiance.tar.gz" -C "$work/src" --strip-components=1
 (cd "$work/src" && patch -p1 < "$root/tools/radiance/o_default.patch")
 sed -i 's/^\(\s*\)add_compile_options(-mavx2 -mfma)/\1# WebAssembly: no AVX2 or FMA/' "$work/src/CMakeLists.txt"
+grep -q 'WebAssembly: no AVX2 or FMA' "$work/src/CMakeLists.txt" || { echo "CMakeLists.txt: the -mavx2 -mfma line was not found" >&2; exit 1; }
 cat > "$work/build.sh" <<'SH'
 set -euo pipefail
 cd /w
