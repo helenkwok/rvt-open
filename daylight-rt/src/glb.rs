@@ -445,6 +445,11 @@ pub fn read(glb: &[u8], opts: &GridOptions) -> Result<Prepared, String> {
 }
 
 /// Lays one zone's grid over its bottom faces (a room) or its top faces (a floor).
+///
+/// A room's grid is on its lowest faces. A floor's top faces can stand at more
+/// than one height (a step, a sunken area): each band, highest first, gets its
+/// own grid at its own height, all in the floor's one zone, whose `floor_z` is
+/// the highest band's.
 fn lay(
     p: &mut Prepared,
     mut z: Zone,
@@ -453,7 +458,7 @@ fn lay(
     inset: f64,
     opts: &GridOptions,
 ) {
-    let sel: Vec<[V; 3]> = faces
+    let mut rest: Vec<[V; 3]> = faces
         .into_iter()
         .filter(|t| {
             if top {
@@ -463,20 +468,37 @@ fn lay(
             }
         })
         .collect();
-    let zs = sel.iter().flatten().map(|v| v[2]);
-    let z0 = if top {
-        zs.fold(f64::MIN, f64::max)
-    } else {
-        zs.fold(f64::MAX, f64::min)
-    };
-    let level: Vec<[V; 3]> = sel
-        .into_iter()
-        .filter(|t| ((t[0][2] + t[1][2] + t[2][2]) / 3.0 - z0).abs() < 0.05)
-        .collect();
-    let pts = grid::over(&level, z0 + opts.offset, opts.spacing, inset);
-    if pts.is_empty() {
-        return;
+    let mut pts = Vec::new();
+    let mut z_first = None;
+    while !rest.is_empty() {
+        let zs = rest.iter().flatten().map(|v| v[2]);
+        let z0 = if top {
+            zs.fold(f64::MIN, f64::max)
+        } else {
+            zs.fold(f64::MAX, f64::min)
+        };
+        let (level, others): (Vec<[V; 3]>, Vec<[V; 3]>) = rest
+            .into_iter()
+            .partition(|t| ((t[0][2] + t[1][2] + t[2][2]) / 3.0 - z0).abs() < 0.05);
+        let band = grid::over(&level, z0 + opts.offset, opts.spacing, inset);
+        if !band.is_empty() {
+            z_first.get_or_insert(z0);
+            pts.extend(band);
+        }
+        if !top {
+            break;
+        }
+        rest = if level.is_empty() {
+            // the extreme vertex sits on a sloped face no band holds: drop that face
+            others
+                .into_iter()
+                .filter(|t| !t.iter().any(|v| v[2] == z0))
+                .collect()
+        } else {
+            others
+        };
     }
+    let Some(z0) = z_first else { return };
     z.floor_z = z0;
     let k = p.zones.len() as u32;
     p.zones.push(z);
@@ -486,5 +508,62 @@ fn lay(
             n: [0.0, 0.0, 1.0],
         });
         p.sensor_zone.push(k);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn square(x: f64, z: f64) -> [[V; 3]; 2] {
+        [
+            [[x, 0.0, z], [x + 2.0, 0.0, z], [x + 2.0, 2.0, z]],
+            [[x, 0.0, z], [x + 2.0, 2.0, z], [x, 2.0, z]],
+        ]
+    }
+
+    fn zone() -> Zone {
+        Zone {
+            kind: "floor",
+            name: String::new(),
+            entity_index: None,
+            element_id: None,
+            floor_z: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_floor_with_two_top_heights_gets_a_grid_on_each() {
+        let opts = GridOptions {
+            spacing: 0.5,
+            offset: 0.76,
+            inset: 0.0,
+        };
+        let mut faces: Vec<[V; 3]> = square(0.0, 1.0).to_vec();
+        faces.extend(square(3.0, 0.4));
+        let mut p = Prepared::default();
+        lay(&mut p, zone(), faces, true, 0.0, &opts);
+        assert_eq!(p.zones.len(), 1);
+        assert_eq!(p.zones[0].floor_z, 1.0);
+        assert_eq!(p.sensors.len(), 32);
+        assert_eq!(p.sensors.iter().filter(|s| s.p[2] == 1.76).count(), 16);
+        assert_eq!(p.sensors.iter().filter(|s| s.p[2] == 1.16).count(), 16);
+        assert!(p.sensor_zone.iter().all(|&k| k == 0));
+    }
+
+    #[test]
+    fn a_room_keeps_only_its_lowest_faces() {
+        let opts = GridOptions {
+            spacing: 0.5,
+            offset: 0.76,
+            inset: 0.0,
+        };
+        let flip = |t: [V; 3]| [t[0], t[2], t[1]];
+        let mut faces: Vec<[V; 3]> = square(0.0, 0.0).into_iter().map(flip).collect();
+        faces.extend(square(3.0, 0.5).into_iter().map(flip));
+        let mut p = Prepared::default();
+        lay(&mut p, zone(), faces, false, 0.0, &opts);
+        assert_eq!(p.sensors.len(), 16);
+        assert!(p.sensors.iter().all(|s| s.p[2] == 0.76));
     }
 }
