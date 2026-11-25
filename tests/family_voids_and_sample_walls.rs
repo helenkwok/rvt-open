@@ -9,7 +9,6 @@
 
 use rvt::RevitFile;
 use rvt::family_documents::{FamilySolid, HOST_DOCUMENT, read_with_host};
-use rvt::ifc::RvtDocExporter;
 use std::path::{Path, PathBuf};
 
 fn find(dir: &Path, name: &str) -> Option<PathBuf> {
@@ -133,12 +132,13 @@ fn crossings(s: &FamilySolid, along: usize, u: f64, z: f64) -> usize {
     depths.len()
 }
 
+/// The family summary `rvt-ifc` writes: the family file's own forms are
+/// added by the convert step, not by the exporter alone.
 fn family_summary(name: &str) -> Option<rvt::ifc::family_file::FamilySummary> {
     let mut rf = open(name)?;
-    let result = RvtDocExporter
-        .export_with_diagnostics(&mut rf)
-        .expect("export");
-    Some(result.diagnostics.input.family.expect("a family summary"))
+    let exported =
+        rvt::convert::export(&mut rf, &rvt::convert::ConvertOptions::default()).expect("export");
+    Some(exported.diagnostics.input.family.expect("a family summary"))
 }
 
 /// (file, deleted forms left out, forms drawn), as measured: each left-out
