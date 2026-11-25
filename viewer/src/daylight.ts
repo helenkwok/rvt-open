@@ -65,6 +65,29 @@ interface FileSite {
   locationName: string;
 }
 
+/** The file's sun setting a viewer starts from (rvt-wasm `daylightPrepare`'s `sun`). */
+export interface FileSun {
+  source: 'view' | 'project';
+  settingName: string;
+  settingId: number;
+  sunAndShadowType?: string;
+  timeInterval?: string;
+  /** The project's clock time as Revit shows it, `YYYY-MM-DDTHH:MM`. */
+  start?: string;
+  end?: string;
+  /** Degrees: the Lighting mode's sun. */
+  azimuth?: number;
+  altitude?: number;
+  relativeToView: boolean;
+  viewName?: string;
+  viewId?: number;
+  castShadows?: boolean;
+  ambientShadows?: boolean;
+  sunlightIntensity?: number;
+  shadowIntensity?: number;
+  displayStyle?: string;
+}
+
 interface Prepared {
   positions: Float64Array;
   modifier: Uint32Array;
@@ -74,6 +97,7 @@ interface Prepared {
   zones: Zone[];
   byCategory: [string, number][];
   site: FileSite | null;
+  sun?: FileSun | null;
 }
 
 type Analysis = 'sun' | 'sunhours' | 'svf' | 'df' | 'rad-df' | 'rad-pit';
@@ -129,6 +153,22 @@ function el<K extends keyof HTMLElementTagNameMap>(
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+/** Date (`YYYY-MM-DD`) and hour of a stored clock time `YYYY-MM-DDTHH:MM`, or null. */
+export function clockTime(value: string): { date: string; hour: number } | null {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  return m ? { date: m[1], hour: Number(m[2]) + Number(m[3]) / 60 } : null;
+}
+
+/**
+ * The time step (minutes) of a file's solar-study interval (`SunStudyTimeInterval`), or null for
+ * one that is not a step within a day (Day, Week, Month: frames of a multi-day study), seconds, or
+ * an interval with no name.
+ */
+export function stepOf(interval: string | undefined): number | null {
+  const m: Record<string, number> = { Minute: 1, Minutes15: 15, Minutes30: 30, Minutes45: 45, Hour: 60 };
+  return interval && interval in m ? m[interval] : null;
 }
 
 /** Day of a non-leap year from an `<input type="date">` value (29 February counts as the 28th). */
@@ -333,6 +373,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const siteReset = el('button', { type: 'button', class: 'side-btn' }, 'Use the file’s site');
   siteReset.addEventListener('click', () => {
     applyFileSite(prepared?.site ?? null);
+    if (whenSourceNow === 'file') applyFileSun(prepared?.sun);
     void updateSun().catch(() => undefined);
     if (pathBox.checked) void drawSunPath().catch(() => undefined);
   });
@@ -386,7 +427,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const stepRow = row('Step', stepSel);
   const pathsRow = row('Quality', pathsSel);
   const detailRow = row('Parameters', detailSel);
-  whenBox.append(row('Date', dateIn), timeRow, toRow, stepRow, pathsRow, detailRow);
+  const whenNote = el('p', { class: 'option-hint', id: 'daylight-when-note' });
+  const whenSource = el('span', { class: 'daylight-source', id: 'daylight-when-source' });
+  const whenReset = el('button', { type: 'button', class: 'side-btn', id: 'daylight-when-reset', hidden: '' }, 'Use the file’s sun');
+  whenBox.append(row('Date', dateIn, whenSource), timeRow, toRow, stepRow, pathsRow, detailRow, whenNote, whenReset);
   const gridBox = el('div', { class: 'daylight-grid' });
   gridBox.append(row('Grid spacing (m)', spacingIn), row('Sensor height (m)', offsetIn));
   const toggles = el('div', { class: 'daylight-toggles' });
@@ -462,11 +506,90 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
 
   timeIn.addEventListener('input', () => {
     timeOut.textContent = hhmm(Number(timeIn.value));
+    whenFrom('user');
     if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun().catch(() => undefined);
   });
   dateIn.addEventListener('change', () => {
+    whenFrom('user');
     if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun().catch(() => undefined);
   });
+  for (const i of [toIn, stepSel]) i.addEventListener('change', () => whenFrom('user'));
+  whenReset.addEventListener('click', () => {
+    applyFileSun(prepared?.sun);
+    // the file's view options: shadows on or off as its view has them
+    const cast = prepared?.sun?.castShadows;
+    if (cast === false && shadowsBox.checked) {
+      shadowsBox.checked = false;
+      sunOff();
+    } else if (cast || analysisSel.value === 'sun' || shadowsBox.checked) void updateSun().catch(() => undefined);
+  });
+
+  /** Says where the date, time and study range came from. */
+  let whenSourceNow: Source = 'assumed';
+  function whenFrom(s: Source, note?: string): void {
+    whenSourceNow = s;
+    whenSource.textContent = s === 'file' ? 'from the file' : s === 'user' ? 'set by you' : 'assumed';
+    whenSource.dataset.source = s;
+    if (note !== undefined) whenNote.textContent = note;
+    else if (s === 'user') whenNote.textContent = 'Date and time set by you.';
+    whenReset.hidden = s !== 'user' || !prepared?.sun;
+  }
+  whenFrom('assumed', 'The file’s sun setting was not read: the date and time are assumed.');
+
+  /**
+   * The file's sun setting (the default 3D view's own, else the project's first named preset) in
+   * the date, time and range fields, as the clock time Revit shows (the project's local time),
+   * and its view's cast-shadows option. A Lighting setting stores a direction, not a date: the
+   * fields keep their values and the note says so.
+   */
+  function applyFileSun(sun: FileSun | null | undefined, keepUser = false): void {
+    if (keepUser && whenSourceNow === 'user') {
+      // the user's date and time stay; the reset button shows now that the file's sun is known
+      whenReset.hidden = !sun;
+      return;
+    }
+    root.dataset.fileSun = sun ? JSON.stringify(sun) : '';
+    if (!sun) {
+      whenFrom('assumed', 'The file’s sun setting was not read: the date and time are assumed.');
+      return;
+    }
+    const where = sun.source === 'view' && sun.viewName
+      ? `the view “${sun.viewName}” (sun setting “${sun.settingName}”)`
+      : `the project’s sun setting “${sun.settingName}”`;
+    const a = sun.start ? clockTime(sun.start) : null;
+    if (sun.sunAndShadowType === 'Lighting' || !a) {
+      const dir = sun.azimuth !== undefined && sun.altitude !== undefined
+        ? ` (azimuth ${fmt(sun.azimuth, 1)}°, altitude ${fmt(sun.altitude, 1)}°${sun.relativeToView ? ', relative to the view' : ''})`
+        : '';
+      const what = sun.sunAndShadowType === 'Lighting' ? `is a Lighting sun${dir}: it stores a direction, not a date` : 'holds no date that could be read';
+      whenFrom('assumed', `${where[0].toUpperCase()}${where.slice(1)} ${what}, so the date and time are assumed.`);
+    } else {
+      dateIn.value = a.date;
+      // the file's time to the minute (the slider then moves by any amount)
+      timeIn.step = 'any';
+      timeIn.value = String(a.hour);
+      timeOut.textContent = hhmm(Number(timeIn.value));
+      const study = sun.sunAndShadowType === 'OneDayStudy' || sun.sunAndShadowType === 'MultiDayStudy';
+      const b = sun.end ? clockTime(sun.end) : null;
+      const notes: string[] = [];
+      if (study && b) {
+        toIn.value = b.date;
+        const step = stepOf(sun.timeInterval);
+        if (step) {
+          if (![...stepSel.options].some((o) => o.value === String(step))) stepSel.append(el('option', { value: String(step) }, `every ${step} min`));
+          stepSel.value = String(step);
+        } else {
+          notes.push(`The study’s interval (${sun.timeInterval ?? 'not named'}) is not a step within a day, so the step is kept.`);
+        }
+        // sun hours counts whole days: the study's clock range is shown, not applied
+        notes.push(`The study runs ${hhmm(a.hour)}–${hhmm(b.hour)} each day; sun hours counts whole days, so that range is not applied.`);
+      } else {
+        toIn.value = a.date;
+      }
+      const kind = sun.sunAndShadowType ? ` (${sun.sunAndShadowType})` : '';
+      whenFrom('file', [`Dates and start time from ${where}${kind}, as Revit shows them (the site’s local time).`, ...notes].join(' '));
+    }
+  }
   shadowsBox.addEventListener('change', () => {
     if (shadowsBox.checked) void updateSun().catch(() => undefined);
     else sunOff();
@@ -684,7 +807,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         prepared = m.prepared;
         preparedKey = key;
         preparedId++;
-        if (firstTime) applyFileSite(prepared.site, true);
+        if (firstTime) {
+          applyFileSite(prepared.site, true);
+          applyFileSun(prepared.sun, true);
+          // the file's view casts shadows, or shadows were already on with the assumed inputs
+          if (prepared.sun?.castShadows || shadowsBox.checked) void updateSun().catch(() => undefined);
+        }
         showMaterials(prepared);
         if (root.dataset.state === 'preparing') {
           root.dataset.state = 'ready';
@@ -1094,6 +1222,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     reset(): void {
       clearAll();
       applyFileSite(null);
+      applyFileSun(null);
     },
   };
 }

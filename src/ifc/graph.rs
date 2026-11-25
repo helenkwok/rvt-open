@@ -41,6 +41,8 @@ pub const PSET_OF: &str = "rvtopen::ifc::psetOf::";
 /// the site's georeference (Revit's location, shared coordinates,
 /// survey and project base points, CRS) as one object on the `IfcSite` node.
 pub const GEOREFERENCE: &str = "rvtopen::georeference";
+/// The site's sun: the file's sun setting a viewer starts from (`rvtopen::sun`).
+pub const SUN: &str = "rvtopen::sun";
 /// set on the IFCX node of a type no element is typed by.
 pub const UNPLACED_TYPE: &str = "rvtopen::revit::UnplacedType";
 
@@ -642,6 +644,7 @@ impl IfcxGraph {
             type_entity_sets: de(from_meta("type_entity_sets")),
             body_pieces: de(from_meta("body_pieces")),
             georeference: de(from_meta("georeference")),
+            sun: de(from_meta("sun")),
             grids: de::<Option<_>>(from_meta("grids")).unwrap_or_default(),
             ..IfcModel::default()
         };
@@ -921,6 +924,66 @@ impl Builder {
     /// an EPSG code, their `epsg<code>` eastings and northings: buildingSMART
     /// IFC5's georeferencing by point correspondence
     /// (examples/Georeferencing).
+    /// `rvtopen::sun` on the site: the sun a viewer starts from (the default 3D view's own
+    /// setting, else the project's first named preset), where it came from, and that view's
+    /// shadow and lighting options; and the names of the project's named sun presets.
+    fn sun(&mut self, site: &str, sun: &crate::sun_settings::SunAndDisplay) {
+        let Some((source, view, s)) = sun.viewer_default() else {
+            return;
+        };
+        let mut fields: Vec<(&'static str, Ty)> =
+            vec![("source", Ty::Str), ("settingName", Ty::Str)];
+        let mut value = json!({"source": source, "settingName": s.name});
+        let mut put = |k: &'static str, ty: Ty, v: Value| {
+            fields.push((k, ty));
+            value[k] = v;
+        };
+        for (k, v) in [
+            ("sunAndShadowType", &s.sun_and_shadow_type),
+            ("start", &s.start),
+            ("end", &s.end),
+            ("timeInterval", &s.time_interval),
+        ] {
+            if let Some(v) = v {
+                put(k, Ty::Str, json!(v));
+            }
+        }
+        for (k, v) in [("azimuth", s.azimuth), ("altitude", s.altitude)] {
+            if let Some(v) = v {
+                put(k, Ty::Real(None), json!(v));
+            }
+        }
+        put("relativeToView", Ty::Bool, json!(s.relative_to_view));
+        put("usesGroundPlane", Ty::Bool, json!(s.uses_ground_plane));
+        if let Some(v) = view {
+            put("viewName", Ty::Str, json!(v.name));
+            put("castShadows", Ty::Bool, json!(v.cast_shadows));
+            put("ambientShadows", Ty::Bool, json!(v.ambient_shadows));
+            if let Some(d) = &v.display_style {
+                put("displayStyle", Ty::Str, json!(d));
+            }
+            for (k, x) in [
+                ("sunlightIntensity", v.sunlight_intensity),
+                ("shadowIntensity", v.shadow_intensity),
+                ("ambientIntensity", v.ambient_intensity),
+            ] {
+                if let Some(x) = x {
+                    put(k, Ty::Int, json!(x));
+                }
+            }
+        }
+        let presets: Vec<&str> = sun
+            .presets
+            .iter()
+            .filter_map(|i| sun.setting(*i))
+            .map(|p| p.name.as_str())
+            .collect();
+        if !presets.is_empty() {
+            put("presets", Ty::List(Box::new(Ty::Str)), json!(presets));
+        }
+        self.declared(site, SUN, Ty::Obj(fields), value);
+    }
+
     fn georeference(&mut self, site: &str, g: &Georeference) {
         let len = || Ty::Real(Some("Length"));
         let xyz = || Ty::List(Box::new(len()));
@@ -1055,6 +1118,9 @@ impl Builder {
         self.attr(&site, "bsi::ifc::prop::Name", json!(site_label));
         if let Some(g) = &model.georeference {
             self.georeference(&site, g);
+        }
+        if let Some(sun) = &model.sun {
+            self.sun(&site, sun);
         }
         // under `revit` a model with no storey has no building, and the site
         // holds the elements.
@@ -1631,6 +1697,7 @@ impl Builder {
             "type_entity_sets": model.type_entity_sets,
             "body_pieces": model.body_pieces,
             "georeference": model.georeference,
+            "sun": model.sun,
         });
         if !model.grids.is_empty() {
             project_model["grids"] = json!(model.grids);

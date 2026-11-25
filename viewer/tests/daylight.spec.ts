@@ -43,6 +43,9 @@ async function run(page: Page, analysis: string): Promise<number> {
   await expect(page.locator('#daylight-longitude')).toHaveValue(/^-71\.056/);
   await expect(panel.locator('.daylight-source').first()).toHaveText('from the file');
   await expect(page.locator('#daylight-site-note')).toContainText('Boston');
+  // the file's sun: the default 3D view's own setting (or the project's preset), named as the source
+  await expect(page.locator('#daylight-when-note')).toContainText(/the view “|the project’s sun setting “/i);
+  expect(await panel.getAttribute('data-file-sun')).toMatch(/"settingName"/);
 
   await page.locator('#daylight-analysis').selectOption('sunhours');
   await page.locator('#daylight-date').fill('2026-03-20');

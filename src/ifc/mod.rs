@@ -294,6 +294,10 @@ pub struct IfcModel {
     /// the file's records were not found.
     #[serde(default)]
     pub georeference: Option<crate::georeference::Georeference>,
+    /// The file's sun settings and each view's graphic display options
+    /// ([`crate::sun_settings`]). `None` when the file holds neither.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sun: Option<crate::sun_settings::SunAndDisplay>,
     /// Every element type the file holds, placed or not (/// [`crate::file_types`]). The writers type each element by its own
     /// type as before and add a type object for each type here that no
     /// element names, so a type the project defines survives the export.
@@ -1550,6 +1554,7 @@ impl Exporter for PlaceholderExporter {
             instancing: Default::default(),
             display_bodies: Default::default(),
             georeference: None,
+            sun: None,
             file_types: Vec::new(),
             type_property_sets: Default::default(),
             body_pieces: Default::default(),
@@ -2268,6 +2273,8 @@ fn export_rvt_doc_reporting(
         display_bodies: Default::default(),
         // the site, shared coordinates and CRS.
         georeference: crate::georeference::read(rf),
+        // the sun settings and each view's display options.
+        sun: crate::sun_settings::read(rf),
         file_types,
         type_property_sets: Default::default(),
         body_pieces,
@@ -8402,6 +8409,7 @@ mod tests {
             type_entity_sets: BTreeMap::new(),
             body_pieces: BTreeMap::new(),
             georeference: None,
+            sun: None,
             file_types: Vec::new(),
             wall_cut_openings_left_out: BTreeMap::new(),
             wall_end_reads_unmarked: BTreeMap::new(),

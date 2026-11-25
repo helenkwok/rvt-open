@@ -205,6 +205,7 @@ pub mod redact;
 pub mod schema_objects;
 pub mod schema_spatial;
 pub mod streams;
+pub mod sun_settings;
 pub mod transmission_data;
 mod vector_math;
 pub mod walker;

@@ -362,6 +362,7 @@ pub fn build_ifc_model(inputs: &[ElementInput<'_>], options: BuilderOptions) -> 
         display_bodies: Default::default(),
         body_pieces: Default::default(),
         georeference: None,
+        sun: None,
         file_types: Vec::new(),
         storey_properties: Default::default(),
         filler_sizes: Default::default(),

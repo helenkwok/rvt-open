@@ -297,6 +297,7 @@ fn synthetic_structural_ifc_has_expected_entity_counts() {
         display_bodies: Default::default(),
         body_pieces: Default::default(),
         georeference: None,
+        sun: None,
         file_types: Vec::new(),
         storey_properties: Default::default(),
         filler_sizes: Default::default(),

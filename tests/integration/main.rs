@@ -357,6 +357,8 @@ mod stable_exports;
 mod stream_size_guards;
 #[path = "../streamed_partition.rs"]
 mod streamed_partition;
+#[path = "../sun_settings.rs"]
+mod sun_settings;
 #[path = "../support_matrix.rs"]
 mod support_matrix;
 #[path = "../tapered_walls_2025.rs"]

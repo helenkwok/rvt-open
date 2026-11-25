@@ -32,7 +32,8 @@ fn num(v: &JsValue, k: &str, default: f64) -> f64 {
 /// sensorZone: Uint32Array, zones: [{ kind, name, number, roomName, level,
 /// elementId, floorZ }], byCategory: [[name, triangles]], site }`. `site` is the
 /// file's `{ latitude, longitude, elevation, timeZone, trueNorth,
-/// locationName }`, or null where the file's site location was not read.
+/// locationName }`, or null where the file's site location was not read; `sun` is the
+/// file's sun setting a viewer starts from (see `file_sun`), or null.
 #[wasm_bindgen(js_name = daylightPrepare)]
 pub fn daylight_prepare(model: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
     install_panic_hook();
@@ -139,7 +140,59 @@ pub fn daylight_prepare(model: JsValue, options: JsValue) -> Result<JsValue, JsV
         None => JsValue::NULL,
     };
     set(&out, "site", &site);
+    set(&out, "sun", &file_sun(&model));
     Ok(out.into())
+}
+
+/// The file's sun a viewer starts from, `{ source: "view" | "project", viewName, viewId,
+/// settingName, settingId, sunAndShadowType, start, end (the clock time Revit shows,
+/// `YYYY-MM-DDTHH:MM`),
+/// timeInterval, azimuth, altitude (degrees), relativeToView, castShadows, ambientShadows,
+/// sunlightIntensity, shadowIntensity, displayStyle }`, or null where none was read.
+fn file_sun(model: &IfcModel) -> JsValue {
+    let Some((source, view, s)) = model.sun.as_ref().and_then(|x| x.viewer_default()) else {
+        return JsValue::NULL;
+    };
+    let o = js_sys::Object::new();
+    set(&o, "source", &source.into());
+    set(&o, "settingName", &s.name.as_str().into());
+    set(&o, "settingId", &(s.id as f64).into());
+    if let Some(t) = &s.sun_and_shadow_type {
+        set(&o, "sunAndShadowType", &t.as_str().into());
+    }
+    for (k, v) in [
+        ("timeInterval", &s.time_interval),
+        ("start", &s.start),
+        ("end", &s.end),
+    ] {
+        if let Some(v) = v {
+            set(&o, k, &v.as_str().into());
+        }
+    }
+    for (k, v) in [("azimuth", s.azimuth), ("altitude", s.altitude)] {
+        if let Some(v) = v {
+            set(&o, k, &v.into());
+        }
+    }
+    set(&o, "relativeToView", &s.relative_to_view.into());
+    if let Some(v) = view {
+        set(&o, "viewName", &v.name.as_str().into());
+        set(&o, "viewId", &(v.id as f64).into());
+        set(&o, "castShadows", &v.cast_shadows.into());
+        set(&o, "ambientShadows", &v.ambient_shadows.into());
+        if let Some(d) = &v.display_style {
+            set(&o, "displayStyle", &d.as_str().into());
+        }
+        for (k, x) in [
+            ("sunlightIntensity", v.sunlight_intensity),
+            ("shadowIntensity", v.shadow_intensity),
+        ] {
+            if let Some(x) = x {
+                set(&o, k, &(x as f64).into());
+            }
+        }
+    }
+    o.into()
 }
 
 thread_local! {
