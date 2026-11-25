@@ -90,3 +90,34 @@ async function run(page: Page, analysis: string): Promise<number> {
   expect(sun.azimuth).toBeLessThan(270);
   await page.screenshot({ path: path.join(shots, 'sun-and-shadows.png') });
 });
+
+(fs.existsSync(demo) ? test : test.skip)('a daylight worker that cannot start fails the run instead of hanging it', async ({ page }) => {
+  test.setTimeout(180_000);
+  // while the flag is set, the pool's workers (named daylight-N) load a script that does not exist
+  await page.addInitScript(() => {
+    const Real = window.Worker;
+    const w = window as unknown as { __breakDaylight?: boolean };
+    window.Worker = class extends Real {
+      constructor(url: string | URL, opts?: WorkerOptions) {
+        super(w.__breakDaylight && opts?.name?.startsWith('daylight-') ? '/no-such-daylight-worker.js' : url, opts);
+      }
+    };
+  });
+  await openPanel(page);
+  const panel = page.locator('#daylight-panel');
+  await page.evaluate(() => {
+    (window as unknown as { __breakDaylight?: boolean }).__breakDaylight = true;
+  });
+  await page.locator('#daylight-analysis').selectOption('svf');
+  await page.locator('#daylight-run').click();
+  await expect(panel).toHaveAttribute('data-state', 'error', { timeout: 30_000 });
+  await expect(page.locator('#daylight-status')).toContainText('a daylight worker failed');
+  await expect(page.locator('#daylight-run')).toBeEnabled();
+  // the failed pool is gone: the next run starts new workers and finishes
+  await page.evaluate(() => {
+    (window as unknown as { __breakDaylight?: boolean }).__breakDaylight = false;
+  });
+  await page.locator('#daylight-run').click();
+  await expect(panel).toHaveAttribute('data-state', 'done', { timeout: 120_000 });
+  await expect(panel).toHaveAttribute('data-overlay', '391');
+});
