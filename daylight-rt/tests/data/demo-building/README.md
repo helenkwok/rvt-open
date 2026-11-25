@@ -1,6 +1,6 @@
 # The demo building's daylight reference
 
-Derived from a 40 x 30 ft single-storey demo building its publisher released under CC0 1.0 (public domain); the model itself is the release asset `fixtures-cc0-1` (`tools/ci/fetch-cc0-models.sh`), whose `SOURCE.md` says where it comes from. Everything here is CC0 like its source.
+Derived from a 40 x 30 ft single-storey demo building, Innerscene, Demo building - 40x30 ft floor, CC0 1.0, https://www.innerscene.com/tools/library/3d-parts/demo-building-40-30-ft-floor-d7908382. The model itself is not stored here: CI downloads it from its publisher and checks it against `research/cc0-models.tsv` (`tools/ci/fetch-cc0-models.py`). Everything here is CC0 like its source.
 
 - `materials.rad`, `scene.rad`: the building as a Radiance scene, built from rvt-open's glTF export (1,968 triangles, 64 plastic and 36 glass modifiers from the glTF materials). `daylight_rt::glb::read` builds the same scene and grid from the `.rvt`; `tests/demo_building.rs` checks it.
 - `grid.pts`: 391 sensors, 0.76 m above the floor tops, 0.5 m apart, kept 0.35 m in from the floor's edge (the file has no rooms).

@@ -9,7 +9,7 @@
  * the magnetar-io/revit-test-datasets checkout (_project_corpus/) and the
  * tiny reference models from the release assets fixtures-tiny-1 and -2
  * (tools/ci/fetch-tiny-models.sh _tiny) and the CC0 demo building from the
- * release asset fixtures-cc0-1 (tools/ci/fetch-cc0-models.sh _cc0) are
+ * its publisher (tools/ci/fetch-cc0-models.py research/cc0-models.tsv _cc0) are
  * refused when their bytes do not match the sha256 pinned in the catalog.
  *
  * Privacy: only redistributable files are staged. Nothing is uploaded.
@@ -33,7 +33,7 @@ const TIER1_IDS = new Set(['architectural-2024', 'structural-2023', 'mep-2024'])
 const MAGNETAR_TAGS = ['real-project', 'magnetar'];
 /** Catalog tag for this project's tiny reference models (release assets, MIT). */
 const TINY_TAG = 'tiny-model';
-/** Catalog tag for the CC0 demo models (release asset fixtures-cc0-1). */
+/** Catalog tag for the CC0 demo models (fetched from their publishers, research/cc0-models.tsv). */
 const CC0_TAG = 'cc0-model';
 
 function ensureDir(dir) {
@@ -201,11 +201,11 @@ function main() {
           }
         : tags.includes(CC0_TAG)
           ? {
-              url: 'https://github.com/helenkwok/rvt-open/releases/tag/fixtures-cc0-1',
-              repo: 'helenkwok/rvt-open',
+              url: demo.source_url,
+              repo: null,
               path: demo.provenance,
               license: 'CC0-1.0',
-              missing: 'run tools/ci/fetch-cc0-models.sh _cc0',
+              missing: 'run tools/ci/fetch-cc0-models.py research/cc0-models.tsv _cc0',
             }
           : null;
     if (pinned) {

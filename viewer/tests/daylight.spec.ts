@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The Daylight panel on the CC0 demo building (release asset fixtures-cc0-1):
+// The Daylight panel on the CC0 demo building (research/cc0-models.tsv):
 // the file's site shows, each analysis of the instant tier runs on the pool of
 // workers and draws its coloured grid, and the results export. The numbers
 // themselves are checked against Radiance in daylight-rt/tests/demo_building.rs;
