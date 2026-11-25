@@ -70,6 +70,9 @@ def main() -> int:
         if dest.is_file() and dest.stat().st_size == size and sha256(dest) == sha:
             print(f"{dest}: present and verified")
             continue
+        # A file that does not match its pin is never left in place, so an
+        # unreachable host leaves no model rather than a wrong one.
+        dest.unlink(missing_ok=True)
         data = download(url)
         if data is None:
             print(f"{name}: {url} could not be reached")
