@@ -137,7 +137,19 @@ fn tiny_models_sun_settings_and_view_display_match_the_revit_api() {
                     continue;
                 };
                 if p["Name"].as_str() != Some(s.name.as_str()) {
-                    bad("name", format!("{} vs {}", p["Name"], s.name));
+                    let owners: Vec<&str> = sun
+                        .views
+                        .iter()
+                        .filter(|v| v.sun_setting_id == Some(id))
+                        .map(|v| v.name.as_str())
+                        .collect();
+                    bad(
+                        "name",
+                        format!(
+                            "{} vs {} (stored {:?}, preset {}, own setting of {owners:?})",
+                            p["Name"], s.name, s.stored_name, s.is_preset
+                        ),
+                    );
                 }
                 if p["SunAndShadowType"].as_str() != s.sun_and_shadow_type.as_deref() {
                     bad(
