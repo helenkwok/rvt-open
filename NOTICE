@@ -126,3 +126,23 @@ Copyright (c) 2026 ArtCraft Team and the craft-libs contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your
 option; used here under the Apache License, Version 2.0. Its licence texts,
 notice and source record are in vendor/craft-atomic/.
+
+==============================================================================
+Radiance (the viewer's daylight tier)
+==============================================================================
+
+The viewer ships gensky, gendaylit, oconv and rtrace from Radiance,
+https://github.com/LBNL-ETA/Radiance, commit
+84f888ec659b8a28f7f8841e05e9ced34899b653 (the sources of the 6.0.3
+release), compiled to WebAssembly by tools/radiance/build-wasm.sh with one
+change (tools/radiance/o_default.patch), and Radiance's rayinit.cal,
+skybright.cal and perezlum.cal.
+Radiance v6.1 Copyright (c) 1990 to 2025, The Regents of the University of
+California, through Lawrence Berkeley National Laboratory (subject to
+receipt of any required approvals from the U.S. Dept. of Energy). All
+rights reserved. Licensed under the Radiance Software License, Version 2.0;
+its text ships beside the WebAssembly files (radiance/License.txt in the
+viewer) with a SOURCE.md naming the build.
+
+Weather data the user loads from PVGIS: PVGIS (c) European Communities,
+2001-2026; the viewer shows this credit with every result computed from it.

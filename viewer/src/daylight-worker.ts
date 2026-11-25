@@ -15,6 +15,8 @@
  *   main → worker: { type: 'run', req, id, sensors, first, kind, params }   value: Float64Array, one per sensor
  *   main → worker: { type: 'sun', req, site, day, hour }   value: daylightSunAt's numbers
  *   main → worker: { type: 'suns', req, site, from, to, step }   value: daylightSunPositions' Float64Array
+ *   main → worker: { type: 'radtext', req, positions, modifier, materials }   value: [materials, scene], the
+ *                  scene as Radiance text (daylightRadianceText, for radiance.ts)
  *   worker → main: { type: 'ok', req, value, ms } or { type: 'error', req, message }
  */
 
@@ -31,6 +33,7 @@ type Msg = { req: number } & (
   | { type: 'run'; id: number; sensors: Float64Array; first: number; kind: string; params: Float64Array }
   | { type: 'sun'; site: unknown; day: number; hour: number }
   | { type: 'suns'; site: unknown; from: number; to: number; step: number }
+  | { type: 'radtext'; positions: Float64Array; modifier: Uint32Array; materials: Float64Array }
 );
 
 const send = (msg: unknown, transfer: Transferable[] = []): void => {
@@ -71,6 +74,9 @@ self.addEventListener('message', (ev: MessageEvent<Msg>) => {
         return;
       case 'suns':
         ok(new Float64Array(ready().daylightSunPositions(msg.site, msg.from, msg.to, msg.step)));
+        return;
+      case 'radtext':
+        ok(ready().daylightRadianceText(msg.positions, msg.modifier, msg.materials));
         return;
     }
   } catch (err) {
