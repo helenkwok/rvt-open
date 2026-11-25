@@ -359,6 +359,8 @@ mod streamed_partition;
 mod support_matrix;
 #[path = "../tapered_walls_2025.rs"]
 mod tapered_walls_2025;
+#[path = "../texture_split_parts.rs"]
+mod texture_split_parts;
 #[path = "../truss_framing.rs"]
 mod truss_framing;
 #[path = "../type_global_ids.rs"]
