@@ -73,7 +73,7 @@ const SITE: sun::Site = sun::Site {
     time_zone: -5.0,
 };
 
-/// The spike's 36 sun positions: three days, every hour from 05:00 to 19:00, above the horizon.
+/// The reference's 36 sun positions: three days, every hour from 05:00 to 19:00, above the horizon.
 fn suns() -> Vec<(u32, u32, u32, V)> {
     let mut out = Vec::new();
     for (m, d) in [(3, 20), (6, 21), (12, 21)] {
@@ -144,7 +144,7 @@ fn sun_hours_equal_radiance_on_every_sensor() {
 }
 
 #[test]
-fn sky_view_factor_within_the_spike_rmse() {
+fn sky_view_factor_within_the_measured_rmse() {
     let (tracer, sensors) = scene();
     let ours = daylight_rt::sky_view(&tracer, &sensors, 0, 4096);
     let theirs = column("ref_svf.dat");
