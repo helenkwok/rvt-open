@@ -1,0 +1,27 @@
+oconv calls an object type's intersection test through int (*)(OBJREC *, CUBE *).
+o_default, the test of a type with none, was declared int o_default(void): native
+calling conventions ignore the extra arguments, but WebAssembly's call_indirect
+checks the signature and traps. Declaring the two parameters fixes it.
+
+--- a/src/ot/init2otypes.c
++++ b/src/ot/init2otypes.c
+@@ -15,7 +15,7 @@
+ 
+ 
+ int
+-o_default(void)			/* default action is no intersection */
++o_default(void *o, void *c)			/* default action is no intersection */
+ {
+ 	return(O_MISS);
+ }
+--- a/src/ot/initotypes.c
++++ b/src/ot/initotypes.c
+@@ -35,7 +35,7 @@
+ 
+ 
+ int
+-o_default(void)			/* default action is no intersection */
++o_default(void *o, void *c)			/* default action is no intersection */
+ {
+ 	return(O_MISS);
+ }

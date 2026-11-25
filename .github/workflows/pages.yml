@@ -43,6 +43,10 @@ jobs:
       # Both builds, as the release ships them: the viewer loads the 64-bit one where the browser supports memory64.
       - name: Build the wasm package (32-bit and 64-bit) into viewer/pkg
         run: tools/ci/wasm-package.sh viewer/pkg
+      # Radiance (gensky, gendaylit, oconv, rtrace) as WebAssembly, served as radiance/ beside the viewer.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: viewer/public/radiance, key: "radiance-wasm-${{ hashFiles('tools/radiance/build-wasm.sh', 'tools/radiance/o_default.patch') }}" }
+      - run: '[ -s viewer/public/radiance/rtrace.wasm ] || tools/radiance/build-wasm.sh viewer/public/radiance'
       - name: Real sample projects for the demo gallery (MIT)
         uses: ./.github/actions/fetch-corpus
         with: { repository: magnetar-io/revit-test-datasets, path: _project_corpus }

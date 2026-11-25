@@ -15,6 +15,8 @@
  *   main → worker: { type: 'run', id, job, sensors, first, kind, params }
  *   worker → main: { type: 'done', job, first, values, ms }
  *   main → worker: { type: 'sun', req, site, day, hour } / { type: 'suns', req, site, from, to, step }
+ *   main → worker: { type: 'radtext', req, positions, modifier, materials }
+ *   worker → main: { type: 'radtext', req, value: [materials, scene] } (daylightRadianceText, for radiance.ts)
  *   worker → main: { type: 'sun', req, value } (daylightSunAt) / { type: 'suns', req, value } (daylightSunPositions)
  *   Any failure replies { type: 'error', message, job?, req? }.
  */
@@ -38,7 +40,8 @@ type Msg =
     }
   | { type: 'run'; id: number; job: number; sensors: Float64Array; first: number; kind: string; params: Float64Array }
   | { type: 'sun'; req: number; site: unknown; day: number; hour: number }
-  | { type: 'suns'; req: number; site: unknown; from: number; to: number; step: number };
+  | { type: 'suns'; req: number; site: unknown; from: number; to: number; step: number }
+  | { type: 'radtext'; req: number; positions: Float64Array; modifier: Uint32Array; materials: Float64Array };
 
 const send = (msg: unknown, transfer: Transferable[] = []): void => {
   (self as unknown as { postMessage: (m: unknown, t: Transferable[]) => void }).postMessage(msg, transfer);
@@ -74,13 +77,16 @@ self.addEventListener('message', (ev: MessageEvent<Msg>) => {
       case 'suns':
         send({ type: 'suns', req: msg.req, value: new Float64Array(ready().daylightSunPositions(msg.site, msg.from, msg.to, msg.step)) });
         return;
+      case 'radtext':
+        send({ type: 'radtext', req: msg.req, value: ready().daylightRadianceText(msg.positions, msg.modifier, msg.materials) });
+        return;
     }
   } catch (err) {
     send({
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
       job: msg.type === 'run' ? msg.job : undefined,
-      req: msg.type === 'sun' || msg.type === 'suns' ? msg.req : undefined,
+      req: msg.type === 'run' || msg.type === 'load' ? undefined : msg.req,
     });
   }
 });

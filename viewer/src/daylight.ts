@@ -20,6 +20,7 @@
 import * as THREE from 'three';
 import DaylightWorker from './daylight-worker.ts?worker&inline';
 import type { Bits } from './wasm-build';
+import { DETAILS, PVGIS_CREDIT, RADIANCE_BASE, Radiance, parseWeather, pvgisUrl, weatherAt, type Weather } from './radiance';
 
 export interface DaylightHost {
   scene: THREE.Scene;
@@ -75,7 +76,7 @@ interface Prepared {
   site: FileSite | null;
 }
 
-type Analysis = 'sun' | 'sunhours' | 'svf' | 'df';
+type Analysis = 'sun' | 'sunhours' | 'svf' | 'df' | 'rad-df' | 'rad-pit';
 type SiteKey = 'latitude' | 'longitude' | 'elevation' | 'timeZone' | 'trueNorth';
 type Source = 'file' | 'user' | 'assumed';
 
@@ -84,6 +85,8 @@ const ANALYSES: Record<Analysis, { label: string; unit: string }> = {
   sunhours: { label: 'Sun hours', unit: 'h' },
   svf: { label: 'Sky view factor', unit: '' },
   df: { label: 'Daylight factor (preview, CIE overcast)', unit: '%' },
+  'rad-df': { label: 'Daylight factor (Radiance, CIE overcast)', unit: '%' },
+  'rad-pit': { label: 'Illuminance at a time (Radiance, weather file)', unit: 'lux' },
 };
 
 const SITE_FIELDS: { key: SiteKey; label: string; unit: string; step: string }[] = [
@@ -102,6 +105,8 @@ export const DAYLIGHT_LIMITS = [
   'No surroundings: neighbouring buildings, trees and terrain are not in the scene.',
   'Sun: positions from Radiance’s gensky formulas for a non-leap year, in local standard time (no daylight saving); the sun is a point, not a disc.',
   'Elevation is shown but not used: no sky generator takes it.',
+  'Radiance tier: Radiance 6.0.3 compiled to WebAssembly, on the same scene and sensors. Its Monte Carlo sampling differs from a native build’s random numbers, so a run differs from native Radiance as much as two native runs do (RMSE 0.035 DF points on the reference building, native against native 0.036). Each worker builds its own irradiance cache for its share of the sensors.',
+  'Weather: the illuminance at a time uses the hour of the weather file nearest the time asked (PVGIS hours are moved from UTC to the site’s standard time); a Perez sky from that hour’s direct normal and diffuse horizontal irradiance.',
   'Sensors: a grid over each room’s floor, or over each floor’s top face kept 0.35 m from its edge where the model has no rooms.',
 ];
 
@@ -158,7 +163,7 @@ class Pool {
       const w = new DaylightWorker({ name: `daylight-${i}` }) as Worker;
       w.addEventListener('message', (ev: MessageEvent) => {
         const m = ev.data as { type: string; req?: number; value?: unknown; message?: string };
-        if ((m.type === 'sun' || m.type === 'suns' || m.type === 'error') && m.req !== undefined) {
+        if ((m.type === 'sun' || m.type === 'suns' || m.type === 'radtext' || m.type === 'error') && m.req !== undefined) {
           const done = this.pending.get(m.req);
           this.pending.delete(m.req);
           done?.(m.type === 'error' ? new Error(m.message) : m.value);
@@ -273,7 +278,9 @@ class Pool {
 }
 
 export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChanged(): void; reset(): void } {
-  const pool = new Pool(Math.min(8, Math.max(1, (navigator.hardwareConcurrency || 4) - 1)));
+  // `?daylight-workers=N` sets the pool's size (for measuring how the runs scale); else one per core, up to eight
+  const asked = Number(new URLSearchParams(location.search).get('daylight-workers'));
+  const pool = new Pool(asked >= 1 ? Math.min(32, Math.floor(asked)) : Math.min(8, Math.max(1, (navigator.hardwareConcurrency || 4) - 1)));
   let prepared: Prepared | null = null;
   let preparedKey = '';
   let preparedId = 0;
@@ -282,6 +289,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   let values: Float64Array | null = null;
   let lastRun: { analysis: Analysis; params: Record<string, unknown>; ms: number; range: [number, number] } | null = null;
   let overlay: THREE.InstancedMesh | null = null;
+  const radiance = new Radiance(pool.count);
+  let weather: Weather | null = null;
   const helpers = new THREE.Group();
   helpers.name = 'daylight-helpers';
   host.scene.add(helpers);
@@ -336,6 +345,23 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   for (const n of [1024, 4096, 16384]) pathsSel.append(el('option', { value: String(n), ...(n === 4096 ? { selected: '' } : {}) }, `${n.toLocaleString('en')} paths per sensor`));
   const spacingIn = el('input', { type: 'number', step: '0.1', min: '0.1', value: '0.5', id: 'daylight-spacing', 'aria-label': 'Grid spacing (m)' });
   const offsetIn = el('input', { type: 'number', step: '0.05', value: '0.76', id: 'daylight-offset', 'aria-label': 'Sensor height above the floor (m)' });
+  const detailSel = el('select', { class: 'mode-select', id: 'daylight-detail', 'aria-label': 'Radiance parameters' });
+  for (const [k, d] of Object.entries(DETAILS)) detailSel.append(el('option', { value: k }, d.label));
+  const weatherBox = el('div', { class: 'daylight-weather', id: 'daylight-weather' });
+  const pvgisLink = el('a', { id: 'daylight-pvgis', target: '_blank', rel: 'noopener noreferrer' }, 'Get the typical year from PVGIS (JSON)');
+  const weatherIn = el('input', { type: 'file', id: 'daylight-weather-file', accept: '.json,.epw', 'aria-label': 'Weather file (PVGIS JSON or EPW)' });
+  const weatherNote = el('p', { class: 'option-hint', id: 'daylight-weather-note' }, 'No weather file loaded. PVGIS does not answer requests from a web page, so the link opens its official service in a new tab: save the file it returns and choose it here. An EPW file of your own works too.');
+  pvgisLink.title = `Weather data from PVGIS: ${PVGIS_CREDIT}`;
+  weatherBox.append(pvgisLink, weatherIn, weatherNote);
+  const radNote = el('p', { class: 'option-hint', id: 'daylight-radiance-note' });
+  radNote.append(
+    document.createTextNode('Radiance 6.0.3 (WebAssembly), loaded when a Radiance analysis runs. Radiance Software License 2.0: '),
+    el('a', { href: `${RADIANCE_BASE}License.txt`, target: '_blank', rel: 'noopener' }, 'License.txt'),
+    document.createTextNode(' · '),
+    el('a', { href: `${RADIANCE_BASE}SOURCE.md`, target: '_blank', rel: 'noopener' }, 'build and source'),
+    document.createTextNode('.'),
+  );
+  const matsBox = el('details', { class: 'daylight-limits', id: 'daylight-materials' });
   const shadowsBox = el('input', { type: 'checkbox', id: 'daylight-shadows' });
   const pathBox = el('input', { type: 'checkbox', id: 'daylight-sunpath' });
   const runBtn = el('button', { type: 'button', class: 'side-btn', id: 'daylight-run' }, 'Run');
@@ -353,7 +379,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const toRow = row('To', toIn);
   const stepRow = row('Step', stepSel);
   const pathsRow = row('Quality', pathsSel);
-  whenBox.append(row('Date', dateIn), timeRow, toRow, stepRow, pathsRow);
+  const detailRow = row('Parameters', detailSel);
+  whenBox.append(row('Date', dateIn), timeRow, toRow, stepRow, pathsRow, detailRow);
   const gridBox = el('div', { class: 'daylight-grid' });
   gridBox.append(row('Grid spacing (m)', spacingIn), row('Sensor height (m)', offsetIn));
   const toggles = el('div', { class: 'daylight-toggles' });
@@ -374,13 +401,15 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   for (const l of DAYLIGHT_LIMITS) ul.append(el('li', {}, l));
   limits.append(ul);
 
-  root.append(intro, siteBox, row('Analysis', analysisSel), whenBox, gridBox, toggles, runBtn, stopBtn, bar, status, legend, readout, table, exportJson, exportCsv, limits);
+  root.append(intro, siteBox, row('Analysis', analysisSel), whenBox, weatherBox, radNote, gridBox, toggles, runBtn, stopBtn, bar, status, legend, readout, table, exportJson, exportCsv, matsBox, limits);
 
   const showFields = (): void => {
     const a = analysisSel.value as Analysis;
-    timeRow.hidden = a !== 'sun';
+    timeRow.hidden = a !== 'sun' && a !== 'rad-pit';
     toRow.hidden = stepRow.hidden = a !== 'sunhours';
     pathsRow.hidden = a !== 'svf' && a !== 'df';
+    detailRow.hidden = radNote.hidden = !a.startsWith('rad-');
+    weatherBox.hidden = a !== 'rad-pit';
     gridBox.hidden = a === 'sun';
     runBtn.textContent = a === 'sun' ? 'Show the sun' : 'Run';
   };
@@ -400,6 +429,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       notes.push('This is the location new Revit projects start with (Boston, MA): check that the author set the real site.');
     }
     notes.push('Times are local standard time; daylight saving is not applied.');
+    pvgisLink.href = pvgisUrl(site.latitude, site.longitude);
     siteNote.textContent = notes.join(' ');
   }
 
@@ -427,6 +457,42 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     if (pathBox.checked) void drawSunPath();
     else clearHelpers('path');
   });
+
+  weatherIn.addEventListener('change', async () => {
+    const f = weatherIn.files?.[0];
+    if (!f) return;
+    try {
+      weather = parseWeather(f.name, await f.text(), site.timeZone, new Date(f.lastModified).toISOString().slice(0, 10));
+      const pv = weather.provenance;
+      weatherNote.textContent = `${f.name}: ${weather.hours.length.toLocaleString('en')} hours. ${Object.entries(pv)
+        .filter(([k]) => k !== 'file')
+        .map(([k, v]) => `${k} ${v}`)
+        .join('; ')}.${weather.credit ? ` ${weather.credit}.` : ''}`;
+      root.dataset.weather = String(weather.hours.length);
+    } catch (e) {
+      weather = null;
+      delete root.dataset.weather;
+      weatherNote.textContent = e instanceof Error ? e.message : String(e);
+    }
+  });
+
+  function showMaterials(p: Prepared): void {
+    matsBox.replaceChildren(el('summary', {}, `Materials (${p.materials.length}; ${p.materials.filter((m) => m.assumed).length} assumed)`));
+    const t = el('table', { class: 'daylight-table' });
+    const head = el('tr');
+    for (const h of ['Material', 'Kind', 'Value', 'Source']) head.append(el('th', { scope: 'col' }, h));
+    const body = el('tbody');
+    for (const m of p.materials) {
+      const r = el('tr');
+      for (const c of [m.label, m.kind === 'glass' ? 'glass (transmittance)' : 'reflectance', fmt(m.value, 3), m.assumed ? 'assumed (placeholder)' : 'the file’s colour']) r.append(el('td', {}, c));
+      if (m.assumed) r.dataset.assumed = '';
+      body.append(r);
+    }
+    const thead = el('thead');
+    thead.append(head);
+    t.append(thead, body);
+    matsBox.append(t);
+  }
 
   // ---------- the scene's frame ----------
   const toScene = (x: number, y: number, z: number): THREE.Vector3 => new THREE.Vector3(x, z, -y);
@@ -578,6 +644,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         preparedKey = key;
         preparedId++;
         if (firstTime) applyFileSite(prepared.site);
+        showMaterials(prepared);
         if (root.dataset.state === 'preparing') {
           root.dataset.state = 'ready';
           status.textContent = `${(prepared.sensors.length / 6).toLocaleString('en')} sensors on ${prepared.zones.length} ${prepared.zones[0]?.kind === 'floor' ? 'floors (the model has no rooms)' : 'rooms'}, ${(prepared.positions.length / 9).toLocaleString('en')} triangles.`;
@@ -726,14 +793,51 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       } else if (a === 'svf') {
         params = new Float64Array([Number(pathsSel.value)]);
         extra.paths = Number(pathsSel.value);
-      } else {
+      } else if (a === 'df') {
         params = new Float64Array([2, Number(pathsSel.value), 0.2]);
         Object.assign(extra, { ab: 2, paths: Number(pathsSel.value), groundReflectance: 0.2, sky: 'CIE overcast (gensky -c)' });
+      } else {
+        params = new Float64Array(0);
       }
-      status.textContent = `Running on ${n.toLocaleString('en')} sensors with ${pool.count} workers…`;
-      const v = await pool.run(preparedId, p, decoder, kind, params, (done, total) => {
+      const progress = (done: number, total: number): void => {
         bar.value = total ? done / total : 0;
-      });
+      };
+      let v: Float64Array;
+      if (a === 'rad-df' || a === 'rad-pit') {
+        if (!(await radiance.available())) throw new Error('the Radiance build is not beside this page (radiance/)');
+        const detail = DETAILS[detailSel.value as 'preview' | 'validated'];
+        let sky: string;
+        if (a === 'rad-pit') {
+          if (!weather) throw new Error('choose a weather file first (PVGIS JSON or EPW)');
+          const doy = dayOfYear(dateIn.value);
+          const month = [31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365].findIndex((end) => doy <= end) + 1;
+          const day = doy - [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334][month - 1];
+          const h = weatherAt(weather, month, day, Number(timeIn.value));
+          if (!h) throw new Error(`the weather file has no hour on ${dateIn.value.slice(5)}`);
+          sky = await radiance.perezSky(h.month, h.day, h.hour, site, h.dni, h.dhi);
+          Object.assign(extra, { weatherHour: { month: h.month, day: h.day, hour: h.hour, dni: h.dni, dhi: h.dhi }, sky: 'Perez (gendaylit -W)', weather: weather.provenance, credit: weather.credit });
+        } else {
+          sky = await radiance.overcastSky();
+          Object.assign(extra, { sky: 'CIE overcast, 10,000 lux horizontal (gensky -ang 45 0 -c -B 55.866)', groundReflectance: 0.2 });
+        }
+        extra.rtrace = ['-I', '-h', ...detail.args].join(' ');
+        status.textContent = `Radiance on ${n.toLocaleString('en')} sensors with ${radiance.count} workers…`;
+        const materials = new Float64Array(p.materials.length * 4);
+        p.materials.forEach((m, i) => materials.set([m.kind === 'glass' ? 1 : 0, m.rgb[0], m.rgb[1], m.rgb[2]], i * 4));
+        const [matText, sceneText] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: p.positions, modifier: p.modifier, materials });
+        const pts: string[] = [];
+        for (let i = 0; i < n; i++) {
+          const q = p.sensors.subarray(i * 6, i * 6 + 6);
+          pts.push(`${q[0].toFixed(4)} ${q[1].toFixed(4)} ${q[2].toFixed(4)} ${q[3]} ${q[4]} ${q[5]}`);
+        }
+        const r = await radiance.illuminance(matText, sceneText, sky, pts, detail, progress);
+        v = r.lux;
+        if (a === 'rad-df') for (let i = 0; i < v.length; i++) v[i] /= 100;
+        extra.engine = 'Radiance 6.0.3 (WebAssembly)';
+      } else {
+        status.textContent = `Running on ${n.toLocaleString('en')} sensors with ${pool.count} workers…`;
+        v = await pool.run(preparedId, p, decoder, kind, params, progress);
+      }
       if (scale !== 1) for (let i = 0; i < v.length; i++) v[i] *= scale;
       values = v;
       let lo = Infinity;
@@ -743,12 +847,14 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         hi = Math.max(hi, x);
       }
       if (a === 'svf') [lo, hi] = [0, Math.max(hi, 0.05)];
-      if (a === 'df') [lo, hi] = [0, Math.max(5, Math.ceil(hi))];
+      if (a === 'df' || a === 'rad-df') [lo, hi] = [0, Math.max(5, Math.ceil(hi))];
+      if (a === 'rad-pit') lo = 0;
       if (a === 'sunhours') lo = 0;
       const ms = performance.now() - t0;
       lastRun = { analysis: a, params: extra, ms, range: [lo, hi] };
       drawOverlay(p, v, lo, hi);
       showLegend(a, lo, hi);
+      if (typeof extra.credit === 'string') legend.append(el('div', { class: 'daylight-credit', id: 'daylight-credit' }, extra.credit));
       showTable(a, p, v);
       exportJson.disabled = exportCsv.disabled = false;
       let mean = 0;
@@ -774,7 +880,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   root.closest('details')?.addEventListener('toggle', (ev) => {
     if ((ev.target as HTMLDetailsElement).open && host.worker() && !prepared) void prepare().catch(() => undefined);
   });
-  stopBtn.addEventListener('click', () => pool.stop());
+  stopBtn.addEventListener('click', () => {
+    pool.stop();
+    radiance.stop();
+  });
 
   // ---------- hover readout ----------
   const ray = new THREE.Raycaster();
@@ -805,7 +914,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       analysis: run.analysis,
       label: ANALYSES[run.analysis].label,
       unit: ANALYSES[run.analysis].unit,
-      engine: 'rvt-open daylight-rt, instant tier (preview)',
+      engine: String(run.params.engine ?? 'rvt-open daylight-rt, instant tier (preview)'),
+      credit: run.params.credit ?? null,
       parameters: run.params,
       frame: 'the model’s own: metres, Z up, +Y the model’s north (true north is at the angle below)',
       site: Object.fromEntries(SITE_FIELDS.map((f) => [f.key, { value: site[f.key], source: source[f.key] }])),
