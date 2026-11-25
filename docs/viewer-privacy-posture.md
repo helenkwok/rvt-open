@@ -167,3 +167,7 @@ afterwards (check 3), with the page's Content-Security-Policy limiting
 `connect-src` to `'self'` and `blob:`. They are checks of those paths, not
 a proof that no other code path, browser extension or modified copy of
 the page could make a request.
+
+## The Daylight panel
+
+The Daylight panel computes in the tab. Its instant tier is part of the viewer's own wasm module and fetches nothing. Its Radiance tier fetches Radiance's WebAssembly files from the page's own `radiance/` folder, only when a Radiance analysis runs. Weather data never comes from the page: PVGIS answers no requests from web pages, so the panel's PVGIS link opens PVGIS's official service (re.jrc.ec.europa.eu) in a new tab, sending it the site's latitude and longitude, and you choose the file it returns, or an EPW file of your own; the file is read in the tab.

@@ -153,6 +153,28 @@ thread_local! {
 #[wasm_bindgen(js_name = daylightLoad)]
 pub fn daylight_load(id: u32, positions: &[f64], modifier: &[u32], materials: &[f64]) {
     install_panic_hook();
+    let tracer = Tracer::new(&model_of(positions, modifier, materials));
+    TRACER.with(|t| *t.borrow_mut() = Some((id, tracer)));
+}
+
+/// The same scene as Radiance text, for the validated tier: `[materials,
+/// scene]` (`plastic`/`glass` modifiers `m0`, `m1`, ... and one `polygon` per
+/// triangle), from the arrays `daylightLoad` takes.
+#[wasm_bindgen(js_name = daylightRadianceText)]
+pub fn daylight_radiance_text(
+    positions: &[f64],
+    modifier: &[u32],
+    materials: &[f64],
+) -> Vec<String> {
+    install_panic_hook();
+    let model = model_of(positions, modifier, materials);
+    vec![
+        daylight_rt::radiance::write_materials(&model),
+        daylight_rt::radiance::write_triangles(&model),
+    ]
+}
+
+fn model_of(positions: &[f64], modifier: &[u32], materials: &[f64]) -> Model {
     let modifiers = materials
         .chunks_exact(4)
         .enumerate()
@@ -181,11 +203,10 @@ pub fn daylight_load(id: u32, positions: &[f64], modifier: &[u32], materials: &[
             modifier: m,
         })
         .collect();
-    let tracer = Tracer::new(&Model {
+    Model {
         modifiers,
         triangles,
-    });
-    TRACER.with(|t| *t.borrow_mut() = Some((id, tracer)));
+    }
 }
 
 /// Runs one job of the instant tier on `sensors` (6 numbers each), the first of

@@ -91,6 +91,56 @@ async function run(page: Page, analysis: string): Promise<number> {
   await page.screenshot({ path: path.join(shots, 'sun-and-shadows.png') });
 });
 
+const radianceBuild = path.resolve(__dirname, '../public/radiance/rtrace.wasm');
+(fs.existsSync(demo) && fs.existsSync(radianceBuild) ? test : test.skip)(
+  'the Daylight panel runs Radiance itself: daylight factor and illuminance from a PVGIS year',
+  async ({ page }) => {
+    test.setTimeout(400_000);
+    fs.mkdirSync(shots, { recursive: true });
+    await openPanel(page);
+    const panel = page.locator('#daylight-panel');
+    // the placeholder materials are listed as assumed
+    await expect(page.locator('#daylight-materials summary')).toContainText(/assumed/);
+    await page.locator('#daylight-analysis').selectOption('rad-df');
+    await expect(page.locator('#daylight-radiance-note')).toContainText('Radiance Software License 2.0');
+    await page.locator('#daylight-run').click();
+    await expect(panel).toHaveAttribute('data-analysis', 'rad-df', { timeout: 300_000 });
+    await expect(panel).toHaveAttribute('data-state', 'done');
+    await expect(panel).toHaveAttribute('data-overlay', '391');
+    const df = Number(await panel.getAttribute('data-mean'));
+    // native Radiance's mean at -ab 2 is 1.0900 % (daylight-rt/tests/data/demo-building/df_p1.dat); each worker
+    // builds its own irradiance cache, which moves the mean by a fraction of a percent
+    expect(Math.abs(df / 1.09 - 1)).toBeLessThan(0.02);
+    await page.screenshot({ path: path.join(shots, 'radiance-daylight-factor.png') });
+
+    await page.locator('#daylight-analysis').selectOption('rad-pit');
+    await expect(page.locator('#daylight-pvgis')).toHaveAttribute('href', /^https:\/\/re\.jrc\.ec\.europa\.eu\/api\/v5_3\/tmy\?lat=42\.3587&lon=-71\.0567/);
+    await page.locator('#daylight-weather-file').setInputFiles(path.resolve(__dirname, 'data/pvgis-tmy-demo-building-june.json'));
+    await expect(panel).toHaveAttribute('data-weather', '48');
+    await expect(page.locator('#daylight-weather-note')).toContainText('PVGIS-ERA5');
+    await page.locator('#daylight-date').fill('2026-06-21');
+    await page.locator('#daylight-time').evaluate((e: HTMLInputElement) => {
+      e.value = '12';
+      e.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.locator('#daylight-run').click();
+    await expect(panel).toHaveAttribute('data-analysis', 'rad-pit', { timeout: 300_000 });
+    await expect(panel).toHaveAttribute('data-state', 'done');
+    await expect(page.locator('#daylight-credit')).toHaveText('PVGIS © European Communities, 2001-2026');
+    expect(Number(await panel.getAttribute('data-mean'))).toBeGreaterThan(50);
+    await page.mouse.move(10, 10);
+    await page.screenshot({ path: path.join(shots, 'radiance-illuminance.png') });
+    const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#daylight-export-json').click()]);
+    const result = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+    expect(result.engine).toBe('Radiance 6.0.3 (WebAssembly)');
+    expect(result.credit).toBe('PVGIS © European Communities, 2001-2026');
+    expect(result.parameters.weather.radiationDatabase).toBe('PVGIS-ERA5');
+    expect(result.parameters.weather.years).toBe('2005-2023');
+    expect(result.parameters.weather.horizon).toBe('DEM-calculated');
+    expect(result.parameters.rtrace).toBe('-I -h -ab 2 -aa 0.1 -ad 2048 -ar 64');
+  },
+);
+
 (fs.existsSync(demo) ? test : test.skip)('a daylight worker that cannot start fails the run instead of hanging it', async ({ page }) => {
   test.setTimeout(180_000);
   // while the flag is set, the pool's workers (named daylight-N) load a script that does not exist
@@ -119,5 +169,37 @@ async function run(page: Page, analysis: string): Promise<number> {
   });
   await page.locator('#daylight-run').click();
   await expect(panel).toHaveAttribute('data-state', 'done', { timeout: 120_000 });
+  await expect(panel).toHaveAttribute('data-overlay', '391');
+});
+
+(fs.existsSync(demo) && fs.existsSync(radianceBuild) ? test : test.skip)('a Radiance worker that cannot start fails the run instead of reading as stopped', async ({ page }) => {
+  test.setTimeout(400_000);
+  // while the flag is set, the Radiance workers (named radiance-N) load a script that does not exist
+  await page.addInitScript(() => {
+    const Real = window.Worker;
+    const w = window as unknown as { __breakRadiance?: boolean };
+    window.Worker = class extends Real {
+      constructor(url: string | URL, opts?: WorkerOptions) {
+        super(w.__breakRadiance && opts?.name?.startsWith('radiance-') ? '/no-such-radiance-worker.js' : url, opts);
+      }
+    };
+  });
+  await openPanel(page);
+  const panel = page.locator('#daylight-panel');
+  await page.evaluate(() => {
+    (window as unknown as { __breakRadiance?: boolean }).__breakRadiance = true;
+  });
+  await page.locator('#daylight-analysis').selectOption('rad-df');
+  await page.locator('#daylight-run').click();
+  await expect(panel).toHaveAttribute('data-state', 'error', { timeout: 120_000 });
+  await expect(page.locator('#daylight-status')).toContainText('a Radiance worker failed');
+  await expect(page.locator('#daylight-run')).toBeEnabled();
+  // the next run starts new workers and finishes
+  await page.evaluate(() => {
+    (window as unknown as { __breakRadiance?: boolean }).__breakRadiance = false;
+  });
+  await page.locator('#daylight-run').click();
+  await expect(panel).toHaveAttribute('data-state', 'done', { timeout: 300_000 });
+  await expect(panel).toHaveAttribute('data-analysis', 'rad-df');
   await expect(panel).toHaveAttribute('data-overlay', '391');
 });

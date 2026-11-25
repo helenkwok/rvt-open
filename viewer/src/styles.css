@@ -2330,3 +2330,20 @@ dl.info-group dd {
   margin: 4px 0;
   padding-left: 16px;
 }
+.daylight-credit {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--rv-text-2);
+}
+.daylight-weather {
+  margin: 4px 0 6px;
+}
+.daylight-weather a {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--rv-accent);
+}
+.daylight-weather input[type='file'] {
+  max-width: 100%;
+  font-size: 11px;
+}
