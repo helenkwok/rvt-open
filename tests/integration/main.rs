@@ -111,6 +111,8 @@ mod curtain_part_materials;
 mod curtain_wall_doors;
 #[path = "../curtain_walls.rs"]
 mod curtain_walls;
+#[path = "../cut_mesh_quantities.rs"]
+mod cut_mesh_quantities;
 #[path = "../cylinder_trim_loops.rs"]
 mod cylinder_trim_loops;
 #[path = "../data_outputs.rs"]
