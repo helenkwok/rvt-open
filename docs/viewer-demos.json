@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "description": "Pre-loaded demos for the browser viewer. Real-project entries and the door family are MIT-licensed samples from magnetar-io/revit-test-datasets, staged from the _project_corpus/ checkout and hash-verified. Tiny reference models are this project's own MIT release assets (fixtures-tiny-1 and fixtures-tiny-2), staged from _tiny/ and hash-verified. Tier-1 entries are redistributable synthetic CFB fixtures from corpus/tier1/. Family RFAs from phi-ag/rvt stage when that corpus is present.",
-  "attribution": "Real projects and the door family: magnetar-io/revit-test-datasets (MIT). Tiny reference models: this project's release assets (MIT). Synthetic samples and reference IFC fixtures: this project (Apache-2.0). Family RFAs: phi-ag/rvt sample licence, when staged.",
+  "description": "Pre-loaded demos for the browser viewer. Real-project entries and the door family are MIT-licensed samples from magnetar-io/revit-test-datasets, staged from the _project_corpus/ checkout and hash-verified. Tiny reference models are this project's own MIT release assets (fixtures-tiny-1 and fixtures-tiny-2), staged from _tiny/ and hash-verified. The CC0 demo building is downloaded from its publisher (research/cc0-models.tsv), staged from _cc0/ and hash-verified. Tier-1 entries are redistributable synthetic CFB fixtures from corpus/tier1/. Family RFAs from phi-ag/rvt stage when that corpus is present.",
+  "attribution": "Real projects and the door family: magnetar-io/revit-test-datasets (MIT). Tiny reference models: this project's release assets (MIT). CC0 demo building: Innerscene, Demo building - 40x30 ft floor, CC0 1.0, https://www.innerscene.com/tools/library/3d-parts/demo-building-40-30-ft-floor-d7908382. Synthetic samples and reference IFC fixtures: this project (Apache-2.0). Family RFAs: phi-ag/rvt sample licence, when staged.",
   "source_repo": "https://github.com/helenkwok/rvt-open",
   "license": "Redistributable samples only; every staged file ships with a .license.json sidecar.",
   "demos": [
@@ -496,6 +496,33 @@
       "license": "Apache-2.0 (rvt-open tests/fixtures)",
       "provenance": "tests/fixtures/synthetic-structural.ifc",
       "shows": "Reference IFC4 download"
+    },
+    {
+      "id": "cc0-demo-building-2027",
+      "name": "Demo building (Revit 2027, CC0)",
+      "file": "demos/cc0-2027-demo-building.rvt",
+      "format": "rvt",
+      "revit_version": 2027,
+      "loadable": true,
+      "size_bytes": 5758976,
+      "sha256": "e58429ca498ac8c6598b89376517ff9379f8d7a2062335cf4a1c5fa89353e1b8",
+      "element_count_hint": 100,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "The daylight panel's reference model: its sun hours, sky view factor and daylight factor are checked against Radiance on this file.",
+      "shows": "A one-storey building with windows, doors and columns; open the Daylight panel",
+      "description": "A 40 x 30 ft single-storey demo building with windows, doors, structural columns, a floor and a roof, saved in Revit 2027. Source: Innerscene, Demo building - 40x30 ft floor, CC0 1.0, https://www.innerscene.com/tools/library/3d-parts/demo-building-40-30-ft-floor-d7908382. The daylight tests run on it.",
+      "license": "CC0 1.0",
+      "provenance": "Innerscene, Demo building - 40x30 ft floor, CC0 1.0, https://www.innerscene.com/tools/library/3d-parts/demo-building-40-30-ft-floor-d7908382",
+      "source_url": "https://www.innerscene.com/tools/library/3d-parts/demo-building-40-30-ft-floor-d7908382",
+      "source_candidates": [
+        "_cc0/demo-building-2027.rvt",
+        "../_cc0/demo-building-2027.rvt"
+      ],
+      "tags": [
+        "cc0-model",
+        "daylight"
+      ],
+      "thumbnail": "demos/thumbnails/cc0-demo-building-2027.svg"
     }
   ],
   "schema_note": "Frontend loader reads the staged catalog at /demos/catalog.json (written by viewer/scripts/stage-demos.mjs), copies redistributable binaries to /demos/, and renders a gallery with what each demo shows (`shows`), provenance and expected quality labels. The element_count_hint is a display value — the actual viewer runs its own element enumeration on load.",

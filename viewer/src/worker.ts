@@ -105,6 +105,12 @@
  *   worker → main: { type: 'convert', format, req, out }   text (IFCX, JSON) or
  *                  bytes (.frag, .usdc), as rvt-ifc writes them
  *   A failure replies { type: 'convert-error', format, req, message }.
+ *
+ * The daylight panel (daylight.ts) asks for the scene and sensor grids of the open model:
+ *   main → worker: { type: 'daylight-prepare', options, req }   `options` { spacing, offset, inset }
+ *   worker → main: { type: 'daylight-prepared', req, prepared }   daylightPrepare's object, its typed
+ *                  arrays transferred
+ *   A failure replies { type: 'daylight-error', req, message }.
  */
 
 import * as glue32 from '../pkg/rvt_open.js';
@@ -167,6 +173,7 @@ type ParseMsg =
     }
   | { type: 'info'; index: number }
   | ConvertMsg
+  | { type: 'daylight-prepare'; options: Record<string, number>; req: number }
   | DwgMsg
   | DrawingMsg;
 
@@ -415,6 +422,20 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
         req: msg.req,
         message: lastPanic ?? (err instanceof Error ? err.message : String(err)),
       });
+    }
+    return;
+  }
+  if (msg.type === 'daylight-prepare') {
+    lastPanic = null;
+    try {
+      if (parsedModel === null) throw new Error('no model is open');
+      const prepared = api().daylightPrepare(parsedModel, msg.options) as Record<string, unknown>;
+      const transfer = ['positions', 'modifier', 'sensors', 'sensorZone'].map(
+        (k) => (prepared[k] as Float64Array | Uint32Array).buffer as ArrayBuffer,
+      );
+      send({ type: 'daylight-prepared', req: msg.req, prepared }, transfer);
+    } catch (err) {
+      send({ type: 'daylight-error', req: msg.req, message: lastPanic ?? (err instanceof Error ? err.message : String(err)) });
     }
     return;
   }

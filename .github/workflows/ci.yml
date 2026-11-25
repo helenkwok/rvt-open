@@ -221,6 +221,31 @@ jobs:
       - run: cargo test --profile ci -p rvt-dwg
         env: { RVT_DWG_SAMPLES: "${{ github.workspace }}/_dwg_samples" }
 
+  # The viewer's daylight tier (daylight-rt) against Radiance 6.0.3's answers on the CC0 demo building
+  # (daylight-rt/tests/data/demo-building): sun hours equal on every sensor, the sky view factor and the
+  # daylight-factor preview within their measured error, and the scene built from the .rvt itself.
+  daylight:
+    name: daylight-rt (sun, sky view, daylight factor against Radiance)
+    needs: scope
+    if: needs.scope.outputs.skip != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: tools/ci/retry.sh 3 rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: ci-profile, save-if: false }
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _cc0, key: "cc0-models-${{ hashFiles('research/cc0-models.tsv') }}" }
+      # Downloaded from its publisher and checked against its pin; an unreachable host skips the daylight tests.
+      - run: |
+          st=0; python3 tools/ci/fetch-cc0-models.py research/cc0-models.tsv _cc0 || st=$?
+          [ $st = 2 ] && echo "::warning::CC0 model host unreachable; the daylight tests skip"
+          [ $st = 0 ] && printf 'RVT_DAYLIGHT_DEMO_RVT=%s\nRVT_DAYLIGHT_REQUIRE=1\n' "$PWD/_cc0/demo-building-2027.rvt" >> "$GITHUB_ENV"
+          [ $st = 0 ] || [ $st = 2 ]
+      - run: cargo test --profile ci -p daylight-rt -- --nocapture
+
   test:
     name: tests ${{ matrix.part }}/4
     needs: samples
@@ -793,6 +818,14 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _tiny, key: "tiny-models-${{ hashFiles('tools/ci/fetch-tiny-models.sh') }}" }
       - run: tools/ci/fetch-tiny-models.sh _tiny
+      # The CC0 demo building (from its publisher, research/cc0-models.tsv): the gallery's daylight example.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _cc0, key: "cc0-models-${{ hashFiles('research/cc0-models.tsv') }}" }
+      # Downloaded from its publisher and checked against its pin; an unreachable host skips the daylight tests.
+      - run: |
+          st=0; python3 tools/ci/fetch-cc0-models.py research/cc0-models.tsv _cc0 || st=$?
+          [ $st = 2 ] && echo "::warning::CC0 model host unreachable; the daylight tests skip"
+          [ $st = 0 ] || [ $st = 2 ]
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with: { path: _bim4lca, key: "bim4lca-office-terrain-${{ hashFiles('research/bim4lca-models.tsv') }}" }
       # Read by byte range from the archive and checked against its pin; an unreachable host skips that test.
@@ -809,10 +842,11 @@ jobs:
           pnpm install --frozen-lockfile
           ../tools/ci/retry.sh 3 pnpm exec playwright install --with-deps chromium
           pnpm run build
-          for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt I_Single-Flush.rfa rac_basic_sample_family_2024.rfa tiny-2026-13-stairs.rvt tiny-2024-14-curtain-wall.rvt tiny-2024-16-door-window-flips.rvt tiny-2025-12-columns-beams.rvt tiny-2024-21-mep-basics.rvt tiny-2025-22-families.rvt tiny-2023-4-rooms.rvt tiny-2018-1-hip-roof.rvt; do
+          for f in Revit_IFC5_Einhoven.rvt 2024_Core_Interior.rvt I_Single-Flush.rfa rac_basic_sample_family_2024.rfa tiny-2026-13-stairs.rvt tiny-2024-14-curtain-wall.rvt tiny-2024-16-door-window-flips.rvt tiny-2025-12-columns-beams.rvt tiny-2024-21-mep-basics.rvt tiny-2025-22-families.rvt tiny-2023-4-rooms.rvt tiny-2018-1-hip-roof.rvt cc0-2027-demo-building.rvt; do
+            [ "$f" = cc0-2027-demo-building.rvt ] && [ ! -s ../_cc0/demo-building-2027.rvt ] && continue
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts)
+          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts tests/daylight.spec.ts)
           if [ "${{ matrix.leg }}" = 2 ]; then
             pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
           else
@@ -824,5 +858,13 @@ jobs:
         with:
           name: "viewer-drawings-${{ matrix.bits }}-bit-leg-${{ matrix.leg }}"
           path: viewer/drawing-shots
+          if-no-files-found: ignore
+          retention-days: 7
+      # The daylight test's screenshots of the panel and its grid.
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: "viewer-daylight-${{ matrix.bits }}-bit-leg-${{ matrix.leg }}"
+          path: viewer/daylight-shots
           if-no-files-found: ignore
           retention-days: 7

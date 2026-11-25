@@ -19,6 +19,8 @@
 //! compiled `.wasm` for those imports and fails the build if any
 //! appear.
 
+mod daylight;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use wasm_bindgen::JsCast;

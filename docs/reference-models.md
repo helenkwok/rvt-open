@@ -96,6 +96,19 @@ offices (concrete and timber, at building permit), against Revit's exports of
 each with `-f nordic=true`
 ([`research/bim4lca-measure.tsv`](../research/bim4lca-measure.tsv),
 
+## A CC0 demo building, fetched for CI
+
+Innerscene, Demo building - 40x30 ft floor, CC0 1.0,
+<https://www.innerscene.com/tools/library/3d-parts/demo-building-40-30-ft-floor-d7908382>:
+a 40 x 30 ft single-storey building with windows, doors, structural columns,
+a floor and a roof, saved in Revit 2027. CI downloads it from its publisher
+(`tools/ci/fetch-cc0-models.py`) and checks it against
+[`research/cc0-models.tsv`](../research/cc0-models.tsv); it is never stored in
+this repository. The daylight tests run on it
+([`daylight-rt/tests/data/demo-building`](../daylight-rt/tests/data/demo-building/README.md)),
+and the viewer's demo gallery stages it as its daylight example. A host that
+cannot be reached skips those tests.
+
 ## Revit 2025 models made for one feature each, fetched for a run
 
 The R2025 sample models are 23 small Revit 2025 projects, and a 24th

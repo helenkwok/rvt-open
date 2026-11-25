@@ -36,7 +36,7 @@ autotests = false
 # is built via `maturin build --manifest-path rvt-py/Cargo.toml`.
 # `rvt-open-mcp` is the MCP server, a crate of its own (rmcp and tokio stay
 # out of the core library) with its own `rust-version`.
-members = [".", "rvt-dwg", "rvt-open-mcp", "rvt-py", "rvt-wasm", "tools/stream_evidence", "vendor/craft-atomic"]
+members = [".", "daylight-rt", "rvt-dwg", "rvt-open-mcp", "rvt-py", "rvt-wasm", "tools/stream_evidence", "vendor/craft-atomic"]
 
 # Lints beyond rustc's and clippy's defaults that the workspace keeps, so an
 # editor shows what CI enforces: CI denies every warning (`-D warnings`).

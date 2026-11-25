@@ -2225,3 +2225,108 @@ dl.info-group dd {
   font-weight: var(--rv-fw-semibold);
   color: var(--rv-text);
 }
+
+/* The Daylight panel (daylight.ts). Its rows and buttons set a display of their own, so `hidden` needs restating. */
+#daylight-panel [hidden] {
+  display: none !important;
+}
+#daylight-panel {
+  padding: 4px 12px 12px;
+  color: var(--rv-text-2);
+}
+#daylight-panel fieldset {
+  margin: 0 0 var(--rv-space-2);
+  padding: 6px 8px;
+  border: 1px solid var(--rv-line-soft);
+  border-radius: var(--rv-radius-sm);
+}
+#daylight-panel legend {
+  padding: 0 4px;
+  font-weight: var(--rv-fw-semibold);
+  color: var(--rv-text);
+}
+.daylight-row {
+  display: grid;
+  grid-template-columns: 7.5em minmax(0, 1fr) auto;
+  gap: 4px 6px;
+  align-items: center;
+  margin: 4px 0;
+}
+.daylight-site .daylight-row {
+  grid-template-columns: 7.5em minmax(0, 1fr) auto;
+}
+.daylight-row input,
+.daylight-row select {
+  min-width: 0;
+  width: 100%;
+  font: inherit;
+  color: var(--rv-text);
+}
+.daylight-unit,
+.daylight-source {
+  font-size: 11px;
+  color: var(--rv-text-3);
+}
+.daylight-source {
+  grid-column: 2 / 4;
+  margin-top: -3px;
+}
+.daylight-source[data-source='assumed'] {
+  color: var(--rv-warn);
+}
+.daylight-toggles {
+  display: flex;
+  gap: var(--rv-space-4);
+  margin: 6px 0;
+}
+#daylight-progress {
+  width: 100%;
+}
+.daylight-legend {
+  margin: 6px 0;
+}
+.daylight-legend-title {
+  font-weight: var(--rv-fw-semibold);
+  color: var(--rv-text);
+}
+.daylight-ramp {
+  height: 12px;
+  margin: 4px 0 2px;
+  border-radius: var(--rv-radius-sm);
+}
+.daylight-ramp-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.daylight-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.daylight-table {
+  width: 100%;
+  margin: 6px 0;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.daylight-table caption {
+  text-align: left;
+  font-weight: var(--rv-fw-semibold);
+  color: var(--rv-text);
+}
+.daylight-table th,
+.daylight-table td {
+  padding: 2px 4px;
+  text-align: right;
+  border-bottom: 1px solid var(--rv-line-soft);
+}
+.daylight-table th:first-child,
+.daylight-table td:first-child {
+  text-align: left;
+}
+.daylight-limits ul {
+  margin: 4px 0;
+  padding-left: 16px;
+}

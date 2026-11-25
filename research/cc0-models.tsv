@@ -1,0 +1,7 @@
+# The CC0 models CI reads, each downloaded from its publisher's own URL by
+# tools/ci/fetch-cc0-models.py and checked against its row; nothing is stored in this repository.
+# demo-building-2027.rvt: Innerscene, Demo building - 40x30 ft floor, CC0 1.0,
+# https://www.innerscene.com/tools/library/3d-parts/demo-building-40-30-ft-floor-d7908382
+# (saved in Revit 2027; the daylight tests and the viewer gallery's daylight example).
+# name	url	sha256	bytes
+demo-building-2027.rvt	https://www.innerscene.com/api/library/demo-building-40-30-ft-floor-d7908382/download	e58429ca498ac8c6598b89376517ff9379f8d7a2062335cf4a1c5fa89353e1b8	5758976

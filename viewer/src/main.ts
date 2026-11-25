@@ -30,6 +30,7 @@ import {
 } from './wasm-build';
 import DecoderWorker from './worker.ts?worker&inline';
 import ParametersWorker from './parameters-worker.ts?worker&inline';
+import { initDaylight } from './daylight';
 import {
   elementIdOf,
   parameterIsNumeric,
@@ -1442,6 +1443,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
   lastGlb = null;
   lastSchedule = null;
   currentDiagnostics = null;
+  daylight.reset();
   // The last file's worker holds its wasm memory, and a large file's read, which
   // is next, must not have to fit beside it.
   stopWorker();
@@ -1633,6 +1635,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     renderPhases(msg.phases ?? [], currentDiagnostics?.room_phase_fallback?.phase);
     lastFileStem = file.name.replace(/\.(rvt|rfa|rte|rft)$/i, '');
     renderScene(msg.glb);
+    daylight.modelChanged();
     renderTree();
     renderCategories();
     renderScheduleSummary(msg.schedule);
@@ -4732,6 +4735,23 @@ const modelDrawings = initModelDrawings(
     download: (filename, blob) => download(filename, blob),
   },
   drawingView,
+);
+
+const daylight = initDaylight(
+  {
+    scene,
+    renderer,
+    camera,
+    sun: dir,
+    model: () => currentModel,
+    worker: () => worker,
+    decoder: () => (decoderWasm ? { module: decoderWasm, bits: decoderBits ?? 32 } : null),
+    stem: () => lastFileStem,
+    requestRender,
+    toast,
+    download: (filename, blob) => download(filename, blob),
+  },
+  $('daylight-panel'),
 );
 
 // ---------- Drag & drop / file picker ----------
