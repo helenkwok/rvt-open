@@ -106,6 +106,7 @@ export const DAYLIGHT_LIMITS = [
   'Sun: positions from Radiance’s gensky formulas for a non-leap year, in local standard time (no daylight saving); the sun is a point, not a disc.',
   'Elevation is shown but not used: no sky generator takes it.',
   'Radiance tier: Radiance 6.0.3 compiled to WebAssembly, on the same scene and sensors. Its Monte Carlo sampling differs from a native build’s random numbers, so a run differs from native Radiance as much as two native runs do (RMSE 0.035 to 0.036 DF points on the reference building, native against native 0.036). Each worker builds its own irradiance cache for its share of the sensors.',
+  'Radiance in several workers is faster on some systems than others: on the reference building 18.9 s in one worker and 9.6 s in eight in Chrome on a laptop, but no faster in eight than in one in headless Chromium on Linux in an 8-core container.',
   'Weather: the illuminance at a time uses the hour of the weather file nearest the time asked (PVGIS hours are moved from UTC to the site’s standard time); a Perez sky from that hour’s direct normal and diffuse horizontal irradiance.',
   'Sensors: a grid over each room’s floor, or over each floor’s top face kept 0.35 m from its edge where the model has no rooms.',
 ];

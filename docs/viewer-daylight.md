@@ -45,4 +45,5 @@ Check (CI job "Radiance (WebAssembly) against native Radiance", `tools/radiance/
 - The sun follows Radiance's `gensky` formulas for a non-leap year, in local standard time without daylight saving; it is a point, not a disc.
 - Elevation is shown but not used: no sky generator takes it.
 - Radiance tier: each worker's irradiance cache covers only its share of the sensors, which moves the result by a fraction of a percent against one process; models much larger than the demo building need memory for one octree per worker.
+- Radiance in several workers: in Chrome on a laptop the daylight factor at the preview parameters takes 18.9 s in one worker and 9.6 s in eight; in headless Chromium on Linux in an 8-core container it took 24 s in one and 19 to 24 s in eight, whether the workers share the page's compiled module or compile their own, and with the baseline compiler off. The cause there is not known.
 - Point in time uses one hour of the weather file (the nearest to the time asked), not an interpolation; there is no annual analysis in the browser yet.
