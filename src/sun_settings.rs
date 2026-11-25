@@ -186,19 +186,12 @@ impl SunAndDisplay {
         self.views.iter().find(|v| v.id == id)
     }
     /// The sun a viewer should start from, with where it came from: the default 3D view's own
-    /// setting (`"view"`), else another 3D view's (`"view"`), else the project's first named
-    /// preset (`"project"`). The view is the one whose setting it is, `None` for a preset.
+    /// setting (`"view"`), else the project's first named preset (`"project"`). The view is the
+    /// default view (whose options still apply with a preset), `None` without one.
     pub fn viewer_default(&self) -> Option<(&'static str, Option<&ViewDisplay>, &SunSetting)> {
-        let own = |v: &ViewDisplay| v.sun_setting_id.and_then(|i| self.setting(i));
         let default = self.default_view.and_then(|i| self.view(i));
-        if let Some((v, s)) = default.and_then(|v| Some((v, own(v)?))) {
-            return Some(("view", Some(v), s));
-        }
-        if let Some((v, s)) = self
-            .views
-            .iter()
-            .filter(|v| v.is_3d && !v.is_template)
-            .find_map(|v| Some((v, own(v)?)))
+        if let Some((v, s)) =
+            default.and_then(|v| Some((v, self.setting(v.sun_setting_id?)?)))
         {
             return Some(("view", Some(v), s));
         }
