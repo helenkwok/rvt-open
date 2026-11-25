@@ -78,6 +78,21 @@
             <button class="export-btn" id="export-svg" disabled type="button" title="Download 2D plan view as SVG" aria-label="Export plan SVG">
               <span class="t">Plan SVG</span><span class="d">A floor plan drawing · .svg</span>
             </button>
+            <button class="export-btn" id="export-ifcx" disabled type="button" title="Download IFCX (buildingSMART IFC5 alpha) as rvt-ifc --ifcx writes it, built in this tab" aria-label="Download IFCX">
+              <span class="t">IFCX</span><span class="d">IFC5 alpha · .ifcx</span>
+            </button>
+            <button class="export-btn" id="export-ifcx-appearance" disabled type="button" title="Download the materials' render appearances as an IFCX layer over the IFCX file, as rvt-ifc --ifcx-appearance writes it" aria-label="Download the IFCX appearance layer">
+              <span class="t">IFCX appearance layer</span><span class="d">Render appearances over the IFCX file · .appearance.ifcx</span>
+            </button>
+            <button class="export-btn" id="export-frag" disabled type="button" title="Download Fragments as rvt-ifc --frag writes it" aria-label="Download Fragments">
+              <span class="t">Fragments</span><span class="d">Fragments 3.6 web viewers · .frag</span>
+            </button>
+            <button class="export-btn" id="export-usdc" disabled type="button" title="Download binary OpenUSD as rvt-ifc --usdc writes it" aria-label="Download OpenUSD">
+              <span class="t">OpenUSD</span><span class="d">Binary USD layer · .usdc</span>
+            </button>
+            <button class="export-btn" id="export-appearance" disabled type="button" title="Download every material's render appearance asset as rvt-ifc --appearance writes it: schema, properties, texture slots and swatch" aria-label="Download the appearance assets as JSON">
+              <span class="t">Appearance assets</span><span class="d">Each material's render appearance · .json</span>
+            </button>
             <div class="drawing-only" id="export-drawing" role="group" aria-label="Drawing exports">
               <button class="export-btn" id="export-dwg-entities" type="button" data-table="entities" aria-label="Export entities table CSV">
                 <span class="t">Entities</span><span class="d">Every entity, one row each · .csv</span>
@@ -160,9 +175,11 @@
                 <div class="big">Drop a Revit file here</div>
                 <div class="hint">
                   .rvt, .rfa, .rte or .rft. The file is read in this tab: no upload, no account,
-                  no tracking. Revit 2023, 2024 and 2025 projects open with their walls, doors,
-                  windows, floors, roofs, stairs, furniture and fixtures under Revit's own ElementIds
-                  and names; other releases and family files open with their metadata and schema.
+                  no tracking. Projects of Revit 2010 to 2027 open with their elements under Revit's
+                  own ElementIds and names (measured against Revit's own export on 2023 to 2025,
+                  experimental on the other releases); family files draw their forms, nested families
+                  and materials. The samples show stairs, curtain walls, doors in their host walls,
+                  rooms, roofs, structure, ducts and pipes, and each material's render appearance.
                   See <a href="https://github.com/helenkwok/rvt-open/blob/main/docs/viewer-privacy-posture.md">privacy</a>
                   and <a href="https://github.com/helenkwok/rvt-open/blob/main/docs/status.md">status</a>.
                 </div>
@@ -286,9 +303,10 @@
             <strong>Open locally or pick a sample</strong> → read the Decode and Export rows above →
             inspect the decoded elements → choose an IFC bar in the Export menu (scaffold is the
             honest bar for synthetic files) → export after checking the quality label → download
-            diagnostics for partial exports. Typed elements come from Revit 2023, 2024 and 2025
-            projects, and experimentally from Revit 2008 to 2022, 2026 and 2027 projects; other
-            files export a scaffold.
+            diagnostics for partial exports. IFCX, its appearance layer, Fragments, OpenUSD and the
+            appearance assets are written from the file itself, as the command line writes them.
+            Typed elements come from Revit 2023, 2024 and 2025 projects, and experimentally from
+            Revit 2008 to 2022, 2026 and 2027 projects; other files export a scaffold.
           </div>
         </details>
         <details class="panel-details" id="support-profile-home" hidden>

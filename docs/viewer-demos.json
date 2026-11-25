@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "description": "Pre-loaded RVT demos for the rvt-view browser viewer. Real-project entries are MIT-licensed samples from magnetar-io/revit-test-datasets, staged from the _project_corpus/ checkout and hash-verified. Tier-1 entries are redistributable synthetic CFB fixtures from corpus/tier1/. Optional phi-ag family RFAs stage when the LFS corpus is present.",
-  "attribution": "Real projects: magnetar-io/revit-test-datasets (MIT). Synthetic samples and reference IFC fixtures: this project (Apache-2.0). Optional family RFAs: phi-ag/rvt sample licence, when staged.",
+  "description": "Pre-loaded demos for the browser viewer. Real-project entries and the door family are MIT-licensed samples from magnetar-io/revit-test-datasets, staged from the _project_corpus/ checkout and hash-verified. Tiny reference models are this project's own MIT release assets (fixtures-tiny-1 and fixtures-tiny-2), staged from _tiny/ and hash-verified. Tier-1 entries are redistributable synthetic CFB fixtures from corpus/tier1/. Family RFAs from phi-ag/rvt stage when that corpus is present.",
+  "attribution": "Real projects and the door family: magnetar-io/revit-test-datasets (MIT). Tiny reference models: this project's release assets (MIT). Synthetic samples and reference IFC fixtures: this project (Apache-2.0). Family RFAs: phi-ag/rvt sample licence, when staged.",
   "source_repo": "https://github.com/helenkwok/rvt-open",
   "license": "Redistributable samples only; every staged file ships with a .license.json sidecar.",
   "demos": [
@@ -16,7 +16,7 @@
       "element_count_hint": 37,
       "thumbnail": "demos/thumbnails/einhoven_2023.png",
       "capture": "viewer/demo-captures/einhoven-2023.png",
-      "description": "Real Revit 2023 project from magnetar-io/revit-test-datasets (MIT). Decodes 26 walls, 9 curtain panels, 2 windows and 36 materials. The 24 ArcWalls have bodies on four elevation-derived storeys; the other 13 elements are their 2023 records' boxes, on no storey. Floors, doors and rooms remain open on this file. This is the file the CI browser regression gates.",
+      "description": "Real Revit 2023 project from magnetar-io/revit-test-datasets (MIT). A curtain wall of 24 framed panels on its one Level, as Revit 2023's own IFC export aggregates them, and a wall with 2 windows; 26 bodies are drawn from the meshes Revit saved. This is the file the CI browser regression gates.",
       "tags": [
         "real-project",
         "magnetar",
@@ -24,13 +24,14 @@
       ],
       "loadable": true,
       "expected_quality": "Geometry",
-      "expected_quality_note": "Real-project wall geometry (decoder baseline in tests/fixtures/project-counts/revit-ifc5-einhoven.json). Not a full typed model: no floors, doors or rooms yet.",
+      "expected_quality_note": "Real-project geometry (decoder baseline in tests/fixtures/project-counts/revit-ifc5-einhoven.json).",
       "license": "MIT (magnetar-io/revit-test-datasets)",
       "provenance": "magnetar-io/revit-test-datasets: Revit/Revit_IFC5_Einhoven.rvt",
       "source_candidates": [
         "_project_corpus/Revit/Revit_IFC5_Einhoven.rvt",
         "../_project_corpus/Revit/Revit_IFC5_Einhoven.rvt"
-      ]
+      ],
+      "shows": "Curtain wall of 24 framed panels, wall with 2 windows"
     },
     {
       "id": "core-interior-2024",
@@ -43,22 +44,339 @@
       "element_count_hint": 869,
       "thumbnail": "demos/thumbnails/core_interior_2024.png",
       "capture": "viewer/demo-captures/core-interior-2024.png",
-      "description": "Real Revit 2024 project from magnetar-io/revit-test-datasets (MIT). Partition element records reproduce Revit's own exported ElementId sets exactly: 360 walls, 132 doors, 6 windows, 256 columns, 80 slabs and 20 shading devices across 15 levels. 32 MB download; decode takes a moment.",
+      "description": "Real Revit 2024 project from magnetar-io/revit-test-datasets (MIT). 360 walls, 256 columns, 132 doors, 80 slabs, 116 rooms, 20 shading devices and 6 windows across 15 levels, with Revit's own ElementIds; doors and windows drawn from the meshes Revit saved. Its 18 floor plans, sections and elevations draw in the Drawings list. 32 MB download; decode takes a moment.",
       "tags": [
         "real-project",
         "magnetar",
         "architectural",
-        "large"
+        "large",
+        "drawings"
       ],
       "loadable": true,
       "expected_quality": "Geometry",
-      "expected_quality_note": "Cross-witness gated element sets with bodies (tests/fixtures/project-counts/2024-core-interior.json). Rooms and materials are known gaps.",
+      "expected_quality_note": "Cross-witness gated element sets with bodies (tests/fixtures/project-counts/2024-core-interior.json).",
       "license": "MIT (magnetar-io/revit-test-datasets)",
       "provenance": "magnetar-io/revit-test-datasets: Revit/2024_Core_Interior.rvt",
       "source_candidates": [
         "_project_corpus/Revit/2024_Core_Interior.rvt",
         "../_project_corpus/Revit/2024_Core_Interior.rvt"
-      ]
+      ],
+      "shows": "15 levels, 1,000 elements, plans and sections"
+    },
+    {
+      "id": "door-family-2020",
+      "name": "Door family in its sample wall (Revit 2020)",
+      "file": "demos/I_Single-Flush.rfa",
+      "revit_version": 2020,
+      "format": "rfa",
+      "size_bytes": 307200,
+      "sha256": "66ae731f85416ba0544038d9e442aaf399ff99ae8e1f4388be980b6636549d1f",
+      "element_count_hint": 4,
+      "thumbnail": "demos/thumbnails/door_family_2020.png",
+      "capture": "viewer/demo-captures/door-family-2020.png",
+      "description": "Family file from magnetar-io/revit-test-datasets (MIT): a single flush door, its frame and leaf drawn from the family's own forms, shown in the sample host wall its template keeps, with the opening the family cuts through it, as Revit shows a door family in its own editor.",
+      "tags": [
+        "magnetar",
+        "family",
+        "door",
+        "sample-host"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Revit 2020 is read experimentally: 3 door parts and the sample wall.",
+      "license": "MIT (magnetar-io/revit-test-datasets)",
+      "provenance": "magnetar-io/revit-test-datasets: Revit/Families/Doors/I_Single-Flush.rfa",
+      "source_candidates": [
+        "_project_corpus/Revit/Families/Doors/I_Single-Flush.rfa",
+        "../_project_corpus/Revit/Families/Doors/I_Single-Flush.rfa"
+      ],
+      "source_path": "Revit/Families/Doors/I_Single-Flush.rfa",
+      "shows": "Frame and leaf, sample host wall, opening cut"
+    },
+    {
+      "id": "rac-basic-2024",
+      "name": "RAC Basic Sample Family (2024)",
+      "file": "demos/rac_basic_sample_family_2024.rfa",
+      "revit_version": 2024,
+      "format": "rfa",
+      "size_bytes": 1080832,
+      "element_count_hint": 4,
+      "thumbnail": "demos/thumbnails/rac_basic_2024.png",
+      "description": "Family file: a table whose top and legs are drawn from the family's own extrusions, in their materials (Laminate - Ivory, Matte; Wood - Birch). Select the top or a leg and ask for its material's render appearance: the appearance asset it names and any bitmap files its texture slots name. Floor plan, ceiling plan, sections and elevations draw from the 3D model.",
+      "tags": [
+        "family",
+        "furniture",
+        "reference",
+        "appearance",
+        "drawings"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "The family's two forms are drawn from its own data; a material reads its render appearance asset in Element info.",
+      "license": "phi-ag/rvt sample redistributable (see the phi-ag/rvt LICENSE)",
+      "provenance": "phi-ag/rvt examples/Autodesk/racbasicsamplefamily-2024.rfa",
+      "source_candidates": [
+        "_corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa",
+        "../_corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa"
+      ],
+      "shows": "Family forms, materials, render appearances",
+      "capture": "viewer/demo-captures/rac-basic-2024.png"
+    },
+    {
+      "id": "rac-basic-2026",
+      "name": "RAC Basic Sample Family (2026)",
+      "file": "demos/rac_basic_sample_family_2026.rfa",
+      "revit_version": 2026,
+      "format": "rfa",
+      "size_bytes": 1093120,
+      "element_count_hint": 4,
+      "thumbnail": "demos/thumbnails/rac_basic_2026.png",
+      "description": "The same family saved by Revit 2026: the same forms, materials and appearances read from another release.",
+      "tags": [
+        "family",
+        "furniture",
+        "cross-version",
+        "appearance"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "The family's two forms are drawn from its own data; materials carry their render appearance (swatch, schema, bitmaps) in Element info.",
+      "license": "phi-ag/rvt sample redistributable (see the phi-ag/rvt LICENSE)",
+      "provenance": "phi-ag/rvt examples/Autodesk/racbasicsamplefamily-2026.rfa",
+      "source_candidates": [
+        "_corpus/examples/Autodesk/racbasicsamplefamily-2026.rfa",
+        "../_corpus/examples/Autodesk/racbasicsamplefamily-2026.rfa"
+      ],
+      "shows": "Same family, read from Revit 2026",
+      "capture": "viewer/demo-captures/rac-basic-2026.png"
+    },
+    {
+      "id": "tiny-stairs-2026",
+      "name": "Stairs (Revit 2026, tiny reference model)",
+      "file": "demos/tiny-2026-13-stairs.rvt",
+      "revit_version": 2026,
+      "format": "rvt",
+      "size_bytes": 5799936,
+      "sha256": "c05219ec6311dc7401281c356096627f9ca3a1866801573aca8ff155bea5afca",
+      "element_count_hint": 20,
+      "thumbnail": "demos/thumbnails/tiny-stairs-2026.png",
+      "capture": "viewer/demo-captures/tiny-stairs-2026.png",
+      "description": "A straight stair and a U stair with two runs and a landing, built in Revit 2026: 2 stairs, 3 flights drawn as their steps, the landing slab and 4 railings with their balusters. Built from scratch in Revit 2026 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "tags": [
+        "tiny-model",
+        "stairs",
+        "railings"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Answers known in advance: the release asset holds the Revit API's answer key for this file.",
+      "license": "MIT (this project's release asset fixtures-tiny-2)",
+      "provenance": "release asset fixtures-tiny-2: rvt-open-tiny-models-2/2026/13-stairs.rvt",
+      "source_candidates": [
+        "_tiny/rvt-open-tiny-models-2/2026/13-stairs.rvt",
+        "../_tiny/rvt-open-tiny-models-2/2026/13-stairs.rvt"
+      ],
+      "shows": "Straight and U stairs, landing, railings"
+    },
+    {
+      "id": "tiny-curtain-wall-2024",
+      "name": "Curtain wall (Revit 2024, tiny reference model)",
+      "file": "demos/tiny-2024-14-curtain-wall.rvt",
+      "revit_version": 2024,
+      "format": "rvt",
+      "size_bytes": 5685248,
+      "sha256": "d2a3ff8d7091419a91264536711ab39a0878482dc2b865d5cc7eb66b7a6328b3",
+      "element_count_hint": 14,
+      "thumbnail": "demos/thumbnails/tiny-curtain-wall-2024.png",
+      "capture": "viewer/demo-captures/tiny-curtain-wall-2024.png",
+      "description": "A 6 m curtain wall on a 3 x 2 grid with 50 x 150 mm mullions and one solid panel: 7 mullions and 6 panels, the glazed ones drawn see-through. Built from scratch in Revit 2024 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "tags": [
+        "tiny-model",
+        "curtain-wall",
+        "transparency"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Answers known in advance: the release asset holds the Revit API's answer key for this file.",
+      "license": "MIT (this project's release asset fixtures-tiny-2)",
+      "provenance": "release asset fixtures-tiny-2: rvt-open-tiny-models-2/2024/14-curtain-wall.rvt",
+      "source_candidates": [
+        "_tiny/rvt-open-tiny-models-2/2024/14-curtain-wall.rvt",
+        "../_tiny/rvt-open-tiny-models-2/2024/14-curtain-wall.rvt"
+      ],
+      "shows": "Curtain grid, mullions, glazed panels"
+    },
+    {
+      "id": "tiny-doors-windows-2024",
+      "name": "Doors and windows (Revit 2024, tiny reference model)",
+      "file": "demos/tiny-2024-16-door-window-flips.rvt",
+      "revit_version": 2024,
+      "format": "rvt",
+      "size_bytes": 5726208,
+      "sha256": "b9c176e1c3004fcc594cd43ac5829398c7f50bd8a94adba195a48dc54e840795",
+      "element_count_hint": 7,
+      "thumbnail": "demos/thumbnails/tiny-doors-windows-2024.png",
+      "capture": "viewer/demo-captures/tiny-doors-windows-2024.png",
+      "description": "One 14 m wall hosting four doors (no flip, hand, facing, both) and two windows, each drawn from the mesh Revit saved and cut into its host. Element info jumps between a door and its host wall, and a door's material shows the swatch Revit saved with its render appearance. Built from scratch in Revit 2024 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "tags": [
+        "tiny-model",
+        "doors",
+        "windows",
+        "hosts"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Answers known in advance: the release asset holds the Revit API's answer key for this file.",
+      "license": "MIT (this project's release asset fixtures-tiny-2)",
+      "provenance": "release asset fixtures-tiny-2: rvt-open-tiny-models-2/2024/16-door-window-flips.rvt",
+      "source_candidates": [
+        "_tiny/rvt-open-tiny-models-2/2024/16-door-window-flips.rvt",
+        "../_tiny/rvt-open-tiny-models-2/2024/16-door-window-flips.rvt"
+      ],
+      "shows": "Flipped doors and windows, host wall"
+    },
+    {
+      "id": "tiny-columns-beams-2025",
+      "name": "Columns and beams (Revit 2025, tiny reference model)",
+      "file": "demos/tiny-2025-12-columns-beams.rvt",
+      "revit_version": 2025,
+      "format": "rvt",
+      "size_bytes": 5746688,
+      "sha256": "8dc8837303c70e7209c9e0b10b724eb8fa79dc99b62f105248d816c4d365106d",
+      "element_count_hint": 8,
+      "thumbnail": "demos/thumbnails/tiny-columns-beams-2025.png",
+      "capture": "viewer/demo-captures/tiny-columns-beams-2025.png",
+      "description": "Four structural columns and four beams on Level 2; one beam has start and end offsets, another a 15 degree cross-section rotation. Built from scratch in Revit 2025 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "tags": [
+        "tiny-model",
+        "structural",
+        "beams",
+        "columns"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Answers known in advance: the release asset holds the Revit API's answer key for this file.",
+      "license": "MIT (this project's release asset fixtures-tiny-2)",
+      "provenance": "release asset fixtures-tiny-2: rvt-open-tiny-models-2/2025/12-columns-beams.rvt",
+      "source_candidates": [
+        "_tiny/rvt-open-tiny-models-2/2025/12-columns-beams.rvt",
+        "../_tiny/rvt-open-tiny-models-2/2025/12-columns-beams.rvt"
+      ],
+      "shows": "Columns, offset and rotated beams"
+    },
+    {
+      "id": "tiny-mep-2024",
+      "name": "Duct and pipe runs (Revit 2024, tiny reference model)",
+      "file": "demos/tiny-2024-21-mep-basics.rvt",
+      "revit_version": 2024,
+      "format": "rvt",
+      "size_bytes": 5677056,
+      "sha256": "4fa43a767db6fc7de2b48e60f9984b66e19ed971db5d562bfaf91abbfeeae003",
+      "element_count_hint": 5,
+      "thumbnail": "demos/thumbnails/tiny-mep-2024.png",
+      "capture": "viewer/demo-captures/tiny-mep-2024.png",
+      "description": "A duct run with one bend and a pipe run with one branch: 2 duct segments and 3 pipe segments. Built from scratch in Revit 2024 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "tags": [
+        "tiny-model",
+        "mep",
+        "ducts",
+        "pipes"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Answers known in advance: the release asset holds the Revit API's answer key for this file.",
+      "license": "MIT (this project's release asset fixtures-tiny-2)",
+      "provenance": "release asset fixtures-tiny-2: rvt-open-tiny-models-2/2024/21-mep-basics.rvt",
+      "source_candidates": [
+        "_tiny/rvt-open-tiny-models-2/2024/21-mep-basics.rvt",
+        "../_tiny/rvt-open-tiny-models-2/2024/21-mep-basics.rvt"
+      ],
+      "shows": "Duct and pipe segments"
+    },
+    {
+      "id": "tiny-families-2025",
+      "name": "Family instances (Revit 2025, tiny reference model)",
+      "file": "demos/tiny-2025-22-families.rvt",
+      "revit_version": 2025,
+      "format": "rvt",
+      "size_bytes": 5799936,
+      "sha256": "d4e744ba22f3d250e3f1e5f7580300accbca4618125c214cd8fee72c93b85397",
+      "element_count_hint": 3,
+      "thumbnail": "demos/thumbnails/tiny-families-2025.png",
+      "capture": "viewer/demo-captures/tiny-families-2025.png",
+      "description": "A 1 m box family placed twice, once mirrored and once turned 45 degrees, and a 1 m in-place box, each drawn from the mesh Revit saved. Built from scratch in Revit 2025 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "tags": [
+        "tiny-model",
+        "families",
+        "in-place"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Answers known in advance: the release asset holds the Revit API's answer key for this file.",
+      "license": "MIT (this project's release asset fixtures-tiny-2)",
+      "provenance": "release asset fixtures-tiny-2: rvt-open-tiny-models-2/2025/22-families.rvt",
+      "source_candidates": [
+        "_tiny/rvt-open-tiny-models-2/2025/22-families.rvt",
+        "../_tiny/rvt-open-tiny-models-2/2025/22-families.rvt"
+      ],
+      "shows": "Mirrored, turned and in-place families"
+    },
+    {
+      "id": "tiny-rooms-2023",
+      "name": "Rooms (Revit 2023, tiny reference model)",
+      "file": "demos/tiny-2023-4-rooms.rvt",
+      "revit_version": 2023,
+      "format": "rvt",
+      "size_bytes": 5349376,
+      "sha256": "dd4e9fc97ddb8a5c8edf57b21325785412cd0a09d049ff0d09f9a985debed66e",
+      "element_count_hint": 7,
+      "thumbnail": "demos/thumbnails/tiny-rooms-2023.png",
+      "capture": "viewer/demo-captures/tiny-rooms-2023.png",
+      "description": "A 10 x 6 m rectangle of walls split 6 m / 4 m by an interior wall, with a room in each part: 5 walls and 2 rooms, listed in the room schedule. Built from scratch in Revit 2023 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "tags": [
+        "tiny-model",
+        "rooms",
+        "schedule"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Answers known in advance: the release asset holds the Revit API's answer key for this file.",
+      "license": "MIT (this project's release asset fixtures-tiny-1)",
+      "provenance": "release asset fixtures-tiny-1: rvt-open-tiny-models-1/2023/4-rooms.rvt",
+      "source_candidates": [
+        "_tiny/rvt-open-tiny-models-1/2023/4-rooms.rvt",
+        "../_tiny/rvt-open-tiny-models-1/2023/4-rooms.rvt"
+      ],
+      "shows": "Rooms and the room schedule"
+    },
+    {
+      "id": "tiny-hip-roof-2018",
+      "name": "Hip roof (Revit 2018, tiny reference model)",
+      "file": "demos/tiny-2018-1-hip-roof.rvt",
+      "revit_version": 2018,
+      "format": "rvt",
+      "size_bytes": 4792320,
+      "sha256": "369bf0627a782ed4a2612b5708d4f63889b130983c54fb381ce187af34cbfc01",
+      "element_count_hint": 9,
+      "thumbnail": "demos/thumbnails/tiny-hip-roof-2018.png",
+      "capture": "viewer/demo-captures/tiny-hip-roof-2018.png",
+      "description": "Four walls and a roof by footprint with every edge sloped 30 degrees, built in Revit 2018, the oldest release the tiny models cover. Built from scratch in Revit 2018 from its default template; its Revit API answer key ships beside it in the release asset.",
+      "tags": [
+        "tiny-model",
+        "roof",
+        "walls",
+        "old-release"
+      ],
+      "loadable": true,
+      "expected_quality": "Geometry",
+      "expected_quality_note": "Answers known in advance: the release asset holds the Revit API's answer key for this file.",
+      "license": "MIT (this project's release asset fixtures-tiny-1)",
+      "provenance": "release asset fixtures-tiny-1: rvt-open-tiny-models-1/2018/1-hip-roof.rvt",
+      "source_candidates": [
+        "_tiny/rvt-open-tiny-models-1/2018/1-hip-roof.rvt",
+        "../_tiny/rvt-open-tiny-models-1/2018/1-hip-roof.rvt"
+      ],
+      "shows": "Hip roof and walls, Revit 2018"
     },
     {
       "id": "architectural-2024",
@@ -73,8 +391,7 @@
       "tags": [
         "synthetic",
         "tier1",
-        "architectural",
-        "mvp"
+        "architectural"
       ],
       "loadable": true,
       "expected_quality": "Scaffold",
@@ -83,7 +400,8 @@
       "provenance": "corpus/tier1/architectural-2024/architectural-2024.rvt",
       "source_candidates": [
         "corpus/tier1/architectural-2024/architectural-2024.rvt"
-      ]
+      ],
+      "shows": "Synthetic: file status and scaffold export"
     },
     {
       "id": "structural-2023",
@@ -107,7 +425,8 @@
       "provenance": "corpus/tier1/structural-2023/structural-2023.rvt",
       "source_candidates": [
         "corpus/tier1/structural-2023/structural-2023.rvt"
-      ]
+      ],
+      "shows": "Synthetic: file status and scaffold export"
     },
     {
       "id": "mep-2024",
@@ -131,57 +450,8 @@
       "provenance": "corpus/tier1/mep-2024/mep-2024.rvt",
       "source_candidates": [
         "corpus/tier1/mep-2024/mep-2024.rvt"
-      ]
-    },
-    {
-      "id": "rac-basic-2024",
-      "name": "RAC Basic Sample Family (2024)",
-      "file": "demos/rac_basic_sample_family_2024.rfa",
-      "revit_version": 2024,
-      "format": "rfa",
-      "size_bytes": 1080832,
-      "element_count_hint": 88,
-      "thumbnail": "demos/thumbnails/rac_basic_2024.svg",
-      "description": "Family-scale sample — the canonical reference across every rvt-open test. Optional; staged only when the phi-ag LFS corpus is present.",
-      "tags": [
-        "family",
-        "furniture",
-        "reference"
       ],
-      "loadable": true,
-      "expected_quality": "Scaffold",
-      "expected_quality_note": "Honest partial decode: metadata/schema and spatial scaffold; typed project geometry is not claimed.",
-      "license": "phi-ag/rvt sample redistributable (see the phi-ag/rvt LICENSE)",
-      "provenance": "phi-ag/rvt examples/Autodesk/racbasicsamplefamily-2024.rfa",
-      "source_candidates": [
-        "_corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa",
-        "../_corpus/examples/Autodesk/racbasicsamplefamily-2024.rfa"
-      ]
-    },
-    {
-      "id": "rac-basic-2026",
-      "name": "RAC Basic Sample Family (2026)",
-      "file": "demos/rac_basic_sample_family_2026.rfa",
-      "revit_version": 2026,
-      "format": "rfa",
-      "size_bytes": 1093120,
-      "element_count_hint": 88,
-      "thumbnail": "demos/thumbnails/rac_basic_2026.svg",
-      "description": "Same family upgraded through every Revit release — shows cross-version reading. Optional corpus.",
-      "tags": [
-        "family",
-        "furniture",
-        "cross-version"
-      ],
-      "loadable": true,
-      "expected_quality": "Scaffold",
-      "expected_quality_note": "Honest partial decode: metadata/schema and spatial scaffold; typed project geometry is not claimed.",
-      "license": "phi-ag/rvt sample redistributable (see the phi-ag/rvt LICENSE)",
-      "provenance": "phi-ag/rvt examples/Autodesk/racbasicsamplefamily-2026.rfa",
-      "source_candidates": [
-        "_corpus/examples/Autodesk/racbasicsamplefamily-2026.rfa",
-        "../_corpus/examples/Autodesk/racbasicsamplefamily-2026.rfa"
-      ]
+      "shows": "Synthetic: file status and scaffold export"
     },
     {
       "id": "synthetic-project",
@@ -202,7 +472,8 @@
       "expected_quality": "Geometry",
       "expected_quality_note": "Reference IFC4 with typed elements from synthesized inputs. Viewer cannot parse IFC as input.",
       "license": "Apache-2.0 (rvt-open tests/fixtures)",
-      "provenance": "tests/fixtures/synthetic-project.ifc"
+      "provenance": "tests/fixtures/synthetic-project.ifc",
+      "shows": "Reference IFC4 download"
     },
     {
       "id": "synthetic-structural",
@@ -223,9 +494,10 @@
       "expected_quality": "Geometry",
       "expected_quality_note": "Reference IFC4 structural sample. Viewer cannot parse IFC as input.",
       "license": "Apache-2.0 (rvt-open tests/fixtures)",
-      "provenance": "tests/fixtures/synthetic-structural.ifc"
+      "provenance": "tests/fixtures/synthetic-structural.ifc",
+      "shows": "Reference IFC4 download"
     }
   ],
-  "schema_note": "Frontend loader reads the staged catalog at /demos/catalog.json (written by viewer/scripts/stage-demos.mjs), copies redistributable binaries to /demos/, and renders a gallery with provenance + expected quality labels. The element_count_hint is a display value — the actual viewer runs its own element enumeration on load.",
+  "schema_note": "Frontend loader reads the staged catalog at /demos/catalog.json (written by viewer/scripts/stage-demos.mjs), copies redistributable binaries to /demos/, and renders a gallery with what each demo shows (`shows`), provenance and expected quality labels. The element_count_hint is a display value — the actual viewer runs its own element enumeration on load.",
   "privacy_note": "Every demo listed here has redistribution rights confirmed. Demo bytes are same-origin static assets fetched only when the user clicks a gallery entry (or during initial catalog load). Adding a new demo requires either (a) the contributor holds copyright and chooses to open-source it, or (b) the file is already under an open license allowing redistribution (e.g. phi-ag/rvt's MIT / sample-content clause). See docs/viewer-privacy-posture.md for the broader client-side-only posture."
 }

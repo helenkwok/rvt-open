@@ -97,6 +97,14 @@
  *   It also carries `at`: when the worker received the request, started and
  *   ended the wasm call and posted the reply, in ms since the epoch (the page's
  *   clock), so the page can time a request end to end.
+ *
+ * Exports the command line writes from the file itself, after a parse (the page
+ * sends the bytes again, as for drawings):
+ *   main → worker: { type: 'convert', bytes, format, options, req }   `format`
+ *                  'ifcx' | 'ifcx-appearance' | 'frag' | 'usdc' | 'appearance'
+ *   worker → main: { type: 'convert', format, req, out }   text (IFCX, JSON) or
+ *                  bytes (.frag, .usdc), as rvt-ifc writes them
+ *   A failure replies { type: 'convert-error', format, req, message }.
  */
 
 import * as glue32 from '../pkg/rvt_open.js';
@@ -158,8 +166,17 @@ type ParseMsg =
       wasmBits?: Bits;
     }
   | { type: 'info'; index: number }
+  | ConvertMsg
   | DwgMsg
   | DrawingMsg;
+
+type ConvertMsg = {
+  type: 'convert';
+  bytes: Uint8Array;
+  format: 'ifcx' | 'ifcx-appearance' | 'frag' | 'usdc' | 'appearance';
+  options: Record<string, unknown>;
+  req: number;
+};
 
 type DrawingMsg =
   | { type: 'drawing-list'; bytes: Uint8Array }
@@ -368,6 +385,34 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
         type: 'drawing-error',
         request: m.type,
         req: m.type === 'drawing-open' ? m.req : undefined,
+        message: lastPanic ?? (err instanceof Error ? err.message : String(err)),
+      });
+    }
+    return;
+  }
+  if (msg.type === 'convert') {
+    lastPanic = null;
+    try {
+      const glue = api();
+      const out: string | Uint8Array =
+        msg.format === 'ifcx'
+          ? glue.convert_ifcx(msg.bytes, msg.options)
+          : msg.format === 'ifcx-appearance'
+            ? glue.convert_ifcx_appearance(msg.bytes, msg.options)
+            : msg.format === 'frag'
+              ? glue.convert_frag(msg.bytes, msg.options)
+              : msg.format === 'usdc'
+                ? glue.convert_usdc(msg.bytes, msg.options)
+                : glue.appearance_json(msg.bytes);
+      send(
+        { type: 'convert', format: msg.format, req: msg.req, out },
+        typeof out === 'string' ? [] : [out.buffer as ArrayBuffer],
+      );
+    } catch (err) {
+      send({
+        type: 'convert-error',
+        format: msg.format,
+        req: msg.req,
         message: lastPanic ?? (err instanceof Error ? err.message : String(err)),
       });
     }

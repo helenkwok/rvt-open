@@ -136,6 +136,8 @@ viewer/public/demos/*
 _corpus/
 _corpus_candidates/
 _project_corpus/
+# The tiny reference models (tools/ci/fetch-tiny-models.sh _tiny), which the viewer's demo gallery also stages.
+_tiny/
 
 
 # Any local cargo target dir (e.g. target-msrv/ used for MSRV checks) — never commit build output.
