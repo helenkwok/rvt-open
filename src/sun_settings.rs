@@ -38,7 +38,7 @@ pub struct SunSetting {
     /// The name as stored (a view's own setting keeps the preset name it was made from, or
     /// `<In-session: ...>`).
     pub stored_name: String,
-    /// One of the project's named presets (`DBViewInfo::m_aidSunAndShadowSettings`).
+    /// One of the project's named presets ([`SunAndDisplay::presets`]).
     pub is_preset: bool,
     /// The API's `SunAndShadowType`: `StillImage`, `OneDayStudy`, `MultiDayStudy` or
     /// `Lighting`; `None` for a stored value with no known name.
@@ -178,7 +178,8 @@ pub struct ViewDisplay {
 pub struct SunAndDisplay {
     /// Every `SunAndShadowSettings` element, by id.
     pub settings: Vec<SunSetting>,
-    /// The project's named presets (`DBViewInfo::m_aidSunAndShadowSettings`), in stored order.
+    /// The project's named presets: `DBViewInfo::m_aidSunAndShadowSettings` in stored order when
+    /// the file lists any, else every setting that is no view's own, by id.
     pub presets: Vec<u64>,
     /// Every project view with display options, by id.
     pub views: Vec<ViewDisplay>,
@@ -575,6 +576,15 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
         .filter(|v| v.name != "???")
         .filter_map(|v| v.sun_setting_id)
         .collect();
+    // Without the project's own list (none read from the files measured), the named presets are the
+    // settings that are no view's own.
+    if presets.is_empty() {
+        presets = settings
+            .values()
+            .filter(|s| !owned.contains(&s.id) && !s.stored_name.starts_with("<In-session"))
+            .map(|s| s.id)
+            .collect();
+    }
     for s in settings.values_mut() {
         s.is_preset = presets.contains(&s.id);
         let in_session =
