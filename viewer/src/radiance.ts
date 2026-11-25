@@ -5,9 +5,7 @@
  *
  * The page compiles each program's wasm once (WebAssembly.compileStreaming) and
  * hands the compiled module to its workers (radiance-worker.ts), which only
- * instantiate it: compiling the module in each worker made rtrace in eight
- * Chromium workers run slower than one, while the same module compiled once
- * and shared scales as the other workers do.
+ * instantiate it, rather than each worker fetching and compiling its own.
  *
  * The recipes are Radiance's own command lines: gensky (CIE overcast, for the
  * daylight factor) or gendaylit (a Perez sky from direct normal and diffuse
