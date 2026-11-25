@@ -155,7 +155,9 @@ type Decoder = { module: WebAssembly.Module; bits: Bits };
 /**
  * The pool: one worker per core up to eight, each holding the scene's tracer.
  * Every message carries a request number its reply repeats, so a reply settles
- * only the call that asked; stopping rejects every call still waiting.
+ * only the call that asked; stopping rejects every call still waiting. A worker
+ * that cannot start or throws (its `error` event, which sends no reply) stops
+ * the pool the same way, with the reason, so no call waits for ever.
  */
 class Pool {
   private workers: Worker[] = [];
@@ -182,9 +184,12 @@ class Pool {
         if (m.type === 'error') call.reject(new Error(m.message));
         else call.resolve(m.value);
       });
-      // a worker that dies outside a call's own error handling ends every call still waiting
-      w.addEventListener('error', () => this.stop());
-      w.addEventListener('messageerror', () => this.stop());
+      // a worker that cannot start, throws outside a call, or sends a reply that cannot be read ends every call still waiting
+      w.addEventListener('error', (ev: ErrorEvent) => {
+        ev.preventDefault();
+        this.stop(`a daylight worker failed${ev.message ? `: ${ev.message}` : ' to start'}`);
+      });
+      w.addEventListener('messageerror', () => this.stop('a daylight worker sent a reply that could not be read'));
       this.workers.push(w);
     }
   }
@@ -199,15 +204,15 @@ class Pool {
     });
   }
 
-  /** Stops every worker and rejects every call still waiting; the next call starts new workers. */
-  stop(): void {
+  /** Stops every worker and rejects every call still waiting with `reason`; the next call starts new workers. */
+  stop(reason = 'stopped'): void {
     for (const w of this.workers) w.terminate();
     this.workers = [];
     this.loaded = -1;
     this.ready = false;
     const calls = [...this.pending.values()];
     this.pending.clear();
-    for (const c of calls) c.reject(new Error('stopped'));
+    for (const c of calls) c.reject(new Error(reason));
   }
 
   /** A sun query, answered by the first worker: it needs the decoder, not a scene. */
