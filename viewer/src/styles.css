@@ -2300,6 +2300,10 @@ dl.info-group dd {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+.daylight-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
 .daylight-table {
   width: 100%;
   margin: 6px 0;

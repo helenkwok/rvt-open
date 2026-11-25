@@ -8,17 +8,16 @@
  * its own copy of the scene's tracer; the page hands each the same compiled
  * module, compiled once.
  *
- * Protocol:
- *   main → worker: { type: 'load', module, bits, id, positions, modifier, materials }
+ * Protocol: every message carries `req`, which the reply repeats.
+ *   main → worker: { type: 'init', req, module, bits }   starts the decoder's wasm, no scene
+ *   main → worker: { type: 'load', req, module, bits, id, positions, modifier, materials }
  *                  `materials` is 4 numbers per material (kind 0 plastic / 1 glass, three channels)
- *   worker → main: { type: 'loaded', id, ms }
- *   main → worker: { type: 'run', id, job, sensors, first, kind, params }
- *   worker → main: { type: 'done', job, first, values, ms }
- *   main → worker: { type: 'sun', req, site, day, hour } / { type: 'suns', req, site, from, to, step }
- *   main → worker: { type: 'radtext', req, positions, modifier, materials }
- *   worker → main: { type: 'radtext', req, value: [materials, scene] } (daylightRadianceText, for radiance.ts)
- *   worker → main: { type: 'sun', req, value } (daylightSunAt) / { type: 'suns', req, value } (daylightSunPositions)
- *   Any failure replies { type: 'error', message, job?, req? }.
+ *   main → worker: { type: 'run', req, id, sensors, first, kind, params }   value: Float64Array, one per sensor
+ *   main → worker: { type: 'sun', req, site, day, hour }   value: daylightSunAt's numbers
+ *   main → worker: { type: 'suns', req, site, from, to, step }   value: daylightSunPositions' Float64Array
+ *   main → worker: { type: 'radtext', req, positions, modifier, materials }   value: [materials, scene], the
+ *                  scene as Radiance text (daylightRadianceText, for radiance.ts)
+ *   worker → main: { type: 'ok', req, value, ms } or { type: 'error', req, message }
  */
 
 import * as glue32 from '../pkg/rvt_open.js';
@@ -28,20 +27,14 @@ import type { Bits } from './wasm-build';
 type Glue = typeof glue32;
 let glue: Glue | null = null;
 
-type Msg =
-  | {
-      type: 'load';
-      module: WebAssembly.Module;
-      bits: Bits;
-      id: number;
-      positions: Float64Array;
-      modifier: Uint32Array;
-      materials: Float64Array;
-    }
-  | { type: 'run'; id: number; job: number; sensors: Float64Array; first: number; kind: string; params: Float64Array }
-  | { type: 'sun'; req: number; site: unknown; day: number; hour: number }
-  | { type: 'suns'; req: number; site: unknown; from: number; to: number; step: number }
-  | { type: 'radtext'; req: number; positions: Float64Array; modifier: Uint32Array; materials: Float64Array };
+type Msg = { req: number } & (
+  | { type: 'init'; module: WebAssembly.Module; bits: Bits }
+  | { type: 'load'; module: WebAssembly.Module; bits: Bits; id: number; positions: Float64Array; modifier: Uint32Array; materials: Float64Array }
+  | { type: 'run'; id: number; sensors: Float64Array; first: number; kind: string; params: Float64Array }
+  | { type: 'sun'; site: unknown; day: number; hour: number }
+  | { type: 'suns'; site: unknown; from: number; to: number; step: number }
+  | { type: 'radtext'; positions: Float64Array; modifier: Uint32Array; materials: Float64Array }
+);
 
 const send = (msg: unknown, transfer: Transferable[] = []): void => {
   (self as unknown as { postMessage: (m: unknown, t: Transferable[]) => void }).postMessage(msg, transfer);
@@ -60,33 +53,33 @@ function ready(module?: WebAssembly.Module, bits?: Bits): Glue {
 self.addEventListener('message', (ev: MessageEvent<Msg>) => {
   const msg = ev.data;
   const t0 = performance.now();
+  const ok = (value: unknown, transfer: Transferable[] = []): void => send({ type: 'ok', req: msg.req, value, ms: performance.now() - t0 }, transfer);
   try {
     switch (msg.type) {
+      case 'init':
+        ready(msg.module, msg.bits);
+        ok(null);
+        return;
       case 'load':
         ready(msg.module, msg.bits).daylightLoad(msg.id, msg.positions, msg.modifier, msg.materials);
-        send({ type: 'loaded', id: msg.id, ms: performance.now() - t0 });
+        ok(msg.id);
         return;
       case 'run': {
         const values = new Float64Array(ready().daylightRun(msg.id, msg.sensors, msg.first, msg.kind, msg.params));
-        send({ type: 'done', job: msg.job, first: msg.first, values, ms: performance.now() - t0 }, [values.buffer]);
+        ok(values, [values.buffer]);
         return;
       }
       case 'sun':
-        send({ type: 'sun', req: msg.req, value: Array.from(ready().daylightSunAt(msg.site, msg.day, msg.hour)) });
+        ok(Array.from(ready().daylightSunAt(msg.site, msg.day, msg.hour)));
         return;
       case 'suns':
-        send({ type: 'suns', req: msg.req, value: new Float64Array(ready().daylightSunPositions(msg.site, msg.from, msg.to, msg.step)) });
+        ok(new Float64Array(ready().daylightSunPositions(msg.site, msg.from, msg.to, msg.step)));
         return;
       case 'radtext':
-        send({ type: 'radtext', req: msg.req, value: ready().daylightRadianceText(msg.positions, msg.modifier, msg.materials) });
+        ok(ready().daylightRadianceText(msg.positions, msg.modifier, msg.materials));
         return;
     }
   } catch (err) {
-    send({
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err),
-      job: msg.type === 'run' ? msg.job : undefined,
-      req: msg.type === 'run' || msg.type === 'load' ? undefined : msg.req,
-    });
+    send({ type: 'error', req: msg.req, message: err instanceof Error ? err.message : String(err) });
   }
 });

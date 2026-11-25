@@ -9,7 +9,7 @@
 //!   base colour as reflectance, kept in 0.02 to 0.85. A material whose
 //!   `extras.colourSource` is `rvt-open` (a colour the reader chose, not the
 //!   file's) is marked assumed.
-//! - Sensors: a grid over each room's floor (the faces of its bottom) at
+//! - Sensors: a grid over each room's floor (all of a node's primitives are one zone) (the faces of its bottom) at
 //!   `offset` above it; where the model has no rooms, over the top faces of each
 //!   floor, kept `inset` metres in from the floor's edge.
 //! - Coordinates go to the daylight frame (metres, Z up, the model's own north)
@@ -332,9 +332,11 @@ fn walk(
             let bic = ex["builtInCategory"].as_str();
             let room = tag || matches!(bic, Some("OST_Rooms" | "OST_MEPSpaces"));
             let dflt = (out.model.modifiers.len() - 1) as u32;
+            // a room's or a floor's faces, from all its primitives: one zone per element
+            let mut sensing: Vec<[V; 3]> = Vec::new();
             for (mat, tris) in g.triangles(mesh as usize, &m)? {
                 if room {
-                    out.rooms.push((zone(nd, "room"), tris));
+                    sensing.extend(tris);
                     continue;
                 }
                 let cat = ex["category"].as_str().unwrap_or("?").to_string();
@@ -343,7 +345,7 @@ fn walk(
                     None => out.by_category.push((cat, tris.len())),
                 }
                 if bic == Some("OST_Floors") {
-                    out.floors.push((zone(nd, "floor"), tris.clone()));
+                    sensing.extend_from_slice(&tris);
                 }
                 let modifier = mat.map_or(dflt, |k| (k as u32).min(dflt));
                 for v in tris {
@@ -351,6 +353,13 @@ fn walk(
                     if crate::dot(c, c).sqrt() >= 1e-10 {
                         out.model.triangles.push(Triangle { v, modifier });
                     }
+                }
+            }
+            if !sensing.is_empty() {
+                if room {
+                    out.rooms.push((zone(nd, "room"), sensing));
+                } else {
+                    out.floors.push((zone(nd, "floor"), sensing));
                 }
             }
         }

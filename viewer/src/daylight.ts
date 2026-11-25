@@ -105,7 +105,7 @@ export const DAYLIGHT_LIMITS = [
   'No surroundings: neighbouring buildings, trees and terrain are not in the scene.',
   'Sun: positions from Radiance’s gensky formulas for a non-leap year, in local standard time (no daylight saving); the sun is a point, not a disc.',
   'Elevation is shown but not used: no sky generator takes it.',
-  'Radiance tier: Radiance 6.0.3 compiled to WebAssembly, on the same scene and sensors. Its Monte Carlo sampling differs from a native build’s random numbers, so a run differs from native Radiance as much as two native runs do (RMSE 0.035 DF points on the reference building, native against native 0.036). Each worker builds its own irradiance cache for its share of the sensors.',
+  'Radiance tier: Radiance 6.0.3 compiled to WebAssembly, on the same scene and sensors. Its Monte Carlo sampling differs from a native build’s random numbers, so a run differs from native Radiance as much as two native runs do (RMSE 0.035 to 0.036 DF points on the reference building, native against native 0.036). Each worker builds its own irradiance cache for its share of the sensors.',
   'Weather: the illuminance at a time uses the hour of the weather file nearest the time asked (PVGIS hours are moved from UTC to the site’s standard time); a Perez sky from that hour’s direct normal and diffuse horizontal irradiance.',
   'Sensors: a grid over each room’s floor, or over each floor’s top face kept 0.35 m from its edge where the model has no rooms.',
 ];
@@ -149,13 +149,24 @@ function hhmm(hour: number): string {
   return `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
-/** The pool: one worker per core up to eight, each holding the scene's tracer. */
+type Decoder = { module: WebAssembly.Module; bits: Bits };
+
+/**
+ * The pool: one worker per core up to eight, each holding the scene's tracer.
+ * Every message carries a request number its reply repeats, so a reply settles
+ * only the call that asked; stopping rejects every call still waiting.
+ */
 class Pool {
   private workers: Worker[] = [];
   private loaded = -1;
+  private ready = false;
   private req = 0;
-  private pending = new Map<number, (v: unknown) => void>();
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   constructor(private size: number) {}
+
+  get count(): number {
+    return this.size;
+  }
 
   private spawn(): void {
     if (this.workers.length) return;
@@ -163,116 +174,88 @@ class Pool {
       const w = new DaylightWorker({ name: `daylight-${i}` }) as Worker;
       w.addEventListener('message', (ev: MessageEvent) => {
         const m = ev.data as { type: string; req?: number; value?: unknown; message?: string };
-        if ((m.type === 'sun' || m.type === 'suns' || m.type === 'radtext' || m.type === 'error') && m.req !== undefined) {
-          const done = this.pending.get(m.req);
-          this.pending.delete(m.req);
-          done?.(m.type === 'error' ? new Error(m.message) : m.value);
-        }
+        if (m.req === undefined) return;
+        const call = this.pending.get(m.req);
+        if (!call) return;
+        this.pending.delete(m.req);
+        if (m.type === 'error') call.reject(new Error(m.message));
+        else call.resolve(m.value);
       });
       this.workers.push(w);
     }
   }
 
-  get count(): number {
-    return this.size;
+  /** Posts `msg` to worker `k` and resolves with its reply's `value`. */
+  private call<T>(k: number, msg: Record<string, unknown>, transfer: Transferable[] = []): Promise<T> {
+    this.spawn();
+    const req = ++this.req;
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(req, { resolve: (v) => resolve(v as T), reject });
+      this.workers[k].postMessage({ ...msg, req }, transfer);
+    });
   }
 
-  /** Stops every worker; the next call starts new ones. */
+  /** Stops every worker and rejects every call still waiting; the next call starts new workers. */
   stop(): void {
     for (const w of this.workers) w.terminate();
     this.workers = [];
     this.loaded = -1;
-    for (const done of this.pending.values()) done(new Error('stopped'));
+    this.ready = false;
+    const calls = [...this.pending.values()];
     this.pending.clear();
+    for (const c of calls) c.reject(new Error('stopped'));
   }
 
-  /** A sun query answered by the first worker (it needs the decoder, not a scene). */
-  ask<T>(decoder: { module: WebAssembly.Module; bits: Bits }, msg: Record<string, unknown>): Promise<T> {
-    this.spawn();
-    const req = ++this.req;
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(req, (v) => (v instanceof Error ? reject(v) : resolve(v as T)));
-      const w = this.workers[0];
-      if (this.loaded < 0) w.postMessage({ type: 'load', module: decoder.module, bits: decoder.bits, id: 0, positions: new Float64Array(0), modifier: new Uint32Array(0), materials: new Float64Array(0) });
-      w.postMessage({ ...msg, req });
-    });
+  /** A sun query, answered by the first worker: it needs the decoder, not a scene. */
+  async ask<T>(decoder: Decoder, msg: Record<string, unknown>): Promise<T> {
+    if (!this.ready) {
+      await this.call(0, { type: 'init', module: decoder.module, bits: decoder.bits });
+      this.ready = true;
+    }
+    return this.call<T>(0, msg);
   }
 
-  private async load(id: number, p: Prepared, decoder: { module: WebAssembly.Module; bits: Bits }): Promise<void> {
+  private async load(id: number, p: Prepared, decoder: Decoder): Promise<void> {
     if (this.loaded === id) return;
     this.spawn();
     const materials = new Float64Array(p.materials.length * 4);
     p.materials.forEach((m, i) => materials.set([m.kind === 'glass' ? 1 : 0, m.rgb[0], m.rgb[1], m.rgb[2]], i * 4));
     await Promise.all(
-      this.workers.map(
-        (w) =>
-          new Promise<void>((resolve, reject) => {
-            const on = (ev: MessageEvent): void => {
-              const m = ev.data as { type: string; id?: number; message?: string };
-              if (m.type === 'loaded' && m.id === id) {
-                w.removeEventListener('message', on);
-                resolve();
-              } else if (m.type === 'error' && m.id === undefined) {
-                w.removeEventListener('message', on);
-                reject(new Error(m.message));
-              }
-            };
-            w.addEventListener('message', on);
-            w.postMessage({ type: 'load', module: decoder.module, bits: decoder.bits, id, positions: p.positions, modifier: p.modifier, materials });
-          }),
+      this.workers.map((_, k) =>
+        this.call(k, { type: 'load', module: decoder.module, bits: decoder.bits, id, positions: p.positions, modifier: p.modifier, materials }),
       ),
     );
     this.loaded = id;
+    this.ready = true;
   }
 
-  /** Runs `kind` over every sensor in contiguous shards, the workers taking the next shard as they finish. */
-  async run(
-    id: number,
-    p: Prepared,
-    decoder: { module: WebAssembly.Module; bits: Bits },
-    kind: string,
-    params: Float64Array,
-    progress: (done: number, total: number) => void,
-  ): Promise<Float64Array> {
+  /** Runs `kind` over every sensor in contiguous shards, each worker taking the next shard as it finishes one. */
+  async run(id: number, p: Prepared, decoder: Decoder, kind: string, params: Float64Array, progress: (done: number, total: number) => void): Promise<Float64Array> {
     await this.load(id, p, decoder);
     const n = p.sensors.length / 6;
     const out = new Float64Array(n);
     const shard = Math.min(512, Math.max(8, Math.ceil(n / (this.size * 8))));
     let next = 0;
     let done = 0;
-    let job = 0;
+    let failed = false;
     progress(0, n);
-    await Promise.all(
-      this.workers.map(
-        (w) =>
-          new Promise<void>((resolve, reject) => {
-            const take = (): void => {
-              if (next >= n) {
-                w.removeEventListener('message', on);
-                resolve();
-                return;
-              }
-              const first = next;
-              next = Math.min(n, next + shard);
-              w.postMessage({ type: 'run', id, job: ++job, sensors: p.sensors.slice(first * 6, next * 6), first, kind, params });
-            };
-            const on = (ev: MessageEvent): void => {
-              const m = ev.data as { type: string; first?: number; values?: Float64Array; message?: string; job?: number };
-              if (m.type === 'done' && m.values && m.first !== undefined) {
-                out.set(m.values, m.first);
-                done += m.values.length;
-                progress(done, n);
-                take();
-              } else if (m.type === 'error' && m.job !== undefined) {
-                w.removeEventListener('message', on);
-                reject(new Error(m.message));
-              }
-            };
-            w.addEventListener('message', on);
-            take();
-          }),
-      ),
-    );
+    const lane = async (k: number): Promise<void> => {
+      while (next < n && !failed) {
+        const first = next;
+        next = Math.min(n, next + shard);
+        const values = await this.call<Float64Array>(k, { type: 'run', id, sensors: p.sensors.slice(first * 6, next * 6), first, kind, params });
+        out.set(values, first);
+        done += values.length;
+        progress(done, n);
+      }
+    };
+    try {
+      await Promise.all(this.workers.map((_, k) => lane(k)));
+    } catch (e) {
+      // the other lanes stop taking shards; their calls in flight settle into this finished run
+      failed = true;
+      throw e;
+    }
     return out;
   }
 }
@@ -284,10 +267,21 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   let prepared: Prepared | null = null;
   let preparedKey = '';
   let preparedId = 0;
-  let preparing: Promise<Prepared> | null = null;
+  let preparing: { key: string; promise: Promise<Prepared>; cancel: (e: Error) => void } | null = null;
   let req = 0;
-  let values: Float64Array | null = null;
-  let lastRun: { analysis: Analysis; params: Record<string, unknown>; ms: number; range: [number, number] } | null = null;
+  /** The last completed run: its grid, values and the inputs it used, which hover and the exports read. */
+  interface Run {
+    analysis: Analysis;
+    params: Record<string, unknown>;
+    ms: number;
+    range: [number, number];
+    p: Prepared;
+    values: Float64Array;
+    site: Record<SiteKey, { value: number; source: Source }>;
+    grid: { spacing: number; offset: number; inset: number };
+  }
+  let lastRun: Run | null = null;
+  let runToken = 0;
   let overlay: THREE.InstancedMesh | null = null;
   const radiance = new Radiance(pool.count);
   let weather: Weather | null = null;
@@ -401,6 +395,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const legend = el('div', { class: 'daylight-legend', id: 'daylight-legend', hidden: '' });
   const readout = el('p', { class: 'option-hint', id: 'daylight-readout', 'aria-live': 'polite' });
   const table = el('table', { class: 'daylight-table', id: 'daylight-table', hidden: '' });
+  const tableWrap = el('div', { class: 'daylight-table-wrap' });
+  tableWrap.append(table);
   const exportJson = el('button', { type: 'button', class: 'side-btn', id: 'daylight-export-json', disabled: '' }, 'Export results (JSON)');
   const exportCsv = el('button', { type: 'button', class: 'side-btn', id: 'daylight-export-csv', disabled: '' }, 'Export results (CSV)');
   const limits = el('details', { class: 'daylight-limits' });
@@ -409,7 +405,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   for (const l of DAYLIGHT_LIMITS) ul.append(el('li', {}, l));
   limits.append(ul);
 
-  root.append(intro, siteBox, row('Analysis', analysisSel), whenBox, weatherBox, radNote, gridBox, toggles, cutBoxes, runBtn, stopBtn, bar, status, legend, readout, table, exportJson, exportCsv, matsBox, limits);
+  root.append(intro, siteBox, row('Analysis', analysisSel), whenBox, weatherBox, radNote, gridBox, toggles, cutBoxes, runBtn, stopBtn, bar, status, legend, readout, tableWrap, exportJson, exportCsv, matsBox, limits);
 
   const showFields = (): void => {
     const a = analysisSel.value as Analysis;
@@ -441,8 +437,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     siteNote.textContent = notes.join(' ');
   }
 
-  function applyFileSite(s: FileSite | null): void {
+  /** The file's site in every field, or (`keepUser`) only in the fields you have not set. */
+  function applyFileSite(s: FileSite | null, keepUser = false): void {
     for (const f of SITE_FIELDS) {
+      if (keepUser && source[f.key] === 'user') continue;
       site[f.key] = s ? s[f.key] : 0;
       source[f.key] = s ? 'file' : 'assumed';
     }
@@ -628,22 +626,37 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   }
 
   // ---------- the scene and grids ----------
+  /** The grid options as the inputs give them: a blank or invalid field takes its default; zero is kept. */
+  function gridOptions(): { spacing: number; offset: number; inset: number } {
+    const n = (input: HTMLInputElement, d: number): number => (input.value.trim() !== '' && Number.isFinite(Number(input.value)) ? Number(input.value) : d);
+    const spacing = n(spacingIn, 0.5);
+    return { spacing: spacing > 0 ? spacing : 0.5, offset: n(offsetIn, 0.76), inset: 0.35 };
+  }
+
+  /** Stops waiting for a grid (its late reply is ignored). */
+  function cancelPrepare(reason: string): void {
+    preparing?.cancel(new Error(reason));
+    preparing = null;
+  }
+
   function prepare(): Promise<Prepared> {
-    const options = { spacing: Number(spacingIn.value) || 0.5, offset: Number(offsetIn.value) || 0.76, inset: 0.35 };
+    const options = gridOptions();
     const key = JSON.stringify(options);
     if (prepared && preparedKey === key) return Promise.resolve(prepared);
-    if (preparing) return preparing;
+    if (preparing?.key === key) return preparing.promise;
+    cancelPrepare('the grid options changed');
     const w = host.worker();
     if (!w) return Promise.reject(new Error('no model is open'));
     const mine = ++req;
     root.dataset.state = 'preparing';
     status.textContent = 'Building the scene and the sensor grids…';
-    preparing = new Promise<Prepared>((resolve, reject) => {
+    let cancel: (e: Error) => void = () => undefined;
+    const promise = new Promise<Prepared>((resolve, reject) => {
       const on = (ev: MessageEvent): void => {
         const m = ev.data as { type: string; req?: number; prepared?: Prepared; message?: string };
         if (m.req !== mine || (m.type !== 'daylight-prepared' && m.type !== 'daylight-error')) return;
         w.removeEventListener('message', on);
-        preparing = null;
+        if (preparing?.promise === promise) preparing = null;
         if (m.type === 'daylight-error' || !m.prepared) {
           reject(new Error(m.message ?? 'no scene'));
           return;
@@ -652,7 +665,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         prepared = m.prepared;
         preparedKey = key;
         preparedId++;
-        if (firstTime) applyFileSite(prepared.site);
+        if (firstTime) applyFileSite(prepared.site, true);
         showMaterials(prepared);
         if (root.dataset.state === 'preparing') {
           root.dataset.state = 'ready';
@@ -660,10 +673,15 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         }
         resolve(prepared);
       };
+      cancel = (e: Error): void => {
+        w.removeEventListener('message', on);
+        reject(e);
+      };
       w.addEventListener('message', on);
       w.postMessage({ type: 'daylight-prepare', options, req: mine });
     });
-    return preparing;
+    preparing = { key, promise, cancel };
+    return promise;
   }
 
   // The cut: the model's meshes are clipped above a height (scene y), so the grid inside shows.
@@ -703,7 +721,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   function drawOverlay(p: Prepared, v: Float64Array, lo: number, hi: number): void {
     clearOverlay();
     const n = v.length;
-    const size = (Number(spacingIn.value) || 0.5) * 0.92;
+    const size = (lastRun?.grid.spacing ?? gridOptions().spacing) * 0.92;
     const geo = new THREE.PlaneGeometry(size, size);
     geo.rotateX(-Math.PI / 2);
     const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, toneMapped: false }), n);
@@ -803,12 +821,20 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     }
     if (running) return;
     running = true;
+    const token = ++runToken;
+    const live = (): void => {
+      if (token !== runToken) throw new Error('stopped');
+    };
     runBtn.disabled = true;
     stopBtn.hidden = false;
     bar.hidden = false;
     const t0 = performance.now();
     try {
       const p = await prepare();
+      live();
+      // the inputs this run uses, kept with its result
+      const grid = gridOptions();
+      const siteUsed = Object.fromEntries(SITE_FIELDS.map((f) => [f.key, { value: site[f.key], source: source[f.key] }])) as Run['site'];
       const n = p.sensors.length / 6;
       if (n === 0) throw new Error('the model has no rooms or floors to lay a sensor grid on');
       root.dataset.sensors = String(n);
@@ -821,11 +847,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         const from = dayOfYear(dateIn.value);
         const to = toIn.value ? dayOfYear(toIn.value) : from;
         const step = Number(stepSel.value) || 15;
+        extra.from = dateIn.value.slice(5);
+        extra.to = (toIn.value || dateIn.value).slice(5);
         params = await pool.ask<Float64Array>(decoder, { type: 'suns', site: siteArg(), from, to, step });
+        live();
         kind = 'sun';
         scale = step / 60;
-        extra.from = dateIn.value.slice(5);
-        extra.to = toIn.value.slice(5);
         extra.stepMinutes = step;
         extra.sunPositions = params.length / 3;
       } else if (a === 'svf') {
@@ -853,6 +880,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
           const h = weatherAt(weather, month, day, Number(timeIn.value));
           if (!h) throw new Error(`the weather file has no hour on ${dateIn.value.slice(5)}`);
           sky = await radiance.perezSky(h.month, h.day, h.hour, site, h.dni, h.dhi);
+          live();
           Object.assign(extra, { weatherHour: { month: h.month, day: h.day, hour: h.hour, dni: h.dni, dhi: h.dhi }, sky: 'Perez (gendaylit -W)', weather: weather.provenance, credit: weather.credit });
         } else {
           sky = await radiance.overcastSky();
@@ -863,21 +891,23 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         const materials = new Float64Array(p.materials.length * 4);
         p.materials.forEach((m, i) => materials.set([m.kind === 'glass' ? 1 : 0, m.rgb[0], m.rgb[1], m.rgb[2]], i * 4));
         const [matText, sceneText] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: p.positions, modifier: p.modifier, materials });
+        live();
         const pts: string[] = [];
         for (let i = 0; i < n; i++) {
           const q = p.sensors.subarray(i * 6, i * 6 + 6);
           pts.push(`${q[0].toFixed(4)} ${q[1].toFixed(4)} ${q[2].toFixed(4)} ${q[3]} ${q[4]} ${q[5]}`);
         }
         const r = await radiance.illuminance(matText, sceneText, sky, pts, detail, progress);
+        live();
         v = r.lux;
         if (a === 'rad-df') for (let i = 0; i < v.length; i++) v[i] /= 100;
         extra.engine = 'Radiance 6.0.3 (WebAssembly)';
       } else {
         status.textContent = `Running on ${n.toLocaleString('en')} sensors with ${pool.count} workers…`;
         v = await pool.run(preparedId, p, decoder, kind, params, progress);
+        live();
       }
       if (scale !== 1) for (let i = 0; i < v.length; i++) v[i] *= scale;
-      values = v;
       let lo = Infinity;
       let hi = -Infinity;
       for (const x of v) {
@@ -889,7 +919,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       if (a === 'rad-pit') lo = 0;
       if (a === 'sunhours') lo = 0;
       const ms = performance.now() - t0;
-      lastRun = { analysis: a, params: extra, ms, range: [lo, hi] };
+      lastRun = { analysis: a, params: extra, ms, range: [lo, hi], p, values: v, site: siteUsed, grid };
       drawOverlay(p, v, lo, hi);
       showLegend(a, lo, hi);
       if (typeof extra.credit === 'string') legend.append(el('div', { class: 'daylight-credit', id: 'daylight-credit' }, extra.credit));
@@ -919,6 +949,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     if ((ev.target as HTMLDetailsElement).open && host.worker() && !prepared) void prepare().catch(() => undefined);
   });
   stopBtn.addEventListener('click', () => {
+    runToken++;
+    cancelPrepare('stopped');
     pool.stop();
     radiance.stop();
   });
@@ -927,7 +959,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   host.renderer.domElement.addEventListener('pointermove', (ev) => {
-    if (!overlay || !values || !prepared) return;
+    if (!overlay || !lastRun) return;
+    const { values, p: grid } = lastRun;
     const r = host.renderer.domElement.getBoundingClientRect();
     ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, host.camera);
@@ -938,16 +971,15 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     }
     const i = hit.instanceId;
     const a = lastRun?.analysis ?? 'df';
-    const z = prepared.zones[prepared.sensorZone[i]];
+    const z = grid.zones[grid.sensorZone[i]];
     readout.textContent = `Sensor ${i + 1}: ${fmt(values[i], a === 'svf' ? 3 : 2)}${ANALYSES[a].unit ? ` ${ANALYSES[a].unit}` : ''} · ${zoneLabel(z)}${z?.level ? ` · ${z.level}` : ''}`;
   });
 
   // ---------- exports ----------
   function result(): Record<string, unknown> | null {
-    if (!prepared || !values || !lastRun) return null;
-    const p = prepared;
-    const v = values;
+    if (!lastRun) return null;
     const run = lastRun;
+    const { p, values: v } = run;
     return {
       analysis: run.analysis,
       label: ANALYSES[run.analysis].label,
@@ -956,8 +988,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       credit: run.params.credit ?? null,
       parameters: run.params,
       frame: 'the model’s own: metres, Z up, +Y the model’s north (true north is at the angle below)',
-      site: Object.fromEntries(SITE_FIELDS.map((f) => [f.key, { value: site[f.key], source: source[f.key] }])),
-      grid: { spacing: Number(spacingIn.value), offset: Number(offsetIn.value), sensors: v.length },
+      site: run.site,
+      grid: { ...run.grid, sensors: v.length },
       materials: p.materials.map((m) => ({ label: m.label, kind: m.kind, value: Number(m.value.toFixed(4)), assumed: m.assumed })),
       zones: zoneStats(p, v).map((s) => ({ label: s.label, kind: s.zone.kind, number: s.zone.number ?? null, name: s.zone.roomName ?? s.zone.name, level: s.zone.level ?? null, sensors: s.n, mean: s.mean, min: s.min, max: s.max })),
       sensors: Array.from({ length: v.length }, (_, i) => ({ x: p.sensors[i * 6], y: p.sensors[i * 6 + 1], z: p.sensors[i * 6 + 2], zone: p.sensorZone[i], value: v[i] })),
@@ -971,12 +1003,13 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     host.download(`${host.stem()}.daylight-${lastRun?.analysis}.json`, new Blob([`${JSON.stringify(r, null, 1)}\n`], { type: 'application/json' }));
   });
   exportCsv.addEventListener('click', () => {
-    if (!prepared || !values || !lastRun) return;
+    if (!lastRun) return;
+    const { p: grid, values } = lastRun;
     const q = (s: string): string => (/[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s);
     const lines = ['x_m,y_m,z_m,zone,room_number,room_name,level,value'];
     for (let i = 0; i < values.length; i++) {
-      const z = prepared.zones[prepared.sensorZone[i]];
-      const s = prepared.sensors;
+      const z = grid.zones[grid.sensorZone[i]];
+      const s = grid.sensors;
       lines.push([s[i * 6].toFixed(4), s[i * 6 + 1].toFixed(4), s[i * 6 + 2].toFixed(4), q(zoneLabel(z)), q(z?.number ?? ''), q(z?.roomName ?? ''), q(z?.level ?? ''), String(values[i])].join(','));
     }
     host.download(`${host.stem()}.daylight-${lastRun.analysis}.csv`, new Blob([`${lines.join('\n')}\n`], { type: 'text/csv' }));
@@ -985,9 +1018,9 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   function clearAll(): void {
     prepared = null;
     preparedKey = '';
-    preparing = null;
+    cancelPrepare('the model changed');
+    runToken++;
     req++;
-    values = null;
     lastRun = null;
     clearOverlay();
     clearHelpers('path');

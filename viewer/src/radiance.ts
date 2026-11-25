@@ -70,6 +70,7 @@ export class Radiance {
   private workers: Worker[] = [];
   private req = 0;
   private stopped = false;
+  private pending = new Map<number, { resolve: (out: Uint8Array) => void; reject: (e: Error) => void }>();
   constructor(private size: number) {}
 
   get count(): number {
@@ -109,14 +110,29 @@ export class Radiance {
     return f;
   }
 
+  /** Stops every worker and rejects every run still waiting. */
   stop(): void {
     this.stopped = true;
     for (const w of this.workers) w.terminate();
     this.workers = [];
+    const calls = [...this.pending.values()];
+    this.pending.clear();
+    for (const c of calls) c.reject(new Error('stopped'));
   }
 
   private worker(k: number): Worker {
-    while (this.workers.length <= k) this.workers.push(new RadianceWorker({ name: `radiance-${this.workers.length}` }) as Worker);
+    while (this.workers.length <= k) {
+      const w = new RadianceWorker({ name: `radiance-${this.workers.length}` }) as Worker;
+      w.addEventListener('message', (ev: MessageEvent) => {
+        const m = ev.data as { type: string; req: number; out?: Uint8Array; message?: string };
+        const call = this.pending.get(m.req);
+        if (!call) return;
+        this.pending.delete(m.req);
+        if (m.type === 'done' && m.out) call.resolve(m.out);
+        else call.reject(new Error(m.message ?? 'a Radiance program failed'));
+      });
+      this.workers.push(w);
+    }
     return this.workers[k];
   }
 
@@ -127,14 +143,7 @@ export class Radiance {
     const w = this.worker(k);
     const req = ++this.req;
     return new Promise<Uint8Array>((resolve, reject) => {
-      const on = (ev: MessageEvent): void => {
-        const m = ev.data as { type: string; req: number; out?: Uint8Array; message?: string };
-        if (m.req !== req) return;
-        w.removeEventListener('message', on);
-        if (m.type === 'done' && m.out) resolve(m.out);
-        else reject(new Error(m.message ?? `${prog} failed`));
-      };
-      w.addEventListener('message', on);
+      this.pending.set(req, { resolve, reject });
       w.postMessage({ type: 'run', req, prog, glue: `${RADIANCE_BASE}${prog}.js`, module, args: [...args], files, stdin });
     });
   }
