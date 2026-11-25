@@ -110,6 +110,16 @@ jobs:
       - run: echo "RVT_PROJECT_CORPUS_DIR=$GITHUB_WORKSPACE/_project_corpus/Revit" >> "$GITHUB_ENV"
       - run: cargo run --profile ci --example box_check -- tools/ci/box-baseline.tsv
         env: { BOX_CHECK_JOBS: "3" }
+      # Every public sample's sun settings and view display options, kept for the measurement
+      # against the samples' Revit API dumps.
+      - name: Sun settings of the public samples
+        run: |
+          cargo build --profile ci --example sun_settings
+          dirs=$(ls -d _samples/flat _samples/bim4lca 2>/dev/null || true)
+          find -L $dirs -name '*.rvt' -print0 | sort -z | xargs -0 target/ci/examples/sun_settings > "$RUNNER_TEMP/sun-settings.jsonl"
+          wc -l "$RUNNER_TEMP/sun-settings.jsonl"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: sun-settings, path: "${{ runner.temp }}/sun-settings.jsonl", retention-days: 7 }
 
   fmt:
     name: cargo fmt

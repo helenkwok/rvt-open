@@ -23,6 +23,9 @@ cargo run --example basics_inspect -- path/to/model.rvt
   rises above the committed baseline.
 - [`dhat_schema.rs`](dhat_schema.rs): heap-profiles the schema parser on a
   real Revit file (needs the `dhat-heap` feature).
+- [`sun_settings.rs`](sun_settings.rs): prints each file's sun settings and
+  view display options as JSON lines; CI runs it on every public sample and
+  keeps the output as the `sun-settings` artifact.
 - [`full_decode.rs`](full_decode.rs): writes what the schema reader reads
   of a file as JSON facts for `tools/full-decode/full_decode.py`, which
   accounts for every byte and compares the elements and parameter values
