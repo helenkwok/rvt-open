@@ -15,7 +15,7 @@ use std::path::Path;
 /// Entries, then fields filled per source: name, enum name (API reference), storage type
 /// (files), spec and group (IFC export), localized names (help).
 const ENTRIES: usize = 3812;
-const FILLED: [usize; 6] = [3805, 3805, 486, 412, 670, LOCALIZED];
+const FILLED: [usize; 6] = [3805, 3805, 486, 416, 681, LOCALIZED];
 /// Ids with a help term in at least one language, and the (id, language) terms in all: the terms
 /// the Revit API dump of the public samples shows wrong in German, Japanese or Chinese are left out.
 const LOCALIZED: usize = 1455;
@@ -291,7 +291,8 @@ fn category_newest_release_and_schedules_decide_the_group_and_spec() {
 }
 
 /// A sample `--releases` does not list takes the release of its `__pf<year>` name, a `-<variant>`
-/// suffix included: its newer votes decide over an older listed sample's.
+/// suffix included: its newer votes decide over an older listed sample's. A set whose name holds no
+/// Latin letter (a family's own group in its author's language) never votes, even in the newest release.
 #[test]
 fn an_unlisted_sample_takes_the_release_of_its_saved_name() {
     use std::process::Command;
@@ -308,6 +309,7 @@ fn an_unlisted_sample_takes_the_release_of_its_saved_name() {
     for (m, set, n) in [
         ("a", "Mechanical", 9),
         ("b__pf2024-variant", "Mechanical - Flow", 1),
+        ("c__pf2027", "标识数据", 5),
     ] {
         write(&format!("{m}.pairs.tsv"), "#tag\n");
         write(&format!("{m}.names.tsv"), "#kind\tname\n");

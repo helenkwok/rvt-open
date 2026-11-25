@@ -7,9 +7,9 @@
 // H = machine-matched: the term at the same place of the same Revit 2027 help topic in each of the 12
 // languages, cited per entry; - = no public source, the field is empty.
 //  - inputs: bip_enum.tsv 30fb56087a3ddbd2, bic_enum.tsv b27530a314bf49ca, storage.tsv 5d7db7d1ad93d53c,
-//    group-spec.tsv afbcc3a6ff54077a, enum-texts.tsv 76eae5ea8adf5c41, help-terms.tsv b8dc27668ef81871.
+//    group-spec.tsv b51b41002e56dab5, enum-texts.tsv 76eae5ea8adf5c41, help-terms.tsv b8dc27668ef81871.
 //  - ids: the reference's BuiltInParameter members plus 7 ids kept with no name (no public source names them).
-//  - category names: the `Category` property of Revit's IFC export of public samples, the most voted name of each category id (category-names.tsv 0e8fca40ad83e281); where it has none, the help term of `program_names`.
+//  - category names: the `Category` property of Revit's IFC export of public samples, the most voted name of each category id (category-names.tsv 30189f123a69c1a0); where it has none, the help term of `program_names`.
 //  - The Revit API dump of the public samples is the answer key only: tools/builtin-parameters/score.py.
 
 /// (id, name, BuiltInParameter enum name, storage type, spec type id, group label, source codes), by id.
@@ -1834,9 +1834,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Maximum Amount of Circuits",
         "RBS_ELEC_MAX_CIRCUITS_DATA_PANEL",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec:spec.int64-2.0.0",
+        "Electrical - Circuiting",
+        "RR-EE-",
     ),
     (
         -1155151,
@@ -18244,8 +18244,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "FABRIC_PARAM_WIRES_AT_COVER",
         "Integer",
         "",
-        "",
-        "RRF--H",
+        "Construction",
+        "RRF-EH",
     ),
     (
         -1017739,
@@ -18631,7 +18631,7 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "FABRIC_SHEET_OVERALL_WIDTH",
         "",
         "autodesk.spec.aec:length-2.0.0",
-        "Dimensions",
+        "Layers",
         "RR-EEH",
     ),
     (
@@ -20919,8 +20919,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "GUTTER_PROFILE_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Construction",
+        "RR--E-",
     ),
     (
         -1012835,
@@ -21019,8 +21019,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "GUTTER_MATERIAL_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Materials and Finishes",
+        "RR--E-",
     ),
     (
         -1012822,
@@ -21950,8 +21950,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "LEVEL_DATA_MASS_INSTANCE_COMMENTS",
         "",
         "",
-        "",
-        "RR---H",
+        "Identity Data",
+        "RR--EH",
     ),
     (
         -1012018,
@@ -21968,8 +21968,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "LEVEL_DATA_MASS_FAMILY_AND_TYPE_PARAM",
         "",
         "",
-        "",
-        "RR---H",
+        "Identity Data",
+        "RR--EH",
     ),
     (
         -1012016,
@@ -21977,8 +21977,8 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "LEVEL_DATA_MASS_FAMILY_PARAM",
         "",
         "",
-        "",
-        "RR---H",
+        "Identity Data",
+        "RR--EH",
     ),
     (
         -1012015,
@@ -22004,26 +22004,26 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "LEVEL_DATA_MASS_TYPE_PARAM",
         "",
         "",
-        "",
-        "RR----",
+        "Identity Data",
+        "RR--E-",
     ),
     (
         -1012012,
         "Floor Volume",
         "LEVEL_DATA_VOLUME",
         "",
-        "",
-        "",
-        "RR----",
+        "autodesk.spec.aec:volume-2.0.0",
+        "Dimensions",
+        "RR-EE-",
     ),
     (
         -1012011,
         "Exterior Surface Area",
         "LEVEL_DATA_SURFACE_AREA",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:area-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1012010,
@@ -22039,9 +22039,9 @@ pub(super) const PARAMETERS: &[(i64, &str, &str, &str, &str, &str, &str)] = &[
         "Floor Perimeter",
         "LEVEL_DATA_FLOOR_PERIMETER",
         "",
-        "",
-        "",
-        "RR---H",
+        "autodesk.spec.aec:length-2.0.0",
+        "Dimensions",
+        "RR-EEH",
     ),
     (
         -1012007,
@@ -33518,7 +33518,7 @@ pub(super) const CATEGORIES: &[(i64, &str, &str)] = &[
     (-2003406, "OST_ZoningEnvelope", ""),
     (-2003405, "OST_MassTags", ""),
     (-2003404, "OST_MassForm", ""),
-    (-2003403, "OST_MassFloor", ""),
+    (-2003403, "OST_MassFloor", "Mass: Mass Floor"),
     (-2003400, "OST_Mass", "Mass"),
     (-2003333, "OST_DividedSurface_DiscardedDivisionLines", ""),
     (-2003332, "OST_DividedSurfaceBelt", ""),

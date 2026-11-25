@@ -16,7 +16,8 @@ of the property on elements of that category; it only fills an id neither route 
 The catalog is Revit 2027's, so a vote is counted only among the samples of the newest release that
 has one for the id: a group Revit renamed (`Mechanical` to `Mechanical - Flow`) takes its newest name.
 A property set whose name holds `Schedule` is a schedule Revit exported as a property set
-(`Door Schedule`), not a parameter group: its properties never vote. (A schedule titled in another language
+(`Door Schedule`), not a parameter group: its properties never vote; nor do those of a set whose name holds
+no Latin letter (`标识数据`: a family's own group in its author's language, since the exports run Revit in English). (A schedule titled in another language
 is not recognised; no count of samples separates it, since the sample projects repeat their schedules.)
 `--releases` lists `<sample>\t<release>`; a sample it does not list and whose name ends in `__pf<year>` (optionally
 followed by `-<variant>`) counts as that release; any other counts as one release with no year.
@@ -67,7 +68,10 @@ def rel(fn):
         return release[s]
     m = re.search(r'__pf(\d{4})(?:-[^_]*)?$', s)
     return m.group(1) if m else ''
-is_schedule = lambda set_name: 'schedule' in set_name.lower()
+def is_schedule(set_name):
+    """Not a parameter group: a schedule exported as a property set (`Door Schedule`), or a set whose name holds no
+    Latin letter (a family's own group in its author's language: the exports run Revit in English)."""
+    return 'schedule' in set_name.lower() or not re.search('[A-Za-z]', set_name)
 def newest(by_release):
     """The votes of the newest release that has any."""
     return by_release[max(by_release)]
