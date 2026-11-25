@@ -255,6 +255,10 @@ jobs:
           [ $st = 0 ] && printf 'RVT_DAYLIGHT_DEMO_RVT=%s\nRVT_DAYLIGHT_REQUIRE=1\n' "$PWD/_cc0/demo-building-2027.rvt" >> "$GITHUB_ENV"
           [ $st = 0 ] || [ $st = 2 ]
       - run: cargo test --profile ci -p daylight-rt -- --nocapture
+      # The demo building's sun settings, which the viewer's Daylight panel starts from.
+      - name: Sun settings of the demo building
+        if: env.RVT_DAYLIGHT_DEMO_RVT != ''
+        run: cargo run --profile ci --example sun_settings -- "$RVT_DAYLIGHT_DEMO_RVT"
 
   # Radiance 6.0.3 (gensky, gendaylit, oconv, rtrace) compiled to WebAssembly for the viewer's validated daylight
   # tier, in Emscripten's image pinned by digest, cached by the build script and patch; then checked against native
