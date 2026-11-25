@@ -144,7 +144,7 @@ pub struct ViewDisplay {
     /// The view's own `SunAndShadowSettings` (the API's `View.SunAndShadowSettings`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sun_setting_id: Option<u64>,
-    /// The API's `DisplayStyle` name, from the stored values below.
+    /// The API's `DisplayStyle` name ([`display_style`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_style: Option<String>,
     /// The stored visual-style values: the manager's hidden-line and lighting flags and the
@@ -243,12 +243,20 @@ pub fn time_interval(v: i64) -> Option<&'static str> {
     })
 }
 
-/// The API's `DisplayStyle` name of a view's stored style values (`ViewDisplay::style_values`:
-/// hidden-line flag, lighting flag, surfaces, edges).
-pub fn display_style(v: [i64; 4]) -> Option<&'static str> {
+/// The API's `DisplayStyle` names, by value (the API reference gives each member's value). A
+/// view's model display stores its visual style as this value (`ViewDisplayModel::m_surfaces`;
+/// `ViewDisplayMgr::m_viewDisplayRenderType` before 2014).
+pub fn display_style(v: i64) -> Option<&'static str> {
     Some(match v {
-        [0, 0, ..] => "Wireframe",
-        [1, 0, ..] => "HLR",
+        1 => "Wireframe",
+        2 => "HLR",
+        3 => "Shading",
+        4 => "ShadingWithEdges",
+        5 => "Rendering",
+        6 => "Realistic",
+        7 => "FlatColors",
+        8 => "RealisticWithEdges",
+        9 => "Textures",
         _ => return None,
     })
 }
@@ -401,7 +409,10 @@ fn view_display(
         model.and_then(|x| int(x, "m_edges")).unwrap_or(-1),
     ];
     v.style_values = Some(values);
-    v.display_style = display_style(values).map(str::to_string);
+    let style = model
+        .and_then(|x| int(x, "m_surfaces"))
+        .or_else(|| int(m, "m_viewDisplayRenderType"));
+    v.display_style = style.and_then(display_style).map(str::to_string);
     if let Some(l) = sub(o, m, "m_lights") {
         v.sun_setting_id = id(l, "m_sunAndShadowSettingsId");
         v.sunlight_intensity = int(l, "m_sunlightIntensity");
@@ -555,12 +566,15 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
     if settings.is_empty() && views.is_empty() {
         return None;
     }
-    // A view's own setting shows as `<In-session, ...>`, whatever name it keeps.
+    // A view's own setting that is not a named preset shows as `<In-session, ...>`, whatever
+    // name it keeps.
     let owned: std::collections::BTreeSet<u64> =
         views.values().filter_map(|v| v.sun_setting_id).collect();
     for s in settings.values_mut() {
         s.is_preset = presets.contains(&s.id);
-        s.name = if !owned.contains(&s.id) && !s.stored_name.starts_with("<In-session") {
+        let in_session =
+            s.stored_name.starts_with("<In-session") || (owned.contains(&s.id) && !s.is_preset);
+        s.name = if !in_session {
             s.stored_name.clone()
         } else {
             format!(
