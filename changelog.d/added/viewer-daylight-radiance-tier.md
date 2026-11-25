@@ -10,5 +10,5 @@
   read in the tab, its provenance recorded and "PVGIS © European Communities,
   2001-2026" shown with the result) or an EPW file. On the CC0 demo building
   the WebAssembly daylight factor agrees with native Radiance to RMSE 0.035 to
-  0.036 DF points (two native runs: 0.036). Radiance's licence ships beside the files
-  and is linked from the panel and the footer.
+  0.036 DF points (two native runs: 0.036). Radiance's licence ships beside
+  the files and is linked from the panel and the footer.
