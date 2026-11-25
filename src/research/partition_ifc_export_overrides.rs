@@ -515,7 +515,9 @@ pub fn scan_export_parameters(
         .iter()
         .map(|k| match width {
             crate::schema_objects::IdWidth::Wide => k.to_le_bytes().to_vec(),
-            crate::schema_objects::IdWidth::Narrow => (*k as i32).to_le_bytes().to_vec(),
+            crate::schema_objects::IdWidth::Narrow | crate::schema_objects::IdWidth::Absent => {
+                (*k as i32).to_le_bytes().to_vec()
+            }
         })
         .collect();
     let keep = |frame: &crate::schema_objects::Frame, buf: &[u8]| {

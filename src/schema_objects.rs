@@ -11,7 +11,8 @@
 //!
 //! where `id` is the object's ElementId, a `u64` from Revit 2024 on
 //! ([`IdWidth::Wide`]) and a `u32` before ([`IdWidth::Narrow`],
-//! measured on 2023), and the Adler-32 covers the payload. The payload opens
+//! measured on 2023), and the Adler-32 covers the payload. Revit 2008 writes
+//! no `id` ([`IdWidth::Absent`]): the header's id is then the root's `m_id`. The payload opens
 //! with the object's class as a `u16` schema tag
 //! ([`crate::formats::schema_layouts`]). On `rac_basic_sample_project` the
 //! objects cover 84.3 % of the partition bytes on Revit 2024 (97,401 objects)
@@ -88,6 +89,9 @@ const STANDARD_GRAVITY_FT_S2: f64 = 9.80665 / 0.3048;
 /// First release whose object ids are 64-bit on the wire.
 pub const FIRST_WIDE_ID_RELEASE: u32 = 2024;
 
+/// Last release whose objects carry no id on the wire ([`IdWidth::Absent`]).
+pub const LAST_ID_LESS_RELEASE: u32 = 2008;
+
 /// Tag of `ElementId` from Revit 2012 on. The class is found by its name:
 /// earlier schemas give it tag 19 (and tag 20 to `Identifier`, the class it
 /// holds), so a fixed tag read every id of a Revit 2008 to 2011 file as an
@@ -110,7 +114,12 @@ pub const ES_BLOB_TAG: u16 = u16::MAX;
 /// How an object header writes its id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IdWidth {
-    /// `u32` (before Revit 2024).
+    /// No id (Revit 2008): an object is `Adler-32 · size · payload · size`.
+    /// Read with the next object's id slot taken for this one's trailing
+    /// size, every second object overlaps the one before and goes unread
+    /// (two 2008 families measured: 929 objects of one were gaps).
+    Absent,
+    /// `u32` (Revit 2010 to 2023).
     Narrow,
     /// `u64` (Revit 2024 and later).
     Wide,
@@ -121,6 +130,8 @@ impl IdWidth {
     pub fn of_release(version: u32) -> Self {
         if version >= FIRST_WIDE_ID_RELEASE {
             IdWidth::Wide
+        } else if version != 0 && version <= LAST_ID_LESS_RELEASE {
+            IdWidth::Absent
         } else {
             IdWidth::Narrow
         }
@@ -128,6 +139,7 @@ impl IdWidth {
 
     fn bytes(self) -> usize {
         match self {
+            IdWidth::Absent => 0,
             IdWidth::Narrow => 4,
             IdWidth::Wide => 8,
         }
@@ -175,7 +187,11 @@ pub fn frame_at(buf: &[u8], p: usize, width: IdWidth) -> Option<Frame> {
 /// [`frame_at`] without the Adler-32: for offsets a scan already verified.
 fn frame_unchecked(buf: &[u8], p: usize, width: IdWidth) -> Option<Frame> {
     let w = width.bytes();
-    let id_lo = u32_at(buf, p)?;
+    let id_lo = if width == IdWidth::Absent {
+        0
+    } else {
+        u32_at(buf, p)?
+    };
     if width == IdWidth::Wide && u32_at(buf, p + 4)? != 0 {
         return None;
     }
@@ -888,7 +904,8 @@ pub fn header_records(
             .map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")))
     };
     while p < end {
-        let marker = buf[p..end.min(p + w)].iter().all(|&b| b == 0xff) && p + w + 8 <= end;
+        // An id-less record (Revit 2008) has no marker prefix: try it as a record.
+        let marker = w > 0 && buf[p..end.min(p + w)].iter().all(|&b| b == 0xff) && p + w + 8 <= end;
         let taken = if marker {
             match u64_at(p + w) {
                 Some(1) if p + w + 12 <= end && u32_at(buf, p + w + 8) == Some(0) => Some(w + 12),
@@ -926,7 +943,11 @@ pub fn header_records(
 /// repeats its size.
 fn record_at(buf: &[u8], p: usize, end: usize, width: IdWidth) -> Option<Frame> {
     let w = width.bytes();
-    let id_lo = u32_at(buf, p)?;
+    let id_lo = if width == IdWidth::Absent {
+        0
+    } else {
+        u32_at(buf, p)?
+    };
     if width == IdWidth::Wide && u32_at(buf, p + 4)? != 0 {
         return None;
     }
@@ -984,6 +1005,20 @@ pub fn for_each_object(
     Ok(out)
 }
 
+/// An object written without an id ([`IdWidth::Absent`]) takes its root's
+/// `m_id`, so every reader keys it by its ElementId as on later releases.
+#[doc(hidden)]
+pub fn take_element_id(object: &mut SchemaObject) {
+    if object.frame.header.width != IdWidth::Absent {
+        return;
+    }
+    if let Some(Value::Id(id)) = object.root().and_then(|r| r.get("m_id")) {
+        if let Ok(id) = u64::try_from(*id) {
+            object.frame.header.id = id;
+        }
+    }
+}
+
 /// Data objects [`read_frames_in_order`] reads at once: enough to keep every
 /// core busy, few enough that memory stays bounded by a slice of a partition.
 const READ_CHUNK: usize = 4096;
@@ -1019,7 +1054,9 @@ fn read_frames_in_order(
         let (chunk, tail) = rest.split_at(n.max(1));
         rest = tail;
         let objects = crate::control::map_in_order(chunk, |frame| {
-            read_frame(layouts, stream, buf, frame.clone())
+            let mut object = read_frame(layouts, stream, buf, frame.clone());
+            take_element_id(&mut object);
+            object
         });
         for object in &objects {
             visit(object);
@@ -1109,7 +1146,7 @@ pub fn frames_streamed(
             Some(end) => {
                 // Far end: the cheap conditions of `frame_at` first, then the
                 // trailing size and the checksum read from the members.
-                let wide_ok = width == IdWidth::Narrow || u32_at(&window, lp + 4) == Some(0);
+                let wide_ok = width != IdWidth::Wide || u32_at(&window, lp + 4) == Some(0);
                 if size < 2 || !wide_ok {
                     None
                 } else {
@@ -1197,6 +1234,7 @@ pub fn for_each_object_where_streamed(
         let gaps = frames_streamed(&mut part, width, STREAM_AHEAD, |frame, window, base| {
             if keep(frame, window) {
                 let mut object = read_frame(&layouts, &name, window, frame.clone());
+                take_element_id(&mut object);
                 rebase(&mut object, base);
                 visit(&object);
             }
@@ -1493,8 +1531,6 @@ mod tests {
         assert!(docs.iter().all(|d| d.graph.exact));
     }
 
-    /// Before Revit 2012 `ElementId` is tag 19 and tag 20 is `Identifier`,
-    /// the class it holds: an id field still reads as an id.
     #[test]
     fn element_id_is_found_by_class_name() {
         let field = |name: &str, ty| SchemaField {
