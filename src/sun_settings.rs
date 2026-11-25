@@ -32,8 +32,8 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase")]
 pub struct SunSetting {
     pub id: u64,
-    /// The name Revit shows: its own, or `<In-session, Lighting>` (and so on) for a view's own
-    /// setting.
+    /// The name Revit shows: its own, or `<In-session, Lighting>` (and so on) for a setting stored
+    /// as in-session and for a view's copy of a preset whose type it changed.
     pub name: String,
     /// The name as stored (a view's own setting keeps the preset name it was made from, or
     /// `<In-session: ...>`).
@@ -567,8 +567,6 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
     if settings.is_empty() && views.is_empty() {
         return None;
     }
-    // A view's own setting that is not a named preset shows as `<In-session, ...>`, whatever
-    // name it keeps.
     // A preset that only views named `???` (Revit's internal views) use keeps its name, as the
     // API gives it on the tiny reference models.
     let owned: std::collections::BTreeSet<u64> = views
@@ -585,10 +583,20 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
             .map(|s| s.id)
             .collect();
     }
+    // (stored name, type) of every setting, to tell a view's copy that changed type
+    let kinds: Vec<(String, Option<i64>)> = settings
+        .values()
+        .map(|s| (s.stored_name.clone(), s.type_value))
+        .collect();
     for s in settings.values_mut() {
         s.is_preset = presets.contains(&s.id);
-        let in_session =
-            s.stored_name.starts_with("<In-session") || (owned.contains(&s.id) && !s.is_preset);
+        // A view's own copy of a preset keeps the preset's name until its type changes (a copy
+        // of a multi-day study turned into a Lighting sun shows as `<In-session, Lighting>`).
+        let retyped = owned.contains(&s.id)
+            && kinds
+                .iter()
+                .any(|(n, t)| *n == s.stored_name && *t != s.type_value);
+        let in_session = s.stored_name.starts_with("<In-session") || retyped;
         s.name = if !in_session {
             s.stored_name.clone()
         } else {
