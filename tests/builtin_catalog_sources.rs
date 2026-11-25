@@ -19,7 +19,7 @@ const FILLED: [usize; 6] = [3805, 3805, 486, 412, 670, LOCALIZED];
 /// Ids with a help term in at least one language, and the (id, language) terms in all: the terms
 /// the Revit API dump of the public samples shows wrong in German, Japanese or Chinese are left out.
 const LOCALIZED: usize = 1455;
-const LOCALIZED_TERMS: usize = 17114;
+const LOCALIZED_TERMS: usize = 16934;
 
 #[test]
 fn every_field_is_from_its_public_source_or_empty() {
@@ -283,6 +283,48 @@ fn category_newest_release_and_schedules_decide_the_group_and_spec() {
         "{table:?}"
     );
     assert!(!table.contains("-1001301"), "{table:?}");
+    assert!(
+        table.contains("-1001400\tMechanical - Flow\tIFCLENGTHMEASURE\tlabel\n"),
+        "{table:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A sample `--releases` does not list takes the release of its `__pf<year>` name, a `-<variant>`
+/// suffix included: its newer votes decide over an older listed sample's.
+#[test]
+fn an_unlisted_sample_takes_the_release_of_its_saved_name() {
+    use std::process::Command;
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("skipping: no python3");
+        return;
+    }
+    let tools = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/builtin-parameters");
+    let dir = std::env::temp_dir().join(format!("rvt-open-pf-release-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let pairs = dir.join("pairs");
+    std::fs::create_dir_all(&pairs).expect("dir");
+    let write = |name: &str, text: &str| std::fs::write(pairs.join(name), text).expect(name);
+    for (m, set, n) in [("a", "Mechanical", 9), ("b__pf2024-variant", "Mechanical - Flow", 1)] {
+        write(&format!("{m}.pairs.tsv"), "#tag\n");
+        write(&format!("{m}.names.tsv"), "#kind\tname\n");
+        write(&format!("{m}.props.tsv"), &format!("#s\n{set}\tThing\tIFCLENGTHMEASURE\t{n}\n"));
+    }
+    std::fs::write(dir.join("releases.tsv"), "a\t2018\n").expect("releases");
+    std::fs::write(dir.join("bip.tsv"), "WALL_THING\t-1001400\tThing\n").expect("bip");
+    let derive = Command::new("python3")
+        .arg(tools.join("derive_ifc.py"))
+        .args([&pairs, &dir.join("bip.tsv"), &dir.join("out")])
+        .arg("--releases")
+        .arg(dir.join("releases.tsv"))
+        .output()
+        .expect("derive_ifc");
+    assert!(
+        derive.status.success(),
+        "{}",
+        String::from_utf8_lossy(&derive.stderr)
+    );
+    let table = std::fs::read_to_string(dir.join("out.group-spec.tsv")).expect("table");
     assert!(
         table.contains("-1001400\tMechanical - Flow\tIFCLENGTHMEASURE\tlabel\n"),
         "{table:?}"

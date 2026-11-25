@@ -18,13 +18,14 @@ has one for the id: a group Revit renamed (`Mechanical` to `Mechanical - Flow`) 
 A property set whose name holds `Schedule` is a schedule Revit exported as a property set
 (`Door Schedule`), not a parameter group: its properties never vote. (A schedule titled in another language
 is not recognised; no count of samples separates it, since the sample projects repeat their schedules.)
-`--releases` lists `<sample>\t<release>` (without it, every sample counts as one release).
+`--releases` lists `<sample>\t<release>`; a sample it does not list and whose name ends in `__pf<year>` (optionally
+followed by `-<variant>`) counts as that release; any other counts as one release with no year.
 Enumeration texts: an integer parameter whose IFC value is a text gives (id, stored integer) -> text (the text of
 the newest release that has one),
 dropped when the part after its last `: ` is a storey or type name of the sample that wrote it
 (`*.names.tsv`).
 Writes OUT_PREFIX.group-spec.tsv (id, group, ifc_type, route) and OUT_PREFIX.enum-texts.tsv."""
-import argparse, collections, glob, os, sys, unicodedata
+import argparse, collections, glob, os, re, sys, unicodedata
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument('pairs_dir')
 ap.add_argument('bip_enum')
@@ -59,7 +60,13 @@ if args.releases:
         if l[0] != '#' and l.strip():
             a, b = l.rstrip('\n').split('\t')[:2]
             release[unicodedata.normalize('NFC', a)] = b
-rel = lambda fn: release.get(unicodedata.normalize('NFC', sample(fn)), '')
+def rel(fn):
+    """The release of a sample: its row of `--releases`, else the year of a `__pf<year>` name (as saved by that release)."""
+    s = unicodedata.normalize('NFC', sample(fn))
+    if s in release:
+        return release[s]
+    m = re.search(r'__pf(\d{4})(?:-[^_]*)?$', s)
+    return m.group(1) if m else ''
 is_schedule = lambda set_name: 'schedule' in set_name.lower()
 def newest(by_release):
     """The votes of the newest release that has any."""
