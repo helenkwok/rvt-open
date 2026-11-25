@@ -32,14 +32,18 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase")]
 pub struct SunSetting {
     pub id: u64,
-    /// The name Revit shows: its own, or `<In-session, Lighting>` (and so on) for a setting stored
-    /// as in-session and for a view's copy of a preset whose type it changed.
+    /// The name Revit shows: its own, or `<In-session, Lighting>` (and so on) for a setting a
+    /// view owns.
     pub name: String,
     /// The name as stored (a view's own setting keeps the preset name it was made from, or
     /// `<In-session: ...>`).
     pub stored_name: String,
     /// One of the project's named presets ([`SunAndDisplay::presets`]).
     pub is_preset: bool,
+    /// The view this setting belongs to (the API's `OwnerViewId`): a view's own in-session
+    /// setting has one, a named preset none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_view_id: Option<u64>,
     /// The API's `SunAndShadowType`: `StillImage`, `OneDayStudy`, `MultiDayStudy` or
     /// `Lighting`; `None` for a stored value with no known name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -141,6 +145,10 @@ pub struct ViewDisplay {
     pub is_template: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub view_template_id: Option<u64>,
+    /// The primary view of a dependent view (`DBView::m_primaryViewId`), whose display options
+    /// it shows: they are copied onto it here, as the API reports them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_view_id: Option<u64>,
     /// The view's own `SunAndShadowSettings` (the API's `View.SunAndShadowSettings`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sun_setting_id: Option<u64>,
@@ -347,6 +355,7 @@ fn sun_setting(id_: u64, f: &Fields) -> SunSetting {
         name: String::new(),
         stored_name: text(f, "m_sName").unwrap_or_default(),
         is_preset: false,
+        owner_view_id: id(f, "m_ownerDBViewId"),
         sun_and_shadow_type: ty.and_then(sun_and_shadow_type).map(str::to_string),
         type_value: ty,
         start: start.and_then(packed_date_time),
@@ -387,6 +396,7 @@ fn view_display(
         is_3d: class.starts_with("DBView3d"),
         is_template: flag(root, "m_isTemplate"),
         view_template_id: id(root, "m_viewTemplateId"),
+        primary_view_id: id(root, "m_primaryViewId"),
         sun_setting_id: None,
         display_style: None,
         style_values: None,
@@ -576,36 +586,41 @@ pub fn read(rf: &mut RevitFile) -> Option<SunAndDisplay> {
     if settings.is_empty() && views.is_empty() {
         return None;
     }
-    // A preset that only views named `???` (Revit's internal views) use keeps its name, as the
-    // API gives it on the tiny reference models.
-    let owned: std::collections::BTreeSet<u64> = views
-        .values()
-        .filter(|v| v.name != "???")
-        .filter_map(|v| v.sun_setting_id)
-        .collect();
-    // Without the project's own list (none read from the files measured), the named presets are the
-    // settings that are no view's own.
+    // Without the project's own list (none read from the files measured), the named presets are
+    // the settings no view owns.
     if presets.is_empty() {
         presets = settings
             .values()
-            .filter(|s| !owned.contains(&s.id) && !s.stored_name.starts_with("<In-session"))
+            .filter(|s| s.owner_view_id.is_none() && !s.stored_name.starts_with("<In-session"))
             .map(|s| s.id)
             .collect();
     }
-    // (stored name, type) of every setting, to tell a view's copy that changed type
-    let kinds: Vec<(String, Option<i64>)> = settings
+    // A dependent view shows its primary view's display options.
+    let primaries: Vec<(u64, u64)> = views
         .values()
-        .map(|s| (s.stored_name.clone(), s.type_value))
+        .filter_map(|v| Some((v.id, v.primary_view_id?)))
         .collect();
+    for (dependent, primary) in primaries {
+        let Some(p) = views.get(&primary).cloned() else {
+            continue;
+        };
+        if let Some(v) = views.get_mut(&dependent) {
+            *v = ViewDisplay {
+                id: v.id,
+                name: std::mem::take(&mut v.name),
+                class: std::mem::take(&mut v.class),
+                is_template: v.is_template,
+                view_template_id: v.view_template_id,
+                primary_view_id: v.primary_view_id,
+                ..p
+            };
+        }
+    }
     for s in settings.values_mut() {
         s.is_preset = presets.contains(&s.id);
-        // A view's own copy of a preset keeps the preset's name until its type changes (a copy
-        // of a multi-day study turned into a Lighting sun shows as `<In-session, Lighting>`).
-        let retyped = owned.contains(&s.id)
-            && kinds
-                .iter()
-                .any(|(n, t)| *n == s.stored_name && *t != s.type_value);
-        let in_session = s.stored_name.starts_with("<In-session") || retyped;
+        // A setting a view owns shows as `<In-session, ...>`, whatever name it keeps (the
+        // preset it was copied from, or `<In-session: ...>`).
+        let in_session = s.owner_view_id.is_some() || s.stored_name.starts_with("<In-session");
         s.name = if !in_session {
             s.stored_name.clone()
         } else {
