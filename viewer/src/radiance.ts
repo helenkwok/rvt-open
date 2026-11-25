@@ -69,7 +69,8 @@ export class Radiance {
   private files = new Map<string, Promise<Uint8Array>>();
   private workers: Worker[] = [];
   private req = 0;
-  private stopped = false;
+  /** Why the workers were stopped, until the next start; a run started meanwhile fails with it. */
+  private stopped: string | null = null;
   private pending = new Map<number, { resolve: (out: Uint8Array) => void; reject: (e: Error) => void }>();
   /** `?radiance-compile=each` makes every worker fetch and compile each program itself, to measure against sharing. */
   private compileEach = new URLSearchParams(location.search).get('radiance-compile') === 'each';
@@ -112,14 +113,14 @@ export class Radiance {
     return f;
   }
 
-  /** Stops every worker and rejects every run still waiting. */
-  stop(): void {
-    this.stopped = true;
+  /** Stops every worker and rejects every run still waiting with `reason`. */
+  stop(reason = 'stopped'): void {
+    this.stopped = reason;
     for (const w of this.workers) w.terminate();
     this.workers = [];
     const calls = [...this.pending.values()];
     this.pending.clear();
-    for (const c of calls) c.reject(new Error('stopped'));
+    for (const c of calls) c.reject(new Error(reason));
   }
 
   private worker(k: number): Worker {
@@ -133,9 +134,12 @@ export class Radiance {
         if (m.type === 'done' && m.out) call.resolve(m.out);
         else call.reject(new Error(m.message ?? 'a Radiance program failed'));
       });
-      // a worker that dies outside a run's own error handling ends every run still waiting
-      w.addEventListener('error', () => this.stop());
-      w.addEventListener('messageerror', () => this.stop());
+      // a worker that cannot start, throws outside a run, or sends a reply that cannot be read ends every run still waiting
+      w.addEventListener('error', (ev: ErrorEvent) => {
+        ev.preventDefault();
+        this.stop(`a Radiance worker failed${ev.message ? `: ${ev.message}` : ' to start'}`);
+      });
+      w.addEventListener('messageerror', () => this.stop('a Radiance worker sent a reply that could not be read'));
       this.workers.push(w);
     }
     return this.workers[k];
@@ -144,7 +148,7 @@ export class Radiance {
   /** Runs `prog` in worker `k`; resolves with its standard output. */
   private async run(k: number, prog: string, args: string[], files: Record<string, Uint8Array>, stdin?: Uint8Array): Promise<Uint8Array> {
     const module = this.compileEach ? undefined : await this.module(prog);
-    if (this.stopped) throw new Error('stopped');
+    if (this.stopped !== null) throw new Error(this.stopped);
     const w = this.worker(k);
     const req = ++this.req;
     return new Promise<Uint8Array>((resolve, reject) => {
@@ -196,7 +200,7 @@ export class Radiance {
   /** gensky's CIE overcast sky with 10,000 lux of unobstructed horizontal illuminance, so DF % = lux / 100. */
   /** Clears an earlier Stop: call when a Radiance analysis starts. */
   start(): void {
-    this.stopped = false;
+    this.stopped = null;
   }
 
   async overcastSky(): Promise<string> {

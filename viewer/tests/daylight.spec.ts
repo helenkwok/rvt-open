@@ -171,3 +171,35 @@ const radianceBuild = path.resolve(__dirname, '../public/radiance/rtrace.wasm');
   await expect(panel).toHaveAttribute('data-state', 'done', { timeout: 120_000 });
   await expect(panel).toHaveAttribute('data-overlay', '391');
 });
+
+(fs.existsSync(demo) && fs.existsSync(radianceBuild) ? test : test.skip)('a Radiance worker that cannot start fails the run instead of reading as stopped', async ({ page }) => {
+  test.setTimeout(400_000);
+  // while the flag is set, the Radiance workers (named radiance-N) load a script that does not exist
+  await page.addInitScript(() => {
+    const Real = window.Worker;
+    const w = window as unknown as { __breakRadiance?: boolean };
+    window.Worker = class extends Real {
+      constructor(url: string | URL, opts?: WorkerOptions) {
+        super(w.__breakRadiance && opts?.name?.startsWith('radiance-') ? '/no-such-radiance-worker.js' : url, opts);
+      }
+    };
+  });
+  await openPanel(page);
+  const panel = page.locator('#daylight-panel');
+  await page.evaluate(() => {
+    (window as unknown as { __breakRadiance?: boolean }).__breakRadiance = true;
+  });
+  await page.locator('#daylight-analysis').selectOption('rad-df');
+  await page.locator('#daylight-run').click();
+  await expect(panel).toHaveAttribute('data-state', 'error', { timeout: 120_000 });
+  await expect(page.locator('#daylight-status')).toContainText('a Radiance worker failed');
+  await expect(page.locator('#daylight-run')).toBeEnabled();
+  // the next run starts new workers and finishes
+  await page.evaluate(() => {
+    (window as unknown as { __breakRadiance?: boolean }).__breakRadiance = false;
+  });
+  await page.locator('#daylight-run').click();
+  await expect(panel).toHaveAttribute('data-state', 'done', { timeout: 300_000 });
+  await expect(panel).toHaveAttribute('data-analysis', 'rad-df');
+  await expect(panel).toHaveAttribute('data-overlay', '391');
+});
