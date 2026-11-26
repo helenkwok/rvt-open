@@ -123,11 +123,11 @@ export interface RadianceHooks {
 }
 
 /**
- * rtrace's memory per worker: about eight times the octree (the scene it reads back, the ambient
- * cache) plus a base, measured on the public samples (76 MiB with a 1.1 MiB octree, 176 MiB with
- * 18 MiB, 991 MiB with 118 MiB).
+ * rtrace's memory per worker: about six to eight times the octree (the scene it reads back, the
+ * ambient cache) plus a base, measured on the public samples (76 MiB with a 1.1 MiB octree, 176 MiB
+ * with 18 MiB, 991 MiB with 118 MiB, 1,552 MiB with 271 MiB).
  */
-const workerBytes = (octree: number): number => 8 * octree + 64 * 2 ** 20;
+const workerBytes = (octree: number): number => 7 * octree + 64 * 2 ** 20;
 
 export class Radiance {
   private modules = new Map<string, Promise<WebAssembly.Module>>();
@@ -308,18 +308,21 @@ export class Radiance {
       // built again at oconv's default resolution
       let oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], files);
       let resolution = '-r 1024';
-      if (overflows()) {
-        hooks.stage('oconv', 'surfaces crowd at the coarser resolution: building the octree again at the default one');
-        oct = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], files);
-        resolution = 'default (-r 16384)';
+      let over = overflows();
+      if (over) {
+        hooks.stage('oconv', `${over.toLocaleString('en')} set overflows at the coarser resolution: building the octree again at the default one`);
+        const fine = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], files);
+        // the finer octree is kept only where it places more surfaces: it is larger, so fewer workers fit
+        if (overflows() < over) [oct, over, resolution] = [fine, overflows(), 'default (-r 16384)'];
       }
-      this.sceneOct = { key: sceneKey, oct, resolution, setOverflows: overflows() };
+      this.sceneOct = { key: sceneKey, oct, resolution, setOverflows: over };
     }
     hooks.stage('oconv-sky', sceneReused ? 'adding the sky to the scene’s octree from the last run' : 'adding the sky');
     const oct = await this.run(0, 'oconv', ['-f', '-i', 'scene.oct', 'sky.rad', 'glow.rad'], { 'scene.oct': this.sceneOct!.oct, 'sky.rad': enc(sky), 'glow.rad': enc(GLOW) });
     const n = sensors.length;
-    // each worker holds the octree and rtrace's own memory: as many as about half the device's memory allows
-    const budget = (((navigator as { deviceMemory?: number }).deviceMemory ?? 8) * 2 ** 30) / 2;
+    // each worker holds the octree and rtrace's own memory: as many as about three quarters of the device's
+    // memory allows (browsers report at most 8 GB, so this is a floor on larger machines)
+    const budget = ((navigator as { deviceMemory?: number }).deviceMemory ?? 8) * 2 ** 30 * 0.75;
     const fit = Math.max(1, Math.floor(budget / workerBytes(oct.length)));
     const shares = Math.max(1, Math.min(this.size, fit, Math.ceil(n / 16)));
     const per = Math.ceil(n / shares);

@@ -1307,6 +1307,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   function trackStart(): void {
     const now = performance.now();
     Object.assign(track, { t0: now, last: now, stage: '', text: '', done: 0, total: 0, timeline: [] });
+    delete root.dataset.midUpdates;
     live.hidden = false;
     workersLine.hidden = true;
     workersLine.textContent = '';
@@ -1342,6 +1343,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     const now = performance.now();
     if (done > track.done || total !== track.total) track.last = now;
     if (track.done === 0 && done > 0) [track.countT0, track.countDone0] = [now, 0];
+    // updates that arrive while tracing is under way: the bar moved between empty and full
+    if ((track.stage === 'trace' || track.stage === 'rtrace') && done > 0 && done < total) root.dataset.midUpdates = String(Number(root.dataset.midUpdates ?? 0) + 1);
     track.done = done;
     track.total = total;
     root.dataset.done = String(done);
@@ -1488,9 +1491,11 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       drawOverlay(p, null, v, 0, 1);
       autoCut(Math.max(...storeys.map((s) => s.top)));
       let painted = 0;
+      // every repaint redraws the model as well: a large one is repainted once a second, not four times
+      const paintEvery = tris > LARGE_SCENE ? 1000 : 250;
       const paint = (): void => {
         const now = performance.now();
-        if (now - painted < 250) return;
+        if (now - painted < paintEvery) return;
         painted = now;
         const [lo, hi] = rangeOf(a, v, null);
         paintOverlay(v, lo, hi);

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 //                          and Core Interior, and RVT_SHEETS_MODEL (Technical School) at 2 m.
 //   RVT_DAYLIGHT_ANALYSES  comma-separated (default sunhours,svf,df,rad-df,rad-pit)
 //   RVT_DAYLIGHT_RUN_S     the longest a run may take, seconds (default 1800); a longer one is a failure
+//   RVT_DAYLIGHT_QUERY     added to the page's address (for example daylight-workers=4)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const demos = path.resolve(__dirname, '../public/demos');
@@ -60,16 +61,27 @@ async function runOne(page: Page, analysis: string): Promise<Omit<Row, 'model' |
   const t0 = Date.now();
   await panel.evaluate((e) => e.removeAttribute('data-state'));
   await page.locator('#daylight-run').click();
-  // a large run asks first; the samples run in full
   await expect(panel).toHaveAttribute('data-state', /^(running|ask|done|error)$/, { timeout: 600_000 });
-  if ((await panel.getAttribute('data-state')) === 'ask') await page.locator('#daylight-run').click();
   let barMoved = false;
   let state = '';
+  let said = 0;
   while (Date.now() - t0 < runS * 1000) {
+    // a line a minute: where a long run is
+    if (Date.now() - said > 60_000) {
+      said = Date.now();
+      const at = await panel.evaluate((e) => ({ stage: e.dataset.stage, done: e.dataset.done, total: e.dataset.total, status: document.getElementById('daylight-status')?.textContent, workers: document.getElementById('daylight-workers')?.textContent, live: document.getElementById('daylight-live')?.textContent }));
+      console.log(`PROGRESS ${Math.round((Date.now() - t0) / 1000)} s ${JSON.stringify(at)}`);
+    }
     state = (await panel.getAttribute('data-state')) ?? '';
     const done = Number(await panel.getAttribute('data-done'));
     const total = Number(await panel.getAttribute('data-total'));
     const stage = (await panel.getAttribute('data-stage')) ?? '';
+    // a large run asks first, once the scene is built; the samples run in full
+    if (state === 'ask') {
+      await page.locator('#daylight-run').click();
+      await expect(panel).not.toHaveAttribute('data-state', 'ask');
+      continue;
+    }
     if ((stage === 'trace' || stage === 'rtrace') && done > 0 && done < total) barMoved = true;
     if (state === 'done' || state === 'error' || state === 'idle') break;
     await page.waitForTimeout(250);
@@ -79,6 +91,8 @@ async function runOne(page: Page, analysis: string): Promise<Omit<Row, 'model' |
     await page.locator('#daylight-stop').click();
     state = 'timeout';
   }
+  // the panel counts the updates it showed mid-trace, which the polling above can miss while the page is busy
+  if (Number(await panel.getAttribute('data-mid-updates')) > 0) barMoved = true;
   const timeline = JSON.parse((await panel.getAttribute('data-timeline')) ?? '[]') as [string, number][];
   const status = (await page.locator('#daylight-status').textContent()) ?? '';
   return {
@@ -103,7 +117,7 @@ test('every Daylight analysis on real public samples', async ({ page }) => {
   expect(missing, 'samples named in RVT_DAYLIGHT_SAMPLES that are not there').toEqual([]);
   for (const s of samples) {
     const model = path.basename(s.file);
-    await page.goto('/');
+    await page.goto(`/${process.env.RVT_DAYLIGHT_QUERY ? `?${process.env.RVT_DAYLIGHT_QUERY}` : ''}`);
     await page.locator('#file-input').setInputFiles(s.file);
     await expect(page.locator('#status')).toHaveText(/Loaded/, { timeout: 600_000 });
     await page.locator('#daylight-details > summary').click();
