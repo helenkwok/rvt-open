@@ -291,8 +291,13 @@ pub fn sheet_drawing(
     facts: &ViewFacts,
     sheet: &crate::plan_views::Sheet,
     symbols: &std::collections::BTreeMap<usize, Vec<super::entities::PlanPolyline>>,
+    layers: &super::dwg_layers::ExportLayers,
     notes: &mut Vec<String>,
 ) -> Result<rvt_dwg::Drawing2d, String> {
+    let nplt = layers.annotation_layer("G-ANNO-NPLT", 7);
+    let ttlb = layers.annotation_layer("G-ANNO-TTLB", 7);
+    let notes_layer = layers.annotation_layer("G-ANNO-TEXT", 7);
+    let detail = layers.annotation_layer("A-DETL", 7);
     use rvt_dwg::{Affine, Entity2d, Geom, Layer2d, Layout2d};
     const PAPER: &str = "*Paper_Space";
     let mm = |p: [f64; 2]| [p[0] * MM_PER_FOOT, p[1] * MM_PER_FOOT, 0.0];
@@ -360,6 +365,7 @@ pub fn sheet_drawing(
                     window: Some(window),
                     annotation: Some(annotation),
                     symbols: symbols.clone(),
+                    layers: layers.clone(),
                     ..SheetOptions::default()
                 };
                 (
@@ -379,8 +385,8 @@ pub fn sheet_drawing(
                     continue;
                 };
                 let scale = view.scale.unwrap_or(100.0);
-                let mut d = super::sheet::projected_drawing(model, &window, scale);
-                section_annotation(&mut d, model, facts, view, &window, scale);
+                let mut d = super::sheet::projected_drawing(model, &window, scale, layers);
+                section_annotation(&mut d, model, facts, view, &window, scale, layers);
                 let (origin, mut frame, annotation_crop) = section_frame(view, &window, scale);
                 // The viewport frames the crop and what the view draws beyond it (level and grid
                 // heads, notes), cut at the annotation crop when that is on: the outlines the
@@ -444,7 +450,7 @@ pub fn sheet_drawing(
                 }
                 Some(v) => {
                     let scale = v.scale.unwrap_or(1.0);
-                    let d = drafting_drawing(rf, facts, v.id, scale, notes);
+                    let d = drafting_drawing(rf, facts, v.id, scale, layers, notes);
                     if d.entities.is_empty() {
                         notes.push(format!(
                             "sheet {}: drafting view {:?} drew nothing",
@@ -498,10 +504,10 @@ pub fn sheet_drawing(
         // nothing lies on its edge.
         let spare = if frame.is_some() { 0.0 } else { 4.0 };
         let (w, h) = ((b[2] - b[0]) / scale + spare, (b[3] - b[1]) / scale + spare);
-        ensure(&mut out, "G-ANNO-NPLT", 7);
+        ensure(&mut out, &nplt.0, nplt.1);
         out.entities.push(paper(
             "VIEWPORT",
-            "G-ANNO-NPLT",
+            &nplt.0,
             Geom::Viewport {
                 center: [
                     o[0] + (c[0] - origin[0]) / scale,
@@ -518,11 +524,11 @@ pub fn sheet_drawing(
         viewport_id += 1;
         // The view's title: its name at the title's origin, over a line of the title's length.
         if vp.label_length > 0.0 {
-            ensure(&mut out, "G-ANNO-TTLB", 7);
+            ensure(&mut out, &ttlb.0, ttlb.1);
             let at = mm(vp.label_origin);
             out.entities.push(paper(
                 "LINE",
-                "G-ANNO-TTLB",
+                &ttlb.0,
                 Geom::Line {
                     a: at,
                     b: [at[0] + vp.label_length * MM_PER_FOOT, at[1], 0.0],
@@ -530,7 +536,7 @@ pub fn sheet_drawing(
             ));
             out.entities.push(paper(
                 "TEXT",
-                "G-ANNO-TTLB",
+                &ttlb.0,
                 Geom::Text {
                     at: [at[0], at[1] + 2.0, 0.0],
                     height: 3.5,
@@ -583,7 +589,7 @@ pub fn sheet_drawing(
             if value.trim().is_empty() {
                 continue;
             }
-            ensure(&mut out, "G-ANNO-TTLB", 7);
+            ensure(&mut out, &ttlb.0, ttlb.1);
             let (text, at) = label_text(l, &value);
             // In the sheet: placed and turned by the title block.
             let at = [
@@ -592,7 +598,7 @@ pub fn sheet_drawing(
             ];
             out.entities.push(paper(
                 "TEXT",
-                "G-ANNO-TTLB",
+                &ttlb.0,
                 Geom::Text {
                     at: mm(at),
                     height: text.0 * MM_PER_FOOT,
@@ -610,7 +616,7 @@ pub fn sheet_drawing(
             ));
             continue;
         };
-        ensure(&mut out, "G-ANNO-TTLB", 7);
+        ensure(&mut out, &ttlb.0, ttlb.1);
         let [c, s] = t.x_dir;
         let place = |p: (f64, f64)| {
             mm([
@@ -622,7 +628,7 @@ pub fn sheet_drawing(
             for w in super::sheet::symbol_points(curve).windows(2) {
                 out.entities.push(paper(
                     "LINE",
-                    "G-ANNO-TTLB",
+                    &ttlb.0,
                     Geom::Line {
                         a: place(w[0]),
                         b: place(w[1]),
@@ -633,7 +639,7 @@ pub fn sheet_drawing(
         for text in texts {
             out.entities.push(paper(
                 "TEXT",
-                "G-ANNO-TTLB",
+                &ttlb.0,
                 Geom::Text {
                     at: place((text.at[0], text.at[1])),
                     height: text.height_feet * MM_PER_FOOT,
@@ -645,10 +651,10 @@ pub fn sheet_drawing(
     }
     // The sheet's own text notes and detail lines, sheet sizes.
     for t in facts.texts.iter().filter(|t| t.view == sheet.id) {
-        ensure(&mut out, "G-ANNO-TEXT", 7);
+        ensure(&mut out, &notes_layer.0, notes_layer.1);
         out.entities.push(paper(
             "TEXT",
-            "G-ANNO-TEXT",
+            &notes_layer.0,
             Geom::Text {
                 at: mm([t.at[0], t.at[1]]),
                 height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * MM_PER_FOOT,
@@ -658,11 +664,11 @@ pub fn sheet_drawing(
         ));
     }
     for c in facts.curves.iter().filter(|c| c.view == Some(sheet.id)) {
-        ensure(&mut out, "A-DETL", 7);
+        ensure(&mut out, &detail.0, detail.1);
         for w in c.points.windows(2) {
             out.entities.push(paper(
                 "LINE",
-                "A-DETL",
+                &detail.0,
                 Geom::Line {
                     a: mm([w[0][0], w[0][1]]),
                     b: mm([w[1][0], w[1][1]]),
@@ -799,7 +805,13 @@ fn section_annotation(
     view: &crate::plan_views::SectionView,
     w: &super::sheet::ProjectedWindow,
     scale: f64,
+    layers: &super::dwg_layers::ExportLayers,
 ) {
+    let notes_layer = layers.annotation_layer("G-ANNO-TEXT", 7);
+    let grid = layers.annotation_layer("S-GRID", 7);
+    let grid_head = layers.annotation_layer("S-GRID-IDEN", 7);
+    let level = layers.annotation_layer("A-FLOR-LEVL", 7);
+    let detail = layers.annotation_layer("A-DETL", 7);
     use rvt_dwg::{Entity2d, Geom, Layer2d};
     let on_view = |p: [f64; 3]| {
         [
@@ -808,9 +820,9 @@ fn section_annotation(
             0.0,
         ]
     };
-    let layer = |d: &mut rvt_dwg::Drawing2d, name: &str| {
-        if !d.layers.iter().any(|l| l.name == name) {
-            d.layers.push(Layer2d::new(name, 7));
+    let layer = |d: &mut rvt_dwg::Drawing2d, (name, aci): &(String, i16)| {
+        if !d.layers.iter().any(|l| &l.name == name) {
+            d.layers.push(Layer2d::new(name.as_str(), *aci));
         }
     };
     // Notes and detail lines outside the annotation crop, when that is on, are not shown.
@@ -824,10 +836,10 @@ fn section_annotation(
         .iter()
         .filter(|t| t.view == view.id && shown(on_view(t.at)))
     {
-        layer(d, "G-ANNO-TEXT");
+        layer(d, &notes_layer);
         d.entities.push(Entity2d::new(
             "TEXT",
-            "G-ANNO-TEXT",
+            &notes_layer.0,
             Geom::Text {
                 at: on_view(t.at),
                 height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale * MM_PER_FOOT,
@@ -878,17 +890,16 @@ fn section_annotation(
                 if y < c.min[1] || y > c.max[1] {
                     continue;
                 }
-                layer(d, "S-GRID");
-                layer(d, "S-GRID-IDEN");
+                layer(d, &level);
                 let (a, b) = (at(c.min[0], y, near), at(c.max[0], y, near));
-                line(d, a, b, "S-GRID");
+                line(d, a, b, &level.0);
                 let right = if a[0] > b[0] { a } else { b };
                 let gap = 1.5 / MM_PER_FOOT * k;
                 text(
                     d,
                     [right[0] + gap, right[1] + gap, 0.0],
                     l.name.clone(),
-                    "S-GRID-IDEN",
+                    &level.0,
                 );
                 text(
                     d,
@@ -898,7 +909,7 @@ fn section_annotation(
                         0.0,
                     ],
                     format!("{}", (z * MM_PER_FOOT).round()),
-                    "S-GRID-IDEN",
+                    &level.0,
                 );
             }
         }
@@ -921,10 +932,10 @@ fn section_annotation(
                 if x < c.min[0] || x > c.max[0] {
                     continue;
                 }
-                layer(d, "S-GRID");
-                layer(d, "S-GRID-IDEN");
+                layer(d, &grid);
+                layer(d, &grid_head);
                 let (a, top) = (at(x, c.min[1], near), at(x, c.max[1], near));
-                line(d, a, top, "S-GRID");
+                line(d, a, top, &grid.0);
                 let centre = [top[0], top[1] + radius];
                 for i in 0..32 {
                     let p = |i: usize| {
@@ -935,7 +946,7 @@ fn section_annotation(
                             0.0,
                         ]
                     };
-                    line(d, p(i), p(i + 1), "S-GRID-IDEN");
+                    line(d, p(i), p(i + 1), &grid_head.0);
                 }
                 let tw = crate::plan_views::text_width(&g.name, 1.4 * 2.5 / MM_PER_FOOT * k);
                 text(
@@ -946,7 +957,7 @@ fn section_annotation(
                         0.0,
                     ],
                     g.name.clone(),
-                    "S-GRID-IDEN",
+                    &grid_head.0,
                 );
             }
         }
@@ -960,14 +971,14 @@ fn section_annotation(
                 .category
                 .is_some_and(|k| k < -1 && hidden_ids.contains(&k))
     }) {
-        layer(d, "A-DETL");
+        layer(d, &detail);
         for s in c.points.windows(2) {
             // The part inside the annotation crop.
             let Some((a, b)) = clip_to_rect(on_view(s[0]), on_view(s[1]), annotation_crop) else {
                 continue;
             };
             d.entities
-                .push(Entity2d::new("LINE", "A-DETL", Geom::Line { a, b }));
+                .push(Entity2d::new("LINE", &detail.0, Geom::Line { a, b }));
         }
     }
 }
@@ -1010,8 +1021,12 @@ fn drafting_drawing(
     facts: &ViewFacts,
     id: i64,
     scale: f64,
+    layers: &super::dwg_layers::ExportLayers,
     notes: &mut Vec<String>,
 ) -> rvt_dwg::Drawing2d {
+    let notes_layer = layers.annotation_layer("G-ANNO-TEXT", 7);
+    let detail = layers.annotation_layer("A-DETL", 7);
+    let import = layers.annotation_layer("G-ANNO-IMPT", 7);
     use rvt_dwg::{Drawing2d, Entity2d, Geom, Layer2d, Layout2d, MODEL_SPACE};
     let mm = |p: [f64; 3]| [p[0] * MM_PER_FOOT, p[1] * MM_PER_FOOT, 0.0];
     let mut d = Drawing2d {
@@ -1031,7 +1046,7 @@ fn drafting_drawing(
     for t in facts.texts.iter().filter(|t| t.view == id) {
         d.entities.push(Entity2d::new(
             "TEXT",
-            "G-ANNO-TEXT",
+            &notes_layer.0,
             Geom::Text {
                 at: mm(t.at),
                 height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale * MM_PER_FOOT,
@@ -1044,7 +1059,7 @@ fn drafting_drawing(
         for s in c.points.windows(2) {
             d.entities.push(Entity2d::new(
                 "LINE",
-                "A-DETL",
+                &detail.0,
                 Geom::Line {
                     a: mm(s[0]),
                     b: mm(s[1]),
@@ -1069,7 +1084,7 @@ fn drafting_drawing(
                 for s in super::sheet::symbol_points(c).windows(2) {
                     d.entities.push(Entity2d::new(
                         "LINE",
-                        "G-ANNO-IMPT",
+                        &import.0,
                         Geom::Line {
                             a: place(s[0]),
                             b: place(s[1]),
@@ -1079,9 +1094,10 @@ fn drafting_drawing(
             }
         }
     }
-    for name in ["G-ANNO-TEXT", "A-DETL", "G-ANNO-IMPT"] {
-        if d.entities.iter().any(|e| e.layer == name) {
-            d.layers.push(Layer2d::new(name, 7));
+    for (name, aci) in [&notes_layer, &detail, &import] {
+        if d.entities.iter().any(|e| &e.layer == name) && !d.layers.iter().any(|l| &l.name == name)
+        {
+            d.layers.push(Layer2d::new(name.as_str(), *aci));
         }
     }
     d
@@ -1116,6 +1132,7 @@ pub fn view_drawing(
     facts: &ViewFacts,
     key: DrawingKey,
     symbols: &std::collections::BTreeMap<usize, Vec<super::entities::PlanPolyline>>,
+    layers: &super::dwg_layers::ExportLayers,
     notes: &mut Vec<String>,
 ) -> Result<ViewDrawing, String> {
     match key {
@@ -1126,7 +1143,7 @@ pub fn view_drawing(
                 .find(|s| s.id == id)
                 .ok_or_else(|| format!("no sheet {id}"))?;
             Ok(ViewDrawing {
-                drawing: sheet_drawing(rf, model, facts, sheet, symbols, notes)?,
+                drawing: sheet_drawing(rf, model, facts, sheet, symbols, layers, notes)?,
                 layout: Some("Layout1"),
                 scale: 1.0,
             })
@@ -1142,6 +1159,7 @@ pub fn view_drawing(
                 window: Some(window),
                 annotation: Some(annotation),
                 symbols: symbols.clone(),
+                layers: layers.clone(),
                 ..SheetOptions::default()
             };
             Ok(ViewDrawing {
@@ -1159,8 +1177,8 @@ pub fn view_drawing(
             let window = section_window(facts, view)
                 .ok_or_else(|| format!("{:?} has no crop box decoded", view.name))?;
             let scale = view.scale.unwrap_or(100.0);
-            let mut drawing = super::sheet::projected_drawing(model, &window, scale);
-            section_annotation(&mut drawing, model, facts, view, &window, scale);
+            let mut drawing = super::sheet::projected_drawing(model, &window, scale, layers);
+            section_annotation(&mut drawing, model, facts, view, &window, scale, layers);
             Ok(ViewDrawing {
                 drawing,
                 layout: None,

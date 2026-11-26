@@ -176,6 +176,7 @@ cli       reproducible_outputs
 cli       resource_limits_cli
 cli       rvt_dump_cli
 cli       sheet_view
+cli       dwg_layer_table
 real      sheet_drawings
 real      sheet_listing
 cli       gltf_normals

@@ -2073,14 +2073,15 @@ thread_local! {
 }
 
 /// What the drawings of one file are made from, as `rvt-sheet` makes them: its exported model, its
-/// views and its family instances' plan symbols. `size` and `digest` tell the file apart from
-/// another, including one of the same length.
+/// views, its family instances' plan symbols and the layers its walls are drawn on. `size` and
+/// `digest` tell the file apart from another, including one of the same length.
 struct DrawingSource {
     size: u32,
     digest: u64,
     model: IfcModel,
     facts: rvt::plan_views::ViewFacts,
     symbols: BTreeMap<usize, Vec<rvt::ifc::entities::PlanPolyline>>,
+    layers: rvt::ifc::dwg_layers::ExportLayers,
 }
 
 /// A digest of a file's bytes, read a piece at a time so that no second copy of the file is held.
@@ -2159,9 +2160,15 @@ pub fn drawing_list(bytes: &js_sys::Uint8Array, model: JsValue) -> Result<JsValu
 /// for the next drawing of the same file (a worker opens one file). Keeps the drawing for
 /// [`drawing_save`] and returns `{ svg, layers, notDrawn, truncated, layout, scale, counts: {
 /// lines, texts, viewports, entities }, notes }`, the SVG being the sheet's paper space (its
-/// viewports showing the views) or the view's model space.
+/// viewports showing the views) or the view's model space. `roomBoundaries` (default false) draws
+/// rooms, spaces and areas as boundary polylines, as `rvt-sheet --room-boundaries` does.
 #[wasm_bindgen(js_name = drawingOpen)]
-pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<JsValue, JsValue> {
+pub fn drawing_open(
+    bytes: &js_sys::Uint8Array,
+    kind: &str,
+    id: f64,
+    room_boundaries: Option<bool>,
+) -> Result<JsValue, JsValue> {
     use rvt::ifc::Exporter;
     use rvt::ifc::sheet_views::{DrawingKey, view_drawing};
     install_panic_hook();
@@ -2224,18 +2231,27 @@ pub fn drawing_open(bytes: &js_sys::Uint8Array, kind: &str, id: f64) -> Result<J
                     Default::default()
                 });
             lap(&mut times, "symbols");
+            let mut layers = rvt::ifc::dwg_layers::ExportLayers::default();
+            if let Err(e) = layers.read_wall_functions(&mut rf, &model) {
+                notes.push(format!(
+                    "wall Functions not read, walls go by IsExternal: {e}"
+                ));
+            }
             *cell = Some(DrawingSource {
                 size,
                 digest,
                 model,
                 facts,
                 symbols,
+                layers,
             });
         }
         Ok(cell.take().expect("set above"))
     })?;
     let (model, facts, symbols) = (&source.model, &source.facts, &source.symbols);
-    let drawn = view_drawing(&mut rf, model, facts, key, symbols, &mut notes);
+    let mut layers = source.layers.clone();
+    layers.room_boundaries = room_boundaries.unwrap_or(false);
+    let drawn = view_drawing(&mut rf, model, facts, key, symbols, &layers, &mut notes);
     DRAWING_SOURCE.with(|cell| *cell.borrow_mut() = Some(source));
     let drawn = drawn.map_err(err_str)?;
     lap(&mut times, "draw");

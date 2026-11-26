@@ -139,6 +139,8 @@ mod duct_names;
 mod duct_segment_shape;
 #[path = "../duct_segment_type_common.rs"]
 mod duct_segment_type_common;
+#[path = "../dwg_layer_table.rs"]
+mod dwg_layer_table;
 #[path = "../elem_table_corpus.rs"]
 mod elem_table_corpus;
 #[path = "../elem_table_frame.rs"]

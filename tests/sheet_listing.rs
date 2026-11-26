@@ -56,6 +56,7 @@ fn every_listed_view_is_drawn_and_only_sheets_without_views_draw_alike() {
             &facts,
             DrawingKey::Plan(by_name.id),
             &symbols,
+            &rvt::ifc::dwg_layers::ExportLayers::default(),
             &mut notes,
         )
         .unwrap_or_else(|e| panic!("plan {:?}: {e}", v.name));
@@ -72,6 +73,7 @@ fn every_listed_view_is_drawn_and_only_sheets_without_views_draw_alike() {
             &facts,
             DrawingKey::Section(v.id),
             &symbols,
+            &rvt::ifc::dwg_layers::ExportLayers::default(),
             &mut notes,
         )
         .unwrap_or_else(|e| panic!("section {:?}: {e}", v.name));
@@ -86,6 +88,7 @@ fn every_listed_view_is_drawn_and_only_sheets_without_views_draw_alike() {
             &facts,
             DrawingKey::Sheet(s.id),
             &symbols,
+            &rvt::ifc::dwg_layers::ExportLayers::default(),
             &mut notes,
         )
         .unwrap_or_else(|e| panic!("sheet {}: {e}", s.number));

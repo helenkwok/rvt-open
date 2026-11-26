@@ -56,6 +56,7 @@ fn sheets() -> Option<(Drawn, Drawn)> {
             &facts,
             DrawingKey::Sheet(sheet.id),
             &symbols,
+            &rvt::ifc::dwg_layers::ExportLayers::default(),
             &mut notes,
         )
         .expect("draw")

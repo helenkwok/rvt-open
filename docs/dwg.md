@@ -35,11 +35,17 @@ What the view hides is left out: the categories its visibility settings (or its 
 and the elements hidden in it. Of several plan views with one name, the one placed on a sheet is drawn.
 With the annotation crop on, text, tags and dimensions outside it (the crop box grown by its offsets, sheet sizes times the view scale)
 are left out. A wall the cut plane cuts is drawn broken where a door, window or opening it hosts crosses
-the cut plane. Layers follow the authoring tool's default (AIA) export layers by category (`A-WALL`
-or `I-WALL` by the wall's Function, `S-STRS`, `A-GLAZ-CURT`, `G-ANNO-TEXT`, ...), and the IFC type where
-the category is not known. An element wholly below the cut plane is drawn as the edges of its body seen
+the cut plane. Layers follow an export layer table in the format of the authoring tool's
+`exportlayers-*.txt` files (category, subcategory, layer name, colour number, cut layer name, cut colour
+number): a wall takes the row for its type's Function (`Walls/Interior:1` on `I-WALL`,
+`Walls/Foundation:3` on `S-FNDN`, ...), a line the cut plane cuts the cut layer, and a subcategory with
+no row its category's. Each layer takes its row's colour number. The built-in table holds the layer
+names and colour numbers the authoring tool's default DWG export (AIA, category properties BYLAYER)
+gives the public samples for the categories drawn; `--layer-table FILE` names layers by another table,
+and on Windows the copy an installation keeps (`%ProgramData%\Autodesk\RVT <release>\exportlayers-dwg-AIA.txt`)
+is used when found. The IFC type names the layer where the category is not known. An element wholly below the cut plane is drawn as the edges of its body seen
 from above (projection lines, with no hidden-line removal yet); a stair or railing the cut plane cuts
-draws its part above it as overhead lines on its layer's `-MBND` layer; other elements the cut plane cuts
+draws its part above it as overhead lines (its table's `<Above>` row, `S-STRS-MBND`, `A-FLOR-HRAL-MBND`); other elements the cut plane cuts
 are drawn as their plan outlines. Each family instance's plan symbol (door swings, window and fixture
 lines: the curves its type shows in a plan view) is drawn through the instance's transform, on the
 instance's layer. The project's own lines are drawn by what owns them: model lines in the view's range and
@@ -47,7 +53,7 @@ the view's detail lines on `A-DETL` (legend views drawn as plans are mostly thes
 `A-AREA`, property lines on `C-PROP-LINE` in every plan, and the boundary sketches of floors, toposolids and
 building pads on their category's layer. Lines that only shape another element are not drawn: a family's
 own lines, the sketches of ceilings, roofs, railings, stairs, walls and openings, sweep paths, and area
-boundaries (area plans only). Rooms are drawn as the export's room polylines (`A-AREA-BNDY`). Grids are
+boundaries (area plans only). With `--room-boundaries`, rooms, spaces and areas are drawn as boundary polylines (`A-AREA-BNDY`), as the authoring tool's export with "Export rooms, spaces and areas as polylines" on draws them; by default they are not, as in its default export. Grids are
 drawn to their extents in the view, with a head (a circle and the grid's name, `S-GRID-IDEN`) beyond the
 bubble end, and beyond the free end too where the view shows both. A roof seen from above hides the
 projection lines of what lies under it. A view whose axes are turned
@@ -75,7 +81,8 @@ block's labels that show the sheet's values (number, name, drawn by, ...).
 and toward-the-viewer `m_viewDir` directions, and its crop box from its `Viewer`) draws, in DXF, DWG or
 PDF, the sharp edges of every element's body inside the crop box, its depth included, projected onto
 the view's plane: x along the view's right and y up, about the internal origin, millimetres, on the
-element's layer. There is no hidden-line removal and no cut pattern yet, and no annotation (level
+element's layer (its table row's cut layer where the view's plane cuts it). On a sheet, a section's
+levels are drawn on `A-FLOR-LEVL` and its grids on `S-GRID` and `S-GRID-IDEN`. There is no hidden-line removal and no cut pattern yet, and no annotation (level
 heads, dimensions, tags).
 
 ## PDF

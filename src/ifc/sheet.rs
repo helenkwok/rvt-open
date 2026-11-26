@@ -15,6 +15,8 @@
 
 use super::IfcModel;
 use super::body_geometry::{Body, Placement, Ring, element_body, plan_outline};
+#[cfg(feature = "dwg")]
+use super::dwg_layers::Line;
 use super::entities::IfcEntity;
 use std::fmt::Write;
 
@@ -43,6 +45,10 @@ pub struct SheetOptions {
     /// instance's outline, on its layer.
     #[serde(skip)]
     pub symbols: std::collections::BTreeMap<usize, Vec<super::entities::PlanPolyline>>,
+    /// The layer table DXF and DWG output names layers by, and the walls' type Functions
+    /// ([`super::dwg_layers::ExportLayers`]); the default is the built-in table.
+    #[serde(skip)]
+    pub layers: super::dwg_layers::ExportLayers,
 }
 
 /// What a plan view shows, in model feet: the elements whose height range meets
@@ -211,6 +217,7 @@ impl Default for SheetOptions {
             window: None,
             annotation: None,
             symbols: Default::default(),
+            layers: Default::default(),
         }
     }
 }
@@ -686,7 +693,12 @@ pub struct ProjectedWindow {
 /// elements' faces at 0.2 mm on the sheet at 1:`scale` (coarser for a very large view). No cut
 /// patterns yet.
 #[cfg(feature = "dwg")]
-pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow, scale: f64) -> rvt_dwg::Drawing2d {
+pub fn projected_drawing(
+    model: &IfcModel,
+    w: &ProjectedWindow,
+    scale: f64,
+    layers: &super::dwg_layers::ExportLayers,
+) -> rvt_dwg::Drawing2d {
     use rvt_dwg::{Drawing2d, Entity2d, Geom, Layer2d, Layout2d, MODEL_SPACE};
     const MM_PER_FOOT: f64 = 304.8;
     /// Lineweights (1/100 mm) of cut and seen lines, the authoring tool's defaults for walls.
@@ -825,8 +837,10 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow, scale: f64) -> r
             .into_iter()
             .map(|(a, b)| (local(a), local(b)))
             .collect();
-        let (layer, aci) = layer_for(own, ifc_type);
-        drawn.push((layer, aci, faces, edges));
+        let element = id.and_then(|id| u64::try_from(id).ok());
+        let cut = layer_for(layers, own, ifc_type, element, Line::Cut);
+        let seen = layer_for(layers, own, ifc_type, element, Line::Seen);
+        drawn.push((cut, seen, faces, edges));
     }
     // The depth buffer, over the crop rectangle, at 0.2 mm on the sheet.
     const MAX_CELLS: f64 = 2048.0;
@@ -862,7 +876,7 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow, scale: f64) -> r
     };
     let push = |d: &mut Drawing2d,
                 seen_keys: &mut std::collections::HashSet<(i64, i64, i64, i64)>,
-                layer: &'static str,
+                layer: &str,
                 aci: i16,
                 weight: i16,
                 a: [f64; 3],
@@ -887,17 +901,18 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow, scale: f64) -> r
         }
         let mut e = Entity2d::new("LINE", layer, Geom::Line { a: pa, b: pb });
         e.lineweight = weight;
+        colour_unless_layer_has(d, &mut e, aci);
         d.entities.push(e);
     };
     let mut keys = std::collections::HashSet::new();
-    for (layer, aci, faces, edges) in &drawn {
+    for ((cut_layer, cut_aci), (layer, aci), faces, edges) in &drawn {
         // The cut: where the section plane (depth 0) crosses each face, inside the crop.
         for f in faces {
             let Some((a, b)) = plane_crossing(f) else {
                 continue;
             };
             if let Some((a, b)) = clip(a, b) {
-                push(&mut d, &mut keys, layer, *aci, CUT_WEIGHT, a, b);
+                push(&mut d, &mut keys, cut_layer, *cut_aci, CUT_WEIGHT, a, b);
             }
         }
         // The seen edges: their runs that no nearer face hides.
@@ -926,12 +941,12 @@ pub fn projected_drawing(model: &IfcModel, w: &ProjectedWindow, scale: f64) -> r
     d
 }
 
-/// What a section draws of one element: its layer and colour, its faces and its sharp edges, in
-/// the crop box's coordinates.
+/// What a section draws of one element: its cut and its seen lines' layer and colour, its faces
+/// and its sharp edges, in the crop box's coordinates.
 #[cfg(feature = "dwg")]
 type Drawn = (
-    &'static str,
-    i16,
+    (String, i16),
+    (String, i16),
     Vec<[[f64; 3]; 3]>,
     Vec<([f64; 3], [f64; 3])>,
 );
@@ -1349,9 +1364,28 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
     };
     let sets = super::element_table::element_sets(model);
     let mut symbol_drawn = std::collections::BTreeSet::new();
+    let layers = &options.layers;
     for fp in collect_footprints(model, options.window.as_ref()) {
+        // Rooms, spaces and areas only as boundary polylines, when asked for.
+        if fp.ifc_type == "IFCSPACE" && !layers.room_boundaries {
+            continue;
+        }
         let own = sets.get(&fp.index).map(Vec::as_slice).unwrap_or_default();
-        let (layer, aci) = layer_for(own, &fp.ifc_type);
+        let element = match model.entities.get(fp.index) {
+            Some(IfcEntity::BuildingElement { type_guid, .. }) => {
+                type_guid.as_deref().and_then(|t| t.parse::<u64>().ok())
+            }
+            _ => None,
+        };
+        let (layer, aci) = layer_for(layers, own, &fp.ifc_type, element, Line::Seen);
+        // The outline is the cut where the view's cut plane crosses the element, else seen.
+        let crossed = options
+            .window
+            .as_ref()
+            .is_some_and(|w| fp.heights.0 <= w.top_feet && fp.heights.1 >= w.top_feet);
+        let outline = if crossed { Line::Cut } else { Line::Seen };
+        let (cut_layer, cut_aci) = layer_for(layers, own, &fp.ifc_type, element, outline);
+        let layer = layer.as_str();
         ensure(&mut d, layer, aci);
         if let Some(curves) = options.symbols.get(&fp.index) {
             if symbol_drawn.insert(fp.index) {
@@ -1393,8 +1427,9 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
             }
         }
         if !fp.overhead.is_empty() {
-            let overhead = format!("{layer}-MBND");
-            ensure(&mut d, &overhead, aci);
+            let (overhead, overhead_aci) =
+                layer_for(layers, own, &fp.ifc_type, element, Line::Overhead);
+            ensure(&mut d, &overhead, overhead_aci);
             for &(p, q) in &fp.overhead {
                 let segment = match crop {
                     Some(c) => c.clip(p, q),
@@ -1419,21 +1454,26 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
         } else {
             Vec::new()
         };
+        if !rings.is_empty() {
+            ensure(&mut d, &cut_layer, cut_aci);
+        }
         for ring in rings {
             let parts = match crop {
                 Some(c) => c.clip_ring(ring),
                 None => vec![(ring.clone(), true)],
             };
             for (pts, closed) in parts {
-                d.entities.push(Entity2d::new(
+                let mut e = Entity2d::new(
                     "LWPOLYLINE",
-                    layer,
+                    &cut_layer,
                     Geom::Polyline {
                         pts: mm(&pts),
                         closed,
                         z: 0.0,
                     },
-                ));
+                );
+                colour_unless_layer_has(&d, &mut e, cut_aci);
+                d.entities.push(e);
             }
         }
         if options.show_labels && options.annotation.is_none() && !fp.name.is_empty() {
@@ -1466,39 +1506,46 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                 None => Some(((l.a[0], l.a[1]), (l.b[0], l.b[1]))),
             };
             if let Some((p, q)) = segment {
-                ensure(&mut d, &l.layer, 8);
-                d.entities.push(Entity2d::new(
+                let (layer, aci) = layers.annotation_layer(&l.layer, 8);
+                ensure(&mut d, &layer, aci);
+                let mut e = Entity2d::new(
                     "LINE",
-                    &l.layer,
+                    &layer,
                     Geom::Line {
                         a: at([p.0, p.1]),
                         b: at([q.0, q.1]),
                     },
-                ));
+                );
+                colour_unless_layer_has(&d, &mut e, aci);
+                d.entities.push(e);
             }
         }
         for t in &a.texts {
-            ensure(&mut d, &t.layer, 7);
-            d.entities.push(Entity2d::new(
+            let (layer, aci) = layers.annotation_layer(&t.layer, 7);
+            ensure(&mut d, &layer, aci);
+            let mut e = Entity2d::new(
                 "TEXT",
-                &t.layer,
+                &layer,
                 Geom::Text {
                     at: at(t.at),
                     height: t.height_feet * MM_PER_FOOT,
                     rotation: t.rotation,
                     value: t.value.clone(),
                 },
-            ));
+            );
+            colour_unless_layer_has(&d, &mut e, aci);
+            d.entities.push(e);
         }
+        let (dims, dims_aci) = layers.annotation_layer("A-ANNO-DIMS", 7);
         for [p, q] in &a.dimensions {
             let measurement = (q[0] - p[0]).hypot(q[1] - p[1]) * MM_PER_FOOT;
             if measurement < 1e-6 {
                 continue;
             }
-            ensure(&mut d, "A-ANNO-DIMS", 7);
-            d.entities.push(Entity2d::new(
+            ensure(&mut d, &dims, dims_aci);
+            let mut e = Entity2d::new(
                 "DIMENSION",
-                "A-ANNO-DIMS",
+                &dims,
                 Geom::Dimension {
                     block: String::new(),
                     measurement,
@@ -1506,7 +1553,9 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                     at: at([(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]),
                     points: vec![at(*p), at(*q)],
                 },
-            ));
+            );
+            colour_unless_layer_has(&d, &mut e, dims_aci);
+            d.entities.push(e);
         }
     }
     if let Some([h, v]) = options.window.as_ref().and_then(|w| w.frame) {
@@ -1523,6 +1572,16 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
         }
     }
     d
+}
+
+/// Colour `e` with `aci` where its layer has another colour: a cut and a seen line whose table
+/// rows share a layer name and differ in colour, the layer taking the first one's.
+#[cfg(feature = "dwg")]
+fn colour_unless_layer_has(d: &rvt_dwg::Drawing2d, e: &mut rvt_dwg::Entity2d, aci: i16) {
+    let on_layer = d.layers.iter().find(|l| l.name == e.layer);
+    if on_layer.and_then(|l| l.colour.aci) != Some(aci) {
+        e.colour = rvt_dwg::Colour::aci(aci);
+    }
 }
 
 /// A plan symbol curve's points in plan, an arc (start, a point on it, end) as 32 chords.
@@ -1560,116 +1619,69 @@ pub fn symbol_points(c: &super::entities::PlanPolyline) -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// The layer Revit's DWG export draws an element on, by its Revit category, with its default
-/// (AIA) layer names: read from Revit's own exports of the public samples, where every sample
-/// gives a category the same layer. Walls go by their Function: an interior wall (not
-/// `IsExternal`) on `I-WALL`. An element with no category known here falls back to its IFC type.
+/// The layer and colour the authoring tool's DWG export draws `line` of an element on, by its
+/// category from `layers`' table: a wall by its type Function (`id` its ElementId) or, where
+/// that is not read, its `IsExternal` (an interior wall on `I-WALL`). An element with no category
+/// in the table falls back to its IFC type, and a row with no colour takes the IFC type's.
 #[cfg(feature = "dwg")]
-fn layer_for(sets: &[&super::entities::PropertySet], ifc_type: &str) -> (&'static str, i16) {
+fn layer_for(
+    layers: &super::dwg_layers::ExportLayers,
+    sets: &[&super::entities::PropertySet],
+    ifc_type: &str,
+    id: Option<u64>,
+    line: Line,
+) -> (String, i16) {
     let fallback = layer_for_ifc_type(ifc_type);
-    let Some(category) = super::element_table::category_in(sets) else {
-        return fallback;
-    };
-    if category == "Walls" {
-        let external = sets
-            .iter()
-            .flat_map(|s| s.properties.iter())
-            .find(|p| p.name == "IsExternal")
-            .and_then(|p| match p.value {
-                super::entities::PropertyValue::Boolean(b) => Some(b),
-                _ => None,
-            });
-        return if external == Some(false) {
-            ("I-WALL", fallback.1)
-        } else {
-            ("A-WALL", fallback.1)
-        };
-    }
-    CATEGORY_LAYERS
+    let external = sets
         .iter()
-        .find(|(c, _)| *c == category)
-        .map_or(fallback, |(_, l)| (l, fallback.1))
+        .flat_map(|s| s.properties.iter())
+        .find(|p| p.name == "IsExternal")
+        .and_then(|p| match p.value {
+            super::entities::PropertyValue::Boolean(b) => Some(b),
+            _ => None,
+        });
+    // An element whose category has no row (a stair's runs and landings) or that has no category
+    // is looked up by the category its IFC type stands for.
+    let found = super::element_table::category_in(sets)
+        .and_then(|category| layers.element_layer(&category, id, external, line))
+        .or_else(|| {
+            let category = category_for_ifc_type(ifc_type)?;
+            layers.element_layer(category, id, external, line)
+        });
+    match found {
+        Some((layer, colour)) => (layer, if colour < 0 { fallback.1 } else { colour }),
+        // No category: the IFC type's layer, with the table's colour for it where it has one.
+        None => {
+            let layer = match line {
+                Line::Overhead => format!("{}-MBND", fallback.0),
+                _ => fallback.0.to_string(),
+            };
+            let colour = layers.table().colour_of(&layer).unwrap_or(fallback.1);
+            (layer, colour)
+        }
+    }
 }
 
-/// Revit category to the layer its DWG export uses (projection and cut agree for each).
+/// The category whose layer [`layer_for_ifc_type`] gives an IFC type.
 #[cfg(feature = "dwg")]
-const CATEGORY_LAYERS: &[(&str, &str)] = &[
-    ("Air Terminals", "M-HVAC-CDFF"),
-    ("Areas", "A-AREA"),
-    ("Cable Tray Fittings", "E-CABL-TRAY"),
-    ("Cable Trays", "E-CABL-TRAY"),
-    ("Casework", "Q-CASE"),
-    ("Ceilings", "A-CLNG"),
-    ("Columns", "A-COLS"),
-    ("Communication Devices", "E-COMM"),
-    ("Conduit Fittings", "E-POWR-CNDT"),
-    ("Conduits", "E-POWR-CNDT"),
-    ("Curtain Panels", "A-GLAZ-CURT"),
-    ("Curtain Systems", "A-GLAZ-CURT"),
-    ("Curtain Wall Mullions", "A-GLAZ-CWMG"),
-    ("Data Devices", "E-DATA"),
-    ("Doors", "A-DOOR"),
-    ("Duct Accessories", "M-HVAC-DUCT"),
-    ("Duct Fittings", "M-HVAC-DUCT"),
-    ("Ducts", "M-HVAC-DUCT"),
-    ("Electrical Equipment", "E-ELEC-EQPM"),
-    ("Electrical Fixtures", "E-ELEC-FIXT"),
-    ("Entourage", "A-DETL-GENF"),
-    ("Fascias", "A-ROOF-OTLN"),
-    ("Fire Alarm Devices", "E-FIRE"),
-    ("Flex Ducts", "M-HVAC-DUCT"),
-    ("Flex Pipes", "P-PIPE"),
-    ("Floors", "A-FLOR"),
-    ("Food Service Equipment", "A-FDSQ"),
-    ("Furniture", "I-FURN"),
-    ("Furniture Systems", "I-FURN-PNLS"),
-    ("Generic Models", "A-GENM"),
-    ("Gutters", "A-ROOF-OTLN"),
-    ("Handrails", "A-FLOR-HRAL"),
-    ("Hardscape", "L-HRDS"),
-    ("Lighting Devices", "E-LITE"),
-    ("Lighting Fixtures", "E-LITE-EQPM"),
-    ("Mass", "A-MASS"),
-    ("Mechanical Equipment", "M-EQPM"),
-    ("Medical Equipment", "A-MEDQ"),
-    ("Nurse Call Devices", "E-NURS"),
-    ("Parking", "C-PRKG"),
-    ("Pipe Accessories", "P-PIPE"),
-    ("Pipe Fittings", "P-PIPE"),
-    ("Pipes", "P-PIPE"),
-    ("Planting", "L-PLNT"),
-    ("Plumbing Equipment", "P-EQPM"),
-    ("Plumbing Fixtures", "P-SANR-FIXT"),
-    ("Railings", "A-FLOR-HRAL"),
-    ("Ramps", "A-FLOR-LEVL"),
-    ("Roof Soffits", "A-ROOF-OTLN"),
-    ("Roofs", "A-ROOF"),
-    // Rooms as the export's room polylines.
-    ("Rooms", "A-AREA-BNDY"),
-    ("Security Devices", "E-SERT"),
-    ("Signage", "A-SIGN"),
-    ("Site", "L-SITE"),
-    ("Slab Edges", "A-FLOR-OTLN"),
-    ("Spaces", "M-AREA"),
-    ("Specialty Equipment", "Q-SPCQ"),
-    ("Sprinklers", "F-SPRN"),
-    ("Stairs", "S-STRS"),
-    ("Structural Beam Systems", "S-BEAM"),
-    ("Structural Columns", "S-COLS"),
-    ("Structural Connections", "S-FSTN"),
-    ("Structural Foundations", "S-FNDN"),
-    ("Structural Framing", "S-BEAM"),
-    ("Structural Rebar", "S-RBAR"),
-    ("Structural Trusses", "S-TRUS"),
-    ("Supports", "A-FLOR-HRAL"),
-    ("Telephone Devices", "E-COMM"),
-    ("Top Rails", "A-FLOR-HRAL"),
-    ("Topography", "C-TOPO"),
-    ("Toposolid", "C-TOPO"),
-    ("Vertical Circulation", "A-VRTC"),
-    ("Wall Sweeps", "A-WALL"),
-    ("Windows", "A-GLAZ"),
-];
+fn category_for_ifc_type(ifc_type: &str) -> Option<&'static str> {
+    Some(match ifc_type {
+        "IFCWALL" | "IFCWALLSTANDARDCASE" | "IFCCURTAINWALL" => "Walls",
+        "IFCDOOR" => "Doors",
+        "IFCWINDOW" => "Windows",
+        "IFCCOLUMN" => "Structural Columns",
+        "IFCBEAM" | "IFCMEMBER" => "Structural Framing",
+        "IFCSLAB" => "Floors",
+        "IFCROOF" => "Roofs",
+        "IFCCOVERING" => "Ceilings",
+        "IFCSTAIR" | "IFCSTAIRFLIGHT" => "Stairs",
+        "IFCRAILING" => "Railings",
+        "IFCFURNITURE" | "IFCFURNISHINGELEMENT" => "Furniture",
+        "IFCSPACE" => "Rooms",
+        "IFCPLATE" => "Curtain Panels",
+        _ => return None,
+    })
+}
 
 /// Layer (in the style of the AIA standard) and colour index for an IFC type.
 #[cfg(feature = "dwg")]
