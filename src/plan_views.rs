@@ -111,6 +111,9 @@ pub struct GridExtent {
 /// A text a view owns, model feet.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct ViewText {
+    /// Its ElementId.
+    #[serde(skip)]
+    pub id: i64,
     pub view: i64,
     pub at: [f64; 3],
     pub value: String,
@@ -125,6 +128,9 @@ pub struct ViewText {
 /// A dimension a view owns: its reference points, model feet.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct ViewDimension {
+    /// Its ElementId.
+    #[serde(skip)]
+    pub id: i64,
     pub view: i64,
     pub points: Vec<[f64; 3]>,
 }
@@ -132,6 +138,9 @@ pub struct ViewDimension {
 /// A room tag a view owns.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct ViewRoomTag {
+    /// Its ElementId.
+    #[serde(skip)]
+    pub id: i64,
     pub view: i64,
     pub room: Option<i64>,
     /// Where the tag sits, when stored; else the room's point is used.
@@ -158,6 +167,9 @@ pub struct RoomLabel {
 /// profile's reference plane, and area boundaries (`m_areaSchemeId` set, drawn only in area plans).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct ViewCurve {
+    /// Its ElementId (for a sketch's line, the element the sketch shapes: a filled region, a floor).
+    #[serde(skip)]
+    pub id: i64,
     pub view: Option<i64>,
     pub category: Option<i64>,
     pub kind: LineKind,
@@ -599,7 +611,7 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
     let mut crops: BTreeMap<i64, CropBox> = BTreeMap::new();
     // Sketches whose lines are drawn (a filled region's, a property's), lines that only shape
     // something else (a sweep path's, a profile plane's), and each candidate line's id and sketch.
-    let mut drawn_sketches: BTreeMap<i64, LineKind> = BTreeMap::new();
+    let mut drawn_sketches: BTreeMap<i64, (LineKind, i64)> = BTreeMap::new();
     let mut shaping: std::collections::BTreeSet<i64> = Default::default();
     let mut curve_owners: Vec<(i64, Option<i64>)> = Vec::new();
     let sketch_of = |o: &SchemaObject| {
@@ -883,6 +895,7 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                 Some("RoomTag") => {
                     if let Some(view) = owner {
                         out.room_tags.push(ViewRoomTag {
+                            id: element,
                             view,
                             room: match root.get("m_taggedRoomElemId") {
                                 Some(Value::Id(i)) if *i >= 0 => Some(*i),
@@ -927,6 +940,7 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                                 float(root, "m_lineWidth").filter(|_| !flag(root, "m_bNoWrapping")),
                             );
                             out.texts.push(ViewText {
+                                id: element,
                                 view,
                                 at,
                                 value,
@@ -961,7 +975,11 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                             }
                         }
                         if points.len() >= 2 {
-                            out.dimensions.push(ViewDimension { view, points });
+                            out.dimensions.push(ViewDimension {
+                                id: element,
+                                view,
+                                points,
+                            });
                         }
                     }
                 }
@@ -977,7 +995,7 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                     };
                     // Its boundary sketch and those of the openings cut in it.
                     for sketch in o.objects.iter().filter_map(|f| id(f, "m_sketchId")) {
-                        drawn_sketches.insert(sketch, kind);
+                        drawn_sketches.insert(sketch, (kind, element));
                     }
                 }
                 Some("Path3d" | "ProfileRefPlane") if !in_family(o) => {
@@ -1022,6 +1040,7 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
                     if points.len() >= 2 {
                         curve_owners.push((element, sketch_of(o)));
                         out.curves.push(ViewCurve {
+                            id: element,
                             view: owner,
                             category,
                             kind,
@@ -1044,8 +1063,9 @@ pub fn read(rf: &mut RevitFile) -> Result<ViewFacts> {
         }
         match sketch {
             None => true,
-            Some(s) => drawn_sketches.get(&s).is_some_and(|k| {
+            Some(s) => drawn_sketches.get(&s).is_some_and(|(k, owner)| {
                 c.kind = *k;
+                c.id = *owner;
                 true
             }),
         }

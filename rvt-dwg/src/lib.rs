@@ -284,6 +284,11 @@ pub struct Entity2d {
     pub geom: Geom,
     /// Names of the applications with extended data on it.
     pub xdata_apps: Vec<String>,
+    /// The Revit ElementId of the element it draws, for an entity rvt-open made from a model;
+    /// written to SVG as `data-element` so a viewer can select the element. `None` for an entity
+    /// read from a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element: Option<i64>,
 }
 
 impl Entity2d {
@@ -300,7 +305,14 @@ impl Entity2d {
             transparency: None,
             geom,
             xdata_apps: Vec::new(),
+            element: None,
         }
+    }
+
+    /// The same entity, drawing the element `element` (its Revit ElementId), when known.
+    pub fn of_element(mut self, element: Option<i64>) -> Self {
+        self.element = element;
+        self
     }
 }
 

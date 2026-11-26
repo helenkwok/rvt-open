@@ -181,6 +181,10 @@ pub struct PlanAnnotation {
     pub lines: Vec<PlanLine>,
     /// Dimensions: the two points measured between.
     pub dimensions: Vec<[[f64; 2]; 2]>,
+    /// The ElementId of each dimension's dimension string, in the order of `dimensions` (empty
+    /// when not known).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dimension_elements: Vec<i64>,
 }
 
 /// One text of a plan's annotation.
@@ -192,6 +196,9 @@ pub struct PlanText {
     pub height_feet: f64,
     pub rotation: f64,
     pub layer: String,
+    /// The ElementId of the element it draws (a text note, a tag, a grid), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element: Option<i64>,
 }
 
 /// One line of a plan's annotation.
@@ -204,6 +211,9 @@ pub struct PlanLine {
     /// annotation crop).
     #[serde(default)]
     pub outside_crop: bool,
+    /// The ElementId of the element it draws (a grid, a detail line, a filled region), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element: Option<i64>,
 }
 
 impl Default for SheetOptions {
@@ -840,7 +850,7 @@ pub fn projected_drawing(
         let element = id.and_then(|id| u64::try_from(id).ok());
         let cut = layer_for(layers, own, ifc_type, element, Line::Cut);
         let seen = layer_for(layers, own, ifc_type, element, Line::Seen);
-        drawn.push((cut, seen, faces, edges));
+        drawn.push((cut, seen, faces, edges, id));
     }
     // The depth buffer, over the crop rectangle, at 0.2 mm on the sheet.
     const MAX_CELLS: f64 = 2048.0;
@@ -854,7 +864,7 @@ pub fn projected_drawing(
         ((wy / cell).ceil() as usize).clamp(1, MAX_CELLS as usize),
     );
     let mut depth = vec![f32::INFINITY; nx * ny];
-    for (_, _, faces, _) in &drawn {
+    for (_, _, faces, _, _) in &drawn {
         for f in faces {
             for t in clip_to_box_depth(f, far) {
                 rasterize(&t, lo, cell, nx, ny, &mut depth);
@@ -905,7 +915,9 @@ pub fn projected_drawing(
         d.entities.push(e);
     };
     let mut keys = std::collections::HashSet::new();
-    for ((cut_layer, cut_aci), (layer, aci), faces, edges) in &drawn {
+    for ((cut_layer, cut_aci), (layer, aci), faces, edges, element) in &drawn {
+        // Every line from here to the end of this element's turn is its.
+        let first = d.entities.len();
         // The cut: where the section plane (depth 0) crosses each face, inside the crop.
         for f in faces {
             let Some((a, b)) = plane_crossing(f) else {
@@ -937,18 +949,22 @@ pub fn projected_drawing(
                 push(&mut d, &mut keys, layer, *aci, SEEN_WEIGHT, at(t0), b);
             }
         }
+        for e in &mut d.entities[first..] {
+            e.element = *element;
+        }
     }
     d
 }
 
 /// What a section draws of one element: its cut and its seen lines' layer and colour, its faces
-/// and its sharp edges, in the crop box's coordinates.
+/// and its sharp edges, in the crop box's coordinates, and its ElementId.
 #[cfg(feature = "dwg")]
 type Drawn = (
     (String, i16),
     (String, i16),
     Vec<[[f64; 3]; 3]>,
     Vec<([f64; 3], [f64; 3])>,
+    Option<i64>,
 );
 
 /// The part of triangle `t` (local, z the depth) between depth 0 and `far`, as triangles.
@@ -1371,6 +1387,8 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
             continue;
         }
         let own = sets.get(&fp.index).map(Vec::as_slice).unwrap_or_default();
+        // What this element draws starts here: every entity from here to the loop's end is its.
+        let first = d.entities.len();
         let element = match model.entities.get(fp.index) {
             Some(IfcEntity::BuildingElement { type_guid, .. }) => {
                 type_guid.as_deref().and_then(|t| t.parse::<u64>().ok())
@@ -1497,6 +1515,9 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                 },
             ));
         }
+        for e in &mut d.entities[first..] {
+            e.element = element.and_then(|id| i64::try_from(id).ok());
+        }
     }
     if let Some(a) = options.annotation.as_ref().filter(|_| options.show_labels) {
         let at = |p: [f64; 2]| [p[0] * MM_PER_FOOT, p[1] * MM_PER_FOOT, 0.0];
@@ -1515,7 +1536,8 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                         a: at([p.0, p.1]),
                         b: at([q.0, q.1]),
                     },
-                );
+                )
+                .of_element(l.element);
                 colour_unless_layer_has(&d, &mut e, aci);
                 d.entities.push(e);
             }
@@ -1532,12 +1554,13 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                     rotation: t.rotation,
                     value: t.value.clone(),
                 },
-            );
+            )
+            .of_element(t.element);
             colour_unless_layer_has(&d, &mut e, aci);
             d.entities.push(e);
         }
         let (dims, dims_aci) = layers.annotation_layer("A-ANNO-DIMS", 7);
-        for [p, q] in &a.dimensions {
+        for (i, [p, q]) in a.dimensions.iter().enumerate() {
             let measurement = (q[0] - p[0]).hypot(q[1] - p[1]) * MM_PER_FOOT;
             if measurement < 1e-6 {
                 continue;
@@ -1553,7 +1576,8 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                     at: at([(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]),
                     points: vec![at(*p), at(*q)],
                 },
-            );
+            )
+            .of_element(a.dimension_elements.get(i).copied());
             colour_unless_layer_has(&d, &mut e, dims_aci);
             d.entities.push(e);
         }

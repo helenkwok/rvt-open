@@ -896,7 +896,7 @@ jobs:
             [ "$f" = cc0-2027-demo-building.rvt ] && [ ! -s ../_cc0/demo-building-2027.rvt ] && continue
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts tests/daylight.spec.ts tests/daylight-samples.spec.ts)
+          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/drawing-select.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts tests/daylight.spec.ts tests/daylight-samples.spec.ts)
           if [ "${{ matrix.leg }}" = 2 ]; then
             pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
           else
