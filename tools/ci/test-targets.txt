@@ -178,6 +178,7 @@ cli       rvt_dump_cli
 cli       sheet_view
 cli       dwg_layer_table
 real      sheet_drawings
+real      drawing_elements
 real      sheet_listing
 cli       gltf_normals
 real      gltf_element_alpha

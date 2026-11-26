@@ -179,8 +179,9 @@ pub fn render(d: &Drawing2d, layout: Option<&str>, limits: &Limits) -> Result<Sv
             let k = height / view_height;
             write!(
                 out,
-                "<g clip-path=\"url(#vp{i})\" data-viewport=\"{}\"><g transform=\"matrix({} 0 0 {} {} {})\" stroke-width=\"{}\">{body}</g></g>",
+                "<g clip-path=\"url(#vp{i})\" data-viewport=\"{}\"{}><g transform=\"matrix({} 0 0 {} {} {})\" stroke-width=\"{}\">{body}</g></g>",
                 esc(&v.handle),
+                v.element.map_or(String::new(), |id| format!(" data-element=\"{id}\"")),
                 f(k),
                 f(k),
                 f(center[0] - k * view_center[0]),
@@ -258,6 +259,8 @@ struct Inherit<'a> {
     colour: Colour,
     /// The insert's lineweight (1/100 mm), for ByBlock.
     lineweight: i16,
+    /// The element the insert draws: what its block draws is that element's.
+    element: Option<i64>,
 }
 
 struct Renderer<'a> {
@@ -305,6 +308,7 @@ impl<'a> Renderer<'a> {
             layer: "0",
             colour: Colour::aci(7),
             lineweight: DEFAULT_LINEWEIGHT,
+            element: None,
         };
         let entities = self.by_owner.get(block).cloned().unwrap_or_default();
         for e in entities {
@@ -360,6 +364,7 @@ impl<'a> Renderer<'a> {
             self.layer.get(layer).copied(),
             inherit.lineweight,
         );
+        let element = e.element.or(inherit.element);
         match &e.geom {
             Geom::Insert {
                 block,
@@ -372,14 +377,14 @@ impl<'a> Renderer<'a> {
                 self.expand(
                     block,
                     &t.then(&Affine::insert(base, *at, *scale, *rotation)),
-                    (layer, colour, weight),
+                    (layer, colour, weight, element),
                     depth,
                     groups,
                 );
                 return;
             }
             Geom::Dimension { block, .. } => {
-                self.expand(block, t, (layer, colour, weight), depth, groups);
+                self.expand(block, t, (layer, colour, weight, element), depth, groups);
                 return;
             }
             Geom::Viewport { .. } => return,
@@ -424,23 +429,25 @@ impl<'a> Renderer<'a> {
             _ => String::new(),
         };
         let mut el = String::new();
+        // The handle, and the element it draws when known (`data-element`, for a viewer to select).
         let handle = esc(&e.handle);
+        let elem = element.map_or(String::new(), |id| format!(" data-element=\"{id}\""));
         match &g {
             Geom::Line { a, b } => {
-                write!(el, "<line data-handle=\"{handle}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\"{sw}/>", f(a[0]), f(a[1]), f(b[0]), f(b[1])).ok();
+                write!(el, "<line data-handle=\"{handle}\"{elem} x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\"{sw}/>", f(a[0]), f(a[1]), f(b[0]), f(b[1])).ok();
             }
             Geom::Circle { c, r } => {
-                write!(el, "<circle data-handle=\"{handle}\" cx=\"{}\" cy=\"{}\" r=\"{}\" stroke=\"{stroke}\"{sw}/>", f(c[0]), f(c[1]), f(*r)).ok();
+                write!(el, "<circle data-handle=\"{handle}\"{elem} cx=\"{}\" cy=\"{}\" r=\"{}\" stroke=\"{stroke}\"{sw}/>", f(c[0]), f(c[1]), f(*r)).ok();
             }
             Geom::Point { p } => {
                 // A dot: 1 mm on paper, or three units in model space.
                 let dot = self.width_per_mm.unwrap_or(3.0);
-                write!(el, "<circle data-handle=\"{handle}\" cx=\"{}\" cy=\"{}\" r=\"0\" stroke=\"{stroke}\" stroke-width=\"{}\"/>", f(p[0]), f(p[1]), fw(dot)).ok();
+                write!(el, "<circle data-handle=\"{handle}\"{elem} cx=\"{}\" cy=\"{}\" r=\"0\" stroke=\"{stroke}\" stroke-width=\"{}\"/>", f(p[0]), f(p[1]), fw(dot)).ok();
             }
             Geom::Arc { .. } | Geom::Ellipse { .. } | Geom::Polyline { .. } | Geom::Path { .. } => {
                 write!(
                     el,
-                    "<path data-handle=\"{handle}\" d=\"{}\" stroke=\"{stroke}\"{sw}/>",
+                    "<path data-handle=\"{handle}\"{elem} d=\"{}\" stroke=\"{stroke}\"{sw}/>",
                     path_d(&g)
                 )
                 .ok();
@@ -458,7 +465,7 @@ impl<'a> Renderer<'a> {
                     .collect::<Vec<_>>()
                     .join(" ");
                 let opacity = if *solid { "1" } else { "0.25" };
-                write!(el, "<path data-handle=\"{handle}\" d=\"{d}\" fill=\"{stroke}\" fill-opacity=\"{opacity}\" fill-rule=\"evenodd\" stroke=\"none\"/>").ok();
+                write!(el, "<path data-handle=\"{handle}\"{elem} d=\"{d}\" fill=\"{stroke}\" fill-opacity=\"{opacity}\" fill-rule=\"evenodd\" stroke=\"none\"/>").ok();
             }
             Geom::Text {
                 at,
@@ -469,7 +476,7 @@ impl<'a> Renderer<'a> {
                 let lines: Vec<&str> = value.lines().collect();
                 write!(
                     el,
-                    "<text data-handle=\"{handle}\" transform=\"translate({} {}) rotate({}) scale(1 -1)\" font-size=\"{}\" fill=\"{stroke}\" stroke=\"none\">",
+                    "<text data-handle=\"{handle}\"{elem} transform=\"translate({} {}) rotate({}) scale(1 -1)\" font-size=\"{}\" fill=\"{stroke}\" stroke=\"none\">",
                     f(at[0]),
                     f(at[1]),
                     f(rotation.to_degrees()),
@@ -498,7 +505,7 @@ impl<'a> Renderer<'a> {
         &mut self,
         block: &str,
         t: &Affine,
-        (layer, colour, lineweight): (&str, Colour, i16),
+        (layer, colour, lineweight, element): (&str, Colour, i16, Option<i64>),
         depth: usize,
         groups: &mut Vec<(String, String)>,
     ) {
@@ -512,6 +519,7 @@ impl<'a> Renderer<'a> {
             layer: &layer,
             colour,
             lineweight,
+            element,
         };
         for child in entities {
             self.entity(child, t, &inherit, depth + 1, groups);

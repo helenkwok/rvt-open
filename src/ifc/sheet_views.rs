@@ -100,6 +100,7 @@ pub fn view_window(
             height_feet: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale,
             rotation: t.rotation,
             layer: "G-ANNO-TEXT".into(),
+            element: Some(t.id),
         });
     }
     for tag in facts.room_tags.iter().filter(|t| t.view == view.id) {
@@ -119,6 +120,7 @@ pub fn view_window(
                 height_feet: 2.5 * scale / MM_PER_FOOT,
                 rotation: 0.0,
                 layer: "A-AREA-IDEN".into(),
+                element: Some(tag.id),
             });
         }
     }
@@ -163,6 +165,7 @@ pub fn view_window(
             b: head,
             layer: "S-GRID".into(),
             outside_crop: true,
+            element: Some(g.id),
         });
         // A head: a circle just beyond its end, the grid's name in it (placed where the export's
         // text box starts, up and left of the centre).
@@ -190,6 +193,7 @@ pub fn view_window(
                     b: on_circle(k + 1),
                     layer: "S-GRID-IDEN".into(),
                     outside_crop: true,
+                    element: Some(g.id),
                 });
             }
             if !g.name.is_empty() {
@@ -199,6 +203,7 @@ pub fn view_window(
                     height_feet: 2.5 * scale / MM_PER_FOOT,
                     rotation: 0.0,
                     layer: "S-GRID-IDEN".into(),
+                    element: Some(g.id),
                 });
             }
         }
@@ -208,6 +213,7 @@ pub fn view_window(
             let (p, q) = ([w[0][0], w[0][1]], [w[1][0], w[1][1]]);
             if in_annotation_crop([(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]) {
                 a.dimensions.push([p, q]);
+                a.dimension_elements.push(d.id);
             }
         }
     }
@@ -257,6 +263,7 @@ pub fn view_window(
                 b: q,
                 layer: layer.into(),
                 outside_crop: false,
+                element: Some(c.id),
             });
         }
     }
@@ -505,45 +512,54 @@ pub fn sheet_drawing(
         let spare = if frame.is_some() { 0.0 } else { 4.0 };
         let (w, h) = ((b[2] - b[0]) / scale + spare, (b[3] - b[1]) / scale + spare);
         ensure(&mut out, &nplt.0, nplt.1);
-        out.entities.push(paper(
-            "VIEWPORT",
-            &nplt.0,
-            Geom::Viewport {
-                center: [
-                    o[0] + (c[0] - origin[0]) / scale,
-                    o[1] + (c[1] - origin[1]) / scale,
-                    0.0,
-                ],
-                width: w,
-                height: h,
-                view_center: [c[0] + shift, c[1]],
-                view_height: h * scale,
-                id: viewport_id,
-            },
-        ));
+        out.entities.push(
+            paper(
+                "VIEWPORT",
+                &nplt.0,
+                Geom::Viewport {
+                    center: [
+                        o[0] + (c[0] - origin[0]) / scale,
+                        o[1] + (c[1] - origin[1]) / scale,
+                        0.0,
+                    ],
+                    width: w,
+                    height: h,
+                    view_center: [c[0] + shift, c[1]],
+                    view_height: h * scale,
+                    id: viewport_id,
+                },
+            )
+            .of_element(Some(vp.id)),
+        );
         viewport_id += 1;
         // The view's title: its name at the title's origin, over a line of the title's length.
         if vp.label_length > 0.0 {
             ensure(&mut out, &ttlb.0, ttlb.1);
             let at = mm(vp.label_origin);
-            out.entities.push(paper(
-                "LINE",
-                &ttlb.0,
-                Geom::Line {
-                    a: at,
-                    b: [at[0] + vp.label_length * MM_PER_FOOT, at[1], 0.0],
-                },
-            ));
-            out.entities.push(paper(
-                "TEXT",
-                &ttlb.0,
-                Geom::Text {
-                    at: [at[0], at[1] + 2.0, 0.0],
-                    height: 3.5,
-                    rotation: 0.0,
-                    value: name,
-                },
-            ));
+            out.entities.push(
+                paper(
+                    "LINE",
+                    &ttlb.0,
+                    Geom::Line {
+                        a: at,
+                        b: [at[0] + vp.label_length * MM_PER_FOOT, at[1], 0.0],
+                    },
+                )
+                .of_element(Some(vp.id)),
+            );
+            out.entities.push(
+                paper(
+                    "TEXT",
+                    &ttlb.0,
+                    Geom::Text {
+                        at: [at[0], at[1] + 2.0, 0.0],
+                        height: 3.5,
+                        rotation: 0.0,
+                        value: name,
+                    },
+                )
+                .of_element(Some(vp.id)),
+            );
         }
     }
     // Title blocks: their symbol's lines, placed by the instance.
@@ -596,16 +612,19 @@ pub fn sheet_drawing(
                 t.origin[0] + at[0] * c - at[1] * s,
                 t.origin[1] + at[0] * s + at[1] * c,
             ];
-            out.entities.push(paper(
-                "TEXT",
-                &ttlb.0,
-                Geom::Text {
-                    at: mm(at),
-                    height: text.0 * MM_PER_FOOT,
-                    rotation: text.1 + s.atan2(c),
-                    value,
-                },
-            ));
+            out.entities.push(
+                paper(
+                    "TEXT",
+                    &ttlb.0,
+                    Geom::Text {
+                        at: mm(at),
+                        height: text.0 * MM_PER_FOOT,
+                        rotation: text.1 + s.atan2(c),
+                        value,
+                    },
+                )
+                .of_element(Some(t.id)),
+            );
         }
     }
     for t in blocks {
@@ -626,54 +645,66 @@ pub fn sheet_drawing(
         };
         for curve in cs {
             for w in super::sheet::symbol_points(curve).windows(2) {
-                out.entities.push(paper(
-                    "LINE",
-                    &ttlb.0,
-                    Geom::Line {
-                        a: place(w[0]),
-                        b: place(w[1]),
-                    },
-                ));
+                out.entities.push(
+                    paper(
+                        "LINE",
+                        &ttlb.0,
+                        Geom::Line {
+                            a: place(w[0]),
+                            b: place(w[1]),
+                        },
+                    )
+                    .of_element(Some(t.id)),
+                );
             }
         }
         for text in texts {
-            out.entities.push(paper(
-                "TEXT",
-                &ttlb.0,
-                Geom::Text {
-                    at: place((text.at[0], text.at[1])),
-                    height: text.height_feet * MM_PER_FOOT,
-                    rotation: text.rotation + s.atan2(c),
-                    value: text.value.clone(),
-                },
-            ));
+            out.entities.push(
+                paper(
+                    "TEXT",
+                    &ttlb.0,
+                    Geom::Text {
+                        at: place((text.at[0], text.at[1])),
+                        height: text.height_feet * MM_PER_FOOT,
+                        rotation: text.rotation + s.atan2(c),
+                        value: text.value.clone(),
+                    },
+                )
+                .of_element(Some(t.id)),
+            );
         }
     }
     // The sheet's own text notes and detail lines, sheet sizes.
     for t in facts.texts.iter().filter(|t| t.view == sheet.id) {
         ensure(&mut out, &notes_layer.0, notes_layer.1);
-        out.entities.push(paper(
-            "TEXT",
-            &notes_layer.0,
-            Geom::Text {
-                at: mm([t.at[0], t.at[1]]),
-                height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * MM_PER_FOOT,
-                rotation: t.rotation,
-                value: t.value.clone(),
-            },
-        ));
+        out.entities.push(
+            paper(
+                "TEXT",
+                &notes_layer.0,
+                Geom::Text {
+                    at: mm([t.at[0], t.at[1]]),
+                    height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * MM_PER_FOOT,
+                    rotation: t.rotation,
+                    value: t.value.clone(),
+                },
+            )
+            .of_element(Some(t.id)),
+        );
     }
     for c in facts.curves.iter().filter(|c| c.view == Some(sheet.id)) {
         ensure(&mut out, &detail.0, detail.1);
         for w in c.points.windows(2) {
-            out.entities.push(paper(
-                "LINE",
-                &detail.0,
-                Geom::Line {
-                    a: mm([w[0][0], w[0][1]]),
-                    b: mm([w[1][0], w[1][1]]),
-                },
-            ));
+            out.entities.push(
+                paper(
+                    "LINE",
+                    &detail.0,
+                    Geom::Line {
+                        a: mm([w[0][0], w[0][1]]),
+                        b: mm([w[1][0], w[1][1]]),
+                    },
+                )
+                .of_element(Some(c.id)),
+            );
         }
     }
     let limits = rvt_dwg::bounds(
@@ -837,16 +868,19 @@ fn section_annotation(
         .filter(|t| t.view == view.id && shown(on_view(t.at)))
     {
         layer(d, &notes_layer);
-        d.entities.push(Entity2d::new(
-            "TEXT",
-            &notes_layer.0,
-            Geom::Text {
-                at: on_view(t.at),
-                height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale * MM_PER_FOOT,
-                rotation: dot3(t.base, w.up).atan2(dot3(t.base, w.right)),
-                value: t.value.clone(),
-            },
-        ));
+        d.entities.push(
+            Entity2d::new(
+                "TEXT",
+                &notes_layer.0,
+                Geom::Text {
+                    at: on_view(t.at),
+                    height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale * MM_PER_FOOT,
+                    rotation: dot3(t.base, w.up).atan2(dot3(t.base, w.right)),
+                    value: t.value.clone(),
+                },
+            )
+            .of_element(Some(t.id)),
+        );
     }
     // Levels (the model's storeys) and grids, across the crop: a level where its height meets the
     // view (its name above and its height below the line's right end), a grid where it crosses
@@ -891,6 +925,7 @@ fn section_annotation(
                     continue;
                 }
                 layer(d, &level);
+                let first = d.entities.len();
                 let (a, b) = (at(c.min[0], y, near), at(c.max[0], y, near));
                 line(d, a, b, &level.0);
                 let right = if a[0] > b[0] { a } else { b };
@@ -911,6 +946,11 @@ fn section_annotation(
                     format!("{}", (z * MM_PER_FOOT).round()),
                     &level.0,
                 );
+                // The level's ElementId, by its name.
+                let id = facts.levels.iter().find(|v| v.name == l.name).map(|v| v.id);
+                for e in &mut d.entities[first..] {
+                    e.element = id;
+                }
             }
         }
         if !hidden_ids.contains(&GRIDS) {
@@ -934,6 +974,7 @@ fn section_annotation(
                 }
                 layer(d, &grid);
                 layer(d, &grid_head);
+                let first = d.entities.len();
                 let (a, top) = (at(x, c.min[1], near), at(x, c.max[1], near));
                 line(d, a, top, &grid.0);
                 let centre = [top[0], top[1] + radius];
@@ -959,6 +1000,9 @@ fn section_annotation(
                     g.name.clone(),
                     &grid_head.0,
                 );
+                for e in &mut d.entities[first..] {
+                    e.element = Some(g.id);
+                }
             }
         }
     }
@@ -978,7 +1022,7 @@ fn section_annotation(
                 continue;
             };
             d.entities
-                .push(Entity2d::new("LINE", &detail.0, Geom::Line { a, b }));
+                .push(Entity2d::new("LINE", &detail.0, Geom::Line { a, b }).of_element(Some(c.id)));
         }
     }
 }
@@ -1044,27 +1088,33 @@ fn drafting_drawing(
         ..Default::default()
     };
     for t in facts.texts.iter().filter(|t| t.view == id) {
-        d.entities.push(Entity2d::new(
-            "TEXT",
-            &notes_layer.0,
-            Geom::Text {
-                at: mm(t.at),
-                height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale * MM_PER_FOOT,
-                rotation: t.rotation,
-                value: t.value.clone(),
-            },
-        ));
+        d.entities.push(
+            Entity2d::new(
+                "TEXT",
+                &notes_layer.0,
+                Geom::Text {
+                    at: mm(t.at),
+                    height: t.height.unwrap_or(2.5 / MM_PER_FOOT) * scale * MM_PER_FOOT,
+                    rotation: t.rotation,
+                    value: t.value.clone(),
+                },
+            )
+            .of_element(Some(t.id)),
+        );
     }
     for c in facts.curves.iter().filter(|c| c.view == Some(id)) {
         for s in c.points.windows(2) {
-            d.entities.push(Entity2d::new(
-                "LINE",
-                &detail.0,
-                Geom::Line {
-                    a: mm(s[0]),
-                    b: mm(s[1]),
-                },
-            ));
+            d.entities.push(
+                Entity2d::new(
+                    "LINE",
+                    &detail.0,
+                    Geom::Line {
+                        a: mm(s[0]),
+                        b: mm(s[1]),
+                    },
+                )
+                .of_element(Some(c.id)),
+            );
         }
     }
     let imports: Vec<_> = facts.imports.iter().filter(|i| i.0 == id).collect();

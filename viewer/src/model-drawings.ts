@@ -7,6 +7,7 @@
  * while the other is shown: switching only hides one.
  */
 import type { SvgView } from './drawing';
+import { initDrawingSelection, type DrawingSelection, type DrawingSelectHost } from './drawing-select';
 
 export interface ModelDrawingsHost {
   /** The worker that opened the model, or null. */
@@ -19,6 +20,8 @@ export interface ModelDrawingsHost {
   setStatus(text: string): void;
   toast(message: string, kind?: 'ok' | 'bad' | 'info'): void;
   download(filename: string, blob: Blob): void;
+  /** Naming, chaining and reporting the elements selected in a drawing (drawing-select.ts). */
+  select: Omit<DrawingSelectHost, 'setStatus' | 'status'>;
 }
 
 type Kind = 'sheet' | 'plan' | 'section';
@@ -158,12 +161,20 @@ const scaleText = (scale: number | null): string => (scale && scale > 0 ? ` · 1
 export function initModelDrawings(
   host: ModelDrawingsHost,
   view: SvgView,
-): { load(): Promise<void>; reset(): void; showModel(): void } {
+): { load(): Promise<void>; reset(): void; showModel(): void; selection: DrawingSelection } {
   const app = $('app');
   const pane = $('drawing-pane');
   const sheetEl = $('drawing-sheet');
   const listEl = $('drawings');
   const titleEl = $('drawing-title');
+  const selection = initDrawingSelection(
+    { ...host.select, setStatus: host.setStatus, status: () => document.getElementById('status')?.textContent ?? '' },
+    sheetEl,
+  );
+  const byFace = document.getElementById('drawing-by-face') as HTMLInputElement | null;
+  byFace?.addEventListener('change', () => {
+    selection.byFace = byFace.checked;
+  });
 
   let shown: Request | null = null;
   let pending: Request | null = null;
@@ -235,6 +246,10 @@ export function initModelDrawings(
         titleEl.textContent = shown.label;
         showDrawing();
         if (!view.show(msg.drawn.svg, true)) {
+          // The last drawing is gone from the pane: so is its index. The selection is kept.
+          const kept = selection.selected();
+          selection.detach(false);
+          selection.set(kept);
           timeline.stop();
           host.toast('The drawing could not be shown: the renderer returned no SVG.', 'bad');
           return;
@@ -246,6 +261,12 @@ export function initModelDrawings(
           svg.dataset.viewports = String(msg.drawn.counts.viewports);
           svg.dataset.times = JSON.stringify(msg.drawn.times ?? {});
           timeline.mark('inserted');
+          // The drawing's elements, for selecting them in it (the selection shown stays).
+          const kept = selection.selected();
+          selection.attach(svg);
+          selection.set(kept);
+          view.setPicker(selection);
+          timeline.mark('indexed');
           svg.dataset.timeline = timeline.json();
           // Painted: the frame after the one that lays the drawing out.
           requestAnimationFrame(() =>
@@ -466,10 +487,13 @@ export function initModelDrawings(
       listTimeline?.stop();
       listTimeline = null;
       titleEl.textContent = '';
+      selection.detach(true);
+      selection.set([]);
       if (app.dataset.mode !== 'drawing') view.clear();
       listening?.removeEventListener('message', onMessage as EventListener);
       listening = null;
     },
     showModel,
+    selection,
   };
 }

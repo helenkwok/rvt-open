@@ -2138,6 +2138,67 @@ select:focus:not(:focus-visible),
 #drawing-sheet text.drawing-picked {
   fill: var(--rv-accent) !important;
 }
+/* Selecting in a model's sheet or view (drawing-select.ts), in Revit's default colours: the
+   element under the cursor drawn heavier in the pre-selection colour, the selection in the
+   selection colour. */
+#drawing-sheet {
+  --drawing-preselect: #003bbd;
+  --drawing-select: #003bbd;
+}
+#app[data-view='drawing'] #drawing-sheet {
+  cursor: default;
+}
+#drawing-sheet .sel-pre,
+#drawing-sheet .sel-pre * {
+  stroke: var(--drawing-preselect) !important;
+  stroke-width: 2.5px !important;
+  vector-effect: non-scaling-stroke;
+}
+#drawing-sheet .sel-on,
+#drawing-sheet .sel-on * {
+  stroke: var(--drawing-select) !important;
+  stroke-width: 2px !important;
+  vector-effect: non-scaling-stroke;
+}
+#drawing-sheet text.sel-pre,
+#drawing-sheet text.sel-pre *,
+#drawing-sheet .sel-pre text,
+#drawing-sheet .sel-pre text *,
+#drawing-sheet text.sel-on,
+#drawing-sheet text.sel-on *,
+#drawing-sheet .sel-on text,
+#drawing-sheet .sel-on text * {
+  fill: var(--drawing-select) !important;
+  stroke: none !important;
+}
+#drawing-sheet path[fill]:not([fill='none']).sel-on,
+#drawing-sheet .sel-on path[fill]:not([fill='none']),
+#drawing-sheet path[fill]:not([fill='none']).sel-pre {
+  fill: var(--drawing-select) !important;
+  fill-opacity: 0.45 !important;
+  stroke: none !important;
+}
+/* An activated viewport: the rest of the sheet greys out. */
+#drawing-sheet svg.has-active-viewport > g > :not(.vp-active) {
+  opacity: 0.35;
+}
+.drawing-window {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid var(--drawing-select, #003bbd);
+  background: rgb(0 59 189 / 0.06);
+}
+.drawing-window.is-crossing {
+  border-style: dashed;
+}
+.drawing-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rv-space-1, 4px);
+}
+.drawing-selection-count {
+  font-variant-numeric: tabular-nums;
+}
 .drawing-layer-actions {
   display: flex;
   gap: var(--rv-space-2);

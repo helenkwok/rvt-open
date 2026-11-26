@@ -129,6 +129,8 @@ mod door_overall_sizes;
 mod door_type_global_ids;
 #[path = "../door_window_wall_negative.rs"]
 mod door_window_wall_negative;
+#[path = "../drawing_elements.rs"]
+mod drawing_elements;
 #[path = "../duct_and_pipe_ports.rs"]
 mod duct_and_pipe_ports;
 #[path = "../duct_fields.rs"]

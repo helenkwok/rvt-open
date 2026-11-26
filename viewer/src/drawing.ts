@@ -5,6 +5,7 @@
  * image/svg+xml, stripped of anything active or external, and imported as DOM.
  */
 import { drawnBox } from './drawn-box';
+import type { DrawingPicker } from './drawing-select';
 import type { Bits, WasmUrls } from './wasm-build';
 
 /** What the pane needs from main.ts; passed in so this module has no import cycle. */
@@ -91,6 +92,12 @@ export interface SvgView {
   fit(): void;
   clear(): void;
   svg(): SVGSVGElement | null;
+  /**
+   * Hands hover, clicks, drags and keys to `picker` (a model drawing's selection) until the next
+   * drawing is shown: a left drag then draws a selection window, and a middle drag, or a left drag
+   * with Space held, pans.
+   */
+  setPicker(picker: DrawingPicker | null): void;
 }
 
 /**
@@ -99,6 +106,8 @@ export interface SvgView {
  */
 export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null) => void): SvgView {
   let svgEl: SVGSVGElement | null = null;
+  let picker: DrawingPicker | null = null;
+  let spaceDown = false;
   let fitBox = { x: 0, y: 0, w: 1, h: 1 };
   let box = { ...fitBox };
 
@@ -125,6 +134,13 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
 
   const show = (text: string, fitDrawn = false): SVGSVGElement | null => {
     const el = sanitizeSvg(text);
+    // A gesture begun on the drawing replaced ends with it: it applies to no other drawing.
+    if (drag) {
+      drag = null;
+      sheet.classList.remove('is-panning');
+    }
+    picker?.leave();
+    picker = null;
     sheet.replaceChildren();
     svgEl = null;
     if (!el) return null;
@@ -147,21 +163,31 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
     return el;
   };
 
-  // Pan by drag; a press that barely moves is a click.
-  let drag: { x: number; y: number; moved: boolean; id: number } | null = null;
+  // Pan by drag (or, with a picker, draw a selection window); a press that barely moves is a click.
+  let drag: { x: number; y: number; x0: number; y0: number; moved: boolean; id: number; box: boolean } | null = null;
   sheet.addEventListener('pointerdown', (ev) => {
-    if (ev.button !== 0) return;
-    drag = { x: ev.clientX, y: ev.clientY, moved: false, id: ev.pointerId };
+    if (ev.button !== 0 && ev.button !== 1) return;
+    if (ev.button === 1) ev.preventDefault();
+    const box = picker !== null && ev.button === 0 && !spaceDown;
+    drag = { x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, moved: false, id: ev.pointerId, box };
   });
   sheet.addEventListener('pointermove', (ev) => {
-    if (!drag || ev.pointerId !== drag.id || !svgEl) return;
+    if (!drag) {
+      if (ev.buttons === 0) picker?.hover(ev.clientX, ev.clientY);
+      return;
+    }
+    if (ev.pointerId !== drag.id || !svgEl) return;
     const dx = ev.clientX - drag.x;
     const dy = ev.clientY - drag.y;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     if (!drag.moved) {
       drag.moved = true;
       sheet.setPointerCapture(ev.pointerId);
-      sheet.classList.add('is-panning');
+      if (!drag.box) sheet.classList.add('is-panning');
+    }
+    if (drag.box) {
+      picker?.box({ x: drag.x0, y: drag.y0 }, { x: ev.clientX, y: ev.clientY }, ev, false);
+      return;
     }
     const r = sheet.getBoundingClientRect();
     const k = Math.max(box.w / r.width, box.h / r.height);
@@ -173,14 +199,31 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
   });
   sheet.addEventListener('pointerup', (ev) => {
     if (!drag || ev.pointerId !== drag.id) return;
-    const wasClick = !drag.moved;
+    const d = drag;
     drag = null;
     sheet.classList.remove('is-panning');
-    if (wasClick) onClick(ev.target as Element | null);
+    if (d.box && d.moved) picker?.box({ x: d.x0, y: d.y0 }, { x: ev.clientX, y: ev.clientY }, ev, true);
+    else if (!d.moved && ev.button === 0) {
+      if (picker) picker.click(ev.clientX, ev.clientY, ev);
+      else onClick(ev.target as Element | null);
+    }
   });
   sheet.addEventListener('pointercancel', (ev) => {
-    if (drag && ev.pointerId === drag.id) drag = null;
+    if (drag && ev.pointerId === drag.id) {
+      if (drag.box && drag.moved) picker?.cancel();
+      drag = null;
+    }
     sheet.classList.remove('is-panning');
+  });
+  sheet.addEventListener('pointerleave', () => {
+    if (!drag) picker?.leave();
+  });
+  sheet.addEventListener('dblclick', (ev) => picker?.dblclick(ev.clientX, ev.clientY));
+  sheet.addEventListener('keyup', (ev) => {
+    if (ev.key === ' ') spaceDown = false;
+  });
+  sheet.addEventListener('blur', () => {
+    spaceDown = false;
   });
   sheet.addEventListener(
     'wheel',
@@ -191,6 +234,16 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
     { passive: false },
   );
   sheet.addEventListener('keydown', (ev) => {
+    if (ev.key === ' ') {
+      spaceDown = true;
+      ev.preventDefault();
+      return;
+    }
+    if (picker?.key(ev)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
     if (ev.key === '+' || ev.key === '=') zoom(1 / 1.25);
     else if (ev.key === '-' || ev.key === '_') zoom(1.25);
     else if (ev.key === '0') fit();
@@ -202,10 +255,15 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
     show,
     fit,
     clear: () => {
+      picker?.leave();
+      picker = null;
       sheet.replaceChildren();
       svgEl = null;
     },
     svg: () => svgEl,
+    setPicker: (p) => {
+      picker = p;
+    },
   };
 }
 

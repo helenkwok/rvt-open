@@ -338,6 +338,7 @@ pub(crate) fn to_drawing(doc: &CadDocument) -> Drawing2d {
                 .iter()
                 .map(|r| r.application_name.clone())
                 .collect(),
+            element: None,
         });
     }
 
