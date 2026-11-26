@@ -266,7 +266,7 @@ async function fakeRadiance(page: Page, script: string): Promise<void> {
   expect(result.parameters.skippedTriangles).toEqual({ degenerate: expect.any(Number), duplicate: expect.any(Number) });
 });
 
-(fs.existsSync(demo) ? test : test.skip)('a run with no progress for the set time says so, and Stop ends it', async ({ page }) => {
+(fs.existsSync(demo) && fs.existsSync(radianceBuild) ? test : test.skip)('a run with no progress for the set time says so, and Stop ends it', async ({ page }) => {
   test.setTimeout(180_000);
   // Radiance workers that never answer
   await fakeRadiance(page, '/* silent */');
@@ -285,7 +285,7 @@ async function fakeRadiance(page: Page, script: string): Promise<void> {
   await expect(page.locator('#daylight-run')).toBeEnabled();
 });
 
-(fs.existsSync(demo) ? test : test.skip)('a Radiance failure shows the fatal line first, the warnings counted, and the log behind Details and in the export', async ({ page }) => {
+(fs.existsSync(demo) && fs.existsSync(radianceBuild) ? test : test.skip)('a Radiance failure shows the fatal line first, the warnings counted, and the log behind Details and in the export', async ({ page }) => {
   test.setTimeout(180_000);
   // every Radiance program fails as oconv did on a large model: warnings, then the fatal line
   await fakeRadiance(
