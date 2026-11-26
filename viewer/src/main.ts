@@ -517,6 +517,110 @@ function selectEntity(idx: number): void {
   highlightEntity(idx);
   showElementInfo(idx);
   selectedIndex = idx;
+  // The drawing shows the same element selected, unless the drawing is where it was selected.
+  if (!selectingInDrawing) {
+    const id = elementIdOf(model?.entities?.[idx]?.type_guid);
+    modelDrawings.selection.set(id === null ? [] : [id]);
+  }
+}
+
+// ---------- Selecting in a sheet or view (drawing-select.ts) ----------
+/** True while a selection made in the drawing is shown in the tree, the 3D view and the panel. */
+let selectingInDrawing = false;
+/** Each element's entity index (the one the export writes), by ElementId; built on first use. */
+let entityByElementId: Map<number, number> | null = null;
+
+function entityOfElement(id: number): number | null {
+  if (!entityByElementId) {
+    const byId = new Map<number, number>();
+    model?.entities?.forEach((e, i) => {
+      const eid = elementIdOf(e.type_guid);
+      if (eid !== null && !byId.has(eid)) byId.set(eid, writtenElementOf(i));
+    });
+    entityByElementId = byId;
+  }
+  return entityByElementId.get(id) ?? null;
+}
+
+/** What a drawing layer holds, for an element the model's entities do not list (annotation). */
+const DRAWING_LAYER_KINDS: Array<[RegExp, string]> = [
+  [/TTLB/, 'Title block'],
+  [/NPLT/, 'Viewport'],
+  [/GRID/, 'Grid'],
+  [/LEVL/, 'Level'],
+  [/DIMS/, 'Dimension'],
+  [/AREA-IDEN/, 'Room tag'],
+  [/AREA/, 'Room separation line'],
+  [/ANNO-TEXT|NOTE/, 'Text note'],
+  [/DETL/, 'Detail line'],
+  [/PROP/, 'Property line'],
+];
+
+/** An element of the drawing, in words: its category and name, as the status line names it. */
+function describeDrawingElement(id: number, layer: string | null): string {
+  const idx = entityOfElement(id);
+  const e = idx !== null ? model?.entities?.[idx] : undefined;
+  if (e) return `${ifcTypeLabel(e.ifc_type)} : ${e.name}`;
+  if (document.querySelector(`#drawing-sheet g[data-viewport][data-element="${id}"]`)) return `Viewport : ${id}`;
+  const kind = DRAWING_LAYER_KINDS.find(([re]) => re.test(layer ?? ''))?.[1] ?? 'Annotation';
+  return `${kind} : ${id}`;
+}
+
+function clearDrawnSelection(): void {
+  document.querySelectorAll('.tree-node.selected').forEach((el) => el.classList.remove('selected'));
+  clearHighlight();
+  pendingInfoIndex = null;
+  selectedIndex = null;
+  stopParametersRead();
+  infoEl.removeAttribute('aria-busy');
+  infoEl.textContent =
+    'Select an element in the 3-D view or scene tree (Enter / Space on a tree row). Double-click it or press F to zoom to it.';
+}
+
+/** The selection made in a drawing, shown in the tree, the 3D view and the panel. */
+function drawingSelectionChanged(ids: number[]): void {
+  selectingInDrawing = true;
+  try {
+    const indices = ids.map(entityOfElement);
+    if (ids.length === 0) {
+      clearDrawnSelection();
+      return;
+    }
+    if (ids.length === 1 && indices[0] !== null) {
+      selectEntity(indices[0]);
+      return;
+    }
+    // Several elements, or one the model's entities do not list: the 3D view lights the model
+    // elements among them, and the panel counts them by category, as Revit's selection filter.
+    clearDrawnSelection();
+    const lit = withBodyPieces(indices.filter((i): i is number => i !== null));
+    if (lit.size > 0) highlightWhere((data) => data.entityIndex !== undefined && lit.has(data.entityIndex));
+    const sheet = document.getElementById('drawing-sheet');
+    const layerOf = (id: number): string | null =>
+      sheet?.querySelector(`[data-element="${id}"]`)?.closest('g[data-layer]')?.getAttribute('data-layer') ?? null;
+    const kinds = new Map<string, number>();
+    for (const id of ids) {
+      const kind = describeDrawingElement(id, layerOf(id)).split(' : ')[0];
+      kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    }
+    infoEl.innerHTML = '';
+    const identity = infoGroup('identity', ids.length === 1 ? undefined : `${ids.length} elements selected`);
+    if (ids.length === 1) {
+      const id = ids[0];
+      const [kind, name] = describeDrawingElement(id, layerOf(id)).split(' : ');
+      identity.appendChild(infoRow('Category', kind));
+      identity.appendChild(infoRow('ElementId', name, true));
+      const layer = layerOf(id);
+      if (layer) identity.appendChild(infoRow('Layer', layer));
+      const text = sheet?.querySelector(`text[data-element="${id}"]`)?.textContent;
+      if (text) identity.appendChild(infoRow('Text', text));
+    } else {
+      for (const [kind, n] of [...kinds].sort((a, b) => b[1] - a[1])) identity.appendChild(infoRow(kind, String(n), true));
+    }
+    infoEl.appendChild(identity);
+  } finally {
+    selectingInDrawing = false;
+  }
 }
 
 /** An entity's name as the tree shows it. */
@@ -1436,6 +1540,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
   startLoadOverlay(file);
   hideScaffoldNote();
   model = null;
+  entityByElementId = null;
   sceneGraph = null;
   listedEntities = new Set<number>();
   resetTreeFilter();
@@ -1624,6 +1729,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     }
     if (reply.type !== 'ready') return;
     model = msg.model;
+    entityByElementId = null;
     loadedWasmMemoryBytes = msg.stats.wasmMemoryBytes;
     sceneGraph = msg.scene;
     listedEntities = listedIndices(msg.scene, new Set<number>());
@@ -4733,6 +4839,16 @@ const modelDrawings = initModelDrawings(
     setStatus,
     toast,
     download: (filename, blob) => download(filename, blob),
+    select: {
+      describe: describeDrawingElement,
+      // Walls chain with walls, and detail, room separation and property lines with lines.
+      chains: (id, layer) => {
+        const idx = entityOfElement(id);
+        const type = idx !== null ? model?.entities?.[idx]?.ifc_type : undefined;
+        return type !== undefined ? /^IFCWALL/.test(type) : /DETL|AREA$|PROP/.test(layer ?? '');
+      },
+      changed: drawingSelectionChanged,
+    },
   },
   drawingView,
 );
@@ -4794,6 +4910,7 @@ document.addEventListener('keydown', (ev) => {
   // The scaffold explainer is ambient, not modal — Escape clears it
   // alongside the tree selection rather than swallowing the keypress.
   hideScaffoldNote();
+  modelDrawings.selection.set([]);
   const selected = treeEl.querySelector('.tree-node.selected');
   if (selected) {
     selected.classList.remove('selected');

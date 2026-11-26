@@ -864,7 +864,7 @@ pub fn projected_drawing(
         ((wy / cell).ceil() as usize).clamp(1, MAX_CELLS as usize),
     );
     let mut depth = vec![f32::INFINITY; nx * ny];
-    for (_, _, faces, _) in &drawn {
+    for (_, _, faces, _, _) in &drawn {
         for f in faces {
             for t in clip_to_box_depth(f, far) {
                 rasterize(&t, lo, cell, nx, ny, &mut depth);
