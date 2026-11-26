@@ -28,6 +28,7 @@ Every run shows, beside Run and Stop (which stay in view at the bottom of the pa
 |---|---|
 | Scene | "Building the scene and the sensor grids", then the surfaces, sensors, rooms and levels |
 | Sun positions (sun hours) | the days and the step |
+| Loading the scene into the workers (instant tier) | workers ready of the total; once per scene, later runs skip it |
 | Loading Radiance | files loaded of the total and megabytes (the first Radiance run only; later runs reuse the compiled programs) |
 | Sky | gensky or gendaylit |
 | Radiance text | the surfaces written, and afterwards how many zero-area and duplicate triangles were left out |

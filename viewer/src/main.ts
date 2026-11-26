@@ -2023,8 +2023,10 @@ function frameBox(box: THREE.Box3, along?: THREE.Vector3): void {
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z, MIN_FRAME_METRES);
+  // a view along a given direction (the Daylight panel's storey) fits the narrower of the two fields of view
   const fov = camera.fov * (Math.PI / 180);
-  const dist = Math.abs(maxDim / Math.sin(fov / 2)) * 0.8;
+  const fit = along ? Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * camera.aspect)) : fov;
+  const dist = Math.abs(maxDim / Math.sin(fit / 2)) * 0.8;
   // Keep the approach direction when zooming in on a part of the model,
   // so the view does not swing round; the whole model gets the default.
   const approach = camera.position.clone().sub(controls.target);

@@ -210,6 +210,9 @@ export function radianceEstimate(sensors: number, triangles: number, workers: nu
   return (sensors * perSensor) / Math.max(1, workers) + 2;
 }
 
+/** Triangles above which the instant tier's tracers are ended before a Radiance run, to free their memory. */
+const LARGE_SCENE = 200_000;
+
 /** A run longer than this (seconds, estimated) asks before it starts. */
 const ASK_ABOVE_S = 120;
 
@@ -317,14 +320,21 @@ class Pool {
     return this.call<T>(0, msg);
   }
 
-  private async load(id: number, p: Prepared, decoder: Decoder): Promise<void> {
+  /** True when the workers hold scene `id`'s tracer. */
+  holds(id: number): boolean {
+    return this.loaded === id;
+  }
+
+  private async load(id: number, p: Prepared, decoder: Decoder, loading?: (done: number, total: number) => void): Promise<void> {
     if (this.loaded === id) return;
     this.spawn();
+    let done = 0;
+    loading?.(0, this.workers.length);
     const materials = new Float64Array(p.materials.length * 4);
     p.materials.forEach((m, i) => materials.set([m.kind === 'glass' ? 1 : 0, m.rgb[0], m.rgb[1], m.rgb[2]], i * 4));
     await Promise.all(
       this.workers.map((_, k) =>
-        this.call(k, { type: 'load', module: decoder.module, bits: decoder.bits, id, positions: p.positions, modifier: p.modifier, materials }),
+        this.call(k, { type: 'load', module: decoder.module, bits: decoder.bits, id, positions: p.positions, modifier: p.modifier, materials }).then(() => loading?.(++done, this.workers.length)),
       ),
     );
     this.loaded = id;
@@ -340,8 +350,9 @@ class Pool {
     params: Float64Array,
     progress: (done: number, total: number, lanes: [number, number][]) => void,
     value?: (first: number, values: Float64Array) => void,
+    loading?: (done: number, total: number) => void,
   ): Promise<Float64Array> {
-    await this.load(id, p, decoder);
+    await this.load(id, p, decoder, loading);
     const n = p.sensors.length / 6;
     const out = new Float64Array(n);
     const shard = Math.min(512, Math.max(8, Math.ceil(n / (this.size * 8))));
@@ -355,6 +366,8 @@ class Pool {
         const first = next;
         next = Math.min(n, next + shard);
         const values = await this.call<Float64Array>(k, { type: 'run', id, sensors: p.sensors.slice(first * 6, next * 6), first, kind, params });
+        // a shard that finishes after another lane failed belongs to a run that has ended
+        if (failed) return;
         out.set(values, first);
         value?.(first, values);
         done += values.length;
@@ -689,9 +702,24 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   // ---------- weather: chosen, dropped, or kept in this browser for the site ----------
   /** The site a kept weather file belongs to: latitude and longitude to 4 decimals (about 10 m). */
   const siteKey = (): string => `${site.latitude.toFixed(4)},${site.longitude.toFixed(4)}`;
+  /** The site the loaded weather was loaded for. */
+  let weatherSite = '';
 
-  function loadWeather(name: string, text: string, fileDate: string, from: 'file' | 'kept'): void {
+  /** Reads a chosen or dropped file: the selection is recorded first, so a slower earlier read cannot replace it. */
+  async function readWeather(f: File): Promise<void> {
     const gen = ++weatherGen;
+    let text: string;
+    try {
+      text = await f.text();
+    } catch (e) {
+      if (gen === weatherGen) weatherNote.textContent = `${f.name} could not be read (${e instanceof Error ? e.message : String(e)}). ${weather ? 'The weather loaded before stays in use.' : 'No weather file is loaded.'}`;
+      return;
+    }
+    if (gen !== weatherGen) return;
+    loadWeather(f.name, text, new Date(f.lastModified).toISOString().slice(0, 10), 'file', gen);
+  }
+
+  function loadWeather(name: string, text: string, fileDate: string, from: 'file' | 'kept', gen = ++weatherGen): void {
     try {
       const w = parseWeather(name, text, fileDate);
       if (gen !== weatherGen) return;
@@ -704,7 +732,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         .join('; ')}.${weather.credit ? ` ${weather.credit}.` : ''}`;
       root.dataset.weather = String(weather.hours.length);
       root.dataset.weatherFrom = from;
-      if (from === 'file') void keepWeather(name, text, fileDate);
+      weatherSite = siteKey();
+      if (from === 'file') void keepWeather(name, text, fileDate, weatherSite, gen);
       else showKept({ name, date: fileDate, saved: '' }, true);
     } catch (e) {
       if (gen !== weatherGen) return;
@@ -716,7 +745,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
 
   weatherIn.addEventListener('change', async () => {
     const f = weatherIn.files?.[0];
-    if (f) loadWeather(f.name, await f.text(), new Date(f.lastModified).toISOString().slice(0, 10), 'file');
+    if (f) await readWeather(f);
   });
 
   // a weather file dropped on the panel, or anywhere on the page while the analysis that uses one is chosen
@@ -734,7 +763,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         analysisSel.value = 'rad-pit';
         showFields();
       }
-      void f.text().then((t) => loadWeather(f.name, t, new Date(f.lastModified).toISOString().slice(0, 10), 'file'));
+      void readWeather(f);
     },
     true,
   );
@@ -755,10 +784,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   async function store<T>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest): Promise<T> {
     const d = await db();
     try {
+      // settled when the transaction commits (a request can succeed in a transaction that then aborts)
       return await new Promise<T>((resolve, reject) => {
-        const r = f(d.transaction('weather', mode).objectStore('weather'));
-        r.onsuccess = () => resolve(r.result as T);
-        r.onerror = () => reject(r.error);
+        const tx = d.transaction('weather', mode);
+        const r = f(tx.objectStore('weather'));
+        tx.oncomplete = () => resolve(r.result as T);
+        tx.onabort = tx.onerror = () => reject(tx.error ?? r.error ?? new Error('IndexedDB transaction failed'));
       });
     } finally {
       d.close();
@@ -770,23 +801,33 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     if (!k) return;
     weatherSaved.textContent = `${loaded ? 'Loaded from' : 'Kept in'} this browser for the site ${siteKey()}: ${k.name}${k.saved ? `, kept ${k.saved}` : ''}. The next model at this site loads it without the file dialog.`;
   }
-  async function keepWeather(name: string, text: string, date: string): Promise<void> {
+  async function keepWeather(name: string, text: string, date: string, key: string, gen: number): Promise<void> {
     try {
       const k: Kept = { name, text, date, saved: new Date().toISOString().slice(0, 10) };
-      await store('readwrite', (s) => s.put(k, siteKey()));
-      showKept(k);
+      await store('readwrite', (s) => s.put(k, key));
+      if (gen === weatherGen) showKept(k);
     } catch {
       weatherSaved.hidden = false;
       weatherSaved.textContent = 'This browser does not keep files for the page (private window or storage blocked): choose the weather file again next time.';
     }
   }
-  /** Loads the weather file kept for the current site, if any (no weather is loaded yet). */
+  /** Loads the weather file kept for the current site, if any; weather kept for another site is dropped first. */
   async function loadKept(): Promise<void> {
+    if (weather && root.dataset.weatherFrom === 'kept' && weatherSite !== siteKey()) {
+      weatherGen++;
+      weather = null;
+      delete root.dataset.weather;
+      delete root.dataset.weatherFrom;
+      showKept(null);
+      weatherNote.textContent = NO_WEATHER;
+    }
     if (weather) return;
     const gen = weatherGen;
+    const key = siteKey();
     try {
-      const k = await store<Kept | undefined>('readonly', (s) => s.get(siteKey()));
-      if (!k || gen !== weatherGen || weather) return;
+      const k = await store<Kept | undefined>('readonly', (s) => s.get(key));
+      // a reply for a site the panel has left, or after another file was chosen, is dropped
+      if (!k || gen !== weatherGen || weather || key !== siteKey()) return;
       loadWeather(k.name, k.text, k.date, 'kept');
       showKept(k, true);
     } catch {
@@ -796,8 +837,9 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   weatherForget.addEventListener('click', async () => {
     try {
       await store('readwrite', (s) => s.delete(siteKey()));
-    } catch {
-      // nothing to forget
+    } catch (e) {
+      weatherSaved.textContent = `The kept weather file could not be forgotten: ${e instanceof Error ? e.message : String(e)}`;
+      return;
     }
     showKept(null);
     delete root.dataset.weatherFrom;
@@ -1258,6 +1300,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     'oconv-sky': 'oconv: adding the sky',
     trace: 'Tracing',
     rtrace: 'rtrace: tracing',
+    pool: 'Loading the scene into the workers',
     collect: 'Collecting the values and drawing the grid',
   };
 
@@ -1277,6 +1320,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
 
   /** Enters stage `key`, with what it works on. */
   function stage(key: string, detail = ''): void {
+    // a callback of a run that has ended (failed, stopped) changes nothing
+    if (!running) return;
     const now = performance.now();
     const prev = track.timeline.at(-1);
     if (prev && prev.seconds === undefined) prev.seconds = (now - track.t0) / 1000 - prev.startS;
@@ -1293,6 +1338,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
 
   /** A count within the stage: `done` of `total`, with a line per worker. */
   function count(done: number, total: number, text: string, workers?: string): void {
+    if (!running) return;
     const now = performance.now();
     if (done > track.done || total !== track.total) track.last = now;
     if (track.done === 0 && done > 0) [track.countT0, track.countDone0] = [now, 0];
@@ -1385,9 +1431,9 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       const n = p.sensors.length / 6;
       if (n === 0) throw new Error('the model has no rooms or floors to lay a sensor grid on');
       const tris = p.positions.length / 9;
-      fillStoreys(p);
+      const levels = storeysOf(p).length;
       const rooms = p.zones[0]?.kind === 'floor' ? 'floors (the model has no rooms)' : 'rooms';
-      status.textContent = `${tris.toLocaleString('en')} surfaces; ${n.toLocaleString('en')} sensors in ${p.zones.length} ${rooms} on ${storeys.length} level${storeys.length === 1 ? '' : 's'}.`;
+      status.textContent = `${tris.toLocaleString('en')} surfaces; ${n.toLocaleString('en')} sensors in ${p.zones.length} ${rooms} on ${levels} level${levels === 1 ? '' : 's'}.`;
       root.dataset.sensors = String(n);
       // a long run asks first, with the counts and the estimated time; nothing is capped
       if (a.startsWith('rad-')) {
@@ -1433,6 +1479,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         params = new Float64Array(0);
       }
       // the grid fills in as values come back: grey until known, on a scale that grows with them
+      // (the storeys are this run's from here on: the result they described is gone)
+      fillStoreys(p);
       const v = new Float64Array(n).fill(Number.NaN);
       const unitScale = a === 'rad-df' ? 0.01 : scale;
       lastRun = null;
@@ -1496,6 +1544,9 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         stage('radtext', `${tris.toLocaleString('en')} surfaces`);
         const [matText, sceneText, degenerate, duplicate] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: rot(p.positions, 9), modifier: p.modifier, materials });
         alive();
+        // on a large scene the instant tier's workers each hold a tracer of it: they are ended before
+        // Radiance's workers load the octree (the next instant run loads them again), so the tab does not hold both
+        if (tris > LARGE_SCENE) pool.stop('freeing memory for Radiance');
         const skipped = { degenerate: Number(degenerate) || 0, duplicate: Number(duplicate) || 0 };
         extra.skippedTriangles = skipped;
         const sens = rot(p.sensors, 6);
@@ -1519,26 +1570,35 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
           },
         });
         alive();
+        radiance.release();
         if (a === 'rad-df') for (let i = 0; i < n; i++) v[i] = r.lux[i] / 100;
         else v.set(r.lux);
         extra.engine = 'Radiance 6.0.3 (WebAssembly)';
-        radianceInfo = { workers: r.workers, octreeBytes: r.octreeBytes, sceneOctreeReused: r.sceneReused };
+        radianceInfo = { workers: r.workers, octreeBytes: r.octreeBytes, sceneOctreeReused: r.sceneReused, octreeResolution: r.resolution, setOverflows: r.setOverflows };
         Object.assign(extra, radianceInfo);
         const logText = radiance.log.map((l) => `${l.prog}:\n${l.text}`).join('\n');
         if (logText) extra.radianceLog = logText;
       } else {
-        stage('trace', `${n.toLocaleString('en')} sensors in ${pool.count} workers`);
+        if (!pool.holds(preparedId)) stage('pool', `${tris.toLocaleString('en')} surfaces, one tracer per worker`);
+        let traced = false;
         const out = await pool.run(
           preparedId,
           p,
           decoder,
           kind,
           params,
-          (done, total, lanes) => count(done, total, `Tracing: ${sensorsText(done, total)}`, lanes.length > 1 ? `Workers: ${lanes.map(([d], k) => `${k + 1}: ${d.toLocaleString('en')}`).join(' · ')}` : ''),
+          (done, total, lanes) => {
+            if (!traced) {
+              traced = true;
+              stage('trace', `${n.toLocaleString('en')} sensors in ${pool.count} workers`);
+            }
+            count(done, total, `Tracing: ${sensorsText(done, total)}`, lanes.length > 1 ? `Workers: ${lanes.map(([d], k) => `${k + 1}: ${d.toLocaleString('en')}`).join(' · ')}` : '');
+          },
           (first, values) => {
             for (let k = 0; k < values.length; k++) v[first + k] = values[k] * scale;
             paint();
           },
+          (done, total) => count(done, total, `Loading the scene into the workers: ${done} of ${total} ready`),
         );
         alive();
         for (let i = 0; i < n; i++) v[i] = out[i] * scale;
@@ -1558,7 +1618,9 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       const sk = extra.skippedTriangles as { degenerate: number; duplicate: number } | undefined;
       const skippedText = sk && (sk.degenerate || sk.duplicate) ? ` Left out of the Radiance scene: ${sk.degenerate.toLocaleString('en')} zero-area and ${sk.duplicate.toLocaleString('en')} duplicate triangles.` : '';
       const workers = (radianceInfo.workers as number | undefined) ?? pool.count;
-      status.textContent = `Done in ${fmt(ms / 1000, 1)} s: ${n.toLocaleString('en')} sensors, mean ${fmt(mean, a === 'svf' ? 3 : 2)}${ANALYSES[a].unit ? ` ${ANALYSES[a].unit}` : ''} (${ANALYSES[a].label}, ${workers} workers).${skippedText}`;
+      const over = Number(radianceInfo.setOverflows) || 0;
+      const overText = over ? ` oconv reported ${over.toLocaleString('en')} set overflow${over === 1 ? '' : 's'} (more surfaces in one spot than its octree lists, so some there are missing from the scene).` : '';
+      status.textContent = `Done in ${fmt(ms / 1000, 1)} s: ${n.toLocaleString('en')} sensors, mean ${fmt(mean, a === 'svf' ? 3 : 2)}${ANALYSES[a].unit ? ` ${ANALYSES[a].unit}` : ''} (${ANALYSES[a].label}, ${workers} workers).${skippedText}${overText}`;
       live.textContent = `Stages: ${track.timeline.map((t) => `${STAGES[t.stage] ?? t.stage} ${fmt(t.seconds ?? 0, 1)} s`).join(' · ')}`;
     } catch (err) {
       // a failed share leaves the others running: stop them
@@ -1589,15 +1651,22 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         errorBox.replaceChildren(el('summary', {}, 'Details'), el('pre', { class: 'daylight-log' }, log));
       }
       clearOverlay();
+      // the export is this failed attempt's, not an earlier result's
+      lastRun = null;
+      legend.hidden = table.hidden = true;
+      exportCsv.disabled = true;
       lastFailure = { analysis: a, label: ANALYSES[a].label, failed: true, error: sentence, stage: track.stage, stages: track.timeline, log: log || null, seconds: Number(((performance.now() - track.t0) / 1000).toFixed(2)) };
       exportJson.disabled = false;
       host.toast(`Daylight run failed. ${sentence}`, 'bad');
     } finally {
-      running = false;
-      clearInterval(track.ticker);
-      runBtn.disabled = false;
-      stopBtn.hidden = true;
-      bar.hidden = true;
+      // a run Stop or a model change ended has already handed the panel back (maybe to a newer run)
+      if (token === runToken) {
+        running = false;
+        clearInterval(track.ticker);
+        runBtn.disabled = false;
+        stopBtn.hidden = true;
+        bar.hidden = true;
+      }
     }
   }
   runBtn.addEventListener('click', () =>
@@ -1618,6 +1687,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     radiance.stop();
     running = false;
     clearInterval(track.ticker);
+    // Run is free at once, even while a request of the stopped run is still out on the network
+    runBtn.disabled = false;
+    stopBtn.hidden = true;
+    bar.hidden = true;
     root.dataset.state = 'idle';
     status.textContent = `Stopped after ${clock((performance.now() - track.t0) / 1000)}.`;
     live.hidden = true;
@@ -1710,6 +1783,11 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     legend.hidden = table.hidden = true;
     exportJson.disabled = exportCsv.disabled = true;
     readout.textContent = status.textContent = '';
+    // the run the model change ended hands the panel back here
+    running = false;
+    clearInterval(track.ticker);
+    runBtn.disabled = false;
+    stopBtn.hidden = bar.hidden = true;
     live.hidden = workersLine.hidden = errorBox.hidden = true;
     lastFailure = null;
     askedFor = '';

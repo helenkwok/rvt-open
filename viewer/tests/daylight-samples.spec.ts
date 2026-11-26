@@ -25,7 +25,8 @@ const samples = (fromEnv.length ? fromEnv : defaults)
     const [file, spacing] = s.split('|');
     return { file, spacing: spacing ? Number(spacing) : 0.5 };
   })
-  .filter((s) => fs.existsSync(s.file));
+  // a sample named in RVT_DAYLIGHT_SAMPLES must be there; a default one that is not staged is left out
+  .filter((s) => fromEnv.length > 0 || fs.existsSync(s.file));
 const analyses = (process.env.RVT_DAYLIGHT_ANALYSES ?? 'sunhours,svf,df,rad-df,rad-pit').split(',').map((s) => s.trim());
 const runS = Number(process.env.RVT_DAYLIGHT_RUN_S) || 1800;
 const radiance = fs.existsSync(path.resolve(__dirname, '../public/radiance/rtrace.wasm'));
@@ -98,6 +99,8 @@ test('every Daylight analysis on real public samples', async ({ page }) => {
   test.setTimeout(samples.length * analyses.length * (runS + 120) * 1000 + 600_000);
   fs.mkdirSync(shots, { recursive: true });
   const rows: Row[] = [];
+  const missing = samples.filter((s) => !fs.existsSync(s.file)).map((s) => s.file);
+  expect(missing, 'samples named in RVT_DAYLIGHT_SAMPLES that are not there').toEqual([]);
   for (const s of samples) {
     const model = path.basename(s.file);
     await page.goto('/');
@@ -133,6 +136,8 @@ test('every Daylight analysis on real public samples', async ({ page }) => {
   console.log(md);
   const failed = rows.filter((r) => r.state !== 'done');
   expect(failed, failed.map((r) => `${r.model} ${r.analysis}: ${r.reason}`).join('\n')).toEqual([]);
-  // the bar moves with the sensors on every run long enough to report one update before the end
-  for (const r of rows) if (r.seconds > 5 && (r.analysis.startsWith('rad-') || r.sensors! > 2000)) expect(r.barMoved, `${r.model} ${r.analysis}: the bar did not move`).toBe(true);
+  // the bar moves with the sensors on every run whose tracing lasts long enough to report an update before
+  // its end (progress comes at most every 250 ms; the test reads it every 250 ms)
+  const traceSeconds = (r: Row): number => Number(/(?:^|, )(?:trace|rtrace) ([\d.]+)/.exec(r.stages)?.[1] ?? 0);
+  for (const r of rows) if (traceSeconds(r) > 3) expect(r.barMoved, `${r.model} ${r.analysis}: the bar did not move`).toBe(true);
 });

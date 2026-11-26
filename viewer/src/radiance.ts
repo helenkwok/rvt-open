@@ -84,13 +84,17 @@ export function summarizeLog(prog: string, log: string, fallback = ''): { senten
   const lines = log.split('\n').map((l) => l.trim()).filter(Boolean);
   const kinds = new Map<string, number>();
   let fatal = '';
+  // a line Radiance marked as an error outranks later text it did not mark
+  let classified = false;
   for (const l of lines) {
     const m = /^[^:]*:\s*(warning|fatal|system|internal|user|consistency)\s*-\s*(.*)$/i.exec(l);
     if (m && m[1].toLowerCase() === 'warning') {
       const text = m[2].replace(/"[^"]*"/g, '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
       kinds.set(text, (kinds.get(text) ?? 0) + 1);
-    } else if (m) fatal = m[2];
-    else if (!/^…/.test(l)) fatal = l.replace(/^[^:]*:\s*/, '');
+    } else if (m) {
+      fatal = m[2];
+      classified = true;
+    } else if (!classified && !/^…/.test(l)) fatal = l.replace(/^[^:]*:\s*/, '');
   }
   const n = (k: number): string => k.toLocaleString('en');
   const warnings = [...kinds].map(([text, k]) =>
@@ -134,7 +138,7 @@ export class Radiance {
   private stopped: string | null = null;
   private pending = new Map<number, { resolve: (out: Uint8Array) => void; reject: (e: Error) => void; progress?: (text: string) => void }>();
   /** The scene's octree from the last run, kept while the scene is the same (a new sky reuses it). */
-  private sceneOct: { key: string; oct: Uint8Array } | null = null;
+  private sceneOct: { key: string; oct: Uint8Array; resolution: string; setOverflows: number } | null = null;
   /** `?radiance-compile=each` makes every worker fetch and compile each program itself, to measure against sharing. */
   private compileEach = new URLSearchParams(location.search).get('radiance-compile') === 'each';
   /** Warnings and other standard error of the last run, per program. */
@@ -290,16 +294,26 @@ export class Radiance {
     sensors: string[],
     detail: Detail,
     hooks: RadianceHooks,
-  ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; sceneReused: boolean }> {
+  ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; sceneReused: boolean; resolution: string; setOverflows: number }> {
     this.log = [];
     const [rayinit, skybright, perezlum] = await Promise.all(['rayinit.cal', 'skybright.cal', 'perezlum.cal'].map((f) => this.file(f)));
     const sceneReused = this.sceneOct?.key === sceneKey;
     if (!sceneReused) {
       this.sceneOct = null;
+      const files = { 'materials.rad': enc(materials), 'scene.rad': enc(scene) };
+      const overflows = (): number => (this.log.filter((l) => l.prog === 'oconv').at(-1)?.text.match(/set overflow/g) ?? []).length;
       hooks.stage('oconv', `building the octree of ${(scene.length / 2 ** 20).toFixed(1)} MB of scene text`);
-      // -r 1024: oconv's octree stops subdividing at 1/1024 of the scene's size; the rays find the same surfaces
-      const oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], { 'materials.rad': enc(materials), 'scene.rad': enc(scene) });
-      this.sceneOct = { key: sceneKey, oct };
+      // -r 1024: the octree stops subdividing at 1/1024 of the scene's size, which keeps it small; where more
+      // surfaces than a voxel can list meet at that size ("set overflow", and oconv leaves some out), it is
+      // built again at oconv's default resolution
+      let oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], files);
+      let resolution = '-r 1024';
+      if (overflows()) {
+        hooks.stage('oconv', 'surfaces crowd at the coarser resolution: building the octree again at the default one');
+        oct = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], files);
+        resolution = 'default (-r 16384)';
+      }
+      this.sceneOct = { key: sceneKey, oct, resolution, setOverflows: overflows() };
     }
     hooks.stage('oconv-sky', sceneReused ? 'adding the sky to the scene’s octree from the last run' : 'adding the sky');
     const oct = await this.run(0, 'oconv', ['-f', '-i', 'scene.oct', 'sky.rad', 'glow.rad'], { 'scene.oct': this.sceneOct!.oct, 'sky.rad': enc(sky), 'glow.rad': enc(GLOW) });
@@ -341,7 +355,14 @@ export class Radiance {
         take(lines.slice(got).join('\n'));
       }),
     );
-    return { lux: out, octreeBytes: oct.length, workers: shares, sceneReused };
+    return { lux: out, octreeBytes: oct.length, workers: shares, sceneReused, resolution: this.sceneOct!.resolution, setOverflows: this.sceneOct!.setOverflows };
+  }
+
+  /** Ends the idle workers, so their WebAssembly memory is returned at once (the next run starts new ones). */
+  release(): void {
+    if (this.pending.size) return;
+    for (const w of this.workers) w.terminate();
+    this.workers = [];
   }
 
   /** Clears an earlier Stop: call when a Radiance analysis starts. */

@@ -56,7 +56,10 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
   let errDropped = 0;
   const errText = (): string => {
     const d = new TextDecoder();
-    return errDropped ? `${d.decode(Uint8Array.from(errBytes))}\n… ${errDropped.toLocaleString('en')} bytes not kept …\n${d.decode(Uint8Array.from(errTail))}` : d.decode(Uint8Array.from(errBytes));
+    // the bytes past the first 4 MiB that the kept tail does not hold
+    const lost = errDropped - errTail.length;
+    const tail = d.decode(Uint8Array.from(errTail));
+    return lost > 0 ? `${d.decode(Uint8Array.from(errBytes))}\n… ${lost.toLocaleString('en')} bytes not kept …\n${tail}` : d.decode(Uint8Array.from(errBytes)) + tail;
   };
   try {
     let f = factories.get(m.glue);
@@ -136,7 +139,7 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
       bytes.set(c, at);
       at += c.length;
     }
-    send({ type: 'done', req: m.req, out: bytes, err: errText(), ms: performance.now() - t0 }, [bytes.buffer]);
+    send({ type: 'done', req: m.req, prog: m.prog, out: bytes, err: errText(), ms: performance.now() - t0 }, [bytes.buffer]);
   } catch (e) {
     // a trap (out of memory, out of bounds) or a failed import: what the program wrote so far goes with it
     send({ type: 'error', req: m.req, message: `${m.prog}: ${e instanceof Error ? e.message : String(e)}`, log: errText(), prog: m.prog });
