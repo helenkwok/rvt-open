@@ -1288,6 +1288,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     countT0: 0,
     countDone0: 0,
     timeline: [] as { stage: string; detail: string; startS: number; seconds?: number }[],
+    /** Per worker (done, share), when the work is split in fixed shares: the run ends with the slowest. */
+    shares: null as [number, number][] | null,
     ticker: 0,
   };
   const STAGES: Record<string, string> = {
@@ -1338,7 +1340,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   }
 
   /** A count within the stage: `done` of `total`, with a line per worker. */
-  function count(done: number, total: number, text: string, workers?: string): void {
+  function count(done: number, total: number, text: string, workers?: string, shares?: [number, number][]): void {
     if (!running) return;
     const now = performance.now();
     if (done > track.done || total !== track.total) track.last = now;
@@ -1347,6 +1349,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     if ((track.stage === 'trace' || track.stage === 'rtrace') && done > 0 && done < total) root.dataset.midUpdates = String(Number(root.dataset.midUpdates ?? 0) + 1);
     track.done = done;
     track.total = total;
+    track.shares = shares ?? null;
     root.dataset.done = String(done);
     root.dataset.total = String(total);
     bar.value = total ? done / total : 0;
@@ -1367,7 +1370,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     const { done, total } = track;
     if (total && done > 0 && done < total) {
       const spent = (now - track.countT0) / 1000;
-      if (done / total >= 0.03 && spent >= 3) parts.push(`about ${clock((spent * (total - done)) / done)} left`);
+      // with fixed shares, the slowest worker's own rate decides the end
+      let left = (spent * (total - done)) / done;
+      if (track.shares?.every(([d]) => d > 0)) left = Math.max(...track.shares.map(([d, s]) => (spent * (s - d)) / d));
+      if (done / total >= 0.03 && spent >= 3) parts.push(`about ${clock(left)} left`);
       else parts.push('time left: shown once 3 % is done');
     }
     let text = parts.join(' · ');
@@ -1562,12 +1568,14 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         }
         const r = await radiance.illuminance(matText, sceneText, `${preparedId}:${turn}`, sky, pts, detail, {
           stage,
-          progress: (done, total, workers) =>
+          progress: (done, total, workers, final) =>
             count(
               done,
               total,
               `rtrace: ${sensorsText(done, total)} traced`,
-              workers.length > 1 ? `Workers: ${workers.map(([d, s], k) => `${k + 1}: ${d.toLocaleString('en')}/${s.toLocaleString('en')}`).join(' · ')}` : '',
+              workers.length > 1 ? `Workers (done/taken): ${workers.map(([d, s], k) => `${k + 1}: ${d.toLocaleString('en')}/${s.toLocaleString('en')}`).join(' · ')}` : '',
+              // once every part is taken, the slowest worker decides the end
+              final ? workers : undefined,
             ),
           value: (i, x) => {
             v[i] = x * unitScale;
@@ -1579,7 +1587,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         if (a === 'rad-df') for (let i = 0; i < n; i++) v[i] = r.lux[i] / 100;
         else v.set(r.lux);
         extra.engine = 'Radiance 6.0.3 (WebAssembly)';
-        radianceInfo = { workers: r.workers, octreeBytes: r.octreeBytes, sceneOctreeReused: r.sceneReused, octreeResolution: r.resolution, setOverflows: r.setOverflows };
+        radianceInfo = { workers: r.workers, parts: r.parts, octreeBytes: r.octreeBytes, sceneOctreeReused: r.sceneReused, octreeResolution: r.resolution, setOverflows: r.setOverflows };
         Object.assign(extra, radianceInfo);
         const logText = radiance.log.map((l) => `${l.prog}:\n${l.text}`).join('\n');
         if (logText) extra.radianceLog = logText;

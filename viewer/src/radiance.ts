@@ -116,8 +116,8 @@ export interface RadianceHooks {
   stage(name: string, detail?: string): void;
   /** Files loaded of the total, and their bytes so far of the total (0 when not known). */
   loading?(files: number, of: number, bytes: number, totalBytes: number): void;
-  /** Sensors traced of the total, and per worker (done, share). */
-  progress(done: number, total: number, workers: [number, number][]): void;
+  /** Sensors traced of the total, and per worker (done, taken so far); `final` once every part is taken. */
+  progress(done: number, total: number, workers: [number, number][], final: boolean): void;
   /** One sensor's value (lux), as soon as its worker writes it. */
   value?(i: number, lux: number): void;
 }
@@ -294,7 +294,7 @@ export class Radiance {
     sensors: string[],
     detail: Detail,
     hooks: RadianceHooks,
-  ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; sceneReused: boolean; resolution: string; setOverflows: number }> {
+  ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; parts: number; sceneReused: boolean; resolution: string; setOverflows: number }> {
     this.log = [];
     const [rayinit, skybright, perezlum] = await Promise.all(['rayinit.cal', 'skybright.cal', 'perezlum.cal'].map((f) => this.file(f)));
     const sceneReused = this.sceneOct?.key === sceneKey;
@@ -325,40 +325,50 @@ export class Radiance {
     const budget = ((navigator as { deviceMemory?: number }).deviceMemory ?? 8) * 2 ** 30 * 0.75;
     const fit = Math.max(1, Math.floor(budget / workerBytes(oct.length)));
     const shares = Math.max(1, Math.min(this.size, fit, Math.ceil(n / 16)));
-    const per = Math.ceil(n / shares);
+    // contiguous chunks, taken by the next free worker: one per worker, or three per worker when each would still
+    // hold 500 sensors or more, so a worker done with an easy part of the building takes on what is left instead of
+    // waiting for the slowest share (each chunk is one rtrace run with its own irradiance cache)
+    const chunks = n / (shares * 3) >= 500 ? shares * 3 : shares;
+    const per = Math.ceil(n / chunks);
     const out = new Float64Array(n);
-    const workers: [number, number][] = Array.from({ length: shares }, (_, k) => [0, Math.max(0, Math.min(n, (k + 1) * per) - k * per)]);
+    // per worker: sensors done, and sensors taken so far
+    const workers: [number, number][] = Array.from({ length: shares }, () => [0, 0]);
     let done = 0;
-    hooks.stage('rtrace', `${n.toLocaleString('en')} sensors in ${shares} worker${shares === 1 ? '' : 's'}`);
-    hooks.progress(0, n, workers);
+    let next = 0;
+    hooks.stage('rtrace', `${n.toLocaleString('en')} sensors in ${shares} worker${shares === 1 ? '' : 's'}${chunks > shares ? `, ${chunks} parts` : ''}`);
+    hooks.progress(0, n, workers, next >= chunks);
     await Promise.all(
-      workers.map(async ([, size], k) => {
-        const first = k * per;
-        if (!size) return;
-        const part = sensors.slice(first, first + size);
-        let got = 0;
-        const take = (text: string): void => {
-          for (const l of text.split('\n')) {
-            if (!l.trim() || got >= size) continue;
-            const v = lux(l);
-            out[first + got] = v;
-            hooks.value?.(first + got, v);
-            got++;
-            done++;
-          }
-          workers[k][0] = got;
-          hooks.progress(done, n, workers);
-        };
-        const text = dec(
-          await this.run(k, 'rtrace', ['-I', '-h', ...detail.args, 'sky.oct'], { 'sky.oct': oct, 'rayinit.cal': rayinit, 'skybright.cal': skybright, 'perezlum.cal': perezlum }, enc(`${part.join('\n')}\n`), take),
-        );
-        const lines = text.trim().split('\n');
-        if (lines.length !== part.length) throw new Error(`rtrace gave ${lines.length} values for ${part.length} sensors`);
-        // the whole output is the answer: lines the progress messages did not carry are read here
-        take(lines.slice(got).join('\n'));
+      workers.map(async (_, k) => {
+        while (next < chunks) {
+          const first = next++ * per;
+          const size = Math.max(0, Math.min(n, first + per) - first);
+          if (!size) continue;
+          workers[k][1] += size;
+          const part = sensors.slice(first, first + size);
+          let got = 0;
+          const take = (text: string): void => {
+            for (const l of text.split('\n')) {
+              if (!l.trim() || got >= size) continue;
+              const v = lux(l);
+              out[first + got] = v;
+              hooks.value?.(first + got, v);
+              got++;
+              done++;
+              workers[k][0]++;
+            }
+            hooks.progress(done, n, workers, next >= chunks);
+          };
+          const text = dec(
+            await this.run(k, 'rtrace', ['-I', '-h', ...detail.args, 'sky.oct'], { 'sky.oct': oct, 'rayinit.cal': rayinit, 'skybright.cal': skybright, 'perezlum.cal': perezlum }, enc(`${part.join('\n')}\n`), take),
+          );
+          const lines = text.trim().split('\n');
+          if (lines.length !== part.length) throw new Error(`rtrace gave ${lines.length} values for ${part.length} sensors`);
+          // the whole output is the answer: lines the progress messages did not carry are read here
+          take(lines.slice(got).join('\n'));
+        }
       }),
     );
-    return { lux: out, octreeBytes: oct.length, workers: shares, sceneReused, resolution: this.sceneOct!.resolution, setOverflows: this.sceneOct!.setOverflows };
+    return { lux: out, octreeBytes: oct.length, workers: shares, parts: chunks, sceneReused, resolution: this.sceneOct!.resolution, setOverflows: this.sceneOct!.setOverflows };
   }
 
   /** Ends the idle workers, so their WebAssembly memory is returned at once (the next run starts new ones). */

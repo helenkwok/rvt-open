@@ -13,13 +13,25 @@ import { fileURLToPath } from 'node:url';
 //   RVT_DAYLIGHT_ANALYSES  comma-separated (default sunhours,svf,df,rad-df,rad-pit)
 //   RVT_DAYLIGHT_RUN_S     the longest a run may take, seconds (default 1800); a longer one is a failure
 //   RVT_DAYLIGHT_QUERY     added to the page's address (for example daylight-workers=4)
+//   RVT_DAYLIGHT_SAMPLES_DIR  folders (separated by ';') whose .rvt files are all run, at RVT_DAYLIGHT_SPACING
+//                          (default 1 m), in name order; RVT_DAYLIGHT_SHARD=k/n runs every n-th from the k-th (1-based)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const demos = path.resolve(__dirname, '../public/demos');
 const shots = path.resolve(__dirname, '../daylight-shots');
 const weatherFile = path.resolve(__dirname, 'data/pvgis-tmy-demo-building-june.json');
 
-const fromEnv = (process.env.RVT_DAYLIGHT_SAMPLES ?? '').split(/[;\n]/).map((s) => s.trim()).filter(Boolean);
+const fromDirs = (process.env.RVT_DAYLIGHT_SAMPLES_DIR ?? '')
+  .split(';')
+  .filter(Boolean)
+  .flatMap((d) => fs.readdirSync(d).filter((f) => /\.rvt$/i.test(f)).map((f) => path.join(d, f)))
+  .sort()
+  .filter((_, i) => {
+    const [k, n] = (process.env.RVT_DAYLIGHT_SHARD ?? '1/1').split('/').map(Number);
+    return i % n === k - 1;
+  })
+  .map((f) => `${f}|${process.env.RVT_DAYLIGHT_SPACING ?? '1'}`);
+const fromEnv = [...(process.env.RVT_DAYLIGHT_SAMPLES ?? '').split(/[;\n]/).map((s) => s.trim()).filter(Boolean), ...fromDirs];
 const defaults = [`${demos}/cc0-2027-demo-building.rvt`, `${demos}/2024_Core_Interior.rvt`, ...(process.env.RVT_SHEETS_MODEL ? [`${process.env.RVT_SHEETS_MODEL}|2`] : [])];
 const samples = (fromEnv.length ? fromEnv : defaults)
   .map((s) => {
