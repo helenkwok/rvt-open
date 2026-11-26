@@ -271,14 +271,28 @@ test('reads a large sheet fast and hovers in well under a frame', async ({ page 
   // On a sheet a viewport's view selects as the viewport; a double-click activates the viewport,
   // and then its elements select; a double-click outside deactivates it.
   const inside = await svg.evaluate((root) => {
+    // A line in the viewport with no other element's line within 8 px of its middle.
     const vp = root.querySelector('g[data-viewport][data-element]')!;
-    const line = Array.from(vp.querySelectorAll('line[data-element]')).find((l) => {
-      const r = l.getBoundingClientRect();
-      return r.width + r.height > 30;
-    })!;
-    const m = (line as SVGGraphicsElement).getScreenCTM()!;
-    const p = new DOMPoint((+line.getAttribute('x1')! + +line.getAttribute('x2')!) / 2, (+line.getAttribute('y1')! + +line.getAttribute('y2')!) / 2).matrixTransform(m);
-    return { vp: vp.getAttribute('data-element')!, element: line.getAttribute('data-element')!, x: p.x, y: p.y };
+    const lines = Array.from(vp.querySelectorAll('line[data-element]')).map((l) => {
+      const m = (l as SVGGraphicsElement).getScreenCTM()!;
+      const a = new DOMPoint(+l.getAttribute('x1')!, +l.getAttribute('y1')!).matrixTransform(m);
+      const b = new DOMPoint(+l.getAttribute('x2')!, +l.getAttribute('y2')!).matrixTransform(m);
+      return { id: l.getAttribute('data-element')!, a, b };
+    });
+    const dist = (p: { x: number; y: number }, a: DOMPoint, b: DOMPoint): number => {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+    };
+    const pane = root.getBoundingClientRect();
+    for (const l of lines) {
+      if (Math.hypot(l.b.x - l.a.x, l.b.y - l.a.y) < 30) continue;
+      const p = { x: (l.a.x + l.b.x) / 2, y: (l.a.y + l.b.y) / 2 };
+      if (p.x < pane.left + 20 || p.x > pane.right - 20 || p.y < pane.top + 80 || p.y > pane.bottom - 20) continue;
+      if (lines.every((o) => o.id === l.id || dist(p, o.a, o.b) > 8)) return { vp: vp.getAttribute('data-element')!, element: l.id, ...p };
+    }
+    throw new Error('no isolated line in the viewport');
   });
   await page.mouse.move(inside.x + 10, inside.y + 10);
   await page.mouse.move(inside.x, inside.y);
@@ -290,9 +304,7 @@ test('reads a large sheet fast and hovers in well under a frame', async ({ page 
   await page.mouse.move(inside.x + 10, inside.y + 10);
   await page.mouse.move(inside.x, inside.y);
   await page.mouse.click(inside.x, inside.y);
-  const chosen = await marked(page, 'sel-on');
-  expect(chosen).toHaveLength(1);
-  expect(chosen).not.toEqual([inside.vp]);
+  expect(await marked(page, 'sel-on')).toEqual([inside.element]);
   await page.mouse.dblclick(box.x + 5, box.y + box.height - 5);
   await expect(svg).not.toHaveClass(/has-active-viewport/);
 

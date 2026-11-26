@@ -513,7 +513,7 @@ let selectedIndex: number | null = null;
 
 function selectEntity(idx: number): void {
   clearScheduleHighlightState();
-  selectTreeRow(idx);
+  selectTreeRow(idx, !selectingInDrawing);
   highlightEntity(idx);
   showElementInfo(idx);
   selectedIndex = idx;
@@ -596,16 +596,35 @@ function drawingSelectionChanged(ids: number[]): void {
     // Several elements, or one the model's entities do not list: the 3D view lights the model
     // elements among them, and the panel counts them by category, as Revit's selection filter.
     clearDrawnSelection();
-    const lit = withBodyPieces(indices.filter((i): i is number => i !== null));
-    if (lit.size > 0) highlightWhere((data) => data.entityIndex !== undefined && lit.has(data.entityIndex));
+    const mapped = indices.filter((i): i is number => i !== null);
+    // The tree marks every model element selected, without taking the keyboard from the drawing.
+    for (const idx of mapped) {
+      const item = treeItemByEntity.get(idx);
+      if (item) ensureTreeRow(item);
+      const row = treeEl.querySelector<HTMLElement>(`.tree-node[data-entity-index="${idx}"]`);
+      if (!row) continue;
+      revealTreeRow(row);
+      row.classList.add('selected');
+    }
+    const lit = withBodyPieces(mapped);
+    if (lit.size > 0) {
+      highlightWhere(
+        (data) =>
+          (data.entityIndex !== undefined && lit.has(data.entityIndex)) ||
+          (data.instances?.some((i) => i.entityIndex !== undefined && lit.has(i.entityIndex)) ?? false),
+      );
+    }
     const sheet = document.getElementById('drawing-sheet');
     const layerOf = (id: number): string | null =>
       sheet?.querySelector(`[data-element="${id}"]`)?.closest('g[data-layer]')?.getAttribute('data-layer') ?? null;
     const kinds = new Map<string, number>();
-    for (const id of ids) {
-      const kind = describeDrawingElement(id, layerOf(id)).split(' : ')[0];
+    ids.forEach((id, i) => {
+      // A model element's category needs no look into the drawing; an annotation's layer does.
+      const idx = indices[i];
+      const e = idx !== null ? model?.entities?.[idx] : undefined;
+      const kind = e ? ifcTypeLabel(e.ifc_type) : describeDrawingElement(id, layerOf(id)).split(' : ')[0];
       kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
-    }
+    });
     infoEl.innerHTML = '';
     const identity = infoGroup('identity', ids.length === 1 ? undefined : `${ids.length} elements selected`);
     if (ids.length === 1) {
@@ -679,7 +698,7 @@ function frameEntities(indices: Set<number>, label: string): boolean {
   return true;
 }
 
-function selectTreeRow(idx: number): void {
+function selectTreeRow(idx: number, focus = true): void {
   document
     .querySelectorAll('.tree-node.selected')
     .forEach((el) => el.classList.remove('selected'));
@@ -694,7 +713,8 @@ function selectTreeRow(idx: number): void {
     block: 'nearest',
     behavior: prefersReducedMotion() ? 'auto' : 'smooth',
   });
-  focusTreeRow(row);
+  // A pick in a drawing keeps the keyboard there, for Tab, Esc and Ctrl+Left.
+  if (focus) focusTreeRow(row);
 }
 
 // ---------- Status ----------
@@ -4847,10 +4867,11 @@ const modelDrawings = initModelDrawings(
     select: {
       describe: describeDrawingElement,
       // Walls chain with walls, and detail, room separation and property lines with lines.
-      chains: (id, layer) => {
+      chainKind: (id, layer) => {
         const idx = entityOfElement(id);
         const type = idx !== null ? model?.entities?.[idx]?.ifc_type : undefined;
-        return type !== undefined ? /^IFCWALL/.test(type) : /DETL|AREA$|PROP/.test(layer ?? '');
+        if (type !== undefined) return /^IFCWALL/.test(type) ? 'wall' : null;
+        return /DETL|AREA$|PROP/.test(layer ?? '') ? 'line' : null;
       },
       changed: drawingSelectionChanged,
     },
@@ -4915,7 +4936,11 @@ document.addEventListener('keydown', (ev) => {
   // The scaffold explainer is ambient, not modal — Escape clears it
   // alongside the tree selection rather than swallowing the keypress.
   hideScaffoldNote();
-  modelDrawings.selection.set([]);
+  // A drawing's selection may have no tree row (annotations, several elements): clear it all.
+  if (modelDrawings.selection.selected().length > 0) {
+    modelDrawings.selection.set([]);
+    clearDrawnSelection();
+  }
   const selected = treeEl.querySelector('.tree-node.selected');
   if (selected) {
     selected.classList.remove('selected');

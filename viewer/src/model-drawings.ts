@@ -21,7 +21,7 @@ export interface ModelDrawingsHost {
   toast(message: string, kind?: 'ok' | 'bad' | 'info'): void;
   download(filename: string, blob: Blob): void;
   /** Naming, chaining and reporting the elements selected in a drawing (drawing-select.ts). */
-  select: Omit<DrawingSelectHost, 'setStatus'>;
+  select: Omit<DrawingSelectHost, 'setStatus' | 'status'>;
 }
 
 type Kind = 'sheet' | 'plan' | 'section';
@@ -167,7 +167,10 @@ export function initModelDrawings(
   const sheetEl = $('drawing-sheet');
   const listEl = $('drawings');
   const titleEl = $('drawing-title');
-  const selection = initDrawingSelection({ ...host.select, setStatus: host.setStatus }, sheetEl);
+  const selection = initDrawingSelection(
+    { ...host.select, setStatus: host.setStatus, status: () => document.getElementById('status')?.textContent ?? '' },
+    sheetEl,
+  );
   const byFace = document.getElementById('drawing-by-face') as HTMLInputElement | null;
   byFace?.addEventListener('change', () => {
     selection.byFace = byFace.checked;
@@ -243,6 +246,10 @@ export function initModelDrawings(
         titleEl.textContent = shown.label;
         showDrawing();
         if (!view.show(msg.drawn.svg, true)) {
+          // The last drawing is gone from the pane: so is its index. The selection is kept.
+          const kept = selection.selected();
+          selection.detach(false);
+          selection.set(kept);
           timeline.stop();
           host.toast('The drawing could not be shown: the renderer returned no SVG.', 'bad');
           return;
@@ -480,7 +487,7 @@ export function initModelDrawings(
       listTimeline?.stop();
       listTimeline = null;
       titleEl.textContent = '';
-      selection.detach();
+      selection.detach(true);
       selection.set([]);
       if (app.dataset.mode !== 'drawing') view.clear();
       listening?.removeEventListener('message', onMessage as EventListener);

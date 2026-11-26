@@ -134,6 +134,11 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
 
   const show = (text: string, fitDrawn = false): SVGSVGElement | null => {
     const el = sanitizeSvg(text);
+    // A gesture begun on the drawing replaced ends with it: it applies to no other drawing.
+    if (drag) {
+      drag = null;
+      sheet.classList.remove('is-panning');
+    }
     picker?.leave();
     picker = null;
     sheet.replaceChildren();
@@ -205,7 +210,7 @@ export function initSvgView(sheet: HTMLElement, onClick: (target: Element | null
   });
   sheet.addEventListener('pointercancel', (ev) => {
     if (drag && ev.pointerId === drag.id) {
-      if (drag.box && drag.moved) picker?.box({ x: drag.x0, y: drag.y0 }, { x: drag.x0, y: drag.y0 }, ev, true);
+      if (drag.box && drag.moved) picker?.cancel();
       drag = null;
     }
     sheet.classList.remove('is-panning');

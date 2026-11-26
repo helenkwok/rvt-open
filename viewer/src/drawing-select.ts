@@ -23,11 +23,16 @@
 export interface DrawingSelectHost {
   /** A one-line description of an element: what the status line and the tooltip show. */
   describe(id: number, layer: string | null): string;
-  /** Whether an element chains with joined ones of its kind on Tab (walls, lines). */
-  chains(id: number, layer: string | null): boolean;
+  /**
+   * What an element chains with on Tab (`wall`, `line`): joined elements of the same kind make one
+   * chain. Null when it does not chain.
+   */
+  chainKind(id: number, layer: string | null): string | null;
   /** The selection changed by the user in the drawing. */
   changed(ids: number[]): void;
   setStatus(text: string): void;
+  /** The status line's text, so a hover's name is cleared only while it is still shown. */
+  status(): string;
 }
 
 /** Pointer and key events the SVG view hands over while this selection is in charge. */
@@ -39,12 +44,15 @@ export interface DrawingPicker {
   /** A window from `a` to `b` (client points); `done` when the button is released. */
   box(a: { x: number; y: number }, b: { x: number; y: number }, ev: MouseEvent, done: boolean): void;
   key(ev: KeyboardEvent): boolean;
+  /** A window gesture ended without applying (pointer cancelled): its overlay goes. */
+  cancel(): void;
 }
 
 export interface DrawingSelection extends DrawingPicker {
   /** Reads the drawing's elements; returns the milliseconds it took. */
   attach(svg: SVGSVGElement): number;
-  detach(): void;
+  /** Forgets the drawing; with `newModel`, also the selection Ctrl+Left would restore. */
+  detach(newModel: boolean): void;
   /** Sets the selection from elsewhere (the 3D view, the tree): no `changed` call. */
   set(ids: Iterable<number>): void;
   selected(): number[];
@@ -68,8 +76,15 @@ interface Item {
   rings: Float64Array[];
   /** Whether a point inside `rings` hits whatever "Select elements by face" says (a text does). */
   solid: boolean;
+  /** A fill: its rings are one region under the even-odd rule, and its inside is drawn. */
+  filled: boolean;
   box: [number, number, number, number];
 }
+
+/** The idle status line: what a click, Tab, Ctrl and Shift do. */
+const IDLE = 'Click to select · Tab for others · Ctrl adds · Shift removes · drag for a window';
+/** An item spanning more grid cells than this is checked on every query instead. */
+const MAX_CELLS_PER_BOX = 256;
 
 interface Candidate {
   ids: number[];
@@ -160,9 +175,8 @@ function inside(px: number, py: number, rings: Float64Array[]): boolean {
   return odd;
 }
 
-/** Whether segment a-b meets rectangle r (x0 y0 x1 y1). */
-function segmentMeetsRect(ax: number, ay: number, bx: number, by: number, r: number[]): boolean {
-  // Liang-Barsky.
+/** The part of segment a-b inside rectangle r (x0 y0 x1 y1), or null (Liang-Barsky). */
+function clipSegment(ax: number, ay: number, bx: number, by: number, r: number[]): number[] | null {
   let t0 = 0;
   let t1 = 1;
   const dx = bx - ax;
@@ -174,15 +188,15 @@ function segmentMeetsRect(ax: number, ay: number, bx: number, by: number, r: num
     [dy, r[3] - ay],
   ]) {
     if (p === 0) {
-      if (q < 0) return false;
+      if (q < 0) return null;
     } else {
       const t = q / p;
       if (p < 0) t0 = Math.max(t0, t);
       else t1 = Math.min(t1, t);
-      if (t0 > t1) return false;
+      if (t0 > t1) return null;
     }
   }
-  return true;
+  return [ax + t0 * dx, ay + t0 * dy, ax + t1 * dx, ay + t1 * dy];
 }
 
 export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement): DrawingSelection {
@@ -190,6 +204,8 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
   let items: Item[] = [];
   /** Uniform grid over the items' boxes: cell -> item indices. */
   let grid = new Map<number, number[]>();
+  /** Items too large for the grid, checked on every query. */
+  let big: number[] = [];
   let cell = 1;
   let origin = [0, 0];
   /** Each element's DOM nodes (a viewport: its group and its title). */
@@ -202,7 +218,8 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
   let previous: number[] = [];
   let candidates: Candidate[] = [];
   let cycle = 0;
-  let hoverAt: { x: number; y: number } | null = null;
+  let hoverAt: { x: number; y: number; t: string } | null = null;
+  let hoverStatus: string | null = null;
   let pre: number[] = [];
   let boxEl: HTMLDivElement | null = null;
   const hoverMs: number[] = [];
@@ -287,6 +304,7 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
       const seg: number[] = [];
       const rings: Float64Array[] = [];
       let solid = false;
+      let filled = false;
       const ring = (local: number[]): Float64Array => {
         const r = new Float64Array(local.length);
         for (let i = 0; i < local.length; i += 2) [r[i], r[i + 1]] = tx(local[i], local[i + 1]);
@@ -314,7 +332,7 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
         }
         case 'path': {
           const fill = el.getAttribute('fill');
-          const filled = fill !== null && fill !== 'none';
+          filled = fill !== null && fill !== 'none';
           for (const p of pathPolylines(el.getAttribute('d') ?? '')) {
             if (filled) rings.push(ring(p.pts));
             else polyline(p.pts, p.closed);
@@ -346,7 +364,7 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
         }
       }
       const layer = el.closest('g[data-layer]')?.getAttribute('data-layer') ?? null;
-      items.push({ id, vp, layer, el, seg: Float64Array.from(seg), rings, solid, box: [x0, y0, x1, y1] });
+      items.push({ id, vp, layer, el, seg: Float64Array.from(seg), rings, solid, filled, box: [x0, y0, x1, y1] });
       if (id !== null) addNode(id, el);
     }
     // The grid: about as many cells as items.
@@ -358,19 +376,34 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
       gy1 = Math.max(gy1, it.box[3]);
     }
     grid = new Map();
+    big = [];
     if (items.length === 0) return;
     origin = [gx0, gy0];
     const area = Math.max((gx1 - gx0) * (gy1 - gy0), 1e-12);
     cell = Math.max(Math.sqrt(area / items.length) * 2, (gx1 - gx0 + gy1 - gy0) / 4096, 1e-9);
+    // Each segment and region by its own box, so a long diagonal path fills only the cells its
+    // segments cross; one box over too many cells puts the item on the list every query checks.
     items.forEach((it, n) => {
-      const [i0, j0, i1, j1] = cellRange(it.box[0], it.box[1], it.box[2], it.box[3]);
-      for (let i = i0; i <= i1; i++) {
-        for (let j = j0; j <= j1; j++) {
-          const k = cellKey(i, j);
-          const list = grid.get(k);
-          if (list) list.push(n);
-          else grid.set(k, [n]);
+      const boxes: number[][] = [];
+      for (let i = 0; i < it.seg.length; i += 4) {
+        const s = it.seg;
+        boxes.push([Math.min(s[i], s[i + 2]), Math.min(s[i + 1], s[i + 3]), Math.max(s[i], s[i + 2]), Math.max(s[i + 1], s[i + 3])]);
+      }
+      // A region's inside selects too: its whole box.
+      if (it.rings.length > 0) boxes.push(it.box);
+      const cells = new Set<number>();
+      for (const b of boxes) {
+        const [i0, j0, i1, j1] = cellRange(b[0], b[1], b[2], b[3]);
+        if ((i1 - i0 + 1) * (j1 - j0 + 1) > MAX_CELLS_PER_BOX) {
+          big.push(n);
+          return;
         }
+        for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) cells.add(cellKey(i, j));
+      }
+      for (const k of cells) {
+        const list = grid.get(k);
+        if (list) list.push(n);
+        else grid.set(k, [n]);
       }
     });
   }
@@ -398,6 +431,10 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
     for (let i = i0; i <= i1; i++) {
       for (let j = j0; j <= j1; j++) for (const n of grid.get(cellKey(i, j)) ?? []) out.add(n);
     }
+    for (const n of big) {
+      const b = items[n].box;
+      if (b[2] >= x0 && b[0] <= x1 && b[3] >= y0 && b[1] <= y1) out.add(n);
+    }
     return out;
   }
 
@@ -419,7 +456,7 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
       const s = it.seg;
       for (let i = 0; i < s.length; i += 4) d = Math.min(d, dist2(x, y, s[i], s[i + 1], s[i + 2], s[i + 3]));
       d = Math.sqrt(d);
-      if (d > tol && it.rings.length > 0 && (it.solid || api.byFace) && inside(x, y, it.rings)) {
+      if (d > tol && it.rings.length > 0 && (it.solid || byFaceOn) && inside(x, y, it.rings)) {
         // A text under the cursor is as near as can be; a face ranks after every edge in reach.
         d = it.solid ? 0 : tol;
       }
@@ -457,10 +494,13 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
       const at = new Map<string, number>();
       for (const it of items) {
         const e = effective(it);
-        if (e === null || !eligible(it) || !host.chains(e, it.layer)) continue;
+        if (e === null || !eligible(it)) continue;
+        // Walls chain with walls and lines with lines: the kind is part of the point's key.
+        const kind = host.chainKind(e, it.layer);
+        if (kind === null) continue;
         if (!parent.has(e)) parent.set(e, e);
         for (let i = 0; i < it.seg.length; i += 2) {
-          const k = key(it.seg[i], it.seg[i + 1]);
+          const k = `${kind}:${key(it.seg[i], it.seg[i + 1])}`;
           const other = at.get(k);
           if (other === undefined) at.set(k, e);
           else parent.set(find(other), find(e));
@@ -508,8 +548,29 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
     setPre(c ? c.ids : []);
     if (c) {
       sheet.title = c.label;
-      host.setStatus(candidates.length > 1 ? `${c.label} · Tab for the next of ${candidates.length}` : c.label);
-    } else sheet.removeAttribute('title');
+      hoverStatus = candidates.length > 1 ? `${c.label} · Tab for the next of ${candidates.length}` : c.label;
+      host.setStatus(hoverStatus);
+    } else {
+      sheet.removeAttribute('title');
+      clearHoverStatus();
+    }
+  }
+
+  /** Puts the idle hint back where the status line still names the last element hovered. */
+  function clearHoverStatus(): void {
+    if (hoverStatus !== null && host.status() === hoverStatus) host.setStatus(IDLE);
+    hoverStatus = null;
+  }
+
+  /** The drawing's screen transform, to tell when a pan or zoom moved it under a still cursor. */
+  const transformKey = (): string => {
+    const m = svg?.getScreenCTM();
+    return m ? `${m.a} ${m.b} ${m.c} ${m.d} ${m.e} ${m.f}` : '';
+  };
+
+  function removeWindow(): void {
+    boxEl?.remove();
+    boxEl = null;
   }
 
   function render(): void {
@@ -556,12 +617,23 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
     host.setStatus(vp === null ? 'Viewport deactivated' : 'Viewport activated: its elements select; double-click outside it to deactivate');
   }
 
+  let byFaceOn = false;
   const api: DrawingSelection = {
-    byFace: false,
+    get byFace(): boolean {
+      return byFaceOn;
+    },
+    set byFace(on: boolean) {
+      byFaceOn = on;
+      // The cursor's candidates were found under the other rule.
+      hoverAt = null;
+      candidates = [];
+      setPre([]);
+    },
     attach(root: SVGSVGElement): number {
       const t0 = performance.now();
       svg = root;
       active = null;
+      hoverAt = null;
       candidates = [];
       pre = [];
       chains = null;
@@ -573,7 +645,10 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
       hoverMs.length = 0;
       return ms;
     },
-    detach(): void {
+    detach(newModel: boolean): void {
+      // A new model's ElementIds are not the last one's: nothing to restore either.
+      if (newModel) previous = [];
+      removeWindow();
       svg = null;
       items = [];
       grid = new Map();
@@ -593,10 +668,11 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
     selected: () => [...selection],
     hover(clientX: number, clientY: number): void {
       if (!svg) return;
-      // Tab keeps its choice until the cursor moves.
-      if (hoverAt && Math.hypot(clientX - hoverAt.x, clientY - hoverAt.y) < 2) return;
+      // Tab keeps its choice until the cursor, or the drawing under it, moves.
+      const t = transformKey();
+      if (hoverAt && hoverAt.t === t && Math.hypot(clientX - hoverAt.x, clientY - hoverAt.y) < 2) return;
       const t0 = performance.now();
-      hoverAt = { x: clientX, y: clientY };
+      hoverAt = { x: clientX, y: clientY, t };
       const p = toRoot(clientX, clientY);
       candidates = p ? candidatesAt(p.x, p.y) : [];
       cycle = 0;
@@ -614,11 +690,16 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
       hoverAt = null;
       candidates = [];
       setPre([]);
+      removeWindow();
       sheet.removeAttribute('title');
+      clearHoverStatus();
+    },
+    cancel(): void {
+      removeWindow();
     },
     click(clientX: number, clientY: number, ev: MouseEvent): void {
       if (!svg) return;
-      if (!hoverAt || Math.hypot(clientX - hoverAt.x, clientY - hoverAt.y) >= 2) {
+      if (!hoverAt || hoverAt.t !== transformKey() || Math.hypot(clientX - hoverAt.x, clientY - hoverAt.y) >= 2) {
         hoverAt = null;
         api.hover(clientX, clientY);
       }
@@ -658,35 +739,49 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
         height: `${Math.abs(b.y - a.y)}px`,
       });
       if (!done) return;
-      boxEl.remove();
-      boxEl = null;
+      removeWindow();
       const p = toRoot(a.x, a.y);
       const q = toRoot(b.x, b.y);
       if (!p || !q) return;
       const r = [Math.min(p.x, q.x), Math.min(p.y, q.y), Math.max(p.x, q.x), Math.max(p.y, q.y)];
-      // Per element: whether every part of it lies inside, and whether any part meets the window.
+      // Per element: whether every part of it that is seen lies inside, and whether any seen part
+      // meets the window. What a viewport clips away is not seen, so it neither keeps an element
+      // out of a window nor lets a window select it.
       const all = new Map<number, boolean>();
       const meets = new Set<number>();
       const insideRect = (x: number, y: number): boolean => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
+      const mid = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
       for (const it of items) {
         const id = effective(it);
         if (id === null || !eligible(it)) continue;
-        // What a viewport clips away is not seen: its parts outside the clip do not count.
         const clip = it.vp !== null ? vpRects.get(it.vp) : undefined;
-        if (clip && (it.box[2] < clip[0] || it.box[0] > clip[2] || it.box[3] < clip[1] || it.box[1] > clip[3])) continue;
-        const wholly = insideRect(it.box[0], it.box[1]) && insideRect(it.box[2], it.box[3]);
+        const seen = (ax: number, ay: number, bx: number, by: number): number[] | null =>
+          clip ? clipSegment(ax, ay, bx, by, clip) : [ax, ay, bx, by];
+        const segs: number[][] = [];
+        for (let i = 0; i < it.seg.length; i += 4) {
+          const v = seen(it.seg[i], it.seg[i + 1], it.seg[i + 2], it.seg[i + 3]);
+          if (v) segs.push(v);
+        }
+        // A region's edges (a text's box, a fill's outline), as seen.
+        const edges: number[][] = [];
+        for (const ring of it.rings) {
+          for (let i = 0; i < ring.length; i += 2) {
+            const j = (i + 2) % ring.length;
+            const v = seen(ring[i], ring[i + 1], ring[j], ring[j + 1]);
+            if (v) edges.push(v);
+          }
+        }
+        if (segs.length === 0 && edges.length === 0) continue;
+        const wholly = [...segs, ...edges].every((v) => insideRect(v[0], v[1]) && insideRect(v[2], v[3]));
         all.set(id, (all.get(id) ?? true) && wholly);
         if (!crossing || meets.has(id)) continue;
         let hit = wholly;
-        const s = it.seg;
-        for (let i = 0; !hit && i < s.length; i += 4) hit = segmentMeetsRect(s[i], s[i + 1], s[i + 2], s[i + 3], r);
-        if (!hit) {
-          for (const ring of it.rings) {
-            for (let i = 0; !hit && i + 3 < ring.length; i += 2) {
-              hit = segmentMeetsRect(ring[i], ring[i + 1], ring[i + 2], ring[i + 3], r);
-            }
-            hit ||= inside((r[0] + r[2]) / 2, (r[1] + r[3]) / 2, [ring]);
-          }
+        for (const v of segs) if (!hit) hit = clipSegment(v[0], v[1], v[2], v[3], r) !== null;
+        for (const v of edges) if (!hit) hit = clipSegment(v[0], v[1], v[2], v[3], r) !== null;
+        // A window wholly inside a region crosses it only where its inside counts (a text, a fill
+        // under the even-odd rule, or any closed outline with "by face"), and is seen there.
+        if (!hit && (it.solid || it.filled || byFaceOn) && it.rings.length > 0) {
+          hit = inside(mid[0], mid[1], it.rings) && (!clip || (mid[0] >= clip[0] && mid[0] <= clip[2] && mid[1] >= clip[1] && mid[1] <= clip[3]));
         }
         if (hit) meets.add(id);
       }

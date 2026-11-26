@@ -160,11 +160,22 @@ fn drawn_lines_texts_and_fills_name_their_elements() {
             .skip(1)
             .filter_map(|s| s.split('"').next()?.parse().ok())
             .collect();
+        // A sheet's viewports name themselves on their groups, titled or not.
+        let mut expected = elements.clone();
+        if let DrawingKey::Sheet(sheet) = key {
+            expected.extend(
+                facts
+                    .viewports
+                    .iter()
+                    .filter(|vp| vp.sheet == sheet)
+                    .map(|vp| vp.id),
+            );
+        }
         assert!(
-            !in_svg.is_empty() && in_svg.is_subset(&elements),
-            "{name}: the SVG names {} elements, {} not in the drawing",
+            !in_svg.is_empty() && in_svg.is_subset(&expected),
+            "{name}: the SVG names {} elements, {} not expected",
             in_svg.len(),
-            in_svg.difference(&elements).count()
+            in_svg.difference(&expected).count()
         );
         let tags = svg.matches(" data-element=\"").count();
         let primitives = svg.matches(" data-handle=\"").count();

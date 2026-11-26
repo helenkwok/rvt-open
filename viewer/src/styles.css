@@ -2161,9 +2161,13 @@ select:focus:not(:focus-visible),
   vector-effect: non-scaling-stroke;
 }
 #drawing-sheet text.sel-pre,
+#drawing-sheet text.sel-pre *,
 #drawing-sheet .sel-pre text,
+#drawing-sheet .sel-pre text *,
 #drawing-sheet text.sel-on,
-#drawing-sheet .sel-on text {
+#drawing-sheet text.sel-on *,
+#drawing-sheet .sel-on text,
+#drawing-sheet .sel-on text * {
   fill: var(--drawing-select) !important;
   stroke: none !important;
 }
