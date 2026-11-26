@@ -34,14 +34,16 @@ const fromDirs = (process.env.RVT_DAYLIGHT_SAMPLES_DIR ?? '')
   .map((f) => `${f}|${process.env.RVT_DAYLIGHT_SPACING ?? '1'}`);
 const fromEnv = [...(process.env.RVT_DAYLIGHT_SAMPLES ?? '').split(/[;\n]/).map((s) => s.trim()).filter(Boolean), ...fromDirs];
 const defaults = [`${demos}/cc0-2027-demo-building.rvt`, `${demos}/2024_Core_Interior.rvt`, ...(process.env.RVT_SHEETS_MODEL ? [`${process.env.RVT_SHEETS_MODEL}|2`] : [])];
-const samples = (fromEnv.length ? fromEnv : defaults)
+// the default models only when no sample source is set at all (an empty shard runs nothing)
+const configured = !!(process.env.RVT_DAYLIGHT_SAMPLES || process.env.RVT_DAYLIGHT_SAMPLES_DIR);
+const samples = (configured ? fromEnv : defaults)
   .map((s) => {
     const [name, spacing] = s.split('|');
     const optional = name.startsWith('?');
     return { file: optional ? name.slice(1) : name, spacing: spacing ? Number(spacing) : 0.5, optional };
   })
   // a sample named in RVT_DAYLIGHT_SAMPLES must be there unless marked optional; a default one not staged is left out
-  .filter((s) => (fromEnv.length > 0 && !s.optional) || fs.existsSync(s.file));
+  .filter((s) => (configured && !s.optional) || fs.existsSync(s.file));
 const analyses = (process.env.RVT_DAYLIGHT_ANALYSES ?? 'sunhours,svf,df,rad-df,rad-pit').split(',').map((s) => s.trim());
 const runS = Number(process.env.RVT_DAYLIGHT_RUN_S) || 1800;
 const radiance = fs.existsSync(path.resolve(__dirname, '../public/radiance/rtrace.wasm'));
@@ -123,7 +125,7 @@ async function runOne(page: Page, analysis: string): Promise<Omit<Row, 'model' |
 
 test('every Daylight analysis on real public samples', async ({ page }) => {
   // in CI only the jobs that name their samples run it
-  test.skip(!samples.length || (!!process.env.CI && !fromEnv.length), 'no sample models (RVT_DAYLIGHT_SAMPLES, or the staged demos)');
+  test.skip(!samples.length || (!!process.env.CI && !configured), 'no sample models (RVT_DAYLIGHT_SAMPLES, RVT_DAYLIGHT_SAMPLES_DIR, or the staged demos)');
   test.setTimeout(samples.length * analyses.length * (runS + 120) * 1000 + 600_000);
   fs.mkdirSync(shots, { recursive: true });
   const rows: Row[] = [];
