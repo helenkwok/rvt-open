@@ -1508,20 +1508,22 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
             if let Some((p, q)) = segment {
                 let (layer, aci) = layers.annotation_layer(&l.layer, 8);
                 ensure(&mut d, &layer, aci);
-                d.entities.push(Entity2d::new(
+                let mut e = Entity2d::new(
                     "LINE",
                     &layer,
                     Geom::Line {
                         a: at([p.0, p.1]),
                         b: at([q.0, q.1]),
                     },
-                ));
+                );
+                colour_unless_layer_has(&d, &mut e, aci);
+                d.entities.push(e);
             }
         }
         for t in &a.texts {
             let (layer, aci) = layers.annotation_layer(&t.layer, 7);
             ensure(&mut d, &layer, aci);
-            d.entities.push(Entity2d::new(
+            let mut e = Entity2d::new(
                 "TEXT",
                 &layer,
                 Geom::Text {
@@ -1530,7 +1532,9 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                     rotation: t.rotation,
                     value: t.value.clone(),
                 },
-            ));
+            );
+            colour_unless_layer_has(&d, &mut e, aci);
+            d.entities.push(e);
         }
         let (dims, dims_aci) = layers.annotation_layer("A-ANNO-DIMS", 7);
         for [p, q] in &a.dimensions {
@@ -1539,7 +1543,7 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                 continue;
             }
             ensure(&mut d, &dims, dims_aci);
-            d.entities.push(Entity2d::new(
+            let mut e = Entity2d::new(
                 "DIMENSION",
                 &dims,
                 Geom::Dimension {
@@ -1549,7 +1553,9 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                     at: at([(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]),
                     points: vec![at(*p), at(*q)],
                 },
-            ));
+            );
+            colour_unless_layer_has(&d, &mut e, dims_aci);
+            d.entities.push(e);
         }
     }
     if let Some([h, v]) = options.window.as_ref().and_then(|w| w.frame) {
