@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 // "done" with a grid, and the progress bar must move while it traces. The table of models, sensors,
 // results and times goes to daylight-shots/samples.md (and samples.json).
 //
-//   RVT_DAYLIGHT_SAMPLES   models, one per line or separated by ';', each `path` or `path|spacing`
+//   RVT_DAYLIGHT_SAMPLES   models, one per line or separated by ';', each `path` or `path|spacing`; a path starting
+//                          with `?` is optional (left out when absent, as CI allows for the CC0 model's host)
 //                          (grid spacing in metres; default 0.5). Default: the staged demo building
 //                          and Core Interior, and RVT_SHEETS_MODEL (Technical School) at 2 m.
 //   RVT_DAYLIGHT_ANALYSES  comma-separated (default sunhours,svf,df,rad-df,rad-pit)
@@ -35,11 +36,12 @@ const fromEnv = [...(process.env.RVT_DAYLIGHT_SAMPLES ?? '').split(/[;\n]/).map(
 const defaults = [`${demos}/cc0-2027-demo-building.rvt`, `${demos}/2024_Core_Interior.rvt`, ...(process.env.RVT_SHEETS_MODEL ? [`${process.env.RVT_SHEETS_MODEL}|2`] : [])];
 const samples = (fromEnv.length ? fromEnv : defaults)
   .map((s) => {
-    const [file, spacing] = s.split('|');
-    return { file, spacing: spacing ? Number(spacing) : 0.5 };
+    const [name, spacing] = s.split('|');
+    const optional = name.startsWith('?');
+    return { file: optional ? name.slice(1) : name, spacing: spacing ? Number(spacing) : 0.5, optional };
   })
-  // a sample named in RVT_DAYLIGHT_SAMPLES must be there; a default one that is not staged is left out
-  .filter((s) => fromEnv.length > 0 || fs.existsSync(s.file));
+  // a sample named in RVT_DAYLIGHT_SAMPLES must be there unless marked optional; a default one not staged is left out
+  .filter((s) => (fromEnv.length > 0 && !s.optional) || fs.existsSync(s.file));
 const analyses = (process.env.RVT_DAYLIGHT_ANALYSES ?? 'sunhours,svf,df,rad-df,rad-pit').split(',').map((s) => s.trim());
 const runS = Number(process.env.RVT_DAYLIGHT_RUN_S) || 1800;
 const radiance = fs.existsSync(path.resolve(__dirname, '../public/radiance/rtrace.wasm'));

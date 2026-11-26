@@ -1656,7 +1656,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       if (err instanceof RadianceError) {
         const s = summarizeLog(err.prog, err.log, err.message);
         sentence = [s.sentence, ...s.warnings.map((w) => `${w}.`)].join(' ');
-        log = err.log;
+        // the whole analysis's log: the programs that ran before it, then the one that failed
+        log = [...radiance.log.map((l) => `${l.prog}:\n${l.text}`), `${err.prog || 'Radiance'} (failed):\n${err.log}`].join('\n');
       } else sentence = `${where} failed: ${msg}${/memory|out of bounds|OOM/i.test(msg) ? ' (the tab ran out of memory: try a wider grid spacing)' : ''}.`;
       status.textContent = `Daylight run failed. ${sentence}`;
       if (log) {

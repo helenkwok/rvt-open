@@ -295,25 +295,28 @@ export class Radiance {
     detail: Detail,
     hooks: RadianceHooks,
   ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; sceneReused: boolean; resolution: string; setOverflows: number }> {
-    this.log = [];
     const [rayinit, skybright, perezlum] = await Promise.all(['rayinit.cal', 'skybright.cal', 'perezlum.cal'].map((f) => this.file(f)));
     const sceneReused = this.sceneOct?.key === sceneKey;
     if (!sceneReused) {
       this.sceneOct = null;
       const files = { 'materials.rad': enc(materials), 'scene.rad': enc(scene) };
-      const overflows = (): number => (this.log.filter((l) => l.prog === 'oconv').at(-1)?.text.match(/set overflow/g) ?? []).length;
+      // the set overflows of the oconv run since `mark` (a run that wrote nothing to standard error has none)
+      const overflows = (mark: number): number => this.log.slice(mark).reduce((k, l) => k + (l.prog === 'oconv' ? (l.text.match(/set overflow/g) ?? []).length : 0), 0);
+      let mark = this.log.length;
       hooks.stage('oconv', `building the octree of ${(scene.length / 2 ** 20).toFixed(1)} MB of scene text`);
       // -r 1024: the octree stops subdividing at 1/1024 of the scene's size, which keeps it small; where more
       // surfaces than a voxel can list meet at that size ("set overflow", and oconv leaves some out), it is
       // built again at oconv's default resolution
       let oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], files);
       let resolution = '-r 1024';
-      let over = overflows();
+      let over = overflows(mark);
       if (over) {
         hooks.stage('oconv', `${over.toLocaleString('en')} set overflows at the coarser resolution: building the octree again at the default one`);
+        mark = this.log.length;
         const fine = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], files);
         // the finer octree is kept only where it places more surfaces: it is larger, so fewer workers fit
-        if (overflows() < over) [oct, over, resolution] = [fine, overflows(), 'default (-r 16384)'];
+        const fineOver = overflows(mark);
+        if (fineOver < over) [oct, over, resolution] = [fine, fineOver, 'default (-r 16384)'];
       }
       this.sceneOct = { key: sceneKey, oct, resolution, setOverflows: over };
     }
@@ -381,6 +384,8 @@ export class Radiance {
   /** Clears an earlier Stop: call when a Radiance analysis starts. */
   start(): void {
     this.stopped = null;
+    // the log is the analysis's, from its sky to its last trace
+    this.log = [];
   }
 
   /** Forgets the kept octree (a new model). */

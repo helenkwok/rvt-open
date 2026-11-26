@@ -895,8 +895,9 @@ jobs:
       # Autodesk's metric Technical School sample (public download) for tests/sheet-lineweights.spec.ts.
       RVT_SHEETS_MODEL: ${{ github.workspace }}/_samples/flat/2026-Technicalschoolcurrentm.rvt
       # tests/daylight-samples.spec.ts: the instant tier and Radiance's daylight factor on real public samples
-      # (path|grid spacing in metres), in the 64-bit legs; its table is in the daylight artifact (samples.md).
-      RVT_DAYLIGHT_SAMPLES: ${{ matrix.bits == 64 && format('{0}/viewer/public/demos/cc0-2027-demo-building.rvt;{0}/viewer/public/demos/2024_Core_Interior.rvt|1;{0}/_samples/flat/2026-Technicalschoolcurrentm.rvt|2', github.workspace) || '' }}
+      # (path|grid spacing in metres; ? marks the CC0 model, whose host may be unreachable), in the 64-bit legs;
+      # its table is in the daylight artifact (samples.md).
+      RVT_DAYLIGHT_SAMPLES: ${{ matrix.bits == 64 && format('?{0}/viewer/public/demos/cc0-2027-demo-building.rvt;{0}/viewer/public/demos/2024_Core_Interior.rvt|1;{0}/_samples/flat/2026-Technicalschoolcurrentm.rvt|2', github.workspace) || '' }}
       RVT_DAYLIGHT_ANALYSES: sunhours,svf,df,rad-df
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
