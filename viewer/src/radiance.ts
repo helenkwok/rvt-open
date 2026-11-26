@@ -106,7 +106,7 @@ export function summarizeLog(prog: string, log: string, fallback = ''): { senten
   );
   const reason = (fatal || fallback || 'it stopped without saying why').replace(/\s+/g, ' ').trim();
   const what = prog === 'oconv' ? 'build the scene' : prog === 'rtrace' ? 'trace the sensors' : prog.startsWith('gen') ? 'make the sky' : `run ${prog}`;
-  const oom = /out of memory|memory access out of bounds|cannot enlarge memory|Aborted\(OOM\)/i.test(reason) ? ' (the program ran out of memory: WebAssembly gives each one at most 2 GiB)' : '';
+  const oom = /out of memory|memory access out of bounds|cannot enlarge memory|Aborted\(OOM\)/i.test(reason) ? ' (the program ran out of memory: WebAssembly gives each one at most 4 GiB)' : '';
   return { sentence: `Radiance could not ${what}: ${reason}${oom}.`, warnings };
 }
 
@@ -307,18 +307,26 @@ export class Radiance {
       // -r 1024: the octree stops subdividing at 1/1024 of the scene's size, which keeps it small; where more
       // surfaces than a voxel can list meet at that size ("set overflow", and oconv leaves some out), it is
       // built again at oconv's default resolution
-      let oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], files);
+      let oct: Uint8Array | null = null;
       let resolution = '-r 1024';
-      let over = overflows(mark);
+      let over = 0;
+      try {
+        oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], files);
+        over = overflows(mark);
+      } catch (e) {
+        // crowded surfaces can exhaust oconv's memory at the coarser resolution: the default one may still build
+        if (!(e instanceof RadianceError) || e.prog !== 'oconv') throw e;
+        over = Infinity;
+      }
       if (over) {
-        hooks.stage('oconv', `${over.toLocaleString('en')} set overflows at the coarser resolution: building the octree again at the default one`);
+        hooks.stage('oconv', `${Number.isFinite(over) ? `${over.toLocaleString('en')} set overflows` : 'out of memory'} at the coarser resolution: building the octree again at the default one`);
         mark = this.log.length;
         const fine = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], files);
         // the finer octree is kept only where it places more surfaces: it is larger, so fewer workers fit
         const fineOver = overflows(mark);
         if (fineOver < over) [oct, over, resolution] = [fine, fineOver, 'default (-r 16384)'];
       }
-      this.sceneOct = { key: sceneKey, oct, resolution, setOverflows: over };
+      this.sceneOct = { key: sceneKey, oct: oct!, resolution, setOverflows: over };
     }
     hooks.stage('oconv-sky', sceneReused ? 'adding the sky to the scene’s octree from the last run' : 'adding the sky');
     const oct = await this.run(0, 'oconv', ['-f', '-i', 'scene.oct', 'sky.rad', 'glow.rad'], { 'scene.oct': this.sceneOct!.oct, 'sky.rad': enc(sky), 'glow.rad': enc(GLOW) });

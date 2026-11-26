@@ -7,7 +7,8 @@
 # sha256, then patched with tools/radiance/o_default.patch (a function signature WebAssembly's indirect calls
 # check). It is compiled with Emscripten 7.0.1 in its official image, pinned by digest. Two build settings differ
 # from a native build: Emscripten's libm is part of its libc (an empty libm.a satisfies the LIB_M check), and the
-# x86-only -mavx2 -mfma flags are left out. Each program is an ES module (MODULARIZE, EXPORT_ES6) with its own
+# x86-only -mavx2 -mfma flags are left out. Memory grows to 4 GiB (WebAssembly's 32-bit limit; Emscripten's default
+# stops at 2 GiB), which oconv needs for large scenes. Each program is an ES module (MODULARIZE, EXPORT_ES6) with its own
 # in-memory file system, run with callMain.
 #
 # OUT_DIR receives <program>.js and <program>.wasm for each program, the files those programs read at run time
@@ -34,7 +35,7 @@ set -euo pipefail
 cd /w
 echo "int radiance_wasm_libm_stub;" > stub.c && emcc -c stub.c -o stub.o && emar rcs libm.a stub.o
 mkdir build && cd build
-LF="-sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sEXIT_RUNTIME=1 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node -sFORCE_FILESYSTEM=1 -sINVOKE_RUN=0 -sEXPORTED_RUNTIME_METHODS=callMain,FS"
+LF="-sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB -sSTACK_SIZE=4MB -sEXIT_RUNTIME=1 -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,worker,node -sFORCE_FILESYSTEM=1 -sINVOKE_RUN=0 -sEXPORTED_RUNTIME_METHODS=callMain,FS"
 emcmake cmake ../src -DBUILD_HEADLESS=ON -DLIB_M=/w/libm.a -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_FLAGS="-O3 -Wno-everything" -DCMAKE_CXX_FLAGS="-O3 -Wno-everything" -DCMAKE_EXE_LINKER_FLAGS="$LF" > ../cmake.log 2>&1 || { tail -40 ../cmake.log; exit 1; }
 emmake make -j"$(nproc)" "$@" > ../make.log 2>&1 || { grep -n -i -B2 -A6 error ../make.log | head -80; exit 1; }
@@ -58,8 +59,8 @@ National Laboratory, under the Radiance Software License, Version 2.0 (License.t
 
 One change to the sources, in rvt-open's tools/radiance/o_default.patch: o_default() in src/ot/initotypes.c and
 src/ot/init2otypes.c declares the two parameters oconv calls it with, because WebAssembly checks the signature of
-an indirect call. Build settings: an empty libm.a for the LIB_M check (Emscripten's libm is in its libc), and no
--mavx2 -mfma.
+an indirect call. Build settings: an empty libm.a for the LIB_M check (Emscripten's libm is in its libc), no
+-mavx2 -mfma, and memory that grows to 4 GiB.
 MD
 (cd "$out" && sha256sum ./*.js ./*.wasm ./*.cal > SHA256SUMS)
 ls -l "$out"

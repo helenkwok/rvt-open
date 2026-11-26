@@ -11,7 +11,9 @@
   at 1/1024 of the scene's size (`-r 1024`; on the demo building the daylight
   factor is bit-identical), and builds the octree again at its default
   resolution when that leaves surfaces out ("set overflow": 71,511 on
-  Technical School); its output is gathered in chunks. Radiance's daylight
+  Technical School; also when that build runs out of memory, as on Snowdon
+  Towers Electrical), and Radiance's programs may grow to 4 GiB of
+  WebAssembly memory instead of 2 GiB; oconv's output is gathered in chunks. Radiance's daylight
   factor now finishes on Core Interior (7,520 sensors) in about 41 to 63 s and
   on Technical School (18,327 sensors) in about 13 minutes with four workers. A failure
   shows the program's fatal line first ("Radiance could not build the scene:

@@ -299,7 +299,7 @@ async function fakeRadiance(page: Page, script: string): Promise<void> {
   await page.locator('#daylight-run').click();
   await expect(panel).toHaveAttribute('data-state', 'error', { timeout: 120_000 });
   await expect(page.locator('#daylight-status')).toHaveText(
-    'Daylight run failed. Radiance could not build the scene: out of memory in fullnode: Out of memory (the program ran out of memory: WebAssembly gives each one at most 2 GiB). 3 zero-area polygons skipped.',
+    'Daylight run failed. Radiance could not build the scene: out of memory in fullnode: Out of memory (the program ran out of memory: WebAssembly gives each one at most 4 GiB). 3 zero-area polygons skipped.',
   );
   const details = page.locator('#daylight-error-details');
   await expect(details).toBeVisible();
