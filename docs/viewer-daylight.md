@@ -17,7 +17,27 @@ The tests are `daylight-rt/tests/demo_building.rs` (CI job "daylight-rt") and `v
 
 - **Site**: the file's site location (latitude, longitude, elevation, time zone, angle to true north). Each value can be changed in the panel, which says whether it is the file's, set by you, or assumed (a file whose location was not read: all zero). A location equal to the one new Revit projects start with is pointed out.
 - **Sensors**: a grid over each room's floor at the height given (default 0.76 m, 0.5 m apart); where the model has no rooms, over each floor's top face, kept 0.35 m from its edge. The table gives each room's number, name and level, sensor count, mean, minimum, maximum and uniformity (minimum over mean).
-- **Exports**: JSON (analysis, parameters, the site with the source of each value, materials, per-room statistics, every sensor's position and value, the known limits) and CSV (one row per sensor).
+- **Exports**: JSON (analysis, parameters, the site with the source of each value, materials, per-storey and per-room statistics, every sensor's position and value, the stages and their times, the known limits) and CSV (one row per sensor). Both always hold every level. A failed run's JSON export holds the error, the stage it stopped in and Radiance's whole log.
+- **Storey**: "All levels" or one level that has sensors, with its elevation. One level shows only its grid, puts the cut just above its sensors and turns the camera to it from above; the ↓ and ↑ buttons, or the Down and Up keys on the control, step through the levels. The table and the legend follow the level; "Same colour scale on every level" keeps the scale of the whole run so floors compare fairly. A height typed in "Cut the model at" overrides the cut until another level is picked.
+
+## Progress
+
+Every run shows, beside Run and Stop (which stay in view at the bottom of the panel however far it scrolls), the stage it is in with a count, and a bar that moves with the sensors:
+
+| Stage | What the panel says |
+|---|---|
+| Scene | "Building the scene and the sensor grids", then the surfaces, sensors, rooms and levels |
+| Sun positions (sun hours) | the days and the step |
+| Loading Radiance | files loaded of the total and megabytes (the first Radiance run only; later runs reuse the compiled programs) |
+| Sky | gensky or gendaylit |
+| Radiance text | the surfaces written, and afterwards how many zero-area and duplicate triangles were left out |
+| oconv | the octree of the scene, then the sky added to it; a later run on the same scene reuses the scene's octree and only adds its sky |
+| Tracing | sensors done of the total, overall and per worker; the grid fills in as values come back (grey until known) |
+| Collecting | the values, the grid, the legend and the table |
+
+Below it: the elapsed time, the age of the last update, and once 3 % of the sensors are done, the time left. With no progress for 60 s the panel asks "still working, or stuck?" and points to Stop. A run that fails says so in one sentence: for Radiance, "Radiance could not build the scene: <reason>" from the program's fatal line, with repeated warnings counted ("1,410 zero-area polygons skipped"), and the whole log behind **Details**. The end: "Done in X s: N sensors, mean …", with the time of each stage.
+
+A Radiance run estimated at more than two minutes (from the sensors, the surfaces and the workers) asks first, with the counts and the estimate: Run again starts it. Nothing is capped; a wider grid spacing makes fewer sensors.
 
 ## Radiance tier
 
@@ -28,11 +48,13 @@ For numbers to report, the panel runs Radiance itself: gensky, gendaylit, oconv 
 | Daylight factor (Radiance) | `gensky -ang 45 0 -c -B 55.866` (CIE overcast, 10,000 lux unobstructed horizontal) with sky and ground glow, `oconv`, `rtrace -I -h`; DF % = lux / 100 |
 | Illuminance at a time (Radiance) | `gendaylit M D H -a <lat> -o <lon west> -m <meridian> -W <DNI> <DHI>` from the weather file's hour nearest the time asked, `oconv`, `rtrace -I -h`; lux = 179 x (0.265 R + 0.670 G + 0.065 B) |
 
+**The scene Radiance reads** leaves out triangles it cannot use, and counts them in the result: zero-area triangles (as printed, to 0.01 mm) or ones with a corner that is not a number, and exact copies of an earlier triangle (the same corners in any order; where copies have different materials, the first is kept). Copies lying on one another cannot be separated by oconv's octree, which then subdivides every voxel they share to its finest level. oconv runs with `-r 1024` (the octree stops subdividing at 1/1024 of the scene's size): the rays find the same surfaces, and on the demo building the daylight factor is bit-identical to the default.
+
 rtrace parameters: **preview** `-ab 2 -aa 0.1 -ad 2048 -ar 64` (the daylight-factor defaults of common daylighting recipes) or **validated** `-ab 5 -ad 2048 -as 1024 -ar 256 -aa 0.15 -lr 6 -lw 2e-4`. The scene and sensors are the instant tier's, written as Radiance text by `daylight-rt`. The sensors are split into one contiguous share per worker; each worker builds its own irradiance cache. The page compiles each program once and hands the compiled module to every worker, which only instantiates it.
 
 Check (CI job "Radiance (WebAssembly) against native Radiance", `tools/radiance/check-demo.mjs`): the daylight factor at the preview parameters on the CC0 demo building has a mean of 1.0894 % and 1.0907 % in two WebAssembly runs against 1.0900 % for native Radiance 6.0.3, with RMSE 0.035 and 0.036 DF points, while two native runs (one process and eight) differ by 0.036. The check fails above the native noise plus 0.01, or a mean off by more than 0.5 %. The runs are not bit-identical because the Monte Carlo samples come from the C library's random-number generator, which differs between glibc and Emscripten's libc.
 
-**Weather** for the illuminance at a time: a PVGIS 5.3 typical meteorological year (the default) or an EPW file of your own. PVGIS answers no requests from web pages, so the panel's link opens the official service (`https://re.jrc.ec.europa.eu/api/v5_3/tmy?lat=…&lon=…&usehorizon=1&outputformat=json`) in a new tab and you choose the saved file. The panel records the provenance with the result (source, radiation and meteorological databases, latitude, longitude and elevation, the years of the typical year, the horizon option, the file's date) and shows the credit **PVGIS © European Communities, 2001-2026** with every result computed from it. PVGIS hours are UTC; the panel moves them to the site's standard time with the file's stated irradiance time offset. EPW hours are local standard time, each the hour ending at its stamp.
+**Weather** for the illuminance at a time: a PVGIS 5.3 typical meteorological year (the default) or an EPW file of your own, chosen in the file dialog or dropped on the panel (or anywhere on the page while this analysis is chosen). The last file loaded for a site (latitude and longitude to 4 decimals) is kept in the browser's own storage (IndexedDB, nothing leaves the page) and loads by itself for the next model at that site; the panel says so and **Forget the kept weather file** removes it. The file input has no type filter, so the system dialog does not match every file of a folder against types (`.epw` has none registered); a file that is neither format is refused with the reason. PVGIS answers no requests from web pages, so the panel's link opens the official service (`https://re.jrc.ec.europa.eu/api/v5_3/tmy?lat=…&lon=…&usehorizon=1&outputformat=json`) in a new tab and you choose the saved file. The panel records the provenance with the result (source, radiation and meteorological databases, latitude, longitude and elevation, the years of the typical year, the horizon option, the file's date) and shows the credit **PVGIS © European Communities, 2001-2026** with every result computed from it. PVGIS hours are UTC; the panel moves them to the site's standard time with the file's stated irradiance time offset. EPW hours are local standard time, each the hour ending at its stamp.
 
 **Materials**: the panel lists every material with its reflectance (or glass transmittance) and whether its colour is the file's or a placeholder rvt-open chose ("assumed").
 

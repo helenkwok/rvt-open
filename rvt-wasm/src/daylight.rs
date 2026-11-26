@@ -211,8 +211,11 @@ pub fn daylight_load(id: u32, positions: &[f64], modifier: &[u32], materials: &[
 }
 
 /// The same scene as Radiance text, for the validated tier: `[materials,
-/// scene]` (`plastic`/`glass` modifiers `m0`, `m1`, ... and one `polygon` per
-/// triangle), from the arrays `daylightLoad` takes.
+/// scene, degenerate, duplicate]` (`plastic`/`glass` modifiers `m0`, `m1`, ... and one
+/// `polygon` per triangle; `degenerate` and `duplicate` count, as text, the
+/// triangles left out: zero area or a corner that is not a finite number, and
+/// exact copies of an earlier triangle),
+/// from the arrays `daylightLoad` takes.
 #[wasm_bindgen(js_name = daylightRadianceText)]
 pub fn daylight_radiance_text(
     positions: &[f64],
@@ -221,9 +224,12 @@ pub fn daylight_radiance_text(
 ) -> Vec<String> {
     install_panic_hook();
     let model = model_of(positions, modifier, materials);
+    let (scene, skipped) = daylight_rt::radiance::write_scene(&model);
     vec![
         daylight_rt::radiance::write_materials(&model),
-        daylight_rt::radiance::write_triangles(&model),
+        scene,
+        skipped.degenerate.to_string(),
+        skipped.duplicate.to_string(),
     ]
 }
 

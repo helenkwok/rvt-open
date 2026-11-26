@@ -844,6 +844,10 @@ jobs:
       RVT_DRAWINGS_MODEL: ${{ github.workspace }}/_bim4lca/ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt
       # Autodesk's metric Technical School sample (public download) for tests/sheet-lineweights.spec.ts.
       RVT_SHEETS_MODEL: ${{ github.workspace }}/_samples/flat/2026-Technicalschoolcurrentm.rvt
+      # tests/daylight-samples.spec.ts: the instant tier and Radiance's daylight factor on real public samples
+      # (path|grid spacing in metres), in the 64-bit legs; its table is in the daylight artifact (samples.md).
+      RVT_DAYLIGHT_SAMPLES: ${{ matrix.bits == 64 && format('{0}/viewer/public/demos/cc0-2027-demo-building.rvt;{0}/viewer/public/demos/2024_Core_Interior.rvt|1;{0}/_samples/flat/2026-Technicalschoolcurrentm.rvt|2', github.workspace) || '' }}
+      RVT_DAYLIGHT_ANALYSES: sunhours,svf,df,rad-df
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -892,7 +896,7 @@ jobs:
             [ "$f" = cc0-2027-demo-building.rvt ] && [ ! -s ../_cc0/demo-building-2027.rvt ] && continue
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts tests/daylight.spec.ts)
+          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts tests/daylight.spec.ts tests/daylight-samples.spec.ts)
           if [ "${{ matrix.leg }}" = 2 ]; then
             pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
           else

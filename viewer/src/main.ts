@@ -1889,7 +1889,7 @@ function frameCamera(obj: THREE.Object3D): void {
 /** The smallest extent a framed box is treated as having, metres. */
 const MIN_FRAME_METRES = 0.5;
 
-function frameBox(box: THREE.Box3): void {
+function frameBox(box: THREE.Box3, along?: THREE.Vector3): void {
   if (box.isEmpty()) return;
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
@@ -1899,8 +1899,9 @@ function frameBox(box: THREE.Box3): void {
   // Keep the approach direction when zooming in on a part of the model,
   // so the view does not swing round; the whole model gets the default.
   const approach = camera.position.clone().sub(controls.target);
-  const direction =
-    currentModel && approach.lengthSq() > 0 && !box.equals(new THREE.Box3().setFromObject(currentModel))
+  const direction = along
+    ? along.clone().normalize()
+    : currentModel && approach.lengthSq() > 0 && !box.equals(new THREE.Box3().setFromObject(currentModel))
       ? approach.normalize()
       : new THREE.Vector3(1, 0.8, 1).normalize();
   const toPos = center.clone().add(direction.multiplyScalar(dist));
@@ -4750,6 +4751,7 @@ const daylight = initDaylight(
     requestRender,
     toast,
     download: (filename, blob) => download(filename, blob),
+    frame: (box, along) => frameBox(box, along),
   },
   $('daylight-panel'),
 );

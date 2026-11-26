@@ -20,7 +20,7 @@
 import * as THREE from 'three';
 import DaylightWorker from './daylight-worker.ts?worker&inline';
 import type { Bits } from './wasm-build';
-import { DETAILS, PVGIS_CREDIT, RADIANCE_BASE, Radiance, parseWeather, pvgisUrl, weatherAt, type Weather } from './radiance';
+import { DETAILS, PVGIS_CREDIT, RADIANCE_BASE, Radiance, RadianceError, parseWeather, pvgisUrl, summarizeLog, weatherAt, type Weather } from './radiance';
 
 export interface DaylightHost {
   scene: THREE.Scene;
@@ -35,6 +35,8 @@ export interface DaylightHost {
   requestRender(): void;
   toast(message: string, kind?: 'info' | 'ok' | 'bad'): void;
   download(filename: string, blob: Blob): void;
+  /** Points the camera at `box` (scene coordinates), looking along `along` toward it. */
+  frame?(box: THREE.Box3, along?: THREE.Vector3): void;
 }
 
 interface Material {
@@ -190,6 +192,57 @@ function hhmm(hour: number): string {
   return `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
+/** Seconds as `m:ss` (or `h:mm:ss`). */
+export function clock(seconds: number): string {
+  const t = Math.max(0, Math.round(seconds));
+  const [h, m, s] = [Math.floor(t / 3600), Math.floor((t % 3600) / 60), t % 60];
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * A rough time for a Radiance run before it starts (seconds): rtrace's time per sensor in one
+ * worker at the preview parameters grows with the scene, measured on the public samples
+ * (0.06 s on 2,000 triangles, 0.17 s on 30,000, 0.8 s on 1.7 million), shared by the workers.
+ * The validated parameters trace about six times as many rays.
+ */
+export function radianceEstimate(sensors: number, triangles: number, workers: number, validated: boolean): number {
+  const perSensor = 0.06 * Math.max(1, triangles / 2000) ** 0.38 * (validated ? 6 : 1);
+  return (sensors * perSensor) / Math.max(1, workers) + 2;
+}
+
+/** A run longer than this (seconds, estimated) asks before it starts. */
+const ASK_ABOVE_S = 120;
+
+/** One storey's sensors: the level they are on, its elevation, and the top of its grid. */
+interface Storey {
+  key: string;
+  label: string;
+  elevation: number;
+  top: number;
+  sensors: Uint32Array;
+}
+
+/** The levels that have sensors, lowest first (a room's level, else the floor's own name). */
+export function storeysOf(p: { sensors: Float64Array; sensorZone: Uint32Array; zones: { level?: string; name: string; floorZ: number }[] }): Storey[] {
+  const by = new Map<string, { elevation: number; top: number; idx: number[] }>();
+  const n = p.sensors.length / 6;
+  for (let i = 0; i < n; i++) {
+    const z = p.zones[p.sensorZone[i]];
+    const key = z?.level || z?.name || '';
+    let s = by.get(key);
+    if (!s) by.set(key, (s = { elevation: Infinity, top: -Infinity, idx: [] }));
+    s.idx.push(i);
+    s.top = Math.max(s.top, p.sensors[i * 6 + 2]);
+    if (z && Number.isFinite(z.floorZ)) s.elevation = Math.min(s.elevation, z.floorZ);
+  }
+  return [...by]
+    .map(([key, s]) => {
+      const elevation = Number.isFinite(s.elevation) ? s.elevation : s.top;
+      return { key, label: `${key || 'Unnamed level'} (${elevation.toFixed(2)} m)`, elevation, top: s.top, sensors: Uint32Array.from(s.idx) };
+    })
+    .sort((a, b) => a.elevation - b.elevation || a.key.localeCompare(b.key));
+}
+
 type Decoder = { module: WebAssembly.Module; bits: Bits };
 
 /**
@@ -279,7 +332,15 @@ class Pool {
   }
 
   /** Runs `kind` over every sensor in contiguous shards, each worker taking the next shard as it finishes one. */
-  async run(id: number, p: Prepared, decoder: Decoder, kind: string, params: Float64Array, progress: (done: number, total: number) => void): Promise<Float64Array> {
+  async run(
+    id: number,
+    p: Prepared,
+    decoder: Decoder,
+    kind: string,
+    params: Float64Array,
+    progress: (done: number, total: number, lanes: [number, number][]) => void,
+    value?: (first: number, values: Float64Array) => void,
+  ): Promise<Float64Array> {
     await this.load(id, p, decoder);
     const n = p.sensors.length / 6;
     const out = new Float64Array(n);
@@ -287,15 +348,18 @@ class Pool {
     let next = 0;
     let done = 0;
     let failed = false;
-    progress(0, n);
+    const lanes: [number, number][] = this.workers.map(() => [0, 0]);
+    progress(0, n, lanes);
     const lane = async (k: number): Promise<void> => {
       while (next < n && !failed) {
         const first = next;
         next = Math.min(n, next + shard);
         const values = await this.call<Float64Array>(k, { type: 'run', id, sensors: p.sensors.slice(first * 6, next * 6), first, kind, params });
         out.set(values, first);
+        value?.(first, values);
         done += values.length;
-        progress(done, n);
+        lanes[k][0] += values.length;
+        progress(done, n, lanes);
       }
     };
     try {
@@ -362,6 +426,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       showSite();
       if (analysisSel.value === 'sun' || shadowsBox.checked) void updateSun().catch(() => undefined);
       if (pathBox.checked) void drawSunPath().catch(() => undefined);
+      if (f.key === 'latitude' || f.key === 'longitude') void loadKept();
     });
     const tag = el('span', { class: 'daylight-source' });
     row.append(el('span', {}, f.label), input, el('span', { class: 'daylight-unit' }, f.unit), tag);
@@ -395,11 +460,15 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   for (const [k, d] of Object.entries(DETAILS)) detailSel.append(el('option', { value: k }, d.label));
   const weatherBox = el('div', { class: 'daylight-weather', id: 'daylight-weather' });
   const pvgisLink = el('a', { id: 'daylight-pvgis', target: '_blank', rel: 'noopener noreferrer' }, 'Get the typical year from PVGIS (JSON)');
-  const weatherIn = el('input', { type: 'file', id: 'daylight-weather-file', accept: '.json,.epw', 'aria-label': 'Weather file (PVGIS JSON or EPW)' });
-  const NO_WEATHER = 'No weather file loaded. PVGIS does not answer requests from a web page, so the link opens its official service in a new tab: save the file it returns and choose it here. An EPW file of your own works too.';
+  // no `accept` filter: the system dialog then lists the folder without matching each file against types
+  // (.epw has none registered), and parseWeather says plainly when a file is neither format
+  const weatherIn = el('input', { type: 'file', id: 'daylight-weather-file', 'aria-label': 'Weather file (PVGIS JSON or EPW)' });
+  const NO_WEATHER = 'No weather file loaded. PVGIS does not answer requests from a web page, so the link opens its official service in a new tab: save the file it returns and choose it here, or drop it on this panel. An EPW file of your own works too.';
   const weatherNote = el('p', { class: 'option-hint', id: 'daylight-weather-note' }, NO_WEATHER);
+  const weatherSaved = el('p', { class: 'option-hint', id: 'daylight-weather-saved', hidden: '' });
+  const weatherForget = el('button', { type: 'button', class: 'side-btn', id: 'daylight-weather-forget', hidden: '' }, 'Forget the kept weather file');
   pvgisLink.title = `Weather data from PVGIS: ${PVGIS_CREDIT}`;
-  weatherBox.append(pvgisLink, weatherIn, weatherNote);
+  weatherBox.append(pvgisLink, weatherIn, weatherNote, weatherSaved, weatherForget);
   const radNote = el('p', { class: 'option-hint', id: 'daylight-radiance-note' });
   radNote.append(
     document.createTextNode('Radiance 6.0.3 (WebAssembly), loaded when a Radiance analysis runs. Radiance Software License 2.0: '),
@@ -415,6 +484,14 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const stopBtn = el('button', { type: 'button', class: 'side-btn', id: 'daylight-stop', hidden: '' }, 'Stop');
   const bar = el('progress', { id: 'daylight-progress', max: '1', value: '0', hidden: '' });
   const status = el('p', { class: 'option-hint', id: 'daylight-status', 'aria-live': 'polite' });
+  // the run's liveness: elapsed time, the age of the last update, the time left; and per worker
+  const live = el('p', { class: 'option-hint daylight-live', id: 'daylight-live', hidden: '' });
+  const workersLine = el('p', { class: 'option-hint daylight-live', id: 'daylight-workers', hidden: '' });
+  const errorBox = el('details', { class: 'daylight-limits', id: 'daylight-error-details', hidden: '' });
+  const runBox = el('div', { class: 'daylight-runbox', id: 'daylight-runbox' });
+  const runButtons = el('div', { class: 'daylight-run-buttons' });
+  runButtons.append(runBtn, stopBtn);
+  runBox.append(runButtons, bar, status, live, workersLine, errorBox);
 
   const row = (label: string, ...kids: HTMLElement[]): HTMLElement => {
     const r = el('label', { class: 'daylight-row' });
@@ -447,6 +524,16 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   toggles.append(t1, t2);
   const cutBoxes = el('div', { class: 'daylight-cut' });
   cutBoxes.append(t3, cutRow);
+  // which storey's grid shows: All, or one level (its grid only, the cut above it, the camera on it)
+  const storeySel = el('select', { class: 'mode-select', id: 'daylight-storey', 'aria-label': 'Storey (Up and Down keys step through the levels)' });
+  const storeyDown = el('button', { type: 'button', class: 'side-btn daylight-step', id: 'daylight-storey-down', 'aria-label': 'Lower level', title: 'Lower level (Down key)' }, '↓');
+  const storeyUp = el('button', { type: 'button', class: 'side-btn daylight-step', id: 'daylight-storey-up', 'aria-label': 'Higher level', title: 'Higher level (Up key)' }, '↑');
+  const sharedBox = el('input', { type: 'checkbox', id: 'daylight-shared-scale' });
+  const sharedRow = el('label', {});
+  sharedRow.append(sharedBox, document.createTextNode(' Same colour scale on every level'));
+  const storeyRow = row('Storey', storeySel, storeyDown, storeyUp);
+  const storeyBox = el('div', { class: 'daylight-storeys', id: 'daylight-storeys', hidden: '' });
+  storeyBox.append(storeyRow, sharedRow);
 
   const legend = el('div', { class: 'daylight-legend', id: 'daylight-legend', hidden: '' });
   const readout = el('p', { class: 'option-hint', id: 'daylight-readout', 'aria-live': 'polite' });
@@ -461,7 +548,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   for (const l of DAYLIGHT_LIMITS) ul.append(el('li', {}, l));
   limits.append(ul);
 
-  root.append(intro, siteBox, row('Analysis', analysisSel), whenBox, weatherBox, radNote, gridBox, toggles, cutBoxes, runBtn, stopBtn, bar, status, legend, readout, tableWrap, exportJson, exportCsv, matsBox, limits);
+  root.append(intro, siteBox, row('Analysis', analysisSel), whenBox, weatherBox, radNote, gridBox, toggles, cutBoxes, runBox, storeyBox, legend, readout, tableWrap, exportJson, exportCsv, matsBox, limits);
 
   const showFields = (): void => {
     const a = analysisSel.value as Analysis;
@@ -599,26 +686,122 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     else clearHelpers('path');
   });
 
-  weatherIn.addEventListener('change', async () => {
-    const f = weatherIn.files?.[0];
-    if (!f) return;
+  // ---------- weather: chosen, dropped, or kept in this browser for the site ----------
+  /** The site a kept weather file belongs to: latitude and longitude to 4 decimals (about 10 m). */
+  const siteKey = (): string => `${site.latitude.toFixed(4)},${site.longitude.toFixed(4)}`;
+
+  function loadWeather(name: string, text: string, fileDate: string, from: 'file' | 'kept'): void {
     const gen = ++weatherGen;
     try {
-      const w = parseWeather(f.name, await f.text(), new Date(f.lastModified).toISOString().slice(0, 10));
+      const w = parseWeather(name, text, fileDate);
       if (gen !== weatherGen) return;
+      if (!w.hours.length) throw new Error(`${name}: no hours of weather could be read`);
       weather = w;
       const pv = weather.provenance;
-      weatherNote.textContent = `${f.name}: ${weather.hours.length.toLocaleString('en')} hours. ${Object.entries(pv)
+      weatherNote.textContent = `${name}: ${weather.hours.length.toLocaleString('en')} hours. ${Object.entries(pv)
         .filter(([k]) => k !== 'file')
         .map(([k, v]) => `${k} ${v}`)
         .join('; ')}.${weather.credit ? ` ${weather.credit}.` : ''}`;
       root.dataset.weather = String(weather.hours.length);
+      root.dataset.weatherFrom = from;
+      if (from === 'file') void keepWeather(name, text, fileDate);
+      else showKept({ name, date: fileDate, saved: '' }, true);
     } catch (e) {
       if (gen !== weatherGen) return;
       weather = null;
       delete root.dataset.weather;
-      weatherNote.textContent = e instanceof Error ? e.message : String(e);
+      weatherNote.textContent = `This weather file could not be read: ${e instanceof Error ? e.message : String(e)}`;
     }
+  }
+
+  weatherIn.addEventListener('change', async () => {
+    const f = weatherIn.files?.[0];
+    if (f) loadWeather(f.name, await f.text(), new Date(f.lastModified).toISOString().slice(0, 10), 'file');
+  });
+
+  // a weather file dropped on the panel, or anywhere on the page while the analysis that uses one is chosen
+  const isWeather = (f: File): boolean => /\.(epw|json)$/i.test(f.name);
+  window.addEventListener(
+    'drop',
+    (ev) => {
+      const f = ev.dataTransfer?.files[0];
+      if (!f || !isWeather(f) || (!root.contains(ev.target as Node) && analysisSel.value !== 'rad-pit')) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      document.getElementById('dropzone')?.classList.remove('drag-over');
+      root.classList.remove('daylight-drop');
+      if (analysisSel.value !== 'rad-pit') {
+        analysisSel.value = 'rad-pit';
+        showFields();
+      }
+      void f.text().then((t) => loadWeather(f.name, t, new Date(f.lastModified).toISOString().slice(0, 10), 'file'));
+    },
+    true,
+  );
+  root.addEventListener('dragover', (ev) => {
+    ev.preventDefault();
+    root.classList.add('daylight-drop');
+  });
+  root.addEventListener('dragleave', () => root.classList.remove('daylight-drop'));
+
+  // the last weather file per site, kept in this browser's IndexedDB (nothing leaves the page)
+  const db = (): Promise<IDBDatabase> =>
+    new Promise((resolve, reject) => {
+      const r = indexedDB.open('rvt-open-daylight', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('weather');
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error ?? new Error('IndexedDB is not available'));
+    });
+  async function store<T>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest): Promise<T> {
+    const d = await db();
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        const r = f(d.transaction('weather', mode).objectStore('weather'));
+        r.onsuccess = () => resolve(r.result as T);
+        r.onerror = () => reject(r.error);
+      });
+    } finally {
+      d.close();
+    }
+  }
+  type Kept = { name: string; text: string; date: string; saved: string };
+  function showKept(k: { name: string; date: string; saved: string } | null, loaded = false): void {
+    weatherSaved.hidden = weatherForget.hidden = !k;
+    if (!k) return;
+    weatherSaved.textContent = `${loaded ? 'Loaded from' : 'Kept in'} this browser for the site ${siteKey()}: ${k.name}${k.saved ? `, kept ${k.saved}` : ''}. The next model at this site loads it without the file dialog.`;
+  }
+  async function keepWeather(name: string, text: string, date: string): Promise<void> {
+    try {
+      const k: Kept = { name, text, date, saved: new Date().toISOString().slice(0, 10) };
+      await store('readwrite', (s) => s.put(k, siteKey()));
+      showKept(k);
+    } catch {
+      weatherSaved.hidden = false;
+      weatherSaved.textContent = 'This browser does not keep files for the page (private window or storage blocked): choose the weather file again next time.';
+    }
+  }
+  /** Loads the weather file kept for the current site, if any (no weather is loaded yet). */
+  async function loadKept(): Promise<void> {
+    if (weather) return;
+    const gen = weatherGen;
+    try {
+      const k = await store<Kept | undefined>('readonly', (s) => s.get(siteKey()));
+      if (!k || gen !== weatherGen || weather) return;
+      loadWeather(k.name, k.text, k.date, 'kept');
+      showKept(k, true);
+    } catch {
+      // nothing kept, or no IndexedDB: the dialog and the drop still work
+    }
+  }
+  weatherForget.addEventListener('click', async () => {
+    try {
+      await store('readwrite', (s) => s.delete(siteKey()));
+    } catch {
+      // nothing to forget
+    }
+    showKept(null);
+    delete root.dataset.weatherFrom;
+    weatherNote.textContent = weather ? `${weatherNote.textContent} (no longer kept in this browser)` : NO_WEATHER;
   });
 
   function showMaterials(p: Prepared): void {
@@ -790,8 +973,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     const w = host.worker();
     if (!w) return Promise.reject(new Error('no model is open'));
     const mine = ++req;
-    root.dataset.state = 'preparing';
-    status.textContent = 'Building the scene and the sensor grids…';
+    if (!running) root.dataset.state = 'preparing';
+    if (!running) status.textContent = 'Building the scene and the sensor grids…';
     let cancel: (e: Error) => void = () => undefined;
     const promise = new Promise<Prepared>((resolve, reject) => {
       const on = (ev: MessageEvent): void => {
@@ -812,9 +995,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
           applyFileSun(prepared.sun, true);
           // the file's view casts shadows, or shadows were already on with the assumed inputs
           if (prepared.sun?.castShadows || shadowsBox.checked) void updateSun().catch(() => undefined);
+          void loadKept();
         }
         showMaterials(prepared);
-        if (root.dataset.state === 'preparing') {
+        if (root.dataset.state === 'preparing' && !running) {
           root.dataset.state = 'ready';
           status.textContent = `${(prepared.sensors.length / 6).toLocaleString('en')} sensors on ${prepared.zones.length} ${prepared.zones[0]?.kind === 'floor' ? 'floors (the model has no rooms)' : 'rooms'}, ${(prepared.positions.length / 9).toLocaleString('en')} triangles.`;
         }
@@ -850,6 +1034,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   cutIn.addEventListener('change', () => {
     const v = Number(cutIn.value);
     if (!Number.isFinite(v)) return;
+    cutManual = cutIn.value.trim() !== '';
     cutPlane.constant = v;
     setCut(cutBox.checked && overlay !== null);
   });
@@ -865,35 +1050,54 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     delete root.dataset.overlay;
   }
 
-  function drawOverlay(p: Prepared, v: Float64Array, lo: number, hi: number): void {
+  /** The sensor each drawn square stands for (the grid of one storey, or every sensor). */
+  let overlayIdx: Uint32Array | null = null;
+  const GREY = new THREE.Color('#9aa0a6');
+
+  /** Draws squares for the sensors `idx` (every sensor when null), coloured by `v` (NaN: not yet known, grey). */
+  function drawOverlay(p: Prepared, idx: Uint32Array | null, v: Float64Array, lo: number, hi: number): void {
     clearOverlay();
-    const n = v.length;
+    const n = idx ? idx.length : p.sensors.length / 6;
     const size = (lastRun?.grid.spacing ?? gridOptions().spacing) * 0.92;
     const geo = new THREE.PlaneGeometry(size, size);
     geo.rotateX(-Math.PI / 2);
-    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, toneMapped: false }), n);
+    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, toneMapped: false }), Math.max(1, n));
+    mesh.count = n;
     const m = new THREE.Matrix4();
-    const c = new THREE.Color();
-    for (let i = 0; i < n; i++) {
+    for (let k = 0; k < n; k++) {
+      const i = idx ? idx[k] : k;
       const s = p.sensors.subarray(i * 6, i * 6 + 3);
       const at = toScene(s[0], s[1], s[2]);
       m.makeTranslation(at.x, at.y, at.z);
-      mesh.setMatrixAt(i, m);
-      mesh.setColorAt(i, rampColour(hi > lo ? (v[i] - lo) / (hi - lo) : 0.5, c));
+      mesh.setMatrixAt(k, m);
     }
     mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.name = 'daylight-grid';
     mesh.userData.kind = 'overlay';
     overlay = mesh;
+    overlayIdx = idx;
     helpers.add(mesh);
     root.dataset.overlay = String(n);
-    // cut half a storey above the highest sensors, unless a height was set
-    let top = -Infinity;
-    for (let i = 0; i < n; i++) top = Math.max(top, p.sensors[i * 6 + 2]);
-    if (cutIn.value === '') cutIn.value = (top + 0.6).toFixed(2);
+    paintOverlay(v, lo, hi);
+  }
+
+  /** Colours the drawn squares from `v` on the scale lo to hi. */
+  function paintOverlay(v: Float64Array, lo: number, hi: number): void {
+    if (!overlay) return;
+    const c = new THREE.Color();
+    for (let k = 0; k < overlay.count; k++) {
+      const x = v[overlayIdx ? overlayIdx[k] : k];
+      overlay.setColorAt(k, Number.isNaN(x) ? GREY : rampColour(hi > lo ? (x - lo) / (hi - lo) : 0.5, c));
+    }
+    if (overlay.instanceColor) overlay.instanceColor.needsUpdate = true;
+    host.requestRender();
+  }
+
+  /** Where the cut goes for the grid shown: just above its highest sensors. */
+  function autoCut(top: number): void {
+    if (!cutManual) cutIn.value = (top + 0.6).toFixed(2);
     cutPlane.constant = Number(cutIn.value);
-    setCut(cutBox.checked);
+    setCut(cutBox.checked && overlay !== null);
   }
 
   function zoneLabel(z: Zone | undefined): string {
@@ -905,7 +1109,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     return z.name || 'Floor';
   }
 
-  function showLegend(a: Analysis, lo: number, hi: number): void {
+  function showLegend(a: Analysis, lo: number, hi: number, scope = ''): void {
     legend.hidden = false;
     legend.replaceChildren();
     const unit = ANALYSES[a].unit;
@@ -913,12 +1117,16 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     barEl.style.background = `linear-gradient(to right, ${RAMP.join(', ')})`;
     const labels = el('div', { class: 'daylight-ramp-labels' });
     for (let k = 0; k <= 4; k++) labels.append(el('span', {}, `${fmt(lo + ((hi - lo) * k) / 4, a === 'svf' ? 3 : a === 'sunhours' ? 1 : a === 'rad-pit' ? 0 : 2)}${unit ? ` ${unit}` : ''}`));
-    legend.append(el('div', { class: 'daylight-legend-title' }, ANALYSES[a].label), barEl, labels);
+    legend.append(el('div', { class: 'daylight-legend-title' }, `${ANALYSES[a].label}${scope ? ` · ${scope}` : ''}`), barEl, labels);
+    root.dataset.legend = `${lo},${hi}`;
   }
 
-  function zoneStats(p: Prepared, v: Float64Array): { zone: Zone; label: string; n: number; mean: number; min: number; max: number }[] {
+  /** Statistics per zone, over the sensors `idx` (every sensor when null). */
+  function zoneStats(p: Prepared, v: Float64Array, idx: Uint32Array | null = null): { zone: Zone; label: string; n: number; mean: number; min: number; max: number }[] {
     const acc = p.zones.map((zone) => ({ zone, label: zoneLabel(zone), n: 0, sum: 0, min: Infinity, max: -Infinity }));
-    for (let i = 0; i < v.length; i++) {
+    const n = idx ? idx.length : v.length;
+    for (let k = 0; k < n; k++) {
+      const i = idx ? idx[k] : k;
       const a = acc[p.sensorZone[i]];
       if (!a) continue;
       a.n++;
@@ -929,7 +1137,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     return acc.filter((a) => a.n > 0).map((a) => ({ zone: a.zone, label: a.label, n: a.n, mean: a.sum / a.n, min: a.min, max: a.max }));
   }
 
-  function showTable(a: Analysis, p: Prepared, v: Float64Array): void {
+  function showTable(a: Analysis, p: Prepared, v: Float64Array, idx: Uint32Array | null, scope: string): void {
     const d = a === 'svf' ? 3 : 2;
     table.hidden = false;
     table.replaceChildren();
@@ -938,15 +1146,200 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     const thead = el('thead');
     thead.append(head);
     const body = el('tbody');
-    for (const s of zoneStats(p, v)) {
+    for (const s of zoneStats(p, v, idx)) {
       const r = el('tr');
       for (const cell of [s.label, s.zone.level ?? '', String(s.n), fmt(s.mean, d), fmt(s.min, d), fmt(s.max, d), s.mean > 0 ? fmt(s.min / s.mean, 2) : '–']) r.append(el('td', {}, cell));
       body.append(r);
     }
-    table.append(el('caption', {}, `${ANALYSES[a].label}${ANALYSES[a].unit ? ` (${ANALYSES[a].unit})` : ''} per ${p.zones[0]?.kind === 'floor' ? 'floor' : 'room'}`), thead, body);
+    table.append(el('caption', {}, `${ANALYSES[a].label}${ANALYSES[a].unit ? ` (${ANALYSES[a].unit})` : ''} per ${p.zones[0]?.kind === 'floor' ? 'floor' : 'room'}${scope ? `, ${scope}` : ''}`), thead, body);
   }
 
-  // ---------- running ----------
+  /** The legend's range for `a` over the values `v` at `idx` (every value when null). */
+  function rangeOf(a: Analysis, v: Float64Array, idx: Uint32Array | null): [number, number] {
+    let lo = Infinity;
+    let hi = -Infinity;
+    const n = idx ? idx.length : v.length;
+    for (let k = 0; k < n; k++) {
+      const x = v[idx ? idx[k] : k];
+      if (Number.isNaN(x)) continue;
+      lo = Math.min(lo, x);
+      hi = Math.max(hi, x);
+    }
+    if (!Number.isFinite(lo)) [lo, hi] = [0, 1];
+    if (a === 'svf') [lo, hi] = [0, Math.max(hi, 0.05)];
+    if (a === 'df' || a === 'rad-df') [lo, hi] = [0, Math.max(5, Math.ceil(hi))];
+    if (a === 'rad-pit' || a === 'sunhours') lo = 0;
+    return [lo, hi];
+  }
+
+  // ---------- storeys ----------
+  let storeys: Storey[] = [];
+  /** The cut height was typed: it stays until another storey is picked. */
+  let cutManual = false;
+  function fillStoreys(p: Prepared): void {
+    storeys = storeysOf(p);
+    const keep = storeySel.value;
+    storeySel.replaceChildren(el('option', { value: '' }, `All levels (${storeys.length})`));
+    for (const s of storeys) storeySel.append(el('option', { value: s.key }, `${s.label}: ${s.sensors.length.toLocaleString('en')} sensors`));
+    storeySel.value = storeys.some((s) => s.key === keep) ? keep : '';
+    storeyBox.hidden = storeys.length < 2;
+  }
+  const storeyNow = (): Storey | null => storeys.find((s) => s.key === storeySel.value && storeySel.value !== '') ?? null;
+
+  /** Shows the last run on the storey picked: its grid, legend, table and cut; `aim` turns the camera to it. */
+  function showResult(aim: boolean): void {
+    const run = lastRun;
+    if (!run) return;
+    const st = storeyNow();
+    const idx = st ? st.sensors : null;
+    const [lo, hi] = sharedBox.checked || !st ? run.range : rangeOf(run.analysis, run.values, idx);
+    drawOverlay(run.p, idx, run.values, lo, hi);
+    const scope = st ? `${st.label}${sharedBox.checked ? ', scale of every level' : ', scale of this level'}` : storeys.length > 1 ? 'all levels' : '';
+    showLegend(run.analysis, lo, hi, scope);
+    if (typeof run.params.credit === 'string') legend.append(el('div', { class: 'daylight-credit', id: 'daylight-credit' }, run.params.credit));
+    showTable(run.analysis, run.p, run.values, idx, st ? st.label : '');
+    root.dataset.storey = st?.key ?? '';
+    let top = -Infinity;
+    const n = idx ? idx.length : run.values.length;
+    for (let k = 0; k < n; k++) top = Math.max(top, run.p.sensors[(idx ? idx[k] : k) * 6 + 2]);
+    autoCut(top);
+    if (aim && st && host.frame) {
+      const box = new THREE.Box3();
+      for (const i of st.sensors) box.expandByPoint(toScene(run.p.sensors[i * 6], run.p.sensors[i * 6 + 1], run.p.sensors[i * 6 + 2]));
+      // from above and to one side, so the grid and the walls around it both show
+      host.frame(box, new THREE.Vector3(0.6, 1.6, 0.6));
+    }
+  }
+  function pickStorey(step: number): void {
+    if (!storeys.length) return;
+    const k = storeys.findIndex((s) => s.key === storeySel.value && storeySel.value !== '');
+    const next = k < 0 ? (step > 0 ? 0 : storeys.length - 1) : Math.min(storeys.length - 1, Math.max(0, k + step));
+    storeySel.value = storeys[next].key;
+    cutManual = false;
+    showResult(true);
+  }
+  storeySel.addEventListener('change', () => {
+    cutManual = false;
+    showResult(true);
+  });
+  storeySel.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+    ev.preventDefault();
+    pickStorey(ev.key === 'ArrowUp' ? 1 : -1);
+  });
+  storeyUp.addEventListener('click', () => pickStorey(1));
+  storeyDown.addEventListener('click', () => pickStorey(-1));
+  sharedBox.addEventListener('change', () => showResult(false));
+
+  // ---------- running: stages, progress, liveness ----------
+  /** No progress for this long (ms) says so; `?daylight-stall-ms=` sets it (tests use a short one). */
+  const STALL_MS = Number(new URLSearchParams(location.search).get('daylight-stall-ms')) || 60_000;
+  /** The run's progress as the panel shows it, and the stages it went through. */
+  const track = {
+    t0: 0,
+    last: 0,
+    stage: '',
+    stageT0: 0,
+    text: '',
+    done: 0,
+    total: 0,
+    countT0: 0,
+    countDone0: 0,
+    timeline: [] as { stage: string; detail: string; startS: number; seconds?: number }[],
+    ticker: 0,
+  };
+  const STAGES: Record<string, string> = {
+    scene: 'Building the scene and the sensor grids',
+    suns: 'Working out the sun positions',
+    load: 'Loading Radiance',
+    radtext: 'Writing the scene as Radiance text',
+    sky: 'Making the sky',
+    oconv: 'oconv: building the octree',
+    'oconv-sky': 'oconv: adding the sky',
+    trace: 'Tracing',
+    rtrace: 'rtrace: tracing',
+    collect: 'Collecting the values and drawing the grid',
+  };
+
+  function trackStart(): void {
+    const now = performance.now();
+    Object.assign(track, { t0: now, last: now, stage: '', text: '', done: 0, total: 0, timeline: [] });
+    live.hidden = false;
+    workersLine.hidden = true;
+    workersLine.textContent = '';
+    errorBox.hidden = true;
+    errorBox.replaceChildren();
+    delete root.dataset.stalled;
+    clearInterval(track.ticker);
+    track.ticker = window.setInterval(tick, 500);
+    tick();
+  }
+
+  /** Enters stage `key`, with what it works on. */
+  function stage(key: string, detail = ''): void {
+    const now = performance.now();
+    const prev = track.timeline.at(-1);
+    if (prev && prev.seconds === undefined) prev.seconds = (now - track.t0) / 1000 - prev.startS;
+    track.timeline.push({ stage: key, detail, startS: (now - track.t0) / 1000 });
+    Object.assign(track, { stage: key, stageT0: now, last: now, done: 0, total: 0, countT0: now, countDone0: 0 });
+    track.text = `${STAGES[key] ?? key}${detail ? `: ${detail}` : ''}…`;
+    root.dataset.stage = key;
+    delete root.dataset.done;
+    delete root.dataset.total;
+    bar.removeAttribute('value');
+    status.textContent = track.text;
+    tick();
+  }
+
+  /** A count within the stage: `done` of `total`, with a line per worker. */
+  function count(done: number, total: number, text: string, workers?: string): void {
+    const now = performance.now();
+    if (done > track.done || total !== track.total) track.last = now;
+    if (track.done === 0 && done > 0) [track.countT0, track.countDone0] = [now, 0];
+    track.done = done;
+    track.total = total;
+    root.dataset.done = String(done);
+    root.dataset.total = String(total);
+    bar.value = total ? done / total : 0;
+    status.textContent = text;
+    if (workers !== undefined) {
+      workersLine.hidden = !workers;
+      workersLine.textContent = workers;
+    }
+    tick();
+  }
+
+  /** Elapsed time, the age of the last update, the time left once enough is done, and the stall warning. */
+  function tick(): void {
+    if (!running) return;
+    const now = performance.now();
+    const quiet = now - track.last;
+    const parts = [`Elapsed ${clock((now - track.t0) / 1000)}`, `last update ${Math.round(quiet / 1000)} s ago`];
+    const { done, total } = track;
+    if (total && done > 0 && done < total) {
+      const spent = (now - track.countT0) / 1000;
+      if (done / total >= 0.03 && spent >= 3) parts.push(`about ${clock((spent * (total - done)) / done)} left`);
+      else parts.push('time left: shown once 3 % is done');
+    }
+    let text = parts.join(' · ');
+    if (quiet > STALL_MS) {
+      text = `No progress for ${Math.round(quiet / 1000)} s (${STAGES[track.stage] ?? track.stage}): still working, or stuck? Stop ends the run. ${text}`;
+      root.dataset.stalled = 'true';
+    } else delete root.dataset.stalled;
+    live.textContent = text;
+  }
+
+  function trackEnd(): void {
+    clearInterval(track.ticker);
+    const prev = track.timeline.at(-1);
+    if (prev && prev.seconds === undefined) prev.seconds = (performance.now() - track.t0) / 1000 - prev.startS;
+    root.dataset.timeline = JSON.stringify(track.timeline.map((t) => [t.stage, Number((t.seconds ?? 0).toFixed(2))]));
+  }
+
+  /** The last failed run, for its JSON export. */
+  let lastFailure: Record<string, unknown> | null = null;
+  /** The confirmed size of a long run: a second Run with the same inputs starts it. */
+  let askedFor = '';
   let running = false;
   async function run(): Promise<void> {
     const a = analysisSel.value as Analysis;
@@ -969,24 +1362,49 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     if (running) return;
     running = true;
     const token = ++runToken;
-    const live = (): void => {
+    const alive = (): void => {
       if (token !== runToken) throw new Error('stopped');
     };
     runBtn.disabled = true;
     stopBtn.hidden = false;
     bar.hidden = false;
-    const t0 = performance.now();
+    lastFailure = null;
+    exportJson.disabled = exportCsv.disabled = true;
+    root.dataset.state = 'running';
+    trackStart();
+    // the status and the bar are beside Run, wherever the panel is scrolled
+    runBox.scrollIntoView({ block: 'nearest' });
+    let radianceInfo: Record<string, unknown> = {};
     try {
+      stage('scene', prepared && preparedKey === JSON.stringify(gridOptions()) ? 'kept from the last run' : '');
       const p = await prepare();
-      live();
-      // the inputs this run uses, kept with its result
+      alive();
       const grid = gridOptions();
-      // one site for the whole run: edits made while it waits do not reach it
       const siteNow = { ...site };
       const siteUsed = Object.fromEntries(SITE_FIELDS.map((f) => [f.key, { value: siteNow[f.key], source: source[f.key] }])) as Run['site'];
       const n = p.sensors.length / 6;
       if (n === 0) throw new Error('the model has no rooms or floors to lay a sensor grid on');
+      const tris = p.positions.length / 9;
+      fillStoreys(p);
+      const rooms = p.zones[0]?.kind === 'floor' ? 'floors (the model has no rooms)' : 'rooms';
+      status.textContent = `${tris.toLocaleString('en')} surfaces; ${n.toLocaleString('en')} sensors in ${p.zones.length} ${rooms} on ${storeys.length} level${storeys.length === 1 ? '' : 's'}.`;
       root.dataset.sensors = String(n);
+      // a long run asks first, with the counts and the estimated time; nothing is capped
+      if (a.startsWith('rad-')) {
+        const est = radianceEstimate(n, tris, radiance.count, detailSel.value === 'validated');
+        const key = `${preparedId}:${a}:${detailSel.value}:${n}`;
+        root.dataset.estimate = String(Math.round(est));
+        if (est > ASK_ABOVE_S && askedFor !== key) {
+          askedFor = key;
+          status.textContent = `This run is large: ${n.toLocaleString('en')} sensors and ${tris.toLocaleString('en')} surfaces. Radiance would take roughly ${clock(est)} with ${radiance.count} workers (a rough estimate; the time left is shown while it runs). Press Run again to start it, or pick fewer sensors (a wider grid spacing).`;
+          runBtn.textContent = `Run anyway (about ${clock(est)})`;
+          root.dataset.state = 'ask';
+          live.hidden = true;
+          return;
+        }
+      }
+      askedFor = '';
+      runBtn.textContent = 'Run';
       root.dataset.state = 'running';
       let kind = a as string;
       let params: Float64Array;
@@ -998,8 +1416,9 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         const step = Number(stepSel.value) || 15;
         extra.from = dateIn.value.slice(5);
         extra.to = (toIn.value || dateIn.value).slice(5);
+        stage('suns', `${extra.from} to ${extra.to}, every ${step} min`);
         params = await pool.ask<Float64Array>(decoder, { type: 'suns', site: { ...siteNow }, from, to, step });
-        live();
+        alive();
         kind = 'sun';
         scale = step / 60;
         extra.stepMinutes = step;
@@ -1013,32 +1432,50 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       } else {
         params = new Float64Array(0);
       }
-      const progress = (done: number, total: number): void => {
-        bar.value = total ? done / total : 0;
+      // the grid fills in as values come back: grey until known, on a scale that grows with them
+      const v = new Float64Array(n).fill(Number.NaN);
+      const unitScale = a === 'rad-df' ? 0.01 : scale;
+      lastRun = null;
+      storeySel.value = '';
+      drawOverlay(p, null, v, 0, 1);
+      autoCut(Math.max(...storeys.map((s) => s.top)));
+      let painted = 0;
+      const paint = (): void => {
+        const now = performance.now();
+        if (now - painted < 250) return;
+        painted = now;
+        const [lo, hi] = rangeOf(a, v, null);
+        paintOverlay(v, lo, hi);
       };
-      let v: Float64Array;
+      const sensorsText = (done: number, total: number): string => `${done.toLocaleString('en')} of ${total.toLocaleString('en')} sensors`;
       if (a === 'rad-df' || a === 'rad-pit') {
         radiance.start();
         if (!(await radiance.available())) throw new Error('the Radiance build is not beside this page (radiance/)');
         const detail = DETAILS[detailSel.value as 'preview' | 'validated'];
+        const progs = [a === 'rad-pit' ? 'gendaylit' : 'gensky', 'oconv', 'rtrace'];
+        stage('load', `${progs.join(', ')} and the files they read`);
+        await radiance.load(progs, (files, of, bytes, totalBytes) =>
+          count(files, of, `Loading Radiance: ${files} of ${of} files, ${(bytes / 2 ** 20).toFixed(1)}${totalBytes ? ` of ${(totalBytes / 2 ** 20).toFixed(1)}` : ''} MB`),
+        );
+        alive();
         let sky: string;
+        stage('sky', a === 'rad-pit' ? 'gendaylit, a Perez sky from the weather file' : 'gensky, the CIE overcast sky');
         if (a === 'rad-pit') {
           const w = weather;
-          if (!w) throw new Error('choose a weather file first (PVGIS JSON or EPW)');
+          if (!w) throw new Error('choose a weather file first (PVGIS JSON or EPW): the file dialog, or drop it on the panel');
           const doy = dayOfYear(dateIn.value);
           const month = [31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365].findIndex((end) => doy <= end) + 1;
           const day = doy - [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334][month - 1];
           const h = weatherAt(w, month, day, Number(timeIn.value), siteNow.timeZone);
           if (!h) throw new Error(`the weather file has no hour on ${dateIn.value.slice(5)}`);
           sky = await radiance.perezSky(h.month, h.day, h.hour, siteNow, h.dni, h.dhi);
-          live();
+          alive();
           Object.assign(extra, { weatherHour: { month: h.month, day: h.day, hour: h.hour, dni: h.dni, dhi: h.dhi }, sky: 'Perez (gendaylit -W)', weather: w.provenance, credit: w.credit });
         } else {
           sky = await radiance.overcastSky();
           Object.assign(extra, { sky: 'CIE overcast, 10,000 lux horizontal (gensky -ang 45 0 -c -B 55.866)', groundReflectance: 0.2 });
         }
         extra.rtrace = ['-I', '-h', ...detail.args].join(' ');
-        status.textContent = `Radiance on ${n.toLocaleString('en')} sensors with ${radiance.count} workers…`;
         const materials = new Float64Array(p.materials.length * 4);
         p.materials.forEach((m, i) => materials.set([m.kind === 'glass' ? 1 : 0, m.rgb[0], m.rgb[1], m.rgb[2]], i * 4));
         // gendaylit's sky has +Y toward true north: the scene and sensors turn by the angle to true north
@@ -1056,65 +1493,120 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
           return out;
         };
         if (turn !== 0) extra.trueNorthTurn = siteNow.trueNorth;
-        const [matText, sceneText] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: rot(p.positions, 9), modifier: p.modifier, materials });
-        live();
+        stage('radtext', `${tris.toLocaleString('en')} surfaces`);
+        const [matText, sceneText, degenerate, duplicate] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: rot(p.positions, 9), modifier: p.modifier, materials });
+        alive();
+        const skipped = { degenerate: Number(degenerate) || 0, duplicate: Number(duplicate) || 0 };
+        extra.skippedTriangles = skipped;
         const sens = rot(p.sensors, 6);
         const pts: string[] = [];
         for (let i = 0; i < n; i++) {
           const q = sens.subarray(i * 6, i * 6 + 6);
           pts.push(`${q[0].toFixed(4)} ${q[1].toFixed(4)} ${q[2].toFixed(4)} ${q[3]} ${q[4]} ${q[5]}`);
         }
-        const r = await radiance.illuminance(matText, sceneText, sky, pts, detail, progress);
-        live();
-        v = r.lux;
-        if (a === 'rad-df') for (let i = 0; i < v.length; i++) v[i] /= 100;
+        const r = await radiance.illuminance(matText, sceneText, `${preparedId}:${turn}`, sky, pts, detail, {
+          stage,
+          progress: (done, total, workers) =>
+            count(
+              done,
+              total,
+              `rtrace: ${sensorsText(done, total)} traced`,
+              workers.length > 1 ? `Workers: ${workers.map(([d, s], k) => `${k + 1}: ${d.toLocaleString('en')}/${s.toLocaleString('en')}`).join(' · ')}` : '',
+            ),
+          value: (i, x) => {
+            v[i] = x * unitScale;
+            paint();
+          },
+        });
+        alive();
+        if (a === 'rad-df') for (let i = 0; i < n; i++) v[i] = r.lux[i] / 100;
+        else v.set(r.lux);
         extra.engine = 'Radiance 6.0.3 (WebAssembly)';
+        radianceInfo = { workers: r.workers, octreeBytes: r.octreeBytes, sceneOctreeReused: r.sceneReused };
+        Object.assign(extra, radianceInfo);
+        const logText = radiance.log.map((l) => `${l.prog}:\n${l.text}`).join('\n');
+        if (logText) extra.radianceLog = logText;
       } else {
-        status.textContent = `Running on ${n.toLocaleString('en')} sensors with ${pool.count} workers…`;
-        v = await pool.run(preparedId, p, decoder, kind, params, progress);
-        live();
+        stage('trace', `${n.toLocaleString('en')} sensors in ${pool.count} workers`);
+        const out = await pool.run(
+          preparedId,
+          p,
+          decoder,
+          kind,
+          params,
+          (done, total, lanes) => count(done, total, `Tracing: ${sensorsText(done, total)}`, lanes.length > 1 ? `Workers: ${lanes.map(([d], k) => `${k + 1}: ${d.toLocaleString('en')}`).join(' · ')}` : ''),
+          (first, values) => {
+            for (let k = 0; k < values.length; k++) v[first + k] = values[k] * scale;
+            paint();
+          },
+        );
+        alive();
+        for (let i = 0; i < n; i++) v[i] = out[i] * scale;
       }
-      if (scale !== 1) for (let i = 0; i < v.length; i++) v[i] *= scale;
-      let lo = Infinity;
-      let hi = -Infinity;
-      for (const x of v) {
-        lo = Math.min(lo, x);
-        hi = Math.max(hi, x);
-      }
-      if (a === 'svf') [lo, hi] = [0, Math.max(hi, 0.05)];
-      if (a === 'df' || a === 'rad-df') [lo, hi] = [0, Math.max(5, Math.ceil(hi))];
-      if (a === 'rad-pit') lo = 0;
-      if (a === 'sunhours') lo = 0;
-      const ms = performance.now() - t0;
-      lastRun = { analysis: a, params: extra, ms, range: [lo, hi], p, values: v, site: siteUsed, grid };
-      drawOverlay(p, v, lo, hi);
-      showLegend(a, lo, hi);
-      if (typeof extra.credit === 'string') legend.append(el('div', { class: 'daylight-credit', id: 'daylight-credit' }, extra.credit));
-      showTable(a, p, v);
+      stage('collect');
+      const ms = performance.now() - track.t0;
+      lastRun = { analysis: a, params: extra, ms, range: rangeOf(a, v, null), p, values: v, site: siteUsed, grid };
+      trackEnd();
+      extra.stages = track.timeline.map((t) => ({ stage: t.stage, detail: t.detail, seconds: Number((t.seconds ?? 0).toFixed(2)) }));
+      showResult(false);
       exportJson.disabled = exportCsv.disabled = false;
       let mean = 0;
       for (const x of v) mean += x / v.length;
       root.dataset.state = 'done';
       root.dataset.analysis = a;
       root.dataset.mean = String(mean);
-      status.textContent = `${ANALYSES[a].label}: ${n.toLocaleString('en')} sensors, mean ${fmt(mean, a === 'svf' ? 3 : 2)}${ANALYSES[a].unit ? ` ${ANALYSES[a].unit}` : ''}, ${pool.count} workers, ${fmt(ms / 1000, 1)} s.`;
+      const sk = extra.skippedTriangles as { degenerate: number; duplicate: number } | undefined;
+      const skippedText = sk && (sk.degenerate || sk.duplicate) ? ` Left out of the Radiance scene: ${sk.degenerate.toLocaleString('en')} zero-area and ${sk.duplicate.toLocaleString('en')} duplicate triangles.` : '';
+      const workers = (radianceInfo.workers as number | undefined) ?? pool.count;
+      status.textContent = `Done in ${fmt(ms / 1000, 1)} s: ${n.toLocaleString('en')} sensors, mean ${fmt(mean, a === 'svf' ? 3 : 2)}${ANALYSES[a].unit ? ` ${ANALYSES[a].unit}` : ''} (${ANALYSES[a].label}, ${workers} workers).${skippedText}`;
+      live.textContent = `Stages: ${track.timeline.map((t) => `${STAGES[t.stage] ?? t.stage} ${fmt(t.seconds ?? 0, 1)} s`).join(' · ')}`;
     } catch (err) {
       // a failed share leaves the others running: stop them
       if (a.startsWith('rad-')) radiance.stop();
+      trackEnd();
       // a run the model change or Stop ended leaves the panel to what came after it
       if (token !== runToken) return;
       const msg = err instanceof Error ? err.message : String(err);
-      root.dataset.state = msg === 'stopped' ? 'idle' : 'error';
-      status.textContent = msg === 'stopped' ? 'Stopped.' : `Daylight run failed: ${msg}`;
-      if (msg !== 'stopped') host.toast(`Daylight run failed: ${msg}`, 'bad');
+      if (msg === 'stopped') {
+        root.dataset.state = 'idle';
+        status.textContent = `Stopped after ${clock((performance.now() - track.t0) / 1000)}.`;
+        live.hidden = true;
+        clearOverlay();
+        return;
+      }
+      root.dataset.state = 'error';
+      const where = STAGES[track.stage] ?? track.stage;
+      let sentence: string;
+      let log = '';
+      if (err instanceof RadianceError) {
+        const s = summarizeLog(err.prog, err.log, err.message);
+        sentence = [s.sentence, ...s.warnings.map((w) => `${w}.`)].join(' ');
+        log = err.log;
+      } else sentence = `${where} failed: ${msg}${/memory|out of bounds|OOM/i.test(msg) ? ' (the tab ran out of memory: try a wider grid spacing)' : ''}.`;
+      status.textContent = `Daylight run failed. ${sentence}`;
+      if (log) {
+        errorBox.hidden = false;
+        errorBox.replaceChildren(el('summary', {}, 'Details'), el('pre', { class: 'daylight-log' }, log));
+      }
+      clearOverlay();
+      lastFailure = { analysis: a, label: ANALYSES[a].label, failed: true, error: sentence, stage: track.stage, stages: track.timeline, log: log || null, seconds: Number(((performance.now() - track.t0) / 1000).toFixed(2)) };
+      exportJson.disabled = false;
+      host.toast(`Daylight run failed. ${sentence}`, 'bad');
     } finally {
       running = false;
+      clearInterval(track.ticker);
       runBtn.disabled = false;
       stopBtn.hidden = true;
       bar.hidden = true;
     }
   }
-  runBtn.addEventListener('click', () => void run());
+  runBtn.addEventListener('click', () =>
+    void run().catch((e) => {
+      // nothing ends silently: a failure outside the run's own handling still says so
+      status.textContent = `Daylight run failed: ${e instanceof Error ? e.message : String(e)}`;
+      root.dataset.state = 'error';
+    }),
+  );
   // opening the panel reads the site, so it shows before anything runs
   root.closest('details')?.addEventListener('toggle', (ev) => {
     if ((ev.target as HTMLDetailsElement).open && host.worker() && !prepared) void prepare().catch(() => undefined);
@@ -1124,6 +1616,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     cancelPrepare('stopped');
     pool.stop();
     radiance.stop();
+    running = false;
+    clearInterval(track.ticker);
+    root.dataset.state = 'idle';
+    status.textContent = `Stopped after ${clock((performance.now() - track.t0) / 1000)}.`;
+    live.hidden = true;
+    clearOverlay();
   });
 
   // ---------- hover readout ----------
@@ -1140,7 +1638,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       readout.textContent = '';
       return;
     }
-    const i = hit.instanceId;
+    const i = overlayIdx ? overlayIdx[hit.instanceId] : hit.instanceId;
     const a = lastRun?.analysis ?? 'df';
     const z = grid.zones[grid.sensorZone[i]];
     readout.textContent = `Sensor ${i + 1}: ${fmt(values[i], a === 'svf' ? 3 : 2)}${ANALYSES[a].unit ? ` ${ANALYSES[a].unit}` : ''} · ${zoneLabel(z)}${z?.level ? ` · ${z.level}` : ''}`;
@@ -1148,7 +1646,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
 
   // ---------- exports ----------
   function result(): Record<string, unknown> | null {
-    if (!lastRun) return null;
+    if (!lastRun) return lastFailure ? { ...lastFailure, limits: DAYLIGHT_LIMITS } : null;
     const run = lastRun;
     const { p, values: v } = run;
     return {
@@ -1162,6 +1660,11 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       site: run.site,
       grid: { ...run.grid, sensors: v.length },
       materials: p.materials.map((m) => ({ label: m.label, kind: m.kind, value: Number(m.value.toFixed(4)), assumed: m.assumed })),
+      storeys: storeysOf(p).map((st) => {
+        let [sum, min, max] = [0, Infinity, -Infinity];
+        for (const i of st.sensors) [sum, min, max] = [sum + v[i], Math.min(min, v[i]), Math.max(max, v[i])];
+        return { level: st.key, elevation: st.elevation, sensors: st.sensors.length, mean: sum / st.sensors.length, min, max };
+      }),
       zones: zoneStats(p, v).map((s) => ({ label: s.label, kind: s.zone.kind, number: s.zone.number ?? null, name: s.zone.roomName ?? s.zone.name, level: s.zone.level ?? null, sensors: s.n, mean: s.mean, min: s.min, max: s.max })),
       sensors: Array.from({ length: v.length }, (_, i) => ({ x: p.sensors[i * 6], y: p.sensors[i * 6 + 1], z: p.sensors[i * 6 + 2], zone: p.sensorZone[i], value: v[i] })),
       limits: DAYLIGHT_LIMITS,
@@ -1171,7 +1674,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   exportJson.addEventListener('click', () => {
     const r = result();
     if (!r) return;
-    host.download(`${host.stem()}.daylight-${lastRun?.analysis}.json`, new Blob([`${JSON.stringify(r, null, 1)}\n`], { type: 'application/json' }));
+    host.download(`${host.stem()}.daylight-${lastRun?.analysis ?? `${String(lastFailure?.analysis)}-failed`}.json`, new Blob([`${JSON.stringify(r, null, 1)}\n`], { type: 'application/json' }));
   });
   exportCsv.addEventListener('click', () => {
     if (!lastRun) return;
@@ -1207,6 +1710,17 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     legend.hidden = table.hidden = true;
     exportJson.disabled = exportCsv.disabled = true;
     readout.textContent = status.textContent = '';
+    live.hidden = workersLine.hidden = errorBox.hidden = true;
+    lastFailure = null;
+    askedFor = '';
+    runBtn.textContent = analysisSel.value === 'sun' ? 'Show the sun' : 'Run';
+    storeys = [];
+    storeySel.replaceChildren();
+    storeyBox.hidden = true;
+    cutManual = false;
+    radiance.forget();
+    showKept(null);
+    delete root.dataset.weatherFrom;
     root.dataset.state = 'idle';
     delete root.dataset.sensors;
     delete root.dataset.sunPath;

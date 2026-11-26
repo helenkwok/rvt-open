@@ -2282,6 +2282,45 @@ dl.info-group dd {
 #daylight-progress {
   width: 100%;
 }
+/* Run, Stop, the bar and the stage stay in view at the bottom of the panel however far its text scrolls. */
+.daylight-runbox {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 6px -12px 0;
+  padding: 6px 12px;
+  background: var(--rv-panel, var(--rv-bg));
+  border-top: 1px solid var(--rv-line-soft);
+}
+.daylight-run-buttons {
+  display: flex;
+  gap: var(--rv-space-2);
+}
+.daylight-live {
+  margin: 2px 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+#daylight-panel[data-stalled='true'] #daylight-live {
+  color: var(--rv-warn);
+}
+.daylight-log {
+  max-height: 14em;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.daylight-storeys .daylight-row {
+  grid-template-columns: 7.5em minmax(0, 1fr) auto auto;
+}
+.daylight-step {
+  min-width: 2em;
+}
+#daylight-panel.daylight-drop {
+  outline: 2px dashed var(--rv-accent, currentColor);
+  outline-offset: -2px;
+}
 .daylight-legend {
   margin: 6px 0;
 }

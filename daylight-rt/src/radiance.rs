@@ -148,10 +148,76 @@ pub fn write_materials(model: &Model) -> String {
     s
 }
 
-/// The triangles as Radiance `polygon`s (5 decimals), named `t<n>`.
+/// True for a triangle Radiance cannot use: a corner that is not a finite
+/// number, or (as printed, to 5 decimals) an area under 1e-10 m², which
+/// oconv reports as a zero-area polygon.
+pub fn degenerate(t: &Triangle) -> bool {
+    if t.v.iter().flatten().any(|c| !c.is_finite()) {
+        return true;
+    }
+    let r = t.v.map(|v| v.map(|c| round(c, 5)));
+    let c = crate::cross(crate::sub(r[1], r[0]), crate::sub(r[2], r[0]));
+    crate::dot(c, c).sqrt() / 2.0 < 1e-10
+}
+
+/// What [`kept`] leaves out of the Radiance scene.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Skipped {
+    /// [`degenerate`] triangles.
+    pub degenerate: usize,
+    /// Exact copies (the same three corners as printed, in any order) of a
+    /// triangle written before them. Copies lying on one another cannot be
+    /// separated by oconv's octree, which then subdivides every voxel they
+    /// share down to its finest resolution: on one public sample a fifth of
+    /// the triangles were copies, up to 12 deep, and the octree outgrew
+    /// WebAssembly's memory.
+    pub duplicate: usize,
+}
+
+/// Which triangles the Radiance scene keeps (one flag per triangle), and what
+/// it leaves out: [`degenerate`] triangles and exact copies of an earlier one.
+pub fn kept(model: &Model) -> (Vec<bool>, Skipped) {
+    use std::hash::{Hash, Hasher};
+    let mut seen = std::collections::HashSet::with_capacity(model.triangles.len());
+    let mut skipped = Skipped::default();
+    let keep = model
+        .triangles
+        .iter()
+        .map(|t| {
+            if degenerate(t) {
+                skipped.degenerate += 1;
+                return false;
+            }
+            // the corners as printed, in a fixed order; a 64-bit hash of them stands for the triangle
+            let mut k = t.v.map(|v| v.map(|c| (round(c, 5) * 1e5).round() as i64));
+            k.sort_unstable();
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            k.hash(&mut h);
+            if seen.insert(h.finish()) {
+                true
+            } else {
+                skipped.duplicate += 1;
+                false
+            }
+        })
+        .collect();
+    (keep, skipped)
+}
+
+/// The triangles as Radiance `polygon`s (5 decimals), named `t<n>` by their
+/// index in the model, without those [`kept`] leaves out.
 pub fn write_triangles(model: &Model) -> String {
+    write_scene(model).0
+}
+
+/// [`write_triangles`], with what it left out.
+pub fn write_scene(model: &Model) -> (String, Skipped) {
+    let (keep, skipped) = kept(model);
     let mut s = String::with_capacity(model.triangles.len() * 100);
     for (n, t) in model.triangles.iter().enumerate() {
+        if !keep[n] {
+            continue;
+        }
         let id = model
             .modifiers
             .get(t.modifier as usize)
@@ -162,7 +228,7 @@ pub fn write_triangles(model: &Model) -> String {
         }
         s.push('\n');
     }
-    s
+    (s, skipped)
 }
 
 /// Sensors as `x y z dx dy dz` lines (4 decimals).
@@ -236,5 +302,39 @@ mod tests {
         // a U-shaped polygon is refused rather than fanned across its notch
         let u = "void plastic m\n0\n0\n5 .5 .5 .5 0 0\nm polygon u\n0\n0\n24 0 0 0 3 0 0 3 3 0 2 3 0 2 1 0 1 1 0 1 3 0 0 3 0\n";
         assert!(parse(&[u]).is_err());
+    }
+
+    #[test]
+    fn degenerate_and_copied_triangles_are_left_out_and_counted() {
+        let tri = |v: [V; 3]| Triangle { v, modifier: 0 };
+        let mut m = parse(&["void plastic m0\n0\n0\n5 .5 .5 .5 0 0\n"]).unwrap();
+        m.triangles = vec![
+            tri([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            // collinear
+            tri([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
+            // two corners equal once printed to 5 decimals
+            tri([
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.000_001, 0.000_001, 0.0],
+            ]),
+            tri([[f64::NAN, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            tri([[0.0, 0.0, 0.0], [f64::INFINITY, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            tri([[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [0.0, 1.0, 1.0]]),
+        ];
+        // a copy of the first, its corners in another order
+        m.triangles
+            .push(tri([[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]));
+        let (text, skipped) = write_scene(&m);
+        assert_eq!(
+            skipped,
+            Skipped {
+                degenerate: 4,
+                duplicate: 1
+            }
+        );
+        assert!(text.contains("polygon t0\n") && text.contains("polygon t5\n"));
+        assert_eq!(text.matches("polygon").count(), 2);
+        assert!(!text.contains("NaN") && !text.contains("inf"));
     }
 }

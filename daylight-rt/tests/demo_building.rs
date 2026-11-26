@@ -240,6 +240,12 @@ fn the_scene_built_from_the_file_is_the_reference_scene() {
     .unwrap();
     assert_eq!(
         again.triangles.iter().map(|t| t.v).collect::<Vec<_>>(),
-        p.model.triangles.iter().map(|t| t.v).collect::<Vec<_>>()
+        p.model
+            .triangles
+            .iter()
+            .zip(radiance::kept(&p.model).0)
+            .filter(|(_, k)| *k)
+            .map(|(t, _)| t.v)
+            .collect::<Vec<_>>()
     );
 }
