@@ -14,3 +14,8 @@
 - **A section's or elevation's levels are drawn on `A-FLOR-LEVL`**, as
   Revit's DWG exports of rac_basic's North elevation and Snowdon Towers'
   Café Kitchen section draw them, no longer on the grid layers.
+- **Room polylines are off by default, as in Revit's default DWG export.**
+  `rvt-sheet --room-boundaries` (and `roomBoundaries` in the WebAssembly
+  `drawingOpen`, `ExportLayers::room_boundaries` in the library) draws
+  rooms, spaces and areas as boundary polylines on `A-AREA-BNDY`, as
+  Revit's "Export rooms, spaces and areas as polylines" does.

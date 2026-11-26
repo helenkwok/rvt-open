@@ -53,7 +53,7 @@ the view's detail lines on `A-DETL` (legend views drawn as plans are mostly thes
 `A-AREA`, property lines on `C-PROP-LINE` in every plan, and the boundary sketches of floors, toposolids and
 building pads on their category's layer. Lines that only shape another element are not drawn: a family's
 own lines, the sketches of ceilings, roofs, railings, stairs, walls and openings, sweep paths, and area
-boundaries (area plans only). Rooms are drawn as the export's room polylines (`A-AREA-BNDY`). Grids are
+boundaries (area plans only). With `--room-boundaries`, rooms, spaces and areas are drawn as boundary polylines (`A-AREA-BNDY`), as the authoring tool's export with "Export rooms, spaces and areas as polylines" on draws them; by default they are not, as in its default export. Grids are
 drawn to their extents in the view, with a head (a circle and the grid's name, `S-GRID-IDEN`) beyond the
 bubble end, and beyond the free end too where the view shows both. A roof seen from above hides the
 projection lines of what lies under it. A view whose axes are turned

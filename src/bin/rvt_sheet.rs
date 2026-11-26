@@ -165,6 +165,12 @@ struct Cli {
     /// exportlayers-dwg-AIA.txt`, the newest found), else the built-in table.
     #[arg(long, value_name = "FILE")]
     layer_table: Option<PathBuf>,
+
+    /// Draw rooms, spaces and areas as boundary polylines (`A-AREA-BNDY`) in DXF, DWG and PDF
+    /// output, as the authoring tool's "Export rooms, spaces and areas as polylines" does. Off by
+    /// default, as in its default DWG export.
+    #[arg(long)]
+    room_boundaries: bool,
 }
 
 fn main() -> ExitCode {
@@ -475,6 +481,7 @@ fn export_layers(
             None => ExportLayers::default(),
         },
     };
+    layers.room_boundaries = cli.room_boundaries;
     // Every drawing but an SVG plan draws through the layer table (a sheet's SVG too).
     if cli.format != "svg" || cli.sheet.is_some() {
         if let Err(e) = layers.read_wall_functions(rf, model) {

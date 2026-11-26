@@ -11,8 +11,10 @@
 //!   panels on `A-GLAZ-CURT`, text notes on `G-ANNO-TEXT`.
 //! - Plan view "Level 1" draws the doors' plan symbols (their swings, as lines on `A-DOOR`), the
 //!   stairs above the cut plane as overhead lines on `S-STRS-MBND`, its room separation lines on
-//!   `A-AREA` and its rooms on `A-AREA-BNDY`, as the export does; lines that only shape another
-//!   element (a wall's or a stair's sketch) are not drawn.
+//!   `A-AREA`, as the export does; lines that only shape another element (a wall's or a stair's
+//!   sketch) are not drawn. Its rooms are drawn as polylines on `A-AREA-BNDY` with
+//!   `--room-boundaries` only, as the export with rooms as polylines draws them; its default draws
+//!   none.
 //! - Plan view "Level 2" draws its grids with their heads (circles and names on `S-GRID-IDEN`).
 //! - Plan view "Site" is turned to true north: it is drawn in the view's own axes, so its walls
 //!   run at 37 degrees as in the authoring tool's export of it, and the grids it hides are left out.
@@ -120,22 +122,33 @@ fn level_2_reads_its_visibility_and_draws_its_dimensions_on_the_export_layers() 
 }
 
 fn draw(rvt: &std::path::Path, view: &str) -> rvt_dwg::Drawing2d {
+    draw_with(rvt, view, &[])
+}
+
+/// [`draw`] with `extra` arguments.
+fn draw_with(rvt: &std::path::Path, view: &str, extra: &[&str]) -> rvt_dwg::Drawing2d {
     let dir = std::env::temp_dir().join(format!(
-        "rvt-sheet-view-{}-{}",
+        "rvt-sheet-view-{}-{}{}",
         std::process::id(),
-        view.replace(' ', "-")
+        view.replace(' ', "-"),
+        extra.concat()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let dxf = dir.join("view.dxf");
-    sheet(&[
-        rvt.as_os_str(),
-        "--view".as_ref(),
-        view.as_ref(),
-        "--format".as_ref(),
-        "dxf".as_ref(),
-        "-o".as_ref(),
-        dxf.as_os_str(),
-    ]);
+    sheet(
+        &[
+            rvt.as_os_str(),
+            "--view".as_ref(),
+            view.as_ref(),
+            "--format".as_ref(),
+            "dxf".as_ref(),
+            "-o".as_ref(),
+            dxf.as_os_str(),
+        ]
+        .into_iter()
+        .chain(extra.iter().map(|s| std::ffi::OsStr::new(*s)))
+        .collect::<Vec<_>>(),
+    );
     let read = rvt_dwg::read_file(&dxf, rvt_dwg::Limits::DEFAULT).expect("read back");
     let _ = std::fs::remove_dir_all(&dir);
     read.drawing
@@ -157,8 +170,20 @@ fn level_1_draws_door_symbols_overhead_stairs_room_separations_and_rooms() {
     // Its project lines are room separation lines (the export's `A-AREA`); the lines drawn on
     // `A-DETL-GENF` before were the sketches of walls, stairs and floors.
     assert!(count("A-AREA", "LINE") > 0, "no room separation lines");
-    assert!(count("A-AREA-BNDY", "LWPOLYLINE") > 0, "no room polylines");
     assert_eq!(count("A-DETL-GENF", "LINE"), 0);
+    // Rooms as polylines only when asked for, as the export's default draws none.
+    assert_eq!(
+        count("A-AREA-BNDY", "LWPOLYLINE"),
+        0,
+        "room polylines by default"
+    );
+    let with_rooms = draw_with(&rvt, "Level 1", &["--room-boundaries"]);
+    let rooms = with_rooms
+        .entities
+        .iter()
+        .filter(|e| e.layer == "A-AREA-BNDY" && e.kind == "LWPOLYLINE")
+        .count();
+    assert!(rooms > 0, "no room polylines with --room-boundaries");
 }
 
 #[test]

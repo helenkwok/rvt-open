@@ -157,6 +157,10 @@ pub struct ExportLayers {
     pub table: Option<Arc<LayerTable>>,
     /// Each wall's type Function (`WallFunction` code), by the wall's ElementId.
     pub wall_functions: BTreeMap<u64, i64>,
+    /// Draw rooms, spaces and areas as boundary polylines (`A-AREA-BNDY`), as the export's
+    /// "Export rooms, spaces and areas as polylines" does. Off by default, as in its default
+    /// export, which draws none.
+    pub room_boundaries: bool,
 }
 
 /// Which line of an element is drawn.

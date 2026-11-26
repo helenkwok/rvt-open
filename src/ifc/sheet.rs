@@ -1366,6 +1366,10 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
     let mut symbol_drawn = std::collections::BTreeSet::new();
     let layers = &options.layers;
     for fp in collect_footprints(model, options.window.as_ref()) {
+        // Rooms, spaces and areas only as boundary polylines, when asked for.
+        if fp.ifc_type == "IFCSPACE" && !layers.room_boundaries {
+            continue;
+        }
         let own = sets.get(&fp.index).map(Vec::as_slice).unwrap_or_default();
         let element = match model.entities.get(fp.index) {
             Some(IfcEntity::BuildingElement { type_guid, .. }) => {
