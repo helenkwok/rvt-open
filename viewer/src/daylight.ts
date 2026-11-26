@@ -213,6 +213,12 @@ export function radianceEstimate(sensors: number, triangles: number, workers: nu
 /** Triangles above which the instant tier's tracers are ended before a Radiance run, to free their memory. */
 const LARGE_SCENE = 200_000;
 
+/**
+ * Triangles above which a Radiance run asks first because of memory: Snowdon Towers Electrical and
+ * Plumbing (6.3 million triangles, 351 to 364 MB of Radiance text) took a tab past 10 GB.
+ */
+const HUGE_SCENE = 3_000_000;
+
 /** A run longer than this (seconds, estimated) asks before it starts. */
 const ASK_ABOVE_S = 120;
 
@@ -1449,9 +1455,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         const est = radianceEstimate(n, tris, radiance.count, detailSel.value === 'validated');
         const key = `${preparedId}:${a}:${detailSel.value}:${n}`;
         root.dataset.estimate = String(Math.round(est));
-        if (est > ASK_ABOVE_S && askedFor !== key) {
+        if ((est > ASK_ABOVE_S || tris > HUGE_SCENE) && askedFor !== key) {
           askedFor = key;
-          status.textContent = `This run is large: ${n.toLocaleString('en')} sensors and ${tris.toLocaleString('en')} surfaces. Radiance would take roughly ${clock(est)} with ${radiance.count} workers (a rough estimate; the time left is shown while it runs). Press Run again to start it, or pick fewer sensors (a wider grid spacing).`;
+          const memory = tris > HUGE_SCENE ? ' With this many surfaces the tab may need more than 10 GB of memory, and the browser can end a tab that runs out.' : '';
+          status.textContent = `This run is large: ${n.toLocaleString('en')} sensors and ${tris.toLocaleString('en')} surfaces. Radiance would take roughly ${clock(est)} with ${radiance.count} workers (a rough estimate; the time left is shown while it runs).${memory} Press Run again to start it, or pick fewer sensors (a wider grid spacing).`;
           runBtn.textContent = `Run anyway (about ${clock(est)})`;
           root.dataset.state = 'ask';
           live.hidden = true;
