@@ -475,7 +475,8 @@ fn export_layers(
             None => ExportLayers::default(),
         },
     };
-    if cli.format != "svg" {
+    // Every drawing but an SVG plan draws through the layer table (a sheet's SVG too).
+    if cli.format != "svg" || cli.sheet.is_some() {
         if let Err(e) = layers.read_wall_functions(rf, model) {
             eprintln!("rvt-sheet: wall Functions not read, walls go by IsExternal: {e}");
         }

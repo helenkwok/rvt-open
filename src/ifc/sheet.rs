@@ -901,6 +901,7 @@ pub fn projected_drawing(
         }
         let mut e = Entity2d::new("LINE", layer, Geom::Line { a: pa, b: pb });
         e.lineweight = weight;
+        colour_unless_layer_has(d, &mut e, aci);
         d.entities.push(e);
     };
     let mut keys = std::collections::HashSet::new();
@@ -1458,7 +1459,7 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                 None => vec![(ring.clone(), true)],
             };
             for (pts, closed) in parts {
-                d.entities.push(Entity2d::new(
+                let mut e = Entity2d::new(
                     "LWPOLYLINE",
                     &cut_layer,
                     Geom::Polyline {
@@ -1466,7 +1467,9 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                         closed,
                         z: 0.0,
                     },
-                ));
+                );
+                colour_unless_layer_has(&d, &mut e, cut_aci);
+                d.entities.push(e);
             }
         }
         if options.show_labels && options.annotation.is_none() && !fp.name.is_empty() {
@@ -1499,10 +1502,11 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                 None => Some(((l.a[0], l.a[1]), (l.b[0], l.b[1]))),
             };
             if let Some((p, q)) = segment {
-                ensure(&mut d, &l.layer, 8);
+                let (layer, aci) = layers.annotation_layer(&l.layer, 8);
+                ensure(&mut d, &layer, aci);
                 d.entities.push(Entity2d::new(
                     "LINE",
-                    &l.layer,
+                    &layer,
                     Geom::Line {
                         a: at([p.0, p.1]),
                         b: at([q.0, q.1]),
@@ -1511,10 +1515,11 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
             }
         }
         for t in &a.texts {
-            ensure(&mut d, &t.layer, 7);
+            let (layer, aci) = layers.annotation_layer(&t.layer, 7);
+            ensure(&mut d, &layer, aci);
             d.entities.push(Entity2d::new(
                 "TEXT",
-                &t.layer,
+                &layer,
                 Geom::Text {
                     at: at(t.at),
                     height: t.height_feet * MM_PER_FOOT,
@@ -1523,15 +1528,16 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
                 },
             ));
         }
+        let (dims, dims_aci) = layers.annotation_layer("A-ANNO-DIMS", 7);
         for [p, q] in &a.dimensions {
             let measurement = (q[0] - p[0]).hypot(q[1] - p[1]) * MM_PER_FOOT;
             if measurement < 1e-6 {
                 continue;
             }
-            ensure(&mut d, "A-ANNO-DIMS", 7);
+            ensure(&mut d, &dims, dims_aci);
             d.entities.push(Entity2d::new(
                 "DIMENSION",
-                "A-ANNO-DIMS",
+                &dims,
                 Geom::Dimension {
                     block: String::new(),
                     measurement,
@@ -1555,8 +1561,17 @@ pub fn plan_drawing(model: &IfcModel, options: &SheetOptions) -> rvt_dwg::Drawin
             e.geom = e.geom.transformed(&t);
         }
     }
-    layers.apply_to_annotation(&mut d);
     d
+}
+
+/// Colour `e` with `aci` where its layer has another colour: a cut and a seen line whose table
+/// rows share a layer name and differ in colour, the layer taking the first one's.
+#[cfg(feature = "dwg")]
+fn colour_unless_layer_has(d: &rvt_dwg::Drawing2d, e: &mut rvt_dwg::Entity2d, aci: i16) {
+    let on_layer = d.layers.iter().find(|l| l.name == e.layer);
+    if on_layer.and_then(|l| l.colour.aci) != Some(aci) {
+        e.colour = rvt_dwg::Colour::aci(aci);
+    }
 }
 
 /// A plan symbol curve's points in plan, an arc (start, a point on it, end) as 32 chords.
@@ -1615,8 +1630,14 @@ fn layer_for(
             super::entities::PropertyValue::Boolean(b) => Some(b),
             _ => None,
         });
+    // An element whose category has no row (a stair's runs and landings) or that has no category
+    // is looked up by the category its IFC type stands for.
     let found = super::element_table::category_in(sets)
-        .and_then(|category| layers.element_layer(&category, id, external, line));
+        .and_then(|category| layers.element_layer(&category, id, external, line))
+        .or_else(|| {
+            let category = category_for_ifc_type(ifc_type)?;
+            layers.element_layer(category, id, external, line)
+        });
     match found {
         Some((layer, colour)) => (layer, if colour < 0 { fallback.1 } else { colour }),
         // No category: the IFC type's layer, with the table's colour for it where it has one.
@@ -1629,6 +1650,27 @@ fn layer_for(
             (layer, colour)
         }
     }
+}
+
+/// The category whose layer [`layer_for_ifc_type`] gives an IFC type.
+#[cfg(feature = "dwg")]
+fn category_for_ifc_type(ifc_type: &str) -> Option<&'static str> {
+    Some(match ifc_type {
+        "IFCWALL" | "IFCWALLSTANDARDCASE" | "IFCCURTAINWALL" => "Walls",
+        "IFCDOOR" => "Doors",
+        "IFCWINDOW" => "Windows",
+        "IFCCOLUMN" => "Structural Columns",
+        "IFCBEAM" | "IFCMEMBER" => "Structural Framing",
+        "IFCSLAB" => "Floors",
+        "IFCROOF" => "Roofs",
+        "IFCCOVERING" => "Ceilings",
+        "IFCSTAIR" | "IFCSTAIRFLIGHT" => "Stairs",
+        "IFCRAILING" => "Railings",
+        "IFCFURNITURE" | "IFCFURNISHINGELEMENT" => "Furniture",
+        "IFCSPACE" => "Rooms",
+        "IFCPLATE" => "Curtain Panels",
+        _ => return None,
+    })
 }
 
 /// Layer (in the style of the AIA standard) and colour index for an IFC type.

@@ -291,32 +291,4 @@ impl ExportLayers {
                 (l.to_string(), if c < 0 { colour } else { c })
             })
     }
-
-    /// Give each of `d`'s layers named for an annotation ([`Self::annotation_layer`]) its
-    /// table's name and colour, renaming its entities with it.
-    #[cfg(feature = "dwg")]
-    pub fn apply_to_annotation(&self, d: &mut rvt_dwg::Drawing2d) {
-        let mut renamed: HashMap<String, String> = HashMap::new();
-        for layer in &mut d.layers {
-            let aci = layer.colour.aci.unwrap_or(7);
-            let (name, colour) = self.annotation_layer(&layer.name, aci);
-            if colour != aci {
-                layer.colour = rvt_dwg::Colour::aci(colour);
-            }
-            if name != layer.name {
-                renamed.insert(std::mem::replace(&mut layer.name, name.clone()), name);
-            }
-        }
-        if renamed.is_empty() {
-            return;
-        }
-        // Two built-in layers a table maps to one name become one layer.
-        let mut seen = BTreeSet::new();
-        d.layers.retain(|l| seen.insert(l.name.clone()));
-        for e in &mut d.entities {
-            if let Some(name) = renamed.get(&e.layer) {
-                e.layer = name.clone();
-            }
-        }
-    }
 }

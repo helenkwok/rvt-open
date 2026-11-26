@@ -11,3 +11,6 @@
   different colour before, and has Revit's now. `--layer-table FILE` takes
   another table, and on Windows the copy a Revit installation keeps is used
   when found.
+- **A section's or elevation's levels are drawn on `A-FLOR-LEVL`**, as
+  Revit's DWG exports of rac_basic's North elevation and Snowdon Towers'
+  Café Kitchen section draw them, no longer on the grid layers.

@@ -81,7 +81,8 @@ block's labels that show the sheet's values (number, name, drawn by, ...).
 and toward-the-viewer `m_viewDir` directions, and its crop box from its `Viewer`) draws, in DXF, DWG or
 PDF, the sharp edges of every element's body inside the crop box, its depth included, projected onto
 the view's plane: x along the view's right and y up, about the internal origin, millimetres, on the
-element's layer. There is no hidden-line removal and no cut pattern yet, and no annotation (level
+element's layer (its table row's cut layer where the view's plane cuts it). On a sheet, a section's
+levels are drawn on `A-FLOR-LEVL` and its grids on `S-GRID` and `S-GRID-IDEN`. There is no hidden-line removal and no cut pattern yet, and no annotation (level
 heads, dimensions, tags).
 
 ## PDF
