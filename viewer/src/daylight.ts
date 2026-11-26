@@ -1573,7 +1573,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
               done,
               total,
               `rtrace: ${sensorsText(done, total)} traced`,
-              workers.length > 1 ? `Workers (done/taken): ${workers.map(([d, s], k) => `${k + 1}: ${d.toLocaleString('en')}/${s.toLocaleString('en')}`).join(' · ')}` : '',
+              workers.length > 1 ? `Workers: ${workers.map(([d, s], k) => `${k + 1}: ${d.toLocaleString('en')}/${s.toLocaleString('en')}`).join(' · ')}` : '',
               // once every part is taken, the slowest worker decides the end
               final ? workers : undefined,
             ),
@@ -1587,7 +1587,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         if (a === 'rad-df') for (let i = 0; i < n; i++) v[i] = r.lux[i] / 100;
         else v.set(r.lux);
         extra.engine = 'Radiance 6.0.3 (WebAssembly)';
-        radianceInfo = { workers: r.workers, parts: r.parts, octreeBytes: r.octreeBytes, sceneOctreeReused: r.sceneReused, octreeResolution: r.resolution, setOverflows: r.setOverflows };
+        radianceInfo = { workers: r.workers, octreeBytes: r.octreeBytes, sceneOctreeReused: r.sceneReused, octreeResolution: r.resolution, setOverflows: r.setOverflows };
         Object.assign(extra, radianceInfo);
         const logText = radiance.log.map((l) => `${l.prog}:\n${l.text}`).join('\n');
         if (logText) extra.radianceLog = logText;

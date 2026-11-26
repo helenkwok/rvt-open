@@ -294,7 +294,7 @@ export class Radiance {
     sensors: string[],
     detail: Detail,
     hooks: RadianceHooks,
-  ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; parts: number; sceneReused: boolean; resolution: string; setOverflows: number }> {
+  ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; sceneReused: boolean; resolution: string; setOverflows: number }> {
     this.log = [];
     const [rayinit, skybright, perezlum] = await Promise.all(['rayinit.cal', 'skybright.cal', 'perezlum.cal'].map((f) => this.file(f)));
     const sceneReused = this.sceneOct?.key === sceneKey;
@@ -325,18 +325,18 @@ export class Radiance {
     const budget = ((navigator as { deviceMemory?: number }).deviceMemory ?? 8) * 2 ** 30 * 0.75;
     const fit = Math.max(1, Math.floor(budget / workerBytes(oct.length)));
     const shares = Math.max(1, Math.min(this.size, fit, Math.ceil(n / 16)));
-    // contiguous chunks, taken by the next free worker: one per worker, or three per worker when each would still
-    // hold 500 sensors or more, so a worker done with an easy part of the building takes on what is left instead of
-    // waiting for the slowest share (each chunk is one rtrace run with its own irradiance cache)
-    const chunks = n / (shares * 3) >= 500 ? shares * 3 : shares;
+    // one contiguous share per worker. Smaller parts handed to whichever worker is free were measured on Technical
+    // School (18,327 sensors, three parts per worker): no faster (726 s against 711 s), because each part builds its
+    // own irradiance cache again
+    const chunks = shares;
     const per = Math.ceil(n / chunks);
     const out = new Float64Array(n);
     // per worker: sensors done, and sensors taken so far
     const workers: [number, number][] = Array.from({ length: shares }, () => [0, 0]);
     let done = 0;
     let next = 0;
-    hooks.stage('rtrace', `${n.toLocaleString('en')} sensors in ${shares} worker${shares === 1 ? '' : 's'}${chunks > shares ? `, ${chunks} parts` : ''}`);
-    hooks.progress(0, n, workers, next >= chunks);
+    hooks.stage('rtrace', `${n.toLocaleString('en')} sensors in ${shares} worker${shares === 1 ? '' : 's'}`);
+    hooks.progress(0, n, workers, true);
     await Promise.all(
       workers.map(async (_, k) => {
         while (next < chunks) {
@@ -368,7 +368,7 @@ export class Radiance {
         }
       }),
     );
-    return { lux: out, octreeBytes: oct.length, workers: shares, parts: chunks, sceneReused, resolution: this.sceneOct!.resolution, setOverflows: this.sceneOct!.setOverflows };
+    return { lux: out, octreeBytes: oct.length, workers: shares, sceneReused, resolution: this.sceneOct!.resolution, setOverflows: this.sceneOct!.setOverflows };
   }
 
   /** Ends the idle workers, so their WebAssembly memory is returned at once (the next run starts new ones). */

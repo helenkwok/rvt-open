@@ -4,7 +4,7 @@
   scene, loading Radiance with files and megabytes, the sky, the Radiance
   text, oconv, tracing with sensors done overall and per worker, collecting),
   with a bar that moves with the sensors, the elapsed time, the age of the last
-  update and, once 3 % is done, the time left; after 60 s without progress it
+  update and, once 3 % is done, the time left (the slowest worker's); after 60 s without progress it
   asks whether the run is still working and points to Stop. The grid fills in
   as values come back. It ends "Done in X s: N sensors, mean …" with the time
   of each stage, and a Radiance run estimated at more than two minutes asks
