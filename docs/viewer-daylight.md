@@ -78,6 +78,13 @@ Measured and not adopted, against native Radiance's answer on the demo building:
 - A shared ambient file: an `-af` pre-pass on every 4th, 8th or 16th sensor, merged and handed to every worker, stayed within the CI bounds but was no faster (12.1 to 13.1 s against 12.0 s with six workers): the sparse pre-pass sensors reuse little of each other's cache.
 - Smaller parts handed to whichever worker is free (three per worker): no faster on Technical School (rtrace 726 s against 711 s), because each part builds its cache again.
 
+**Every public sample CI fetches** (67 models: Autodesk's samples for 2015 to 2027, Snowdon Towers, the Technical School, and VTT's BIM4LCA models), through the request-only CI job at a 1 m grid on shared 4-core runners, with each run capped at 1,500 s: 243 of 268 runs passed (sun hours 66 of 67, sky view 63, DF preview 53, DF (Radiance) 61).
+
+- 19 runs did not finish within the cap, on the largest grids: the DF preview on every copy of the advanced architectural sample (about 9,600 sensors; its Radiance DF took 590 to 660 s there), and the sky view, DF preview and Radiance DF on the BIM4LCA office models (about 8,800 sensors).
+- 6 failed for memory, on Snowdon Towers. Architectural: every analysis stopped with "Data cannot be cloned, out of memory" as eight workers each took a copy of its triangles; the pool is now sized by memory and loads a large scene one worker at a time (not yet run again on that model). Electrical and Plumbing: Radiance ran out of memory in oconv. Their octree is now built at the default resolution, which needs 1.9 GiB, and the programs may use 4 GiB, but the tab as a whole needs more than 10 GB (see the limits).
+
+That job ran on an earlier commit of this change, before those memory changes. The table of every run is in the job's artifacts.
+
 Adopted: the scene's octree is kept, so a second run on the same scene (another sky, or the illuminance at another time) skips oconv; the grid fills in while rtrace runs; and the CI job above runs the instant tier and Radiance's daylight factor on the demo building, Core Interior (1 m grid) and Technical School (2 m grid) on every pull request. A request-only job (`workflow_dispatch` with `daylight_sweep`) runs them on every public sample CI fetches, in eight shards.
 
 ## Known limits
