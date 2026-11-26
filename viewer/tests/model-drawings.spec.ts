@@ -85,9 +85,10 @@ test('lists the sheets and views, draws a sheet and a section, and saves them', 
     }),
   );
   // As rvt-sheet draws sheet AR01: its site plan in one viewport, its title block and notes, and
-  // the title block's 13 labels filled from the sheet and the project information.
+  // the title block's 13 labels filled from the sheet and the project information. No room
+  // polylines (880 lines before: 15 of them), as in the authoring tool's default DWG export.
   expect(sheetName).toBe('AR01 · ASEMAPIIRUSTUS');
-  expect(sheetCounts).toEqual({ lines: 880, texts: 30, viewports: 1 });
+  expect(sheetCounts).toEqual({ lines: 865, texts: 30, viewports: 1 });
   await expect(page.locator('#drawing-sheet svg [data-viewport]')).toHaveCount(sheetCounts.viewports);
   await shot(page, 'sheet');
   fs.writeFileSync(path.join(SHOTS, 'sheet.svg'), await page.locator('#drawing-sheet > svg').evaluate((el) => el.outerHTML));
