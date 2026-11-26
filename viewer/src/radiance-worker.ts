@@ -11,8 +11,13 @@
  * Protocol:
  *   main → worker: { type: 'run', req, prog, glue (URL of <program>.js), wasm (its .wasm), module?, args, files: { name: bytes }, stdin? }
  *                  Without `module` the worker fetches and compiles `wasm` itself (?radiance-compile=each, to measure).
+ *                  `stream` asks for the output as it is written:
+ *   worker → main: { type: 'progress', req, text }   the whole lines of standard output written since the last
+ *                  one (rtrace: one per sensor), at most every 250 ms while the program runs; reading them changes
+ *                  nothing it computes
  *   worker → main: { type: 'done', req, out (stdout bytes), err (stderr text), ms }
- *   worker → main: { type: 'error', req, message }   (a non-zero exit included)
+ *   worker → main: { type: 'error', req, message, log? }   (a non-zero exit included; `log` is the whole
+ *                  standard error, `code` the exit status)
  */
 
 interface RunMsg {
@@ -25,6 +30,8 @@ interface RunMsg {
   args: string[];
   files: Record<string, Uint8Array>;
   stdin?: Uint8Array;
+  /** Send each new batch of whole output lines while the program runs (rtrace: one line per sensor). */
+  stream?: boolean;
 }
 
 interface EmModule {
@@ -43,6 +50,17 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
   const m = ev.data;
   if (m.type !== 'run') return;
   const t0 = performance.now();
+  // standard error: the first 4 MiB, and always its last 4 KiB (where a fatal error is)
+  const errBytes: number[] = [];
+  let errTail: number[] = [];
+  let errDropped = 0;
+  const errText = (): string => {
+    const d = new TextDecoder();
+    // the bytes past the first 4 MiB that the kept tail does not hold
+    const lost = errDropped - errTail.length;
+    const tail = d.decode(Uint8Array.from(errTail));
+    return lost > 0 ? `${d.decode(Uint8Array.from(errBytes))}\n… ${lost.toLocaleString('en')} bytes not kept …\n${tail}` : d.decode(Uint8Array.from(errBytes)) + tail;
+  };
   try {
     let f = factories.get(m.glue);
     if (!f) {
@@ -52,9 +70,14 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
       f.catch(() => factories.delete(m.glue));
     }
     const factory = await f;
-    const out: number[] = [];
-    const err: number[] = [];
+    // standard output in 1 MiB chunks: an octree can pass the length a plain array of numbers may reach (2^27)
+    const chunks: Uint8Array[] = [];
+    let chunk = new Uint8Array(1 << 20);
+    let used = 0;
     let i = 0;
+    // with `stream`, the bytes since the last progress message
+    let fresh: number[] = [];
+    let sent = performance.now();
     const stdin = m.stdin ?? null;
     const em = await factory({
       noInitialRun: true,
@@ -67,10 +90,32 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
       },
       stdin: () => (stdin && i < stdin.length ? stdin[i++] : null),
       stdout: (c: number | null) => {
-        if (c !== null) out.push(c & 255);
+        if (c === null) return;
+        if (used === chunk.length) {
+          chunks.push(chunk);
+          chunk = new Uint8Array(1 << 20);
+          used = 0;
+        }
+        chunk[used++] = c & 255;
+        if (!m.stream) return;
+        fresh.push(c & 255);
+        if (c === 10) {
+          const now = performance.now();
+          if (now - sent >= 250) {
+            sent = now;
+            send({ type: 'progress', req: m.req, text: new TextDecoder().decode(Uint8Array.from(fresh)) });
+            fresh = [];
+          }
+        }
       },
       stderr: (c: number | null) => {
-        if (c !== null) err.push(c & 255);
+        if (c === null) return;
+        if (errBytes.length < 1 << 22) errBytes.push(c & 255);
+        else {
+          errDropped++;
+          errTail.push(c & 255);
+          if (errTail.length > 8192) errTail = errTail.slice(-4096);
+        }
       },
     });
     for (const [name, data] of Object.entries(m.files)) em.FS.writeFile(name, data);
@@ -83,11 +128,20 @@ self.addEventListener('message', async (ev: MessageEvent<RunMsg>) => {
       if (status === null) throw e;
       code = status;
     }
-    const errText = new TextDecoder().decode(Uint8Array.from(err));
-    if (code !== 0) throw new Error(`${m.prog} exited ${code}: ${errText.slice(0, 400)}`);
-    const bytes = Uint8Array.from(out);
-    send({ type: 'done', req: m.req, out: bytes, err: errText, ms: performance.now() - t0 }, [bytes.buffer]);
+    if (code !== 0) {
+      send({ type: 'error', req: m.req, message: `${m.prog} exited ${code}`, log: errText(), code, prog: m.prog });
+      return;
+    }
+    chunks.push(chunk.subarray(0, used));
+    const bytes = new Uint8Array(chunks.reduce((a, c) => a + c.length, 0));
+    let at = 0;
+    for (const c of chunks) {
+      bytes.set(c, at);
+      at += c.length;
+    }
+    send({ type: 'done', req: m.req, prog: m.prog, out: bytes, err: errText(), ms: performance.now() - t0 }, [bytes.buffer]);
   } catch (e) {
-    send({ type: 'error', req: m.req, message: e instanceof Error ? e.message : String(e) });
+    // a trap (out of memory, out of bounds) or a failed import: what the program wrote so far goes with it
+    send({ type: 'error', req: m.req, message: `${m.prog}: ${e instanceof Error ? e.message : String(e)}`, log: errText(), prog: m.prog });
   }
 });

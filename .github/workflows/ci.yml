@@ -11,6 +11,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      daylight_sweep:
+        description: Run every Daylight analysis on every public sample (job "daylight on every public sample")
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -826,6 +831,51 @@ jobs:
   # tests 40 to 60 s each, the rest under 15 s): leg 2 holds two of the long
   # tests and the orbit, diagnostics and toast tests (about 110 s), leg 1 the
   # rest (about 127 s). Re-balance when a leg runs much longer than the other.
+  # Every public sample through the Daylight panel's instant tier and Radiance's daylight factor (preview), at a
+  # 1 m grid, in eight shards; on request only (workflow_dispatch with daylight_sweep). Each shard's table is in
+  # its artifact (samples.md).
+  daylight-sweep:
+    name: daylight on every public sample / shard ${{ matrix.shard }}
+    if: github.event_name == 'workflow_dispatch' && inputs.daylight_sweep
+    needs: [wasm, samples, radiance]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      RVT_VIEWER_BITS: 64
+      RVT_DAYLIGHT_SAMPLES_DIR: ${{ github.workspace }}/_samples/flat;${{ github.workspace }}/_samples/bim4lca
+      RVT_DAYLIGHT_SHARD: ${{ matrix.shard }}/8
+      RVT_DAYLIGHT_ANALYSES: sunhours,svf,df,rad-df
+      RVT_DAYLIGHT_RUN_S: "1500"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: wasm-pkg, path: viewer/pkg }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: radiance-wasm, path: viewer/public/radiance }
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}", fail-on-cache-miss: true }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: "24.22.1" }
+      - name: Every Daylight analysis on this shard's samples
+        working-directory: viewer
+        run: |
+          npm install -g pnpm@12.6.0
+          pnpm install --frozen-lockfile
+          ../tools/ci/retry.sh 3 pnpm exec playwright install --with-deps chromium
+          pnpm exec tsc --noEmit && pnpm exec vite build
+          pnpm exec playwright test tests/daylight-samples.spec.ts --workers 1
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: "daylight-sweep-${{ matrix.shard }}"
+          path: viewer/daylight-shots/samples.*
+          if-no-files-found: ignore
+          retention-days: 14
   viewer:
     name: viewer (Playwright) / ${{ matrix.bits }}-bit leg ${{ matrix.leg }}
     needs: [wasm, samples, radiance]
@@ -844,6 +894,11 @@ jobs:
       RVT_DRAWINGS_MODEL: ${{ github.workspace }}/_bim4lca/ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt
       # Autodesk's metric Technical School sample (public download) for tests/sheet-lineweights.spec.ts.
       RVT_SHEETS_MODEL: ${{ github.workspace }}/_samples/flat/2026-Technicalschoolcurrentm.rvt
+      # tests/daylight-samples.spec.ts: the instant tier and Radiance's daylight factor on real public samples
+      # (path|grid spacing in metres; ? marks the CC0 model, whose host may be unreachable), in the 64-bit legs;
+      # its table is in the daylight artifact (samples.md).
+      RVT_DAYLIGHT_SAMPLES: ${{ matrix.bits == 64 && format('?{0}/viewer/public/demos/cc0-2027-demo-building.rvt;{0}/viewer/public/demos/2024_Core_Interior.rvt|1;{0}/_samples/flat/2026-Technicalschoolcurrentm.rvt|2', github.workspace) || '' }}
+      RVT_DAYLIGHT_ANALYSES: sunhours,svf,df,rad-df
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -892,7 +947,7 @@ jobs:
             [ "$f" = cc0-2027-demo-building.rvt ] && [ ! -s ../_cc0/demo-building-2027.rvt ] && continue
             test -s "public/demos/$f" || { echo "::error::demo $f was not staged: the gallery would have nothing to draw"; exit 1; }
           done
-          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/drawing-select.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts tests/daylight.spec.ts)
+          specs=(tests/viewer-regression.spec.ts tests/gallery-examples.spec.ts tests/no-network.spec.ts tests/dwg-pane.spec.ts tests/model-drawings.spec.ts tests/drawing-select.spec.ts tests/sheet-lineweights.spec.ts tests/wasm-build.spec.ts tests/wasm-no-network-imports.spec.ts tests/large-model-retry.spec.ts tests/memory-ceiling.spec.ts tests/memory-ceiling-capped.spec.ts tests/large-model-reuse.spec.ts tests/daylight.spec.ts tests/daylight-samples.spec.ts)
           if [ "${{ matrix.leg }}" = 2 ]; then
             pnpm exec playwright test "${specs[@]}" --grep "$LEG2"
           else

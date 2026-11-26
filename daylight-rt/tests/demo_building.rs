@@ -232,6 +232,25 @@ fn the_scene_built_from_the_file_is_the_reference_scene() {
         theirs.len(),
         "sensors with Radiance's sun hours, scene built from the file"
     );
+    // the Radiance scene keeps one of each distinct triangle (its corners as printed, in any order), counted
+    // here in 0.01 mm steps, and leaves out no zero-area one: on this file all are well formed
+    let (keep, skipped) = radiance::kept(&p.model);
+    let distinct: std::collections::BTreeSet<Vec<[i64; 3]>> = p
+        .model
+        .triangles
+        .iter()
+        .map(|t| {
+            let mut c: Vec<[i64; 3]> =
+                t.v.iter()
+                    .map(|v| v.map(|x| (x * 1e5).round() as i64))
+                    .collect();
+            c.sort();
+            c
+        })
+        .collect();
+    assert_eq!(skipped.degenerate, 0);
+    assert_eq!(keep.iter().filter(|k| **k).count(), distinct.len());
+    assert_eq!(skipped.duplicate, p.model.triangles.len() - distinct.len());
     // the Radiance text the validated tier reads holds the same scene
     let again = radiance::parse(&[
         &radiance::write_materials(&p.model),
@@ -240,6 +259,12 @@ fn the_scene_built_from_the_file_is_the_reference_scene() {
     .unwrap();
     assert_eq!(
         again.triangles.iter().map(|t| t.v).collect::<Vec<_>>(),
-        p.model.triangles.iter().map(|t| t.v).collect::<Vec<_>>()
+        p.model
+            .triangles
+            .iter()
+            .zip(radiance::kept(&p.model).0)
+            .filter(|(_, k)| *k)
+            .map(|(t, _)| t.v)
+            .collect::<Vec<_>>()
     );
 }

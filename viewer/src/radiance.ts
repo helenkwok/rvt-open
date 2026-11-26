@@ -64,6 +64,74 @@ function lux(line: string): number {
   return 179 * (0.265 * r + 0.67 * g + 0.065 * b);
 }
 
+/** A Radiance program that failed: `log` is everything it wrote to standard error. */
+export class RadianceError extends Error {
+  constructor(
+    message: string,
+    readonly log: string,
+    readonly prog: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * A Radiance log read for a person: the fatal line as one plain sentence, and
+ * the warnings collapsed by kind with a count. Radiance writes
+ * `<program>: <kind> - <message>`, a warning's message naming the object.
+ */
+export function summarizeLog(prog: string, log: string, fallback = ''): { sentence: string; warnings: string[] } {
+  const lines = log.split('\n').map((l) => l.trim()).filter(Boolean);
+  const kinds = new Map<string, number>();
+  let fatal = '';
+  // a line Radiance marked as an error outranks later text it did not mark
+  let classified = false;
+  for (const l of lines) {
+    const m = /^[^:]*:\s*(warning|fatal|system|internal|user|consistency)\s*-\s*(.*)$/i.exec(l);
+    if (m && m[1].toLowerCase() === 'warning') {
+      const text = m[2].replace(/"[^"]*"/g, '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+      kinds.set(text, (kinds.get(text) ?? 0) + 1);
+    } else if (m) {
+      fatal = m[2];
+      classified = true;
+    } else if (!classified && !/^…/.test(l)) fatal = l.replace(/^[^:]*:\s*/, '');
+  }
+  const n = (k: number): string => k.toLocaleString('en');
+  const warnings = [...kinds].map(([text, k]) =>
+    /^zero area for polygon/.test(text)
+      ? `${n(k)} zero-area polygon${k === 1 ? '' : 's'} skipped`
+      : /^set overflow/.test(text)
+        ? `${n(k)} set overflow${k === 1 ? '' : 's'} (more surfaces in one spot than the octree can separate)`
+        : `${n(k)} × ${text}`,
+  );
+  const reason = (fatal || fallback || 'it stopped without saying why').replace(/\s+/g, ' ').trim();
+  const what = prog === 'oconv' ? 'build the scene' : prog === 'rtrace' ? 'trace the sensors' : prog.startsWith('gen') ? 'make the sky' : `run ${prog}`;
+  const oom = /out of memory|memory access out of bounds|cannot enlarge memory|Aborted\(OOM\)/i.test(reason) ? ' (the program ran out of memory: WebAssembly gives each one at most 4 GiB)' : '';
+  return { sentence: `Radiance could not ${what}: ${reason}${oom}.`, warnings };
+}
+
+/** What a run of illuminance() reports while it works. */
+export interface RadianceHooks {
+  /** A new stage: its name and what it works on. */
+  stage(name: string, detail?: string): void;
+  /** Files loaded of the total, and their bytes so far of the total (0 when not known). */
+  loading?(files: number, of: number, bytes: number, totalBytes: number): void;
+  /** Sensors traced of the total, and per worker (done, taken so far); `final` once every part is taken. */
+  progress(done: number, total: number, workers: [number, number][], final: boolean): void;
+  /** One sensor's value (lux), as soon as its worker writes it. */
+  value?(i: number, lux: number): void;
+}
+
+/** Scenes with fewer triangles than this get oconv's coarser octree (`-r 1024`) first. */
+const COARSE_BELOW = 500_000;
+
+/**
+ * rtrace's memory per worker: about six to eight times the octree (the scene it reads back, the
+ * ambient cache) plus a base, measured on the public samples (76 MiB with a 1.1 MiB octree, 176 MiB
+ * with 18 MiB, 991 MiB with 118 MiB, 1,552 MiB with 271 MiB).
+ */
+const workerBytes = (octree: number): number => 7 * octree + 64 * 2 ** 20;
+
 export class Radiance {
   private modules = new Map<string, Promise<WebAssembly.Module>>();
   private files = new Map<string, Promise<Uint8Array>>();
@@ -71,9 +139,13 @@ export class Radiance {
   private req = 0;
   /** Why the workers were stopped, until the next start; a run started meanwhile fails with it. */
   private stopped: string | null = null;
-  private pending = new Map<number, { resolve: (out: Uint8Array) => void; reject: (e: Error) => void }>();
+  private pending = new Map<number, { resolve: (out: Uint8Array) => void; reject: (e: Error) => void; progress?: (text: string) => void }>();
+  /** The scene's octree from the last run, kept while the scene is the same (a new sky reuses it). */
+  private sceneOct: { key: string; oct: Uint8Array; resolution: string; setOverflows: number } | null = null;
   /** `?radiance-compile=each` makes every worker fetch and compile each program itself, to measure against sharing. */
   private compileEach = new URLSearchParams(location.search).get('radiance-compile') === 'each';
+  /** Warnings and other standard error of the last run, per program. */
+  log: { prog: string; text: string }[] = [];
   constructor(private size: number) {}
 
   get count(): number {
@@ -90,10 +162,25 @@ export class Radiance {
     }
   }
 
-  private module(prog: string): Promise<WebAssembly.Module> {
+  private module(prog: string, onBytes?: (n: number, total: number) => void): Promise<WebAssembly.Module> {
     let m = this.modules.get(prog);
     if (!m) {
-      m = WebAssembly.compileStreaming(fetch(`${RADIANCE_BASE}${prog}.wasm`));
+      m = fetch(`${RADIANCE_BASE}${prog}.wasm`).then((r) => {
+        if (!r.ok) throw new Error(`${prog}.wasm: HTTP ${r.status}`);
+        const total = Number(r.headers.get('content-length')) || 0;
+        if (!r.body || !onBytes) return WebAssembly.compileStreaming(r);
+        let n = 0;
+        const counted = r.body.pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(c, ctl) {
+              n += c.length;
+              onBytes(n, total);
+              ctl.enqueue(c);
+            },
+          }),
+        );
+        return WebAssembly.compileStreaming(new Response(counted, { headers: { 'Content-Type': 'application/wasm' } }));
+      });
       this.modules.set(prog, m);
       m.catch(() => this.modules.delete(prog));
     }
@@ -113,6 +200,39 @@ export class Radiance {
     return f;
   }
 
+  /** Fetches and compiles `progs` and the files rtrace reads, reporting files and bytes as they come. */
+  async load(progs: string[], report?: RadianceHooks['loading']): Promise<void> {
+    const cal = ['rayinit.cal', 'skybright.cal', 'perezlum.cal'];
+    const of = progs.length + cal.length;
+    const bytes = new Map<string, [number, number]>();
+    let files = 0;
+    const tell = (): void => {
+      let a = 0;
+      let b = 0;
+      for (const [n, t] of bytes.values()) {
+        a += n;
+        b += t;
+      }
+      report?.(files, of, a, b);
+    };
+    tell();
+    await Promise.all([
+      ...progs.map((p) =>
+        (this.compileEach ? Promise.resolve() : this.module(p, (n, t) => (bytes.set(p, [n, t]), tell()))).then(() => {
+          files++;
+          tell();
+        }),
+      ),
+      ...cal.map((c) =>
+        this.file(c).then((d) => {
+          bytes.set(c, [d.length, d.length]);
+          files++;
+          tell();
+        }),
+      ),
+    ]);
+  }
+
   /** Stops every worker and rejects every run still waiting with `reason`. */
   stop(reason = 'stopped'): void {
     this.stopped = reason;
@@ -127,12 +247,18 @@ export class Radiance {
     while (this.workers.length <= k) {
       const w = new RadianceWorker({ name: `radiance-${this.workers.length}` }) as Worker;
       w.addEventListener('message', (ev: MessageEvent) => {
-        const m = ev.data as { type: string; req: number; out?: Uint8Array; message?: string };
+        const m = ev.data as { type: string; req: number; out?: Uint8Array; err?: string; message?: string; log?: string; prog?: string; text?: string };
         const call = this.pending.get(m.req);
         if (!call) return;
+        if (m.type === 'progress') {
+          call.progress?.(m.text ?? '');
+          return;
+        }
         this.pending.delete(m.req);
-        if (m.type === 'done' && m.out) call.resolve(m.out);
-        else call.reject(new Error(m.message ?? 'a Radiance program failed'));
+        if (m.type === 'done' && m.out) {
+          if (m.err?.trim() && m.prog) this.log.push({ prog: m.prog, text: m.err });
+          call.resolve(m.out);
+        } else call.reject(new RadianceError(m.message ?? 'a Radiance program failed', m.log ?? '', m.prog ?? ''));
       });
       // a worker that cannot start, throws outside a run, or sends a reply that cannot be read ends every run still waiting
       w.addEventListener('error', (ev: ErrorEvent) => {
@@ -145,64 +271,150 @@ export class Radiance {
     return this.workers[k];
   }
 
-  /** Runs `prog` in worker `k`; resolves with its standard output. */
-  private async run(k: number, prog: string, args: string[], files: Record<string, Uint8Array>, stdin?: Uint8Array): Promise<Uint8Array> {
+  /** Runs `prog` in worker `k`; resolves with its standard output. `progress` receives each new batch of whole lines. */
+  private async run(k: number, prog: string, args: string[], files: Record<string, Uint8Array>, stdin?: Uint8Array, progress?: (text: string) => void, give = false): Promise<Uint8Array> {
     const module = this.compileEach ? undefined : await this.module(prog);
     if (this.stopped !== null) throw new Error(this.stopped);
     const w = this.worker(k);
     const req = ++this.req;
     return new Promise<Uint8Array>((resolve, reject) => {
-      this.pending.set(req, { resolve, reject });
-      w.postMessage({ type: 'run', req, prog, glue: `${RADIANCE_BASE}${prog}.js`, wasm: `${RADIANCE_BASE}${prog}.wasm`, module, args: [...args], files, stdin });
+      this.pending.set(req, { resolve, reject, progress });
+      // `give` hands the files' memory to the worker instead of copying it (they are not used again here)
+      const transfer = give ? Object.values(files).map((f) => f.buffer as ArrayBuffer) : [];
+      w.postMessage({ type: 'run', req, prog, glue: `${RADIANCE_BASE}${prog}.js`, wasm: `${RADIANCE_BASE}${prog}.wasm`, module, args: [...args], files, stdin, stream: !!progress }, transfer);
     });
   }
 
   /**
    * Irradiance-based values per sensor: the scene and `sky` (Radiance text) into
    * an octree, then rtrace -I with `detail` over the sensors, one contiguous
-   * share per worker. Returns lux per sensor.
+   * share per worker. Returns lux per sensor. The scene's octree is kept for
+   * the next run with the same `sceneKey`, which then only adds its sky.
    */
   async illuminance(
     materials: string,
-    scene: string,
+    scene: Uint8Array,
+    sceneKey: string,
     sky: string,
     sensors: string[],
     detail: Detail,
-    progress: (done: number, total: number) => void,
-  ): Promise<{ lux: Float64Array; octreeBytes: number }> {
+    hooks: RadianceHooks,
+    triangles = 0,
+  ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; sceneReused: boolean; resolution: string; setOverflows: number }> {
     const [rayinit, skybright, perezlum] = await Promise.all(['rayinit.cal', 'skybright.cal', 'perezlum.cal'].map((f) => this.file(f)));
-    const sceneOct = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], { 'materials.rad': enc(materials), 'scene.rad': enc(scene) });
-    const oct = await this.run(0, 'oconv', ['-f', '-i', 'scene.oct', 'sky.rad', 'glow.rad'], { 'scene.oct': sceneOct, 'sky.rad': enc(sky), 'glow.rad': enc(GLOW) });
+    const sceneReused = this.sceneOct?.key === sceneKey;
+    if (!sceneReused) {
+      this.sceneOct = null;
+      const files = { 'materials.rad': enc(materials), 'scene.rad': scene };
+      // the set overflows of the oconv run since `mark` (a run that wrote nothing to standard error has none)
+      const overflows = (mark: number): number => this.log.slice(mark).reduce((k, l) => k + (l.prog === 'oconv' ? (l.text.match(/set overflow/g) ?? []).length : 0), 0);
+      let mark = this.log.length;
+      hooks.stage('oconv', `building the octree of ${(scene.length / 2 ** 20).toFixed(1)} MB of scene text`);
+      // -r 1024: the octree stops subdividing at 1/1024 of the scene's size, which keeps a small scene's octree
+      // small (Core Interior, 30,328 triangles: 18 MiB against 96). On large scenes surfaces crowd at that size
+      // ("set overflow": oconv leaves some out) and it needs more memory, not less (Snowdon Towers Electrical,
+      // 3.6 million triangles: 91,898 overflows and 3.0 GiB, against none and 1.9 GiB at the default), so a scene
+      // of 500,000 triangles or more goes straight to the default resolution. A coarse build that overflows or
+      // fails is built again at the default one.
+      let oct: Uint8Array | null = null;
+      let resolution = '-r 1024';
+      let over = 0;
+      if (triangles >= COARSE_BELOW) over = Infinity;
+      else
+        try {
+          oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], files);
+          over = overflows(mark);
+        } catch (e) {
+          // crowded surfaces can exhaust oconv's memory at the coarser resolution: the default one may still build
+          if (!(e instanceof RadianceError) || e.prog !== 'oconv') throw e;
+          over = Infinity;
+        }
+      if (over && oct) hooks.stage('oconv', `${over.toLocaleString('en')} set overflows at the coarser resolution: building the octree again at the default one`);
+      else if (over && triangles < COARSE_BELOW) hooks.stage('oconv', 'out of memory at the coarser resolution: building the octree again at the default one');
+      if (over) {
+        mark = this.log.length;
+        // the last use of the scene text: its memory goes to the worker rather than a copy
+        const fine = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], files, undefined, undefined, true);
+        // the finer octree is kept only where it places more surfaces: it is larger, so fewer workers fit
+        const fineOver = overflows(mark);
+        if (!oct || fineOver < over) [oct, over, resolution] = [fine, fineOver, 'default (-r 16384)'];
+      }
+      this.sceneOct = { key: sceneKey, oct: oct!, resolution, setOverflows: over };
+    }
+    hooks.stage('oconv-sky', sceneReused ? 'adding the sky to the scene’s octree from the last run' : 'adding the sky');
+    const oct = await this.run(0, 'oconv', ['-f', '-i', 'scene.oct', 'sky.rad', 'glow.rad'], { 'scene.oct': this.sceneOct!.oct, 'sky.rad': enc(sky), 'glow.rad': enc(GLOW) });
     const n = sensors.length;
-    const shares = Math.max(1, Math.min(this.size, Math.ceil(n / 16)));
-    const per = Math.ceil(n / shares);
+    // each worker holds the octree and rtrace's own memory: as many as about three quarters of the device's
+    // memory allows (browsers report at most 8 GB, so this is a floor on larger machines)
+    const budget = ((navigator as { deviceMemory?: number }).deviceMemory ?? 8) * 2 ** 30 * 0.75;
+    const fit = Math.max(1, Math.floor(budget / workerBytes(oct.length)));
+    const shares = Math.max(1, Math.min(this.size, fit, Math.ceil(n / 16)));
+    // one contiguous share per worker. Smaller parts handed to whichever worker is free were measured on Technical
+    // School (18,327 sensors, three parts per worker): no faster (726 s against 711 s), because each part builds its
+    // own irradiance cache again
+    const chunks = shares;
+    const per = Math.ceil(n / chunks);
     const out = new Float64Array(n);
+    // per worker: sensors done, and sensors taken so far
+    const workers: [number, number][] = Array.from({ length: shares }, () => [0, 0]);
     let done = 0;
-    progress(0, n);
+    let next = 0;
+    hooks.stage('rtrace', `${n.toLocaleString('en')} sensors in ${shares} worker${shares === 1 ? '' : 's'}`);
+    hooks.progress(0, n, workers, true);
     await Promise.all(
-      Array.from({ length: shares }, async (_, k) => {
-        const first = k * per;
-        const part = sensors.slice(first, Math.min(n, first + per));
-        if (!part.length) return;
-        const text = dec(
-          await this.run(k, 'rtrace', ['-I', '-h', ...detail.args, 'sky.oct'], { 'sky.oct': oct, 'rayinit.cal': rayinit, 'skybright.cal': skybright, 'perezlum.cal': perezlum }, enc(`${part.join('\n')}\n`)),
-        );
-        const lines = text.trim().split('\n');
-        if (lines.length !== part.length) throw new Error(`rtrace gave ${lines.length} values for ${part.length} sensors`);
-        lines.forEach((l, i) => (out[first + i] = lux(l)));
-        done += part.length;
-        progress(done, n);
+      workers.map(async (_, k) => {
+        while (next < chunks) {
+          const first = next++ * per;
+          const size = Math.max(0, Math.min(n, first + per) - first);
+          if (!size) continue;
+          workers[k][1] += size;
+          const part = sensors.slice(first, first + size);
+          let got = 0;
+          const take = (text: string): void => {
+            for (const l of text.split('\n')) {
+              if (!l.trim() || got >= size) continue;
+              const v = lux(l);
+              out[first + got] = v;
+              hooks.value?.(first + got, v);
+              got++;
+              done++;
+              workers[k][0]++;
+            }
+            hooks.progress(done, n, workers, next >= chunks);
+          };
+          const text = dec(
+            await this.run(k, 'rtrace', ['-I', '-h', ...detail.args, 'sky.oct'], { 'sky.oct': oct, 'rayinit.cal': rayinit, 'skybright.cal': skybright, 'perezlum.cal': perezlum }, enc(`${part.join('\n')}\n`), take),
+          );
+          const lines = text.trim().split('\n');
+          if (lines.length !== part.length) throw new Error(`rtrace gave ${lines.length} values for ${part.length} sensors`);
+          // the whole output is the answer: lines the progress messages did not carry are read here
+          take(lines.slice(got).join('\n'));
+        }
       }),
     );
-    return { lux: out, octreeBytes: oct.length };
+    return { lux: out, octreeBytes: oct.length, workers: shares, sceneReused, resolution: this.sceneOct!.resolution, setOverflows: this.sceneOct!.setOverflows };
   }
 
-  /** gensky's CIE overcast sky with 10,000 lux of unobstructed horizontal illuminance, so DF % = lux / 100. */
+  /** Ends the idle workers, so their WebAssembly memory is returned at once (the next run starts new ones). */
+  release(): void {
+    if (this.pending.size) return;
+    for (const w of this.workers) w.terminate();
+    this.workers = [];
+  }
+
   /** Clears an earlier Stop: call when a Radiance analysis starts. */
   start(): void {
     this.stopped = null;
+    // the log is the analysis's, from its sky to its last trace
+    this.log = [];
   }
 
+  /** Forgets the kept octree (a new model). */
+  forget(): void {
+    this.sceneOct = null;
+  }
+
+  /** gensky's CIE overcast sky with 10,000 lux of unobstructed horizontal illuminance, so DF % = lux / 100. */
   async overcastSky(): Promise<string> {
     return dec(await this.run(0, 'gensky', ['-ang', '45', '0', '-c', '-B', '55.866'], {}));
   }
