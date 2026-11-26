@@ -291,6 +291,7 @@ pub fn sheet_drawing(
     facts: &ViewFacts,
     sheet: &crate::plan_views::Sheet,
     symbols: &std::collections::BTreeMap<usize, Vec<super::entities::PlanPolyline>>,
+    layers: &super::dwg_layers::ExportLayers,
     notes: &mut Vec<String>,
 ) -> Result<rvt_dwg::Drawing2d, String> {
     use rvt_dwg::{Affine, Entity2d, Geom, Layer2d, Layout2d};
@@ -360,6 +361,7 @@ pub fn sheet_drawing(
                     window: Some(window),
                     annotation: Some(annotation),
                     symbols: symbols.clone(),
+                    layers: layers.clone(),
                     ..SheetOptions::default()
                 };
                 (
@@ -379,7 +381,7 @@ pub fn sheet_drawing(
                     continue;
                 };
                 let scale = view.scale.unwrap_or(100.0);
-                let mut d = super::sheet::projected_drawing(model, &window, scale);
+                let mut d = super::sheet::projected_drawing(model, &window, scale, layers);
                 section_annotation(&mut d, model, facts, view, &window, scale);
                 let (origin, mut frame, annotation_crop) = section_frame(view, &window, scale);
                 // The viewport frames the crop and what the view draws beyond it (level and grid
@@ -677,6 +679,7 @@ pub fn sheet_drawing(
             .flat_map(|e| e.geom.samples(f64::MAX)),
     );
     out.layouts[1].limits = limits;
+    layers.apply_to_annotation(&mut out);
     Ok(out)
 }
 
@@ -1116,6 +1119,7 @@ pub fn view_drawing(
     facts: &ViewFacts,
     key: DrawingKey,
     symbols: &std::collections::BTreeMap<usize, Vec<super::entities::PlanPolyline>>,
+    layers: &super::dwg_layers::ExportLayers,
     notes: &mut Vec<String>,
 ) -> Result<ViewDrawing, String> {
     match key {
@@ -1126,7 +1130,7 @@ pub fn view_drawing(
                 .find(|s| s.id == id)
                 .ok_or_else(|| format!("no sheet {id}"))?;
             Ok(ViewDrawing {
-                drawing: sheet_drawing(rf, model, facts, sheet, symbols, notes)?,
+                drawing: sheet_drawing(rf, model, facts, sheet, symbols, layers, notes)?,
                 layout: Some("Layout1"),
                 scale: 1.0,
             })
@@ -1142,6 +1146,7 @@ pub fn view_drawing(
                 window: Some(window),
                 annotation: Some(annotation),
                 symbols: symbols.clone(),
+                layers: layers.clone(),
                 ..SheetOptions::default()
             };
             Ok(ViewDrawing {
@@ -1159,8 +1164,9 @@ pub fn view_drawing(
             let window = section_window(facts, view)
                 .ok_or_else(|| format!("{:?} has no crop box decoded", view.name))?;
             let scale = view.scale.unwrap_or(100.0);
-            let mut drawing = super::sheet::projected_drawing(model, &window, scale);
+            let mut drawing = super::sheet::projected_drawing(model, &window, scale, layers);
             section_annotation(&mut drawing, model, facts, view, &window, scale);
+            layers.apply_to_annotation(&mut drawing);
             Ok(ViewDrawing {
                 drawing,
                 layout: None,

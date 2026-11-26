@@ -38,6 +38,7 @@
 
 use clap::Parser;
 use rvt::RevitFile;
+use rvt::ifc::dwg_layers::ExportLayers;
 #[cfg(feature = "dwg")]
 use rvt::ifc::sheet_views::section_window;
 use rvt::ifc::sheet_views::{MM_PER_FOOT, view_window};
@@ -156,6 +157,14 @@ struct Cli {
     /// from the open's own run) instead of exporting the file again.
     #[arg(long)]
     viewer_model: bool,
+
+    /// Name DXF and DWG layers by this export layer table, in the format of the authoring tool's
+    /// `exportlayers-*.txt` files (category, subcategory, layer name, colour number, cut layer
+    /// name, cut colour number, tab-separated). Default: the table an installation of the
+    /// authoring tool keeps for its default export (`%ProgramData%\Autodesk\RVT <release>\
+    /// exportlayers-dwg-AIA.txt`, the newest found), else the built-in table.
+    #[arg(long, value_name = "FILE")]
+    layer_table: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -269,6 +278,7 @@ fn run(cli: &Cli) -> Result<(), String> {
     } else {
         Default::default()
     };
+    let layers = export_layers(cli, &mut rf, &model)?;
     // Where the last phase holds no room, the plan draws the rooms of
     // the latest phase that holds any.
     if let Some(fallback) = rf.room_phase_fallback() {
@@ -281,7 +291,7 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
     if let (Some(key), Some(facts)) = (&cli.sheet, &facts) {
         let sheet = facts.find_sheet(key)?;
-        let drawing = sheet_drawing(&mut rf, &model, facts, sheet, &symbols)?;
+        let drawing = sheet_drawing(&mut rf, &model, facts, sheet, &symbols, &layers)?;
         let bytes = drawing_bytes(&drawing, Some("Layout1"), 1.0, &cli.format, cli)?;
         rvt::cli::write_output(&output, &bytes)
             .map_err(|e| format!("write {}: {e}", output.display()))?;
@@ -305,7 +315,7 @@ fn run(cli: &Cli) -> Result<(), String> {
     if let (Some(view), Some(facts)) = (section, &facts) {
         let window = section_window(facts, view)
             .ok_or_else(|| format!("{:?} has no crop box decoded", view.name))?;
-        let drawing = projected_drawing_of(&model, &window, view.scale.unwrap_or(100.0))?;
+        let drawing = projected_drawing_of(&model, &window, view.scale.unwrap_or(100.0), &layers)?;
         let bytes = drawing_bytes(
             &drawing,
             None,
@@ -344,6 +354,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         window,
         annotation,
         symbols,
+        layers,
     };
     // A view's PDF is drawn at the view's scale; a level band or the whole model at 1:100.
     let pdf_scale = picked.and_then(|v| v.scale).unwrap_or(100.0);
@@ -434,8 +445,42 @@ fn projected_drawing_of(
     model: &rvt::ifc::IfcModel,
     window: &rvt::ifc::sheet::ProjectedWindow,
     scale: f64,
+    layers: &ExportLayers,
 ) -> Result<rvt_dwg::Drawing2d, String> {
-    Ok(rvt::ifc::sheet::projected_drawing(model, window, scale))
+    Ok(rvt::ifc::sheet::projected_drawing(
+        model, window, scale, layers,
+    ))
+}
+
+/// The layer table `--layer-table` names, else an installation's, else the built-in one; with
+/// the walls' type Functions read for DXF, DWG and PDF output.
+fn export_layers(
+    cli: &Cli,
+    rf: &mut RevitFile,
+    model: &rvt::ifc::IfcModel,
+) -> Result<ExportLayers, String> {
+    use rvt::ifc::dwg_layers::LayerTable;
+    let mut layers = match &cli.layer_table {
+        Some(path) => {
+            let text = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let table = LayerTable::parse(&String::from_utf8_lossy(&text))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            ExportLayers::with_table(table)
+        }
+        None => match LayerTable::from_revit_install() {
+            Some((path, table)) => {
+                eprintln!("rvt-sheet: layers named by {}", path.display());
+                ExportLayers::with_table(table)
+            }
+            None => ExportLayers::default(),
+        },
+    };
+    if cli.format != "svg" {
+        if let Err(e) = layers.read_wall_functions(rf, model) {
+            eprintln!("rvt-sheet: wall Functions not read, walls go by IsExternal: {e}");
+        }
+    }
+    Ok(layers)
 }
 
 /// A drawing as DXF, DWG or PDF (`layout` drawn by the PDF: a sheet; `None` for model space at
@@ -469,10 +514,11 @@ fn sheet_drawing(
     facts: &rvt::plan_views::ViewFacts,
     sheet: &rvt::plan_views::Sheet,
     symbols: &std::collections::BTreeMap<usize, Vec<rvt::ifc::entities::PlanPolyline>>,
+    layers: &ExportLayers,
 ) -> Result<rvt_dwg::Drawing2d, String> {
     let mut notes = Vec::new();
     let drawing =
-        rvt::ifc::sheet_views::sheet_drawing(rf, model, facts, sheet, symbols, &mut notes);
+        rvt::ifc::sheet_views::sheet_drawing(rf, model, facts, sheet, symbols, layers, &mut notes);
     for n in notes {
         eprintln!("rvt-sheet: {n}");
     }
@@ -492,6 +538,7 @@ fn projected_drawing_of(
     _: &rvt::ifc::IfcModel,
     _: &rvt::ifc::sheet::ProjectedWindow,
     _: f64,
+    _: &ExportLayers,
 ) -> Result<(), String> {
     Err("this build has no DWG/DXF support (feature `dwg`)".into())
 }
@@ -521,6 +568,7 @@ fn sheet_drawing(
     _: &rvt::plan_views::ViewFacts,
     _: &rvt::plan_views::Sheet,
     _: &std::collections::BTreeMap<usize, Vec<rvt::ifc::entities::PlanPolyline>>,
+    _: &ExportLayers,
 ) -> Result<(), String> {
     Err("--sheet: this build has no DWG/DXF support (feature `dwg`)".into())
 }

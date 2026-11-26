@@ -1,0 +1,98 @@
+# Built-in export layer table of rvt-open's DXF and DWG output (see src/ifc/dwg_layers.rs).
+# The rows the drawings use. Layer names and colour numbers as the authoring tool's default DWG
+# export (AIA layer names, category properties BYLAYER) gives the public sample projects, read
+# from its exports of them; -1 where those exports show no colour for the layer.
+# Category <tab> Subcategory <tab> Layer name <tab> Color number <tab> Cut layer name <tab> Cut color number
+Air Terminals		M-HVAC-CDFF	50	M-HVAC-CDFF	50
+Areas		A-AREA	32	A-AREA	32
+Cable Tray Fittings		E-CABL-TRAY	-1	E-CABL-TRAY	-1
+Cable Trays		E-CABL-TRAY	-1	E-CABL-TRAY	-1
+Casework		Q-CASE	31	Q-CASE	31
+Ceilings		A-CLNG	13	A-CLNG	13
+Columns		A-COLS	52	A-COLS	52
+Communication Devices		E-COMM	-1	E-COMM	-1
+Conduit Fittings		E-POWR-CNDT	-1	E-POWR-CNDT	-1
+Conduits		E-POWR-CNDT	-1	E-POWR-CNDT	-1
+Curtain Panels		A-GLAZ-CURT	52	A-GLAZ-CURT	52
+Curtain Systems		A-GLAZ-CURT	52	A-GLAZ-CURT	52
+Curtain Wall Mullions		A-GLAZ-CWMG	51	A-GLAZ-CWMG	51
+Data Devices		E-DATA	-1	E-DATA	-1
+Dimensions		A-ANNO-DIMS	211	A-ANNO-DIMS	211
+Doors		A-DOOR	31	A-DOOR	31
+Duct Accessories		M-HVAC-DUCT	-1	M-HVAC-DUCT	-1
+Duct Fittings		M-HVAC-DUCT	-1	M-HVAC-DUCT	-1
+Ducts		M-HVAC-DUCT	-1	M-HVAC-DUCT	-1
+Electrical Equipment		E-ELEC-EQPM	71	E-ELEC-EQPM	71
+Electrical Fixtures		E-ELEC-FIXT	-1	E-ELEC-FIXT	-1
+Entourage		A-DETL-GENF	92	A-DETL-GENF	92
+Fascias		A-ROOF-OTLN	-1	A-ROOF-OTLN	-1
+Fire Alarm Devices		E-FIRE	-1	E-FIRE	-1
+Flex Ducts		M-HVAC-DUCT	-1	M-HVAC-DUCT	-1
+Flex Pipes		P-PIPE	-1	P-PIPE	-1
+Floors		A-FLOR	192	A-FLOR	192
+Food Service Equipment		A-FDSQ	13	A-FDSQ	13
+Furniture		I-FURN	30	I-FURN	30
+Furniture Systems		I-FURN-PNLS	30	I-FURN-PNLS	30
+Generic Models		A-GENM	13	A-GENM	13
+Grid Heads		S-GRID-IDEN	1	S-GRID-IDEN	1
+Grids		S-GRID	1	S-GRID	1
+Gutters		A-ROOF-OTLN	-1	A-ROOF-OTLN	-1
+Handrails		A-FLOR-HRAL	11	A-FLOR-HRAL	11
+Hardscape		L-HRDS	13	L-HRDS	13
+Levels		A-FLOR-LEVL	51	A-FLOR-LEVL	51
+Lighting Devices		E-LITE	-1	E-LITE	-1
+Lighting Fixtures		E-LITE-EQPM	33	E-LITE-EQPM	33
+Lines		A-DETL	90	A-DETL	90
+Lines	<Room Separation>	A-AREA	32	A-AREA	32
+Mass		A-MASS	-1	A-MASS	-1
+Mechanical Equipment		M-EQPM	50	M-EQPM	50
+Medical Equipment		A-MEDQ	-1	A-MEDQ	-1
+Nurse Call Devices		E-NURS	-1	E-NURS	-1
+Parking		C-PRKG	70	C-PRKG	70
+Pipe Accessories		P-PIPE	-1	P-PIPE	-1
+Pipe Fittings		P-PIPE	-1	P-PIPE	-1
+Pipes		P-PIPE	-1	P-PIPE	-1
+Planting		L-PLNT	71	L-PLNT	71
+Plumbing Equipment		P-EQPM	6	P-EQPM	6
+Plumbing Fixtures		P-SANR-FIXT	6	P-SANR-FIXT	6
+Railings		A-FLOR-HRAL	11	A-FLOR-HRAL	11
+Railings	<Above> Railings Cut Line	A-FLOR-HRAL-MBND	5	A-FLOR-HRAL-MBND	5
+Ramps		A-FLOR-LEVL	51	A-FLOR-LEVL	51
+Roof Soffits		A-ROOF-OTLN	-1	A-ROOF-OTLN	-1
+Roofs		A-ROOF	132	A-ROOF	132
+Room Polylines		A-AREA-BNDY	-1	A-AREA-BNDY	-1
+Room Tags		A-AREA-IDEN	2	A-AREA-IDEN	2
+Security Devices		E-SERT	-1	E-SERT	-1
+Signage		A-SIGN	-1	A-SIGN	-1
+Site		L-SITE	91	L-SITE	91
+Site	Pads	C-BLDG-PADS	91	C-BLDG-PADS	91
+Site	Property Lines	C-PROP-LINE	-1	C-PROP-LINE	-1
+Slab Edges		A-FLOR-OTLN	51	A-FLOR-OTLN	51
+Spaces		M-AREA	32	M-AREA	32
+Specialty Equipment		Q-SPCQ	91	Q-SPCQ	91
+Sprinklers		F-SPRN	-1	F-SPRN	-1
+Stairs		S-STRS	31	S-STRS	31
+Stairs	<Above> Outlines	S-STRS-MBND	31	S-STRS-MBND	31
+Structural Beam Systems		S-BEAM	12	S-BEAM	12
+Structural Columns		S-COLS	52	S-COLS	52
+Structural Connections		S-FSTN	-1	S-FSTN	-1
+Structural Foundations		S-FNDN	32	S-FNDN	32
+Structural Framing		S-BEAM	12	S-BEAM	12
+Structural Rebar		S-RBAR	-1	S-RBAR	-1
+Structural Trusses		S-TRUS	-1	S-TRUS	-1
+Supports		A-FLOR-HRAL	11	A-FLOR-HRAL	11
+Telephone Devices		E-COMM	-1	E-COMM	-1
+Text Notes		G-ANNO-TEXT	231	G-ANNO-TEXT	231
+Title Blocks		G-ANNO-TTLB	-1	G-ANNO-TTLB	-1
+Top Rails		A-FLOR-HRAL	11	A-FLOR-HRAL	11
+Topography		C-TOPO	7	C-TOPO	7
+Toposolid		C-TOPO	7	C-TOPO	7
+Vertical Circulation		A-VRTC	13	A-VRTC	13
+Viewports		G-ANNO-NPLT	-1	G-ANNO-NPLT	-1
+Wall Sweeps		A-WALL	113	A-WALL	113
+Walls		A-WALL	113	A-WALL	113
+Walls/Exterior:2		A-WALL	113	A-WALL	113
+Walls/Foundation:3		S-FNDN	32	S-FNDN	32
+Walls/Interior:1		I-WALL	2	I-WALL	2
+Walls/Retaining:4		L-SITE-WALL	31	L-SITE-WALL	31
+Windows		A-GLAZ	151	A-GLAZ	151
