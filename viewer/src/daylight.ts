@@ -273,9 +273,17 @@ class Pool {
     return this.size;
   }
 
+  /** The workers the loaded scene runs in. */
+  get active(): number {
+    return this.workers.length || this.want || this.size;
+  }
+
+  /** How many workers the next scene loads into (the pool's size, or fewer for a scene too large for them all). */
+  private want = 0;
+
   private spawn(): void {
     if (this.workers.length) return;
-    for (let i = 0; i < this.size; i++) {
+    for (let i = 0; i < (this.want || this.size); i++) {
       const w = new DaylightWorker({ name: `daylight-${i}` }) as Worker;
       w.addEventListener('message', (ev: MessageEvent) => {
         const m = ev.data as { type: string; req?: number; value?: unknown; message?: string };
@@ -333,16 +341,25 @@ class Pool {
 
   private async load(id: number, p: Prepared, decoder: Decoder, loading?: (done: number, total: number) => void): Promise<void> {
     if (this.loaded === id) return;
+    // each worker holds a copy of the triangles and a tracer built from them (about four times the copy): as many
+    // workers as about three quarters of the memory the browser reports allows
+    const budget = ((navigator as { deviceMemory?: number }).deviceMemory ?? 8) * 2 ** 30 * 0.75;
+    const want = Math.max(1, Math.min(this.size, Math.floor(budget / (4 * p.positions.byteLength + 64 * 2 ** 20))));
+    if (want !== (this.want || this.size)) {
+      this.stop('the scene needs another number of workers');
+      this.want = want;
+    }
     this.spawn();
     let done = 0;
     loading?.(0, this.workers.length);
     const materials = new Float64Array(p.materials.length * 4);
     p.materials.forEach((m, i) => materials.set([m.kind === 'glass' ? 1 : 0, m.rgb[0], m.rgb[1], m.rgb[2]], i * 4));
-    await Promise.all(
-      this.workers.map((_, k) =>
-        this.call(k, { type: 'load', module: decoder.module, bits: decoder.bits, id, positions: p.positions, modifier: p.modifier, materials }).then(() => loading?.(++done, this.workers.length)),
-      ),
-    );
+    const one = (k: number): Promise<void> =>
+      this.call(k, { type: 'load', module: decoder.module, bits: decoder.bits, id, positions: p.positions, modifier: p.modifier, materials }).then(() => loading?.(++done, this.workers.length));
+    // all at once, unless their copies of the triangles in flight together would take half the budget: then one
+    // worker at a time, so only one copy is on its way at once
+    if (this.workers.length * 4 * p.positions.byteLength < budget / 2) await Promise.all(this.workers.map((_, k) => one(k)));
+    else for (let k = 0; k < this.workers.length; k++) await one(k);
     this.loaded = id;
     this.ready = true;
   }
@@ -361,7 +378,7 @@ class Pool {
     await this.load(id, p, decoder, loading);
     const n = p.sensors.length / 6;
     const out = new Float64Array(n);
-    const shard = Math.min(512, Math.max(8, Math.ceil(n / (this.size * 8))));
+    const shard = Math.min(512, Math.max(8, Math.ceil(n / (this.workers.length * 8))));
     let next = 0;
     let done = 0;
     let failed = false;
@@ -1610,7 +1627,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
           (done, total, lanes) => {
             if (!traced) {
               traced = true;
-              stage('trace', `${n.toLocaleString('en')} sensors in ${pool.count} workers`);
+              stage('trace', `${n.toLocaleString('en')} sensors in ${pool.active} workers`);
             }
             count(done, total, `Tracing: ${sensorsText(done, total)}`, lanes.length > 1 ? `Workers: ${lanes.map(([d], k) => `${k + 1}: ${d.toLocaleString('en')}`).join(' · ')}` : '');
           },
@@ -1637,7 +1654,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       root.dataset.mean = String(mean);
       const sk = extra.skippedTriangles as { degenerate: number; duplicate: number } | undefined;
       const skippedText = sk && (sk.degenerate || sk.duplicate) ? ` Left out of the Radiance scene: ${sk.degenerate.toLocaleString('en')} zero-area and ${sk.duplicate.toLocaleString('en')} duplicate triangles.` : '';
-      const workers = (radianceInfo.workers as number | undefined) ?? pool.count;
+      const workers = (radianceInfo.workers as number | undefined) ?? pool.active;
       const over = Number(radianceInfo.setOverflows) || 0;
       const overText = over ? ` oconv reported ${over.toLocaleString('en')} set overflow${over === 1 ? '' : 's'} (more surfaces in one spot than its octree lists, so some there are missing from the scene).` : '';
       status.textContent = `Done in ${fmt(ms / 1000, 1)} s: ${n.toLocaleString('en')} sensors, mean ${fmt(mean, a === 'svf' ? 3 : 2)}${ANALYSES[a].unit ? ` ${ANALYSES[a].unit}` : ''} (${ANALYSES[a].label}, ${workers} workers).${skippedText}${overText}`;
