@@ -517,11 +517,14 @@ function selectEntity(idx: number): void {
   highlightEntity(idx);
   showElementInfo(idx);
   selectedIndex = idx;
-  // The drawing shows the same element selected, unless the drawing is where it was selected.
-  if (!selectingInDrawing) {
-    const id = elementIdOf(model?.entities?.[idx]?.type_guid);
-    modelDrawings.selection.set(id === null ? [] : [id]);
-  }
+  showSelectedInDrawing(idx);
+}
+
+/** The drawing shows element `idx` (or nothing) selected, unless the drawing is where it was chosen. */
+function showSelectedInDrawing(idx: number | null): void {
+  if (selectingInDrawing) return;
+  const id = idx === null ? null : elementIdOf(model?.entities?.[idx]?.type_guid);
+  modelDrawings.selection.set(id === null ? [] : [id]);
 }
 
 // ---------- Selecting in a sheet or view (drawing-select.ts) ----------
@@ -2785,8 +2788,10 @@ function buildTreeRow(item: TreeItem, level: number): HTMLElement {
       highlightEntity(item.entityIndex);
       showElementInfo(item.entityIndex);
       selectedIndex = item.entityIndex;
+      showSelectedInDrawing(item.entityIndex);
       return;
     }
+    showSelectedInDrawing(null);
     // Project, storey and category rows are synthetic — they have no
     // entity to inspect. Describe the row itself rather than leaving
     // whatever element was selected before sitting there as if it

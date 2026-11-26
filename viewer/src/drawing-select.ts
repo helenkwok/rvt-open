@@ -443,9 +443,9 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
   function chainOf(id: number): number[] {
     if (!chains) {
       chains = new Map();
-      // Points closer than a millionth of the drawing are one point.
+      // Points within a ten-thousandth of a grid cell (well under a millimetre of a plan) are one.
       const [x0, y0] = origin;
-      const eps = Math.max(cell * 1e-6, 1e-9);
+      const eps = Math.max(cell * 1e-4, 1e-9);
       const key = (x: number, y: number): string => `${Math.round((x - x0) / eps)},${Math.round((y - y0) / eps)}`;
       const parent = new Map<number, number>();
       const find = (e: number): number => {
@@ -586,7 +586,8 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
       if (count) count.hidden = true;
     },
     set(ids: Iterable<number>): void {
-      selection = new Set([...ids].filter((id) => nodes.has(id)));
+      // Kept whether or not this drawing draws them, as Revit keeps a selection across views.
+      selection = new Set(ids);
       if (svg) render();
     },
     selected: () => [...selection],
@@ -705,7 +706,7 @@ export function initDrawingSelection(host: DrawingSelectHost, sheet: HTMLElement
         return true;
       }
       if (ev.key === 'ArrowLeft' && (ev.ctrlKey || ev.metaKey) && previous.length > 0) {
-        commit(new Set(previous.filter((id) => nodes.has(id))));
+        commit(new Set(previous));
         return true;
       }
       return false;

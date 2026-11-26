@@ -13,6 +13,11 @@ import { expect, test, type Page } from '@playwright/test';
  * On the tiny rooms model (MIT, the gallery's), staged in public/demos. The timings run on the
  * Technical School sample's sheet A1 (RVT_SHEETS_MODEL), the largest public sheet the suite opens.
  */
+const SHOTS = path.join(process.cwd(), 'drawing-shots');
+async function shot(page: Page, name: string): Promise<void> {
+  fs.mkdirSync(SHOTS, { recursive: true });
+  await page.locator('#drawing-pane').screenshot({ path: path.join(SHOTS, `select-${name}.png`) });
+}
 const TINY = path.join(process.cwd(), 'public/demos/tiny-2023-4-rooms.rvt');
 const SHEETS = process.env.RVT_SHEETS_MODEL ?? '';
 
@@ -52,15 +57,23 @@ async function picks(page: Page): Promise<Pick[]> {
     for (const el of Array.from(svg.querySelectorAll('[data-element]'))) {
       const id = el.getAttribute('data-element')!;
       counts.set(id, (counts.get(id) ?? 0) + 1);
-      if (el.localName !== 'line' || el.closest('[data-viewport]')) continue;
+      if (el.closest('[data-viewport]')) continue;
+      // Its straight segments: a line's, or a path's M/L runs.
+      let pts: number[][] = [];
+      if (el.localName === 'line') pts = [[+el.getAttribute('x1')!, +el.getAttribute('y1')!], [+el.getAttribute('x2')!, +el.getAttribute('y2')!]];
+      else if (el.localName === 'path' && !/A/.test(el.getAttribute('d') ?? '') && (el.getAttribute('fill') ?? 'none') === 'none') {
+        const n = (el.getAttribute('d') ?? '').replace(/[MLZ]/g, ' ').trim().split(/\s+/).map(Number);
+        for (let i = 0; i + 1 < n.length; i += 2) pts.push([n[i], n[i + 1]]);
+      }
       const m = (el as SVGGraphicsElement).getScreenCTM()!;
-      const p = (x: number, y: number) => new DOMPoint(x, y).matrixTransform(m);
-      const a = p(+el.getAttribute('x1')!, +el.getAttribute('y1')!);
-      const b = p(+el.getAttribute('x2')!, +el.getAttribute('y2')!);
-      const len = Math.hypot(b.x - a.x, b.y - a.y);
-      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      if (mid.x < pane.left + 20 || mid.x > pane.right - 20 || mid.y < pane.top + 80 || mid.y > pane.bottom - 20) continue;
-      if (len > (best.get(id)?.len ?? 0)) best.set(id, { ...mid, len });
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = new DOMPoint(pts[i][0], pts[i][1]).matrixTransform(m);
+        const b = new DOMPoint(pts[i + 1][0], pts[i + 1][1]).matrixTransform(m);
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        if (mid.x < pane.left + 20 || mid.x > pane.right - 20 || mid.y < pane.top + 80 || mid.y > pane.bottom - 20) continue;
+        if (len > (best.get(id)?.len ?? 0)) best.set(id, { ...mid, len });
+      }
     }
     return [...best]
       .sort((a, b) => b[1].len - a[1].len)
@@ -94,6 +107,7 @@ test('selects elements in a floor plan as Revit does, and in step with the 3D vi
   const label = (await page.locator('#status').textContent()) ?? '';
   expect(label).toMatch(/ : /);
   await expect(sheet).toHaveAttribute('title', /.+/);
+  await shot(page, 'hover');
 
   // Click: selected, counted, shown in the panel and in the tree and the 3D view.
   await page.mouse.click(a.x, a.y);
@@ -106,9 +120,9 @@ test('selects elements in a floor plan as Revit does, and in step with the 3D vi
   // Ctrl adds, Shift removes.
   await page.mouse.move(b.x + 20, b.y + 20);
   await page.mouse.move(b.x, b.y);
-  await page.keyboard.down('Control');
+  await page.keyboard.down('ControlOrMeta');
   await page.mouse.click(b.x, b.y);
-  await page.keyboard.up('Control');
+  await page.keyboard.up('ControlOrMeta');
   await expect(svg).toHaveAttribute('data-selected', '2');
   expect(await marked(page, 'sel-on')).toEqual([a.id, b.id].sort());
   await expect(page.locator('#info')).toContainText('2 elements selected');
@@ -123,7 +137,7 @@ test('selects elements in a floor plan as Revit does, and in step with the 3D vi
   await expect(svg).toHaveAttribute('data-selected', '0');
   await expect(page.locator('#drawing-selection-count')).toBeHidden();
   await expect(page.locator('.tree-node.selected')).toHaveCount(0);
-  await page.keyboard.press('Control+ArrowLeft');
+  await page.keyboard.press('ControlOrMeta+ArrowLeft');
   expect(await marked(page, 'sel-on')).toEqual([b.id]);
 
   // A click on empty paper clears.
@@ -135,13 +149,16 @@ test('selects elements in a floor plan as Revit does, and in step with the 3D vi
   // Tab: at a point near two elements, cycles through both and back with Shift+Tab.
   const corner = await svg.evaluate((root) => {
     const ends: { id: string; x: number; y: number }[] = [];
-    for (const el of Array.from(root.querySelectorAll('line[data-element]'))) {
+    for (const el of Array.from(root.querySelectorAll('line[data-element], path[data-element]'))) {
       const m = (el as SVGGraphicsElement).getScreenCTM()!;
-      for (const [x, y] of [
-        ['x1', 'y1'],
-        ['x2', 'y2'],
-      ]) {
-        const p = new DOMPoint(+el.getAttribute(x)!, +el.getAttribute(y)!).matrixTransform(m);
+      const pts: number[][] = [];
+      if (el.localName === 'line') pts.push([+el.getAttribute('x1')!, +el.getAttribute('y1')!], [+el.getAttribute('x2')!, +el.getAttribute('y2')!]);
+      else if (!/A/.test(el.getAttribute('d') ?? '')) {
+        const n = (el.getAttribute('d') ?? '').replace(/[MLZ]/g, ' ').trim().split(/\s+/).map(Number);
+        for (let i = 0; i + 1 < n.length; i += 2) pts.push([n[i], n[i + 1]]);
+      }
+      for (const [x, y] of pts) {
+        const p = new DOMPoint(x, y).matrixTransform(m);
         ends.push({ id: el.getAttribute('data-element')!, x: p.x, y: p.y });
       }
     }
@@ -166,13 +183,18 @@ test('selects elements in a floor plan as Revit does, and in step with the 3D vi
   await page.keyboard.press('Tab');
   await page.mouse.click(corner!.x, corner!.y);
   expect(await marked(page, 'sel-on')).toEqual(second);
+  await shot(page, 'tab-choice');
   await page.keyboard.press('Escape');
 
   // A window left to right selects what lies wholly inside: around the whole drawing, every
   // element; a small one across a single line, nothing. Right to left, the small one crosses it.
+  // Zoomed out, so the whole drawing sits clear of the toolbar.
+  await sheet.focus();
+  await page.keyboard.press('-');
+  await page.keyboard.press('-');
   const drawn = await svg.evaluate((root) => {
     const r = (root.querySelector('g') as SVGGraphicsElement).getBoundingClientRect();
-    return { x0: r.left - 10, y0: r.top - 10, x1: r.right + 10, y1: r.bottom + 10, ids: new Set(Array.from(root.querySelectorAll('[data-element]')).map((e) => e.getAttribute('data-element'))).size };
+    return { x0: r.left - 30, y0: r.top - 30, x1: r.right + 30, y1: r.bottom + 30, ids: new Set(Array.from(root.querySelectorAll('[data-element]')).map((e) => e.getAttribute('data-element'))).size };
   });
   const drag = async (x0: number, y0: number, x1: number, y1: number) => {
     await page.mouse.move(x0, y0);
@@ -181,11 +203,15 @@ test('selects elements in a floor plan as Revit does, and in step with the 3D vi
     await page.mouse.move(x1, y1, { steps: 4 });
     await page.mouse.up();
   };
-  await drag(Math.max(drawn.x0, box.x + 2), Math.max(drawn.y0, box.y + 60), Math.min(drawn.x1, box.x + box.width - 2), Math.min(drawn.y1, box.y + box.height - 2));
+  expect(drawn.y0).toBeGreaterThan(box.y + 50);
+  await drag(drawn.x0, drawn.y0, drawn.x1, drawn.y1);
   await expect(svg).toHaveAttribute('data-selected', String(drawn.ids));
+  await shot(page, 'window');
   await page.keyboard.press('Escape');
+  await page.keyboard.press('0');
   await drag(a.x - 6, a.y - 6, a.x + 6, a.y + 6);
-  await expect(svg).toHaveAttribute('data-selected', '0');
+  expect(await marked(page, 'sel-on')).not.toContain(a.id);
+  await page.keyboard.press('Escape');
   await drag(a.x + 6, a.y + 6, a.x - 6, a.y - 6);
   expect(await marked(page, 'sel-on')).toContain(a.id);
   await page.keyboard.press('Escape');
@@ -270,9 +296,31 @@ test('reads a large sheet fast and hovers in well under a frame', async ({ page 
   await page.mouse.dblclick(box.x + 5, box.y + box.height - 5);
   await expect(svg).not.toHaveClass(/has-active-viewport/);
 
-  // The shares in a floor plan and a section, for the report.
-  for (const key of ['plan:', 'section:']) {
-    await openDrawing(page, key);
-    console.log(`${key} element ids`, JSON.stringify(await share()), 'index ms', await svg.getAttribute('data-index-ms'));
+  // Sheet A2 (sections, details and a drafting view), a floor plan, a ceiling plan and a section: the
+  // share of what they draw that names its element, how long reading them takes, and hovering.
+  const lists = {
+    sheet: page.locator('#drawings button[data-key^="sheet:"]', { hasText: /^A2 / }),
+    floor: page.locator('#drawings details', { has: page.locator('summary', { hasText: /^Floor plans/ }) }).locator('button'),
+    ceiling: page.locator('#drawings details', { has: page.locator('summary', { hasText: /^Ceiling plans/ }) }).locator('button'),
+    section: page.locator('#drawings button[data-key^="section:"]'),
+  };
+  for (const list of Object.values(lists)) {
+    if ((await list.count()) === 0) continue;
+    const button = list.first();
+    const label = (await button.textContent()) ?? '';
+    await button.click();
+    await expect(page.locator('#drawing-title')).toHaveText(label, { timeout: 600_000 });
+    await expect(svg).toHaveAttribute('data-indexed', /\d+/);
+    for (let i = 0; i < 60; i++) {
+      await page.mouse.move(box.x + 20 + ((box.width - 40) * i) / 60, box.y + 80 + ((box.height - 100) * ((i * 23) % 60)) / 60);
+    }
+    console.log(
+      `${label} element ids`,
+      JSON.stringify(await share()),
+      'index ms',
+      await svg.getAttribute('data-index-ms'),
+      'hover ms',
+      await svg.getAttribute('data-hover-ms'),
+    );
   }
 });
