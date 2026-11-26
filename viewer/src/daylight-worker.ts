@@ -15,8 +15,10 @@
  *   main → worker: { type: 'run', req, id, sensors, first, kind, params }   value: Float64Array, one per sensor
  *   main → worker: { type: 'sun', req, site, day, hour }   value: daylightSunAt's numbers
  *   main → worker: { type: 'suns', req, site, from, to, step }   value: daylightSunPositions' Float64Array
- *   main → worker: { type: 'radtext', req, positions, modifier, materials }   value: [materials, scene], the
- *                  scene as Radiance text (daylightRadianceText, for radiance.ts)
+ *   main → worker: { type: 'radtext', req, positions, modifier, materials }   value: [materials, scene,
+ *                  degenerate, duplicate]: the materials as Radiance text, the scene as Radiance text encoded
+ *                  as UTF-8 bytes (transferred: a large scene's text is hundreds of megabytes, and the page never
+ *                  needs it as a string), and the counts of the triangles left out (daylightRadianceText)
  *   worker → main: { type: 'ok', req, value, ms } or { type: 'error', req, message }
  */
 
@@ -75,9 +77,12 @@ self.addEventListener('message', (ev: MessageEvent<Msg>) => {
       case 'suns':
         ok(new Float64Array(ready().daylightSunPositions(msg.site, msg.from, msg.to, msg.step)));
         return;
-      case 'radtext':
-        ok(ready().daylightRadianceText(msg.positions, msg.modifier, msg.materials));
+      case 'radtext': {
+        const [materials, scene, degenerate, duplicate] = ready().daylightRadianceText(msg.positions, msg.modifier, msg.materials);
+        const bytes = new TextEncoder().encode(scene);
+        ok([materials, bytes, degenerate, duplicate], [bytes.buffer]);
         return;
+      }
     }
   } catch (err) {
     send({ type: 'error', req: msg.req, message: err instanceof Error ? err.message : String(err) });

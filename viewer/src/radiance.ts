@@ -122,6 +122,9 @@ export interface RadianceHooks {
   value?(i: number, lux: number): void;
 }
 
+/** Scenes with fewer triangles than this get oconv's coarser octree (`-r 1024`) first. */
+const COARSE_BELOW = 500_000;
+
 /**
  * rtrace's memory per worker: about six to eight times the octree (the scene it reads back, the
  * ambient cache) plus a base, measured on the public samples (76 MiB with a 1.1 MiB octree, 176 MiB
@@ -269,14 +272,16 @@ export class Radiance {
   }
 
   /** Runs `prog` in worker `k`; resolves with its standard output. `progress` receives each new batch of whole lines. */
-  private async run(k: number, prog: string, args: string[], files: Record<string, Uint8Array>, stdin?: Uint8Array, progress?: (text: string) => void): Promise<Uint8Array> {
+  private async run(k: number, prog: string, args: string[], files: Record<string, Uint8Array>, stdin?: Uint8Array, progress?: (text: string) => void, give = false): Promise<Uint8Array> {
     const module = this.compileEach ? undefined : await this.module(prog);
     if (this.stopped !== null) throw new Error(this.stopped);
     const w = this.worker(k);
     const req = ++this.req;
     return new Promise<Uint8Array>((resolve, reject) => {
       this.pending.set(req, { resolve, reject, progress });
-      w.postMessage({ type: 'run', req, prog, glue: `${RADIANCE_BASE}${prog}.js`, wasm: `${RADIANCE_BASE}${prog}.wasm`, module, args: [...args], files, stdin, stream: !!progress });
+      // `give` hands the files' memory to the worker instead of copying it (they are not used again here)
+      const transfer = give ? Object.values(files).map((f) => f.buffer as ArrayBuffer) : [];
+      w.postMessage({ type: 'run', req, prog, glue: `${RADIANCE_BASE}${prog}.js`, wasm: `${RADIANCE_BASE}${prog}.wasm`, module, args: [...args], files, stdin, stream: !!progress }, transfer);
     });
   }
 
@@ -288,43 +293,51 @@ export class Radiance {
    */
   async illuminance(
     materials: string,
-    scene: string,
+    scene: Uint8Array,
     sceneKey: string,
     sky: string,
     sensors: string[],
     detail: Detail,
     hooks: RadianceHooks,
+    triangles = 0,
   ): Promise<{ lux: Float64Array; octreeBytes: number; workers: number; sceneReused: boolean; resolution: string; setOverflows: number }> {
     const [rayinit, skybright, perezlum] = await Promise.all(['rayinit.cal', 'skybright.cal', 'perezlum.cal'].map((f) => this.file(f)));
     const sceneReused = this.sceneOct?.key === sceneKey;
     if (!sceneReused) {
       this.sceneOct = null;
-      const files = { 'materials.rad': enc(materials), 'scene.rad': enc(scene) };
+      const files = { 'materials.rad': enc(materials), 'scene.rad': scene };
       // the set overflows of the oconv run since `mark` (a run that wrote nothing to standard error has none)
       const overflows = (mark: number): number => this.log.slice(mark).reduce((k, l) => k + (l.prog === 'oconv' ? (l.text.match(/set overflow/g) ?? []).length : 0), 0);
       let mark = this.log.length;
       hooks.stage('oconv', `building the octree of ${(scene.length / 2 ** 20).toFixed(1)} MB of scene text`);
-      // -r 1024: the octree stops subdividing at 1/1024 of the scene's size, which keeps it small; where more
-      // surfaces than a voxel can list meet at that size ("set overflow", and oconv leaves some out), it is
-      // built again at oconv's default resolution
+      // -r 1024: the octree stops subdividing at 1/1024 of the scene's size, which keeps a small scene's octree
+      // small (Core Interior, 30,328 triangles: 18 MiB against 96). On large scenes surfaces crowd at that size
+      // ("set overflow": oconv leaves some out) and it needs more memory, not less (Snowdon Towers Electrical,
+      // 3.6 million triangles: 91,898 overflows and 3.0 GiB, against none and 1.9 GiB at the default), so a scene
+      // of 500,000 triangles or more goes straight to the default resolution. A coarse build that overflows or
+      // fails is built again at the default one.
       let oct: Uint8Array | null = null;
       let resolution = '-r 1024';
       let over = 0;
-      try {
-        oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], files);
-        over = overflows(mark);
-      } catch (e) {
-        // crowded surfaces can exhaust oconv's memory at the coarser resolution: the default one may still build
-        if (!(e instanceof RadianceError) || e.prog !== 'oconv') throw e;
-        over = Infinity;
-      }
+      if (triangles >= COARSE_BELOW) over = Infinity;
+      else
+        try {
+          oct = await this.run(0, 'oconv', ['-r', '1024', '-f', 'materials.rad', 'scene.rad'], files);
+          over = overflows(mark);
+        } catch (e) {
+          // crowded surfaces can exhaust oconv's memory at the coarser resolution: the default one may still build
+          if (!(e instanceof RadianceError) || e.prog !== 'oconv') throw e;
+          over = Infinity;
+        }
+      if (over && oct) hooks.stage('oconv', `${over.toLocaleString('en')} set overflows at the coarser resolution: building the octree again at the default one`);
+      else if (over && triangles < COARSE_BELOW) hooks.stage('oconv', 'out of memory at the coarser resolution: building the octree again at the default one');
       if (over) {
-        hooks.stage('oconv', `${Number.isFinite(over) ? `${over.toLocaleString('en')} set overflows` : 'out of memory'} at the coarser resolution: building the octree again at the default one`);
         mark = this.log.length;
-        const fine = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], files);
+        // the last use of the scene text: its memory goes to the worker rather than a copy
+        const fine = await this.run(0, 'oconv', ['-f', 'materials.rad', 'scene.rad'], files, undefined, undefined, true);
         // the finer octree is kept only where it places more surfaces: it is larger, so fewer workers fit
         const fineOver = overflows(mark);
-        if (fineOver < over) [oct, over, resolution] = [fine, fineOver, 'default (-r 16384)'];
+        if (!oct || fineOver < over) [oct, over, resolution] = [fine, fineOver, 'default (-r 16384)'];
       }
       this.sceneOct = { key: sceneKey, oct: oct!, resolution, setOverflows: over };
     }

@@ -1552,12 +1552,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
           return out;
         };
         if (turn !== 0) extra.trueNorthTurn = siteNow.trueNorth;
-        stage('radtext', `${tris.toLocaleString('en')} surfaces`);
-        const [matText, sceneText, degenerate, duplicate] = await pool.ask<string[]>(decoder, { type: 'radtext', positions: rot(p.positions, 9), modifier: p.modifier, materials });
-        alive();
-        // on a large scene the instant tier's workers each hold a tracer of it: they are ended before
-        // Radiance's workers load the octree (the next instant run loads them again), so the tab does not hold both
+        // on a large scene the instant tier's workers each hold a tracer of it: they are ended before the Radiance
+        // text is written and the octree built (the next instant run loads them again), so the tab does not hold both
         if (tris > LARGE_SCENE) pool.stop('freeing memory for Radiance');
+        stage('radtext', `${tris.toLocaleString('en')} surfaces`);
+        const [matText, sceneText, degenerate, duplicate] = await pool.ask<[string, Uint8Array, string, string]>(decoder, { type: 'radtext', positions: rot(p.positions, 9), modifier: p.modifier, materials });
+        alive();
         const skipped = { degenerate: Number(degenerate) || 0, duplicate: Number(duplicate) || 0 };
         extra.skippedTriangles = skipped;
         const sens = rot(p.sensors, 6);
@@ -1581,7 +1581,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
             v[i] = x * unitScale;
             paint();
           },
-        });
+        }, tris - skipped.degenerate - skipped.duplicate);
         alive();
         radiance.release();
         if (a === 'rad-df') for (let i = 0; i < n; i++) v[i] = r.lux[i] / 100;
