@@ -476,6 +476,17 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
     return made;
   }
 
+  /** The Daylight panel's cut (clipping planes) carried over to the materials a style swaps in. */
+  function withCut(m: Mat, planes: THREE.Plane[] | null): Mat {
+    for (const x of Array.isArray(m) ? m : [m]) {
+      if (x.clippingPlanes === planes || (!x.clippingPlanes?.length && !planes?.length)) continue;
+      x.clippingPlanes = planes;
+      x.needsUpdate = true;
+    }
+    return m;
+  }
+  const cutOf = (m: Mat): THREE.Plane[] | null => (Array.isArray(m) ? m[0] : m)?.clippingPlanes ?? null;
+
   function materialOf(mesh: THREE.Mesh, style: Style): Mat | undefined {
     const own = original.get(mesh);
     if (!own) return undefined;
@@ -493,6 +504,11 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
       sketchy.clear();
       sketchyKey = key;
     }
+    // the cut the Daylight panel set on the materials drawn now
+    let planes: THREE.Plane[] | null = null;
+    model.traverse((o) => {
+      if (planes === null && (o as THREE.Mesh).isMesh) planes = cutOf((o as THREE.Mesh).material);
+    });
     model.traverse((o) => {
       const line = o as THREE.LineSegments;
       if (line.isLineSegments) {
@@ -513,7 +529,7 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
         original.set(mesh, mesh.material);
       }
       if (host.isHighlight(mesh.material)) return;
-      mesh.material = materialOf(mesh, style)!;
+      mesh.material = withCut(materialOf(mesh, style)!, planes);
     });
   }
 
@@ -570,7 +586,8 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
       fog.color = fogColour();
       host.scene.fog = fog;
     } else host.scene.fog = null;
-    if (values.castShadows !== shadowsOn || (shadowsOn && fromUser)) {
+    // an explicit off goes to the Daylight panel even when already off, to drop a sun request still on its way
+    if (values.castShadows !== shadowsOn || fromUser) {
       shadowsOn = values.castShadows;
       host.setShadows(values.castShadows);
     }
@@ -829,7 +846,8 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
       if (fog) fog.color = fogColour();
     },
     materialFor(mesh: THREE.Mesh): Mat | undefined {
-      return enabled && model ? materialOf(mesh, values.style) : undefined;
+      const m = enabled && model ? materialOf(mesh, values.style) : undefined;
+      return m && withCut(m, cutOf(mesh.material));
     },
     /** Whether a still frame after a move differs from a moving one (ambient shadows). */
     degradesWhileMoving: ambientShadowsDrawn,

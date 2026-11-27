@@ -1585,6 +1585,8 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
   lastSchedule = null;
   currentDiagnostics = null;
   daylight.reset();
+  // the highlight first, so the View display's reset finds every mesh in its style's material and restores its own
+  clearHighlight();
   viewDisplay?.reset();
   // The last file's worker holds its wasm memory, and a large file's read, which
   // is next, must not have to fit beside it.

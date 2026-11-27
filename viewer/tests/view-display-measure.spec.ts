@@ -20,6 +20,9 @@ const models = [
   ...(process.env.RVT_SHEETS_MODEL ? [process.env.RVT_SHEETS_MODEL] : []),
 ].filter((f) => fs.existsSync(f));
 
+// The GPU where there is one (headless Chromium otherwise draws in software, which measures the CPU instead).
+test.use({ launchOptions: { args: ['--enable-gpu', '--ignore-gpu-blocklist', ...(process.platform === 'darwin' ? ['--use-angle=metal'] : [])] } });
+
 const cases: Array<{ name: string; set?: Record<string, string>; check?: string[] }> = [
   { name: 'Shaded with edges', set: { 'vd-style': 'ShadingWithEdges' } },
   { name: 'Wireframe', set: { 'vd-style': 'Wireframe' } },
@@ -49,6 +52,25 @@ const pct = (xs: number[], p: number): number => {
   return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : 0;
 };
 const r2 = (x: number): number => Math.round(x * 100) / 100;
+
+const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+/**
+ * The frame drawn once the camera has stopped: the last frame after no new one came for a second (the damping
+ * is over), and with ambient shadows on, one that drew them.
+ */
+async function stillFrame(page: Page, ao: boolean): Promise<{ ms: number; ao: boolean }> {
+  const read = async (): Promise<string> => (await page.locator('#view-display-panel').getAttribute('data-frame')) ?? '{}';
+  let last = await read();
+  for (let quiet = 0; quiet < 1000; ) {
+    await page.waitForTimeout(250);
+    const now = await read();
+    quiet = now === last ? quiet + 250 : 0;
+    last = now;
+  }
+  if (ao) await expect.poll(async () => (JSON.parse(await read()) as { ao: boolean }).ao, { timeout: 120_000 }).toBe(true);
+  return JSON.parse(await read()) as { ms: number; ao: boolean };
+}
 
 async function orbit(page: Page): Promise<{ raf: number[]; issue: number[] }> {
   const canvas = page.locator('#viewport canvas').first();
@@ -98,7 +120,8 @@ async function orbit(page: Page): Promise<{ raf: number[]; issue: number[] }> {
     await expect(page.locator('#status')).toHaveText(/Loaded/, { timeout: 900_000 });
     await page.waitForTimeout(1500);
     let m = await orbit(page);
-    rows.push({ model: name, case: 'today (no panel)', rafMedianMs: r2(pct(m.raf, 0.5)), rafP95Ms: r2(pct(m.raf, 0.95)), issueMeanMs: 0, stillMs: 0, stillAo: false });
+    let still = await stillFrame(page, false);
+    rows.push({ model: name, case: 'today (no panel)', rafMedianMs: r2(pct(m.raf, 0.5)), rafP95Ms: r2(pct(m.raf, 0.95)), issueMeanMs: r2(mean(m.issue)), stillMs: r2(still.ms), stillAo: still.ao });
 
     await page.goto('/');
     await page.locator('#file-input').setInputFiles(file);
@@ -117,10 +140,8 @@ async function orbit(page: Page): Promise<{ raf: number[]; issue: number[] }> {
       const applyMs = Date.now() - t0;
       await page.waitForTimeout(1500);
       m = await orbit(page);
-      await page.waitForTimeout(800);
-      const still = JSON.parse((await page.locator('#view-display-panel').getAttribute('data-frame')) ?? '{}') as { ms: number; ao: boolean };
-      const issue = m.issue.length ? m.issue.reduce((a, b) => a + b, 0) / m.issue.length : 0;
-      rows.push({ model: name, case: c.name, rafMedianMs: r2(pct(m.raf, 0.5)), rafP95Ms: r2(pct(m.raf, 0.95)), issueMeanMs: r2(issue), stillMs: r2(still.ms), stillAo: still.ao, applyMs });
+      still = await stillFrame(page, (c.check ?? []).includes('vd-ambientShadows'));
+      rows.push({ model: name, case: c.name, rafMedianMs: r2(pct(m.raf, 0.5)), rafP95Ms: r2(pct(m.raf, 0.95)), issueMeanMs: r2(mean(m.issue)), stillMs: r2(still.ms), stillAo: still.ao, applyMs });
     }
   }
   fs.writeFileSync(path.join(out, 'view-display.json'), JSON.stringify({ gl, rows }, null, 2));
