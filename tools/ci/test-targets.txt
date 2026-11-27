@@ -143,6 +143,7 @@ real      roof_extrusion_holes
 real      shaft_sketch_loops
 real      samples
 real      saved_mesh_budget
+real      saved_mesh_limits
 real      saved_symbol_refusal
 real      scan_limits
 real      revit_property_sets

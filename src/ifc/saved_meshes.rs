@@ -71,6 +71,7 @@ use super::{IfcModel, MaterialInfo};
 use crate::native_saved_mesh::{GraphicsMeshes, Primitive};
 use crate::native_wall_cuts::WallCutKind;
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroUsize;
 
 /// `BodySource` of a body drawn from the element's saved graphics.
 pub const SAVED_MESH_BODY_SOURCE: &str = "saved_graphics_mesh";
@@ -519,6 +520,32 @@ pub fn default_scope(rf: &mut crate::RevitFile) -> Option<SavedMeshScope> {
         .then_some(SavedMeshScope::All)
 }
 
+/// Resource limits for reading saved graphics when attaching meshes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavedMeshLimits {
+    max_graph_values: NonZeroUsize,
+}
+
+impl Default for SavedMeshLimits {
+    fn default() -> Self {
+        Self {
+            max_graph_values: NonZeroUsize::new(1_000_000).unwrap(),
+        }
+    }
+}
+
+impl SavedMeshLimits {
+    /// Set the maximum number of field values read from one saved-graphics
+    /// graph. A graph beyond the limit stays unavailable to the attach pass,
+    /// and its elements keep their bodies with the usual refusal. The object,
+    /// depth and file budgets do not depend on this setting, nor does the
+    /// material pass.
+    pub fn with_max_graph_values(mut self, maximum: NonZeroUsize) -> Self {
+        self.max_graph_values = maximum;
+        self
+    }
+}
+
 /// Replace each bounding-box body with the element's saved mesh, where the
 /// file holds one and all of it decodes.
 pub fn attach(rf: &mut crate::RevitFile, model: &mut IfcModel) -> anyhow::Result<SavedMeshReport> {
@@ -590,7 +617,20 @@ pub fn attach_scoped_with_control(
     scope: SavedMeshScope,
     control: &crate::control::WalkerControl,
 ) -> anyhow::Result<SavedMeshReport> {
-    attach_scoped_in_batches(rf, model, scope, control, saved_scene_batch())
+    attach_scoped_with_limits_and_control(rf, model, scope, SavedMeshLimits::default(), control)
+}
+
+/// Same as [`attach_scoped_with_control`], with a caller-supplied
+/// saved-graphics limit. A graph that does not fit keeps the normal
+/// per-element refusal and the element's body.
+pub fn attach_scoped_with_limits_and_control(
+    rf: &mut crate::RevitFile,
+    model: &mut IfcModel,
+    scope: SavedMeshScope,
+    limits: SavedMeshLimits,
+    control: &crate::control::WalkerControl,
+) -> anyhow::Result<SavedMeshReport> {
+    attach_batches(rf, model, scope, limits, control, saved_scene_batch())
 }
 
 /// [`attach_scoped_with_control`] extracting the saved graphics of at most
@@ -600,6 +640,17 @@ pub fn attach_scoped_in_batches(
     rf: &mut crate::RevitFile,
     model: &mut IfcModel,
     scope: SavedMeshScope,
+    control: &crate::control::WalkerControl,
+    batch_size: usize,
+) -> anyhow::Result<SavedMeshReport> {
+    attach_batches(rf, model, scope, SavedMeshLimits::default(), control, batch_size)
+}
+
+fn attach_batches(
+    rf: &mut crate::RevitFile,
+    model: &mut IfcModel,
+    scope: SavedMeshScope,
+    limits: SavedMeshLimits,
     control: &crate::control::WalkerControl,
     batch_size: usize,
 ) -> anyhow::Result<SavedMeshReport> {
@@ -866,7 +917,7 @@ pub fn attach_scoped_in_batches(
         }
         let options = crate::native_document::Options {
             selected_ids: selected,
-            max_graph_values: 1_000_000,
+            max_graph_values: limits.max_graph_values.get(),
             max_graph_objects: 1_000_000,
             value_source: Some("saved_graphics"),
             ..Default::default()
