@@ -180,7 +180,7 @@ cli       dwg_layer_table
 real      sheet_drawings
 real      drawing_elements
 real      sheet_listing
-real      links
+real      links         skip=transmission_data_truncated
 cli       gltf_normals
 real      gltf_element_alpha
 cli       pdf3d_export

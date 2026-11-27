@@ -246,12 +246,46 @@ pub fn parse_transmission_data(bytes: &[u8]) -> Vec<ExternalFileReference> {
     out
 }
 
+/// XML text: the five named entities and numeric character references (`&#38;`, `&#x26;`).
 fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let Some(end) = tail.find(';').filter(|e| *e <= 12) else {
+            out.push('&');
+            rest = &tail[1..];
+            continue;
+        };
+        let name = &tail[1..end];
+        let c = match name {
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "amp" => Some('&'),
+            _ => name
+                .strip_prefix("#x")
+                .or_else(|| name.strip_prefix("#X"))
+                .map(|h| u32::from_str_radix(h, 16))
+                .or_else(|| name.strip_prefix('#').map(|d| d.parse::<u32>()))
+                .and_then(|n| n.ok())
+                .and_then(char::from_u32),
+        };
+        match c {
+            Some(c) => {
+                out.push(c);
+                rest = &tail[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn id(f: &Fields, name: &str) -> Option<i64> {
@@ -440,8 +474,9 @@ pub fn read(rf: &mut RevitFile) -> Result<Links> {
             let (Some(element), Some(root)) = (o.element(), o.root()) else {
                 return;
             };
+            // The element table lists 32-bit ids only: an id it cannot hold is not one of its.
             if in_family(o)
-                || (!live.is_empty() && u32::try_from(element).is_ok_and(|e| !live.contains(&e)))
+                || (!live.is_empty() && u32::try_from(element).map_or(true, |e| !live.contains(&e)))
             {
                 return;
             }
@@ -484,7 +519,8 @@ pub fn read(rf: &mut RevitFile) -> Result<Links> {
             }
             // What a loaded family holds (a title block's logo image, a family's imported
             // drawing) names that family in `m_famId`: it is the family's, not the model's.
-            if !seen.insert(element) || id(root, "m_famId").is_some() {
+            // An element is taken from its first record that reads whole (`seen` is set when it is).
+            if seen.contains(&element) || id(root, "m_famId").is_some() {
                 return;
             }
             let pinned = flag(root, "m_locked").unwrap_or(false);
@@ -505,6 +541,7 @@ pub fn read(rf: &mut RevitFile) -> Result<Links> {
                             _ => None,
                         },
                     };
+                    seen.insert(element);
                     out.instances.push(LinkInstance {
                         id: element,
                         class,
@@ -635,6 +672,7 @@ pub fn read(rf: &mut RevitFile) -> Result<Links> {
                         "TopographyLinkType" => t.kind = LinkKind::Topography,
                         _ => {}
                     }
+                    seen.insert(element);
                     out.types.push(t);
                 }
             }
@@ -683,11 +721,17 @@ pub fn read(rf: &mut RevitFile) -> Result<Links> {
 
 impl Links {
     /// The rows of the Manage Links dialog: one per link or import type the model holds (nested
-    /// link types are not rows, as in the dialog), plus external references with no type
-    /// element (keynote and assembly code tables, decals).
+    /// link types are not rows, as in the dialog), plus a row for each link reference whose type
+    /// element was not read. Keynote tables, assembly code tables and decals are not rows of the
+    /// dialog: they are in [`Links::references`]. A link whose saved load state the file does not
+    /// record has status `Unknown`.
     pub fn manage_links(&self) -> Vec<ManageLinksRow> {
         let refs: BTreeMap<i64, &ExternalFileReference> =
             self.references.iter().map(|r| (r.element_id, r)).collect();
+        let mut counts: BTreeMap<i64, usize> = BTreeMap::new();
+        for i in &self.instances {
+            *counts.entry(i.type_id).or_default() += 1;
+        }
         let mut rows: Vec<ManageLinksRow> = self
             .types
             .iter()
@@ -700,7 +744,7 @@ impl Links {
                     link_name: t.name.clone(),
                     status: if t.linked {
                         if t.status.is_empty() {
-                            "Loaded".into()
+                            "Unknown".into()
                         } else {
                             t.status.clone()
                         }
@@ -723,7 +767,7 @@ impl Links {
                         .unwrap_or_else(|| t.path_type.clone()),
                     file_size: t.file_size,
                     resolution: t.pixels,
-                    count: self.instances.iter().filter(|i| i.type_id == t.id).count(),
+                    count: counts.get(&t.id).copied().unwrap_or(0),
                 }
             })
             .collect();
@@ -746,6 +790,8 @@ impl Links {
                 kind: match r.kind.as_str() {
                     "Revit Link" => LinkKind::Revit,
                     "CAD Link" => LinkKind::Cad,
+                    "Point Cloud" => LinkKind::PointCloud,
+                    "Revit Topography Link" => LinkKind::Topography,
                     _ => LinkKind::Other,
                 },
                 link_name: r
@@ -756,6 +802,7 @@ impl Links {
                     .to_string(),
                 status: match r.saved_load_state.as_str() {
                     "Unloaded" => "Not Loaded".into(),
+                    "" => "Unknown".into(),
                     s => s.to_string(),
                 },
                 reference_type: r.kind.clone(),
@@ -763,7 +810,7 @@ impl Links {
                 path_type: r.saved_path_type.clone(),
                 file_size: None,
                 resolution: None,
-                count: 0,
+                count: counts.get(&r.element_id).copied().unwrap_or(0),
             });
         }
         rows

@@ -171,6 +171,7 @@ fn every_release_of_the_structural_sample_links_and_imports() {
         checked += 1;
     }
     eprintln!("{checked} samples checked");
+    assert!(checked > 0, "RVT_AUTODESK_SAMPLES_DIR holds none of the samples this test reads");
 }
 
 #[test]
