@@ -298,6 +298,8 @@ pub fn read(file: &mut RevitFile) -> Result<ViewCatalog> {
     let mut viewport_types = BTreeMap::new();
     let mut viewers: BTreeMap<u64, Value> = BTreeMap::new();
 
+    // Every viewer and viewport type first: a view may name a viewer whose
+    // ElementId is higher than its own.
     for (id, (class, fields)) in &records {
         match class.as_str() {
             "ViewportAttributes" => {
@@ -312,15 +314,17 @@ pub fn read(file: &mut RevitFile) -> Result<ViewCatalog> {
             "Viewer" | "Viewer3d" | "Section" | "InteriorElevArrow" => {
                 viewers.insert(*id, fields.clone());
             }
-            _ if is_view_class(class) => {
-                if let Some(view) = view(*id, class, fields, &viewers) {
-                    if let Some(number) = view.sheet_number.clone() {
-                        sheets.push(sheet(*id, &number, fields));
-                    }
-                    views.push(view);
-                }
-            }
             _ => {}
+        }
+    }
+    for (id, (class, fields)) in &records {
+        if is_view_class(class)
+            && let Some(view) = view(*id, class, fields, &viewers)
+        {
+            if let Some(number) = view.sheet_number.clone() {
+                sheets.push(sheet(*id, &number, fields));
+            }
+            views.push(view);
         }
     }
 
@@ -609,8 +613,14 @@ fn id_of(fields: &Value, member: &str) -> Option<u64> {
     id_from_value(fields.get(member)?)
 }
 
+/// An ElementId's value: `{"m_id": {"m_id64": n}}` from Revit 2024, and
+/// `{"m_id": {"m_id": n}}` before it.
 fn id_from_value(value: &Value) -> Option<u64> {
-    let id = value.get("m_id")?.get("m_id64")?.as_i64()?;
+    let inner = value.get("m_id")?;
+    let id = inner
+        .get("m_id64")
+        .or_else(|| inner.get("m_id"))?
+        .as_i64()?;
     u64::try_from(id).ok()
 }
 

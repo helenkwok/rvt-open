@@ -56,7 +56,7 @@ let catalog = ViewCatalog::read(&mut file)?;
 for sheet in &catalog.sheets {
     println!("{} {}", sheet.number, sheet.name);
     for viewport in catalog.viewports_on(sheet.id) {
-        println!("  view {} at {:?}", viewport.view_id, viewport.center);
+        println!("  view {:?} at {:?}", viewport.view_id, viewport.center);
     }
 }
 ```
@@ -77,15 +77,13 @@ rvt-views large-project.rvt --large-model > views.json
   Snowdon Towers and the BIM4LCA files): every placed viewport both read has
   the same sheet, view and offset, every sheet the catalog reads has the same
   number and name, and every plan view both read has the same scale.
-  `plan_views::read` places more: on Revit 2015 to 2022 the catalog reads the
-  viewport records but not their sheet and view, so it places none (the
-  structural samples: 0 against 23 and 30), and on later releases it misses
-  placed schedules and other placements that are not `Viewport` records
-  (1 to 10 a model). `tests/views.rs` checks the agreement on the BIM4LCA
-  office.
+  `plan_views::read` places 1 to 10 more on some models (placements on a
+  sheet that are not `Viewport` records, such as schedules) and reads 2 to 4
+  more sheets on the BIM4LCA and DACH files. `tests/views.rs` checks the
+  agreement on the BIM4LCA office.
 - What the catalog adds: every kind of view (plans, sections, 3D views,
   drafting views, legends, schedules, sheets), each 3D view's camera (on
-  Revit 2023 to 2027; for example 77 of the DACH sample's 82 3D views and 37
+  Revit 2015 to 2027; for example 77 of the DACH sample's 82 3D views and 37
   of Snowdon Towers Architectural's 44) and the box centre of a placed,
   unturned, cropped viewport (104 on the DACH sample, 103 on Snowdon Towers
   Architectural).

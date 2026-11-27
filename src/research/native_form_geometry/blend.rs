@@ -121,6 +121,17 @@ impl Blend {
         if a0 * a1 <= 0.0 {
             return Err("sections are wound opposite ways".into());
         }
+        // The section's signed area is quadratic along the blend,
+        // a0 + p t + q t^2 through a0, am and a1; where it changes sign between
+        // the ends, Simpson's rule on its absolute value is not the volume.
+        let (p, q) = (-3.0 * a0 + 4.0 * am - a1, 2.0 * a0 - 4.0 * am + 2.0 * a1);
+        let keeps_sign = |x: f64| x * a0 > 0.0;
+        let turn = (q != 0.0)
+            .then(|| -p / (2.0 * q))
+            .filter(|t| *t > 0.0 && *t < 1.0);
+        if !keeps_sign(am) || turn.is_some_and(|t| !keeps_sign(a0 + p * t + q * t * t)) {
+            return Err("the section's area changes sign along the blend".into());
+        }
         let centre = |points: &[V3]| {
             let k = points.len() as f64;
             [

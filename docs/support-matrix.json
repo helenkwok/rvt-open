@@ -785,7 +785,7 @@
       "name": "Views, sheets and the viewports placed on them, as a research catalog (rvt-views)",
       "status": "experimental",
       "evidence": "rvt::research::views::read; rvt-views (unstable-research); tests/views.rs on the BIM4LCA office under RVT_NORDIC_LCA_DIR (agreement with plan_views::read); one viewport's box centre compared with Viewport.GetBoxCenter()",
-      "notes": "Reads DBView*, Viewer and Viewport records. A placed viewport's centre is m_offset + m_scale * crop centre, only where it is not turned and its crop is active. On 53 public models every placed viewport, sheet and plan scale it shares with plan_views::read (what rvt-sheet draws) agrees; plan_views::read places more (all of Revit 2015 to 2022's, where the catalog places none, and placements that are not Viewport records). 3D cameras on Revit 2023 to 2027. Not read: visibility/graphics overrides, view title position, a turned viewport's placement, an uncropped view's extent, sheet size.",
+      "notes": "Reads DBView*, Viewer and Viewport records. A placed viewport's centre is m_offset + m_scale * crop centre, only where it is not turned and its crop is active. On 53 public models every placed viewport, sheet and plan scale it shares with plan_views::read (what rvt-sheet draws) agrees; plan_views::read places a few more (placements that are not Viewport records). 3D cameras on Revit 2015 to 2027. Not read: visibility/graphics overrides, view title position, a turned viewport's placement, an uncropped view's extent, sheet size.",
       "user_impact": "Consumers can list a project's views, sheets, 3D cameras and viewport placements as JSON without Revit; the viewer, Python bindings and MCP server do not expose the catalog yet."
     }
   ],

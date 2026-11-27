@@ -29,7 +29,7 @@ for y in "$d"/by-year/*; do echo "RVT_REVIT_$(basename "$y")_DIR=$y"; done
 mkdir -p "$d/families"; fam=0
 while IFS=$'\t' read -r kind url name sha bytes; do
   [ "$kind" = file ] || continue; out="$d/families/$name"
-  if [ ! -f "$out" ]; then curl -fsSL --retry 3 -o "$out.part" "$url" && mv "$out.part" "$out" || { rm -f "$out.part"; echo "family $name unreachable: its tests skip" >&2; continue; }; fi
+  if [ ! -f "$out" ]; then curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 -o "$out.part" "$url" && mv "$out.part" "$out" || { rm -f "$out.part"; echo "family $name unreachable: its tests skip" >&2; continue; }; fi
   [ "$(shasum -a 256 "$out" | cut -d' ' -f1)" = "$sha" ] && [ "$(wc -c <"$out" | tr -d ' ')" = "$bytes" ] || { echo "family $name no longer matches its pin" >&2; exit 1; }
   fam=1
 done < "$root/research/family-test-files.tsv"
