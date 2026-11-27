@@ -728,6 +728,8 @@ export function initDaylight(
     }
   }
   shadowsBox.addEventListener('change', () => {
+    // said at once, not when the sun arrives, so the View display panel's cast shadows agree meanwhile
+    if (shadowsBox.checked) host.shadowsChanged?.(true);
     if (shadowsBox.checked) void updateSun().catch(() => undefined);
     else sunOff();
   });

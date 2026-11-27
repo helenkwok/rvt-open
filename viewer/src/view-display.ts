@@ -564,7 +564,12 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
     return host.canvasColour();
   }
 
-  function applyAll(fromUser = false): void {
+  /**
+   * `fromUser`: a value was changed here (a lit sun is then redrawn with the new sliders). `shadowsChosen`: cast shadows
+   * themselves were chosen (the control, a reset, another view), so even an off already in force goes to the Daylight
+   * panel, to drop a sun request still on its way; any other change leaves the Daylight panel's shadows alone.
+   */
+  function applyAll(fromUser = false, shadowsChosen = false): void {
     if (!enabled) return;
     applyStyle();
     // lighting: the sliders scale the lights the viewer was tuned to; unlit styles ignore them
@@ -586,8 +591,7 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
       fog.color = fogColour();
       host.scene.fog = fog;
     } else host.scene.fog = null;
-    // an explicit off goes to the Daylight panel even when already off, to drop a sun request still on its way
-    if (values.castShadows !== shadowsOn || fromUser) {
+    if (values.castShadows !== shadowsOn || shadowsChosen || (fromUser && shadowsOn && values.castShadows)) {
       shadowsOn = values.castShadows;
       host.setShadows(values.castShadows);
     }
@@ -699,7 +703,7 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
       const v = input instanceof HTMLInputElement ? (input.type === 'checkbox' ? input.checked : input.type === 'range' ? Number(input.value) : input.value) : input.value;
       (values as unknown as Record<string, unknown>)[key] = v;
       source[key] = 'user';
-      applyAll(true);
+      applyAll(true, key === 'castShadows');
     });
   }
   const range = (key: Key, max: number, step = 1): HTMLInputElement => el('input', { type: 'range', min: '0', max: String(max), step: String(step), id: `vd-${key}` });
@@ -756,7 +760,7 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
     values = { ...fileState.values };
     source = { ...fileState.source };
     host.useSun(sunOfView(data, view));
-    applyAll(true);
+    applyAll(true, true);
   });
   viewSel.addEventListener('change', () => {
     chooseView(views.find((v) => String(v.id) === viewSel.value) ?? null);
@@ -808,7 +812,7 @@ export function initViewDisplay(host: ViewDisplayHost, root: HTMLElement, enable
         : 'This file’s view display options were not read: Revit’s defaults are drawn.';
     root.dataset.state = enabled ? 'ready' : 'off';
     host.useSun(sunOfView(data, v));
-    applyAll(true);
+    applyAll(true, true);
   }
 
   show();

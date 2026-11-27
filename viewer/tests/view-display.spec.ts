@@ -125,6 +125,24 @@ test('a view gives every option it stores; Revit’s defaults fill what was not 
   expect(s.fog).toBe(false);
 });
 
+(fs.existsSync(demo) ? test : test.skip)('a slider moved while the Daylight panel’s sun is on its way leaves its shadows on', async ({ page }) => {
+  await open(page, demo);
+  await page.locator('#daylight-details > summary').click();
+  await page.locator('#daylight-shadows').check();
+  // straight away, before the sun request answers: other controls do not touch the shadows
+  await page.locator('#vd-sun').fill('80');
+  await page.locator('#vd-style').selectOption('HLR');
+  await page.locator('#vd-shadows').fill('70');
+  await expect(page.locator('#daylight-panel')).toHaveAttribute('data-shadows', 'on', { timeout: 60_000 });
+  await expect(page.locator('#daylight-shadows')).toBeChecked();
+  await expect(page.locator('#vd-castShadows')).toBeChecked();
+  expect((await applied(page)).source.castShadows).toBe('user');
+  // turned off here, they are off there
+  await page.locator('#vd-castShadows').uncheck();
+  await expect(page.locator('#daylight-shadows')).not.toBeChecked();
+  await expect(page.locator('#daylight-panel')).not.toHaveAttribute('data-shadows', 'on');
+});
+
 (fs.existsSync(demo) ? test : test.skip)('?view-display=off draws as before, with the panel off', async ({ page }) => {
   await page.goto('/?view-display=off');
   await page.locator('#file-input').setInputFiles(demo);
