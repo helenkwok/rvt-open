@@ -112,6 +112,7 @@
  *   worker → main: { type: 'links', json }   linksJson's text: { manage_links, links }
  *   main → worker: { type: 'link-glb', bytes, name, req }
  *   worker → main: { type: 'link-glb', name, req, glb }   convert_glb's bytes
+ *   Both replies carry `wasmMemoryBytes`, the wasm memory after the call.
  *   A failure replies { type: 'links-error', request, req, message }.
  *
  * The daylight panel (daylight.ts) asks for the scene and sensor grids of the open model:
@@ -412,11 +413,14 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
   if (msg.type === 'links' || msg.type === 'link-glb') {
     lastPanic = null;
     try {
+      // As drawing replies do: the wasm memory after the call, which only grows.
+      const memory = (): number => instanceMemory?.buffer.byteLength ?? 0;
       if (msg.type === 'links') {
-        send({ type: 'links', json: api().linksJson(msg.bytes) });
+        const json = api().linksJson(msg.bytes);
+        send({ type: 'links', json, wasmMemoryBytes: memory() });
       } else {
         const glb = api().convert_glb(msg.bytes, {});
-        send({ type: 'link-glb', name: msg.name, req: msg.req, glb }, [glb.buffer as ArrayBuffer]);
+        send({ type: 'link-glb', name: msg.name, req: msg.req, glb, wasmMemoryBytes: memory() }, [glb.buffer as ArrayBuffer]);
       }
     } catch (err) {
       send({

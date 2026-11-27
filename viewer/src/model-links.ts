@@ -79,8 +79,10 @@ export function initModelLinks(
   let nextReq = 0;
   /** The groups placed for each link type, by type id. */
   const placed = new Map<number, THREE.Group[]>();
-  /** Requests waiting for their glTF: request → link type. */
-  const waiting = new Map<number, number>();
+  /** Requests waiting for their glTF: request → link type and the model they were made for. */
+  const waiting = new Map<number, { typeId: number; epoch: number }>();
+  /** Bumped by each reset: a reply for an earlier model is dropped. */
+  let epoch = 0;
   const picker = document.createElement('input');
   picker.type = 'file';
   picker.accept = '.rvt';
@@ -88,20 +90,32 @@ export function initModelLinks(
   listEl.after(picker);
   let pickFor: number | null = null;
 
-  const clearPlaced = (): void => {
-    for (const groups of placed.values()) {
-      for (const g of groups) {
-        host.scene.remove(g);
-        g.traverse((o) => {
-          const mesh = o as THREE.Mesh;
-          mesh.geometry?.dispose();
-          const mat = mesh.material;
-          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-          else (mat as THREE.Material | undefined)?.dispose();
-        });
-      }
+  /** Take a link's groups out of the scene and free their geometry and materials (shared by its clones) once. */
+  const disposeGroups = (groups: THREE.Object3D[]): void => {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    for (const g of groups) {
+      host.scene.remove(g);
+      g.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.geometry) geometries.add(mesh.geometry);
+        const mat = mesh.material;
+        if (Array.isArray(mat)) mat.forEach((m) => materials.add(m));
+        else if (mat) materials.add(mat as THREE.Material);
+      });
     }
-    placed.clear();
+    geometries.forEach((x) => x.dispose());
+    materials.forEach((x) => x.dispose());
+  };
+
+  const unplace = (typeId: number): void => {
+    disposeGroups(placed.get(typeId) ?? []);
+    placed.delete(typeId);
+    host.requestRender();
+  };
+
+  const clearPlaced = (): void => {
+    for (const typeId of Array.from(placed.keys())) unplace(typeId);
     host.requestRender();
   };
 
@@ -148,29 +162,30 @@ export function initModelLinks(
         td.textContent = text;
         if (i === 5) td.title = text;
       });
+      // A Revit link can be placed from its file; an IFC link is listed with its placements only.
       if ((row.kind === 'revit' || row.kind === 'ifc') && row.count > 0) {
-        const td = tr.insertCell();
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'side-btn';
-        b.dataset.linkOpen = String(row.id);
-        b.textContent = placed.has(row.id) ? 'Remove' : 'Open file…';
-        b.title = placed.has(row.id)
-          ? `Remove ${row.link_name} from the scene`
-          : `Give ${row.link_name} (a .rvt) to place it where this model links it; nothing is fetched`;
-        b.addEventListener('click', () => {
-          if (placed.has(row.id)) {
-            for (const g of placed.get(row.id) ?? []) host.scene.remove(g);
-            placed.delete(row.id);
-            host.requestRender();
-            render();
-            return;
-          }
-          pickFor = row.id;
-          picker.value = '';
-          picker.click();
-        });
-        td.appendChild(b);
+        if (row.kind === 'revit') {
+          const td = tr.insertCell();
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'side-btn';
+          b.dataset.linkOpen = String(row.id);
+          b.textContent = placed.has(row.id) ? 'Remove' : 'Open file…';
+          b.title = placed.has(row.id)
+            ? `Remove ${row.link_name} from the scene`
+            : `Give ${row.link_name} (a .rvt) to place it where this model links it; nothing is fetched`;
+          b.addEventListener('click', () => {
+            if (placed.has(row.id)) {
+              unplace(row.id);
+              render();
+              return;
+            }
+            pickFor = row.id;
+            picker.value = '';
+            picker.click();
+          });
+          td.appendChild(b);
+        }
         // Its placements, as the scene tree shows a link's instances.
         for (const inst of data?.links.instances.filter((i) => i.type_id === row.id) ?? []) {
           const sub = body.insertRow();
@@ -186,9 +201,16 @@ export function initModelLinks(
     listEl.appendChild(table);
   };
 
-  const place = async (typeId: number, glb: Uint8Array): Promise<void> => {
+  const place = async (typeId: number, glb: Uint8Array, made: number): Promise<void> => {
     const loader = new GLTFLoader();
     const gltf = await loader.parseAsync(glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength) as ArrayBuffer, '');
+    // Another model opened meanwhile: this link is not its.
+    if (made !== epoch) {
+      disposeGroups([gltf.scene]);
+      return;
+    }
+    // One set of groups per link: a link placed again replaces the last.
+    unplace(typeId);
     const groups: THREE.Group[] = [];
     const instances = data?.links.instances.filter((i) => i.type_id === typeId) ?? [];
     instances.forEach((inst, k) => {
@@ -217,10 +239,11 @@ export function initModelLinks(
       }
       render();
     } else if (msg.type === 'link-glb') {
-      const typeId = waiting.get(msg.req);
+      const w = waiting.get(msg.req);
       waiting.delete(msg.req);
-      if (typeId === undefined) return;
-      void place(typeId, msg.glb).then(
+      if (w === undefined || w.epoch !== epoch) return;
+      const typeId = w.typeId;
+      void place(typeId, msg.glb, w.epoch).then(
         () => host.toast(`Placed ${msg.name} where this model links it`, 'ok'),
         (err) => host.toast(`Could not place ${msg.name}: ${(err as Error).message}`, 'bad'),
       );
@@ -246,9 +269,13 @@ export function initModelLinks(
   const openAs = async (typeId: number, file: File): Promise<void> => {
     const w = listen();
     if (!w) return;
+    // One request at a time per link.
+    if (Array.from(waiting.values()).some((x) => x.typeId === typeId)) return;
+    const made = epoch;
     const bytes = new Uint8Array(await file.arrayBuffer());
+    if (made !== epoch) return;
     const req = ++nextReq;
-    waiting.set(req, typeId);
+    waiting.set(req, { typeId, epoch: made });
     host.setStatus(`Reading linked file ${file.name}…`);
     listEl.setAttribute('aria-busy', 'true');
     w.postMessage({ type: 'link-glb', bytes, name: file.name, req }, [bytes.buffer]);
@@ -275,6 +302,7 @@ export function initModelLinks(
       w.postMessage({ type: 'links', bytes }, [bytes.buffer]);
     },
     reset(): void {
+      epoch += 1;
       clearPlaced();
       waiting.clear();
       data = null;
@@ -288,7 +316,7 @@ export function initModelLinks(
       if (!data || !/\.rvt$/i.test(file.name)) return false;
       const name = file.name.toLowerCase();
       const row = data.manage_links.find(
-        (r) => (r.kind === 'revit' || r.kind === 'ifc') && r.count > 0 && (r.link_name.toLowerCase() === name || baseName(r.saved_path) === name),
+        (r) => r.kind === 'revit' && r.count > 0 && (r.link_name.toLowerCase() === name || baseName(r.saved_path) === name),
       );
       if (!row) return false;
       void openAs(row.id, file);

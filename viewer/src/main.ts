@@ -1749,7 +1749,8 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     // Replies to the Drawings list (model-drawings.ts) are its own, but drawing grows the
     // worker's wasm memory, which never shrinks: the saved-parameter guard counts it.
     const reply = msg as { type: string; wasmMemoryBytes?: unknown };
-    if (reply.type.startsWith('drawing-') && typeof reply.wasmMemoryBytes === 'number') {
+    // Drawing and link replies run in the same wasm instance, whose memory only grows.
+    if ((reply.type.startsWith('drawing-') || reply.type.startsWith('link')) && typeof reply.wasmMemoryBytes === 'number') {
       loadedWasmMemoryBytes = Math.max(loadedWasmMemoryBytes, reply.wasmMemoryBytes);
     }
     if (reply.type !== 'ready') return;
