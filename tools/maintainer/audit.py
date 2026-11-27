@@ -135,9 +135,12 @@ def open_thread_text(repo):
     texts = []
     for field, states in (("issues", "states: OPEN, "), ("pullRequests", "states: OPEN, "), ("discussions", "")):
         replies = " replies(last: 100) { nodes { body } }" if field == "discussions" else ""
+        # A page of 40 discussions, each with 100 comments of 100 replies, requests 404,040 nodes: under GitHub's
+        # 500,000-node limit, which a page of 50 (505,050) is over.
+        page = 40 if field == "discussions" else 50
         query = (
             "query($o: String!, $n: String!, $endCursor: String) { repository(owner: $o, name: $n) { "
-            + field + "(" + states + "first: 50, after: $endCursor) { pageInfo { hasNextPage endCursor } "
+            + field + "(" + states + "first: " + str(page) + ", after: $endCursor) { pageInfo { hasNextPage endCursor } "
             + "nodes { body comments(last: 100) { nodes { body" + replies + " } } } } } }"
         )
         p = subprocess.run(
