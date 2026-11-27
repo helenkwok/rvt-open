@@ -93,7 +93,8 @@ pub struct LinkType {
     /// `Relative`, `Absolute`, or the stored path type text.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub path_type: String,
-    /// `Loaded`, `Not Loaded`, `Not Found`, as last saved (links only).
+    /// The saved status: `Loaded`, `Not Loaded`, `Not Found` as the file was last saved (links
+    /// only). The authoring tool shows the status it finds when it opens the file, which can differ.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub status: String,
     /// Revit and IFC links: Attachment (`true`) or Overlay.
@@ -185,7 +186,9 @@ pub struct ManageLinksRow {
     pub id: i64,
     pub kind: LinkKind,
     pub link_name: String,
-    /// `Loaded`, `Not Loaded`, `Not Found`, `Imported`.
+    /// The saved status: `Loaded`, `Not Loaded`, `Not Found` as the file was last saved, `Unknown`
+    /// when it records none, `Imported` for an import. The authoring tool's dialog shows the status
+    /// it finds when it opens the file, which can differ.
     pub status: String,
     /// `Attachment`, `Overlay` (Revit, IFC); `Linked`, `Imported` (CAD, images, PDFs).
     pub reference_type: String,
@@ -253,7 +256,8 @@ fn unescape(s: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         let tail = &rest[at..];
-        let Some(end) = tail.find(';').filter(|e| *e <= 12) else {
+        // A reference is at most 12 bytes after its `&`: look no further for its `;`.
+        let Some(end) = tail.bytes().take(13).position(|b| b == b';') else {
             out.push('&');
             rest = &tail[1..];
             continue;
