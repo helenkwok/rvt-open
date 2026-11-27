@@ -168,12 +168,12 @@ fn report_links(path: &Path, format: Format, redact: bool) -> anyhow::Result<()>
         }
     };
     println!(
-        "{:<12} {:<44} {:<11} {:<10} {:>5}  {:<26} saved path",
-        "kind", "link name", "status", "reference", "count", "path type"
+        "{:<12} {:<44} {:<12} {:<10} {:>5}  {:<26} saved path",
+        "kind", "link name", "saved status", "reference", "count", "path type"
     );
     for row in links.manage_links() {
         println!(
-            "{:<12} {:<44} {:<11} {:<10} {:>5}  {:<26} {}",
+            "{:<12} {:<44} {:<12} {:<10} {:>5}  {:<26} {}",
             format!("{:?}", row.kind).to_lowercase(),
             r(&row.link_name),
             row.status,
