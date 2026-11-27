@@ -1171,68 +1171,85 @@ fn imported_drawings(
         let [x, y, _, o] = i.transform;
         let place = |p: [f64; 3]| mm([0, 1, 2].map(|k| o[k] + p[0] * x[k] + p[1] * y[k]));
         // Graphics name the line style they are drawn with, which belongs to one layer.
-        let mut layer_of = |style: i64| -> String {
+        if g.truncated {
+            notes.push(format!(
+                "imported drawing {}: more than {} curves and texts through its blocks; the rest is left out",
+                t.name,
+                crate::links::IMPORT_DRAW_BUDGET
+            ));
+        }
+        // The layer, and the colour an entity carries itself when another import already
+        // defined a layer of that name in another colour (layers are one table per drawing).
+        let mut layer_of = |style: i64| -> (String, Option<Colour>) {
             let Some(l) = t
                 .layers
                 .iter()
                 .find(|l| l.id == style || l.styles.contains(&style))
             else {
-                return fallback.0.clone();
+                return (fallback.0.clone(), None);
             };
-            if !d.layers.iter().any(|x| x.name == l.name) {
-                let mut layer = Layer2d::new(l.name.as_str(), 7);
-                // A line style colour is 0xBBGGRR; black draws as colour 7 (white on black).
-                if let Some(c) = l.color.filter(|c| *c > 0) {
-                    let c = c as u32;
-                    layer.colour = Colour {
-                        aci: None,
-                        rgb: Some([
-                            (c & 0xff) as u8,
-                            (c >> 8 & 0xff) as u8,
-                            (c >> 16 & 0xff) as u8,
-                        ]),
-                    };
-                }
-                d.layers.push(layer);
+            let mut layer = Layer2d::new(l.name.as_str(), 7);
+            // A line style colour is 0xBBGGRR; black draws as colour 7 (white on black).
+            if let Some(c) = l.color.filter(|c| *c > 0) {
+                let c = c as u32;
+                layer.colour = Colour {
+                    aci: None,
+                    rgb: Some([
+                        (c & 0xff) as u8,
+                        (c >> 8 & 0xff) as u8,
+                        (c >> 16 & 0xff) as u8,
+                    ]),
+                };
             }
-            l.name.clone()
+            match d.layers.iter().find(|x| x.name == l.name) {
+                None => {
+                    d.layers.push(layer);
+                    (l.name.clone(), None)
+                }
+                Some(x) if x.colour == layer.colour => (l.name.clone(), None),
+                Some(_) => (l.name.clone(), Some(layer.colour)),
+            }
         };
         for (points, category) in &g.curves {
-            let layer = layer_of(*category);
+            let (layer, colour) = layer_of(*category);
             for s in points.windows(2) {
-                d.entities.push(
-                    Entity2d::new(
-                        "LINE",
-                        &layer,
-                        Geom::Line {
-                            a: place(s[0]),
-                            b: place(s[1]),
-                        },
-                    )
-                    .of_element(Some(i.id)),
-                );
+                let mut e = Entity2d::new(
+                    "LINE",
+                    &layer,
+                    Geom::Line {
+                        a: place(s[0]),
+                        b: place(s[1]),
+                    },
+                )
+                .of_element(Some(i.id));
+                if let Some(c) = colour {
+                    e.colour = c;
+                }
+                d.entities.push(e);
             }
         }
         for text in &g.texts {
-            let layer = layer_of(text.layer);
-            d.entities.push(
-                Entity2d::new(
-                    "TEXT",
-                    &layer,
-                    Geom::Text {
-                        at: place(text.at),
-                        height: text.height * x[0].hypot(x[1]) * MM_PER_FOOT,
-                        // The baseline taken through both axes, so a mirrored placement
-                        // keeps an upward text upward.
-                        rotation: {
-                            let (c, s) = (text.rotation.cos(), text.rotation.sin());
-                            (x[1] * c + y[1] * s).atan2(x[0] * c + y[0] * s)
-                        },
-                        value: text.value.clone(),
+            let (layer, colour) = layer_of(text.layer);
+            let mut e = Entity2d::new(
+                "TEXT",
+                &layer,
+                Geom::Text {
+                    at: place(text.at),
+                    height: text.height * x[0].hypot(x[1]) * MM_PER_FOOT,
+                    // The baseline taken through both axes, so a mirrored placement
+                    // keeps an upward text upward.
+                    rotation: {
+                        let (c, s) = (text.rotation.cos(), text.rotation.sin());
+                        (x[1] * c + y[1] * s).atan2(x[0] * c + y[0] * s)
                     },
-                )
-                .of_element(Some(i.id)),
-            );
+                    value: text.value.clone(),
+                },
+            )
+            .of_element(Some(i.id));
+            if let Some(c) = colour {
+                e.colour = c;
+            }
+            d.entities.push(e);
         }
     }
 }

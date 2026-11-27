@@ -552,7 +552,7 @@ fn graphics_rep_id(v: &Fv) -> Option<u64> {
 const DRAWN_HIDDEN_INSTANCE_TARGETS: u64 = 53246;
 /// Whether a hidden `GInstance` is one Revit's export draws: its visibility is 1
 /// and its forbidden targets are [`DRAWN_HIDDEN_INSTANCE_TARGETS`].
-fn drawn_hidden_instance(class_name: &str, fields: &Fv) -> bool {
+pub(crate) fn drawn_hidden_instance(class_name: &str, fields: &Fv) -> bool {
     class_name == "GInstance"
         && fields["m_GInfo"]["m_flags"]
             .as_u64()
