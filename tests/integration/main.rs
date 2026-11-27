@@ -221,6 +221,8 @@ mod level_names;
 mod level_parameters;
 #[path = "../level_shared_elevation.rs"]
 mod level_shared_elevation;
+#[path = "../links.rs"]
+mod links;
 #[path = "../material_textures.rs"]
 mod material_textures;
 #[path = "../measure_scorer_names.rs"]

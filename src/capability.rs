@@ -184,7 +184,7 @@ impl CapabilityManifest {
                 claims: vec![
                     "UTF-16LE / empty / opaque classification for TransmissionData".into(),
                 ],
-                non_claims: vec!["Linked-model resolution unsupported".into()],
+                non_claims: vec!["Linked files are listed by rvt::links, not opened".into()],
                 support_matrix_row: None,
                 notes: Some("Detect-only; empty list ≠ no links".into()),
             },

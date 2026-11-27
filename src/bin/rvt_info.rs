@@ -24,7 +24,8 @@ use std::process::ExitCode;
         rvt-info projects/                          inventory of every Revit file under a folder\n  \
         rvt-info projects/ -f csv > inventory.csv   the same inventory as a spreadsheet\n  \
         rvt-info a.rvt b.rfa --json                 one JSON record per file\n  \
-        rvt-info model.rvt --extract-preview thumb.png"
+        rvt-info model.rvt --extract-preview thumb.png\n  \
+        rvt-info model.rvt --links                  linked and imported files (Manage Links)"
 )]
 struct Cli {
     /// Revit files and/or folders. Folders are searched recursively for
@@ -66,6 +67,13 @@ struct Cli {
     /// sharing output publicly.
     #[arg(long)]
     redact: bool,
+
+    /// List the linked and imported models and files (Revit, IFC and CAD links, CAD imports,
+    /// images, PDFs, point clouds, keynote tables, ...) as the Manage Links dialog shows them,
+    /// with each placement's origin and x axis (single file, text or `--json`). With `--json`,
+    /// everything read, each placement's whole transform included.
+    #[arg(long, conflicts_with = "extract_preview")]
+    links: bool,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +103,16 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         cli.format.unwrap_or(Format::Text)
     };
     let single = cli.paths.len() == 1 && !cli.paths[0].is_dir();
+    if cli.links {
+        if !single {
+            anyhow::bail!("--links needs exactly one file");
+        }
+        if !matches!(format, Format::Text | Format::Json) {
+            anyhow::bail!("--links prints text or JSON (--json); not csv or jsonl");
+        }
+        report_links(&cli.paths[0], format, cli.redact)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if single && matches!(format, Format::Text | Format::Json) {
         report_one(&cli, format)?;
         return Ok(ExitCode::SUCCESS);
@@ -123,6 +141,66 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+// ---- links ----------------------------------------------------------------
+
+fn report_links(path: &Path, format: Format, redact: bool) -> anyhow::Result<()> {
+    let mut rf = RevitFile::open(path)?;
+    let links = rvt::links::read(&mut rf)?;
+    if format == Format::Json {
+        let mut v = serde_json::json!({
+            "manage_links": links.manage_links(),
+            "links": links,
+        });
+        if redact {
+            rvt::redact::redact_json_strings(&mut v);
+        }
+        println!("{}", serde_json::to_string_pretty(&v)?);
+        return Ok(());
+    }
+    // Under --redact every printed name and path gets the full pass, as the JSON does.
+    let r = |s: &str| {
+        if redact {
+            rvt::redact::redact_sensitive(s)
+        } else {
+            s.to_string()
+        }
+    };
+    println!(
+        "{:<12} {:<44} {:<12} {:<10} {:>5}  {:<26} saved path",
+        "kind", "link name", "saved status", "reference", "count", "path type"
+    );
+    for row in links.manage_links() {
+        println!(
+            "{:<12} {:<44} {:<12} {:<10} {:>5}  {:<26} {}",
+            format!("{:?}", row.kind).to_lowercase(),
+            r(&row.link_name),
+            row.status,
+            row.reference_type,
+            row.count,
+            row.path_type,
+            r(&row.saved_path)
+        );
+    }
+    // The origin and x axis of each placement (its y and z axes, too, are in --json).
+    for i in &links.instances {
+        let [x, _, _, o] = i.transform;
+        println!(
+            "placed {} {} of {} at ({:.3}, {:.3}, {:.3}) ft, x axis ({:.4}, {:.4}, {:.4}){}",
+            i.class,
+            i.id,
+            i.type_id,
+            o[0],
+            o[1],
+            o[2],
+            x[0],
+            x[1],
+            x[2],
+            i.view.map(|v| format!(" in view {v}")).unwrap_or_default()
+        );
+    }
+    Ok(())
 }
 
 // ---- single-file report --------------------------------------------------
