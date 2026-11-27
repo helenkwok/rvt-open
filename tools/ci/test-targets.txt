@@ -167,6 +167,7 @@ real      typed_no_geometry_types
 real      unfilled_openings
 real      untyped_elements
 real      value_sources_offsets
+real      views
 real      walker_to_ifc_integration
 real      wall_layer_joins
 real      wall_profile_openings

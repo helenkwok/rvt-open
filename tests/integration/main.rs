@@ -393,6 +393,8 @@ mod untyped_elements;
 mod usd_writer;
 #[path = "../value_sources_offsets.rs"]
 mod value_sources_offsets;
+#[path = "../views.rs"]
+mod views;
 #[path = "../walker_to_ifc_integration.rs"]
 mod walker_to_ifc_integration;
 #[path = "../wall_layer_joins.rs"]
