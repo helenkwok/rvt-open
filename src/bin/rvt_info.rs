@@ -70,8 +70,9 @@ struct Cli {
 
     /// List the linked and imported models and files (Revit, IFC and CAD links, CAD imports,
     /// images, PDFs, point clouds, keynote tables, ...) as the Manage Links dialog shows them,
-    /// with each placement's transform (single file). With `--json`, everything read.
-    #[arg(long)]
+    /// with each placement's origin and x axis (single file, text or `--json`). With `--json`,
+    /// everything read, each placement's whole transform included.
+    #[arg(long, conflicts_with = "extract_preview")]
     links: bool,
 }
 
@@ -105,6 +106,9 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     if cli.links {
         if !single {
             anyhow::bail!("--links needs exactly one file");
+        }
+        if !matches!(format, Format::Text | Format::Json) {
+            anyhow::bail!("--links prints text or JSON (--json); not csv or jsonl");
         }
         report_links(&cli.paths[0], format, cli.redact)?;
         return Ok(ExitCode::SUCCESS);
@@ -155,9 +159,10 @@ fn report_links(path: &Path, format: Format, redact: bool) -> anyhow::Result<()>
         println!("{}", serde_json::to_string_pretty(&v)?);
         return Ok(());
     }
+    // Under --redact every printed name and path gets the full pass, as the JSON does.
     let r = |s: &str| {
         if redact {
-            rvt::redact::redact_path_str(s)
+            rvt::redact::redact_sensitive(s)
         } else {
             s.to_string()
         }
@@ -170,7 +175,7 @@ fn report_links(path: &Path, format: Format, redact: bool) -> anyhow::Result<()>
         println!(
             "{:<12} {:<44} {:<11} {:<10} {:>5}  {:<26} {}",
             format!("{:?}", row.kind).to_lowercase(),
-            row.link_name,
+            r(&row.link_name),
             row.status,
             row.reference_type,
             row.count,
@@ -178,16 +183,20 @@ fn report_links(path: &Path, format: Format, redact: bool) -> anyhow::Result<()>
             r(&row.saved_path)
         );
     }
+    // The origin and x axis of each placement (its y and z axes, too, are in --json).
     for i in &links.instances {
-        let o = i.transform[3];
+        let [x, _, _, o] = i.transform;
         println!(
-            "placed {} {} of {} at ({:.3}, {:.3}, {:.3}) ft{}",
+            "placed {} {} of {} at ({:.3}, {:.3}, {:.3}) ft, x axis ({:.4}, {:.4}, {:.4}){}",
             i.class,
             i.id,
             i.type_id,
             o[0],
             o[1],
             o[2],
+            x[0],
+            x[1],
+            x[2],
             i.view.map(|v| format!(" in view {v}")).unwrap_or_default()
         );
     }
