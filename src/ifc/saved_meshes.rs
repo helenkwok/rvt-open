@@ -1797,10 +1797,12 @@ fn section_not_rectangle(entity: &IfcEntity, mesh_area: f64) -> bool {
 
 /// How many times a beam's body drawn along its line may be as wide or as deep
 /// as its own saved mesh across the line before the record box it was solved
-/// from is taken to hold more than the beam. On the measured public models no
-/// such body is more than 4.43 times its mesh's depth or 2.37 times its width;
-/// a box that holds a wall-height section around a beam a few hundred
-/// millimetres deep is 14 to 29 times.
+/// from is taken to hold more than the beam. Over the 7,640 such beams of 53
+/// public models (Autodesk's structural samples of Revit 2015 to 2027, its 2024
+/// samples, Snowdon Towers and the BIM4LCA files) the deepest is 4.99 times its
+/// mesh's depth (12 beams of the DACH sample) and the widest 2.37 times its
+/// width (Snowdon Towers Structural); a box that holds a wall-height section
+/// around a beam a few hundred millimetres deep is 14 to 29 times.
 const BEAM_BOX_SECTION_MESH_RATIO: f64 = 5.0;
 
 /// Whether `entity`, a beam drawn along its line ([`BEAM_AXIS_BODY_SOURCE`]),

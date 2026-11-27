@@ -70,17 +70,25 @@ rvt-views large-project.rvt --large-model > views.json
 ## Evidence boundary
 
 - The box-centre rule is measured on **one** viewport of one Revit 2024
-  project, against the Revit API. It is not re-measured on the office
-  model's 21 viewports (on 18 sheets), because no Revit API dump of that model
-  is here.
-- On Autodesk's Revit 2024 MEP advanced sample (`rmeadvancedsampleproject`) the reader reads
-  165 views (75 plans, 39 sections, 19 3D views, 14 schedules, 8 sheets,
-  7 legends, 2 drafting views and 1 report), 8 sheets, 161 viewport records,
-  22 of them placed on sheets. Seven placed viewports have an active crop and
-  a centre; the others are uncropped, schedules or legends. Twelve 3D views
-  have a camera; nine have a stored target on the looking axis. On all twelve
-  the `Viewer` basis equals the view plane's `m_horzDir`, `m_vertDir` and
-  reversed `m_viewDir`.
+  project, against the Revit API. It is not re-measured on other models,
+  because no Revit API dump of them is here.
+- Against `plan_views::read`, which `rvt-sheet` and the viewer draw sheets
+  from, on 53 public models (Autodesk's samples of Revit 2015 to 2027,
+  Snowdon Towers and the BIM4LCA files): every placed viewport both read has
+  the same sheet, view and offset, every sheet the catalog reads has the same
+  number and name, and every plan view both read has the same scale.
+  `plan_views::read` places more: on Revit 2015 to 2022 the catalog reads the
+  viewport records but not their sheet and view, so it places none (the
+  structural samples: 0 against 23 and 30), and on later releases it misses
+  placed schedules and other placements that are not `Viewport` records
+  (1 to 10 a model). `tests/views.rs` checks the agreement on the BIM4LCA
+  office.
+- What the catalog adds: every kind of view (plans, sections, 3D views,
+  drafting views, legends, schedules, sheets), each 3D view's camera (on
+  Revit 2023 to 2027; for example 77 of the DACH sample's 82 3D views and 37
+  of Snowdon Towers Architectural's 44) and the box centre of a placed,
+  unturned, cropped viewport (104 on the DACH sample, 103 on Snowdon Towers
+  Architectural).
 - The synthetic `corpus/tier1/` files are writer-generated and hold no native
   partition records, so `read` returns their stream error rather than an empty
   catalog. A test uses the office model under `RVT_NORDIC_LCA_DIR` instead.

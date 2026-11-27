@@ -1,7 +1,7 @@
 //! A beam drawn along its line whose record box is more than five times as
 //! wide or deep as its own saved mesh is drawn from the mesh. No beam of
 //! Autodesk's public structural samples is that far from its mesh (the
-//! Snowdon Towers structural model's beams reach 4.43 times its depth), so on
+//! Snowdon Towers structural model's beams reach 2.37 times its width), so on
 //! them every beam drawn along its line without the saved graphics stays so
 //! with them. Reads `RVT_REVIT_2023_DIR` and `RVT_REVIT_2024_DIR` (from the
 //! download host, see `research/autodesk-sample-projects.tsv`); skips what is

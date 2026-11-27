@@ -131,3 +131,41 @@ fn the_same_file_gives_the_same_catalog_twice() {
         assert_eq!(a.center, b.center);
     }
 }
+
+#[test]
+fn placed_viewports_match_what_the_sheet_drawing_reads() {
+    let Some(path) = office() else {
+        return;
+    };
+    let mut file = RevitFile::open(&path).expect("open the office");
+    let catalog = ViewCatalog::read(&mut file).expect("read views");
+    let mut file = RevitFile::open(&path).expect("open the office");
+    let facts = rvt::plan_views::read(&mut file).expect("read plan views");
+    let placed: Vec<_> = catalog
+        .viewports
+        .iter()
+        .filter(|viewport| viewport.sheet_id.is_some())
+        .collect();
+    assert_eq!(placed.len(), facts.viewports.len());
+    for viewport in placed {
+        let drawn = facts
+            .viewports
+            .iter()
+            .find(|drawn| drawn.id == viewport.id as i64)
+            .unwrap_or_else(|| panic!("viewport {} is drawn", viewport.id));
+        assert_eq!(Some(drawn.sheet as u64), viewport.sheet_id);
+        assert_eq!(Some(drawn.view as u64), viewport.view_id);
+        let offset = viewport.offset.expect("a placed viewport's offset");
+        assert_eq!([offset[0], offset[1]], drawn.offset);
+    }
+    // Every sheet the catalog reads is one the sheet drawing reads, with the
+    // same number and name (the drawing also reads three the catalog does not).
+    for sheet in &catalog.sheets {
+        let drawn = facts
+            .sheets
+            .iter()
+            .find(|drawn| drawn.id == sheet.id as i64)
+            .unwrap_or_else(|| panic!("sheet {} is drawn", sheet.id));
+        assert_eq!((&drawn.number, &drawn.name), (&sheet.number, &sheet.name));
+    }
+}
