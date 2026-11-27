@@ -1213,7 +1213,6 @@ fn imported_drawings(
                 );
             }
         }
-        let turn = x[1].atan2(x[0]);
         for text in &g.texts {
             let layer = layer_of(text.layer);
             d.entities.push(
@@ -1223,7 +1222,12 @@ fn imported_drawings(
                     Geom::Text {
                         at: place(text.at),
                         height: text.height * x[0].hypot(x[1]) * MM_PER_FOOT,
-                        rotation: text.rotation + turn,
+                        // The baseline taken through both axes, so a mirrored placement
+                        // keeps an upward text upward.
+                        rotation: {
+                            let (c, s) = (text.rotation.cos(), text.rotation.sin());
+                            (x[1] * c + y[1] * s).atan2(x[0] * c + y[0] * s)
+                        },
                         value: text.value.clone(),
                     },
                 )

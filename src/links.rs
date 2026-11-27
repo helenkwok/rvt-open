@@ -890,10 +890,20 @@ fn nurbs_points(degree: usize, knots: &[f64], ctrl: &[([f64; 3], f64)], n: usize
     let (t0, t1) = (knots[degree], knots[ctrl.len()]);
     (0..=n)
         .map(|s| {
-            let t =
-                (t0 + (t1 - t0) * s as f64 / n as f64).min(t1 - 1e-12 * (t1 - t0).abs().max(1.0));
+            let t = if s == n {
+                t1
+            } else {
+                t0 + (t1 - t0) * s as f64 / n as f64
+            };
+            // The span holding t; the end of the domain belongs to the last span that is not empty.
             let k = (degree..ctrl.len())
-                .rfind(|&k| knots[k] <= t)
+                .rfind(|&k| {
+                    if t >= t1 {
+                        knots[k] < t1
+                    } else {
+                        knots[k] <= t
+                    }
+                })
                 .unwrap_or(degree);
             let mut d: Vec<[f64; 4]> = (0..=degree)
                 .map(|j| {
