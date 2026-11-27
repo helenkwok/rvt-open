@@ -75,6 +75,8 @@ mod arc_wall_corpus;
 mod assoc_levels_2022;
 #[path = "../assoc_levels_2027.rs"]
 mod assoc_levels_2027;
+#[path = "../beam_box_section.rs"]
+mod beam_box_section;
 #[path = "../beam_reference_levels.rs"]
 mod beam_reference_levels;
 #[path = "../beam_storeys.rs"]

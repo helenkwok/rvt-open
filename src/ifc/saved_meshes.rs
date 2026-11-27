@@ -1031,9 +1031,16 @@ fn attach_batches(
                 let whole = partial_refusal(&element.meshes).is_none();
                 if let Some([index]) = beam_lines.get(&element_id).map(Vec::as_slice)
                     && whole
-                    && let Some(found) = beam_mesh_quantities(&world.primitives)
                 {
-                    beams.push((*index, found));
+                    // a body many times the beam's own mesh across its line is
+                    // a record box that holds more than the beam: drawn from
+                    // its mesh, as a box is.
+                    if box_section_holds_more(&model.entities[*index], &world.primitives) {
+                        report.candidates += 1;
+                        mesh_body = Some([*index]);
+                    } else if let Some(found) = beam_mesh_quantities(&world.primitives) {
+                        beams.push((*index, found));
+                    }
                 }
                 if let Some([index]) = column_rectangles.get(&element_id).map(Vec::as_slice)
                     && whole
@@ -1786,6 +1793,92 @@ fn section_not_rectangle(entity: &IfcEntity, mesh_area: f64) -> bool {
         && area > 0.0
         && mesh_area.is_finite()
         && (mesh_area - area).abs() > COLUMN_SECTION_TOLERANCE * area
+}
+
+/// How many times a beam's body drawn along its line may be as wide or as deep
+/// as its own saved mesh across the line before the record box it was solved
+/// from is taken to hold more than the beam. On the measured public models no
+/// such body is more than 4.43 times its mesh's depth or 2.37 times its width;
+/// a box that holds a wall-height section around a beam a few hundred
+/// millimetres deep is 14 to 29 times.
+const BEAM_BOX_SECTION_MESH_RATIO: f64 = 5.0;
+
+/// Whether `entity`, a beam drawn along its line ([`BEAM_AXIS_BODY_SOURCE`]),
+/// is more than [`BEAM_BOX_SECTION_MESH_RATIO`] times as wide or as deep as the
+/// mesh `primitives` across its line. Its width and depth are its
+/// `SectionWidth` and `SectionDepth`; its line runs along its swept body's
+/// directrix, its I or tube section's extrusion axis, or, for a level
+/// rectangle, at its rotation in plan. False where any of these is missing,
+/// the body is another shape, or the mesh has no extent across the line.
+fn box_section_holds_more(entity: &IfcEntity, primitives: &[Primitive]) -> bool {
+    let IfcEntity::BuildingElement {
+        rotation_radians,
+        solid_shape,
+        property_set: Some(set),
+        ..
+    } = entity
+    else {
+        return false;
+    };
+    let length = |name: &str| {
+        set.properties
+            .iter()
+            .find(|property| property.name == name)
+            .and_then(|property| match property.value {
+                PropertyValue::LengthFeet(value) => Some(value),
+                _ => None,
+            })
+    };
+    let (Some(width), Some(depth)) = (length("SectionWidth"), length("SectionDepth")) else {
+        return false;
+    };
+    let unit = |v: [f64; 3]| {
+        let norm = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        (norm.is_finite() && norm > 0.0).then(|| [v[0] / norm, v[1] / norm, v[2] / norm])
+    };
+    // A sloped beam is swept along its centreline, an I or tube section is
+    // extruded along its line, and a level rectangle is the extrusion turned
+    // to its line in plan; any other body is not one this solves.
+    let d = match solid_shape {
+        Some(SolidShape::SweptPath {
+            directrix_points_feet,
+            ..
+        }) => match directrix_points_feet.as_slice() {
+            [a, b] => unit([b[0] - a[0], b[1] - a[1], b[2] - a[2]]),
+            _ => None,
+        },
+        Some(SolidShape::PlacedExtrusion { axis, .. }) => unit(*axis),
+        Some(_) => None,
+        None => {
+            let (sin, cos) = rotation_radians.unwrap_or(0.0).sin_cos();
+            Some([cos, sin, 0.0])
+        }
+    };
+    let Some(d) = d else {
+        return false;
+    };
+    let plan = d[0].hypot(d[1]);
+    if !plan.is_finite() || plan <= 0.0 {
+        return false;
+    }
+    // The axes the beam's section is solved on: across the line level, and
+    // across it in its vertical plane.
+    let across = [-d[1] / plan, d[0] / plan, 0.0];
+    let up = [-d[2] * d[0] / plan, -d[2] * d[1] / plan, plan];
+    let extent = |axis: [f64; 3]| {
+        let (low, high) = primitives
+            .iter()
+            .flat_map(|primitive| primitive.vertices.iter())
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), v| {
+                let along = v[0] * axis[0] + v[1] * axis[1] + v[2] * axis[2];
+                (low.min(along), high.max(along))
+            });
+        high - low
+    };
+    let exceeds = |size: f64, mesh: f64| {
+        mesh.is_finite() && mesh > 0.0 && size > BEAM_BOX_SECTION_MESH_RATIO * mesh
+    };
+    exceeds(width, extent(across)) || exceeds(depth, extent(up))
 }
 
 /// How far a column's box volume may differ from the volume of the mesh Revit

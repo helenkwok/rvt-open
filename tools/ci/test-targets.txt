@@ -102,6 +102,7 @@ real      level_parameters
 real      level_shared_elevation
 real      constraint_levels
 real      assoc_levels_2027
+real      beam_box_section
 real      beam_reference_levels
 real      beam_storeys skip=ifc_beam_storeys_match_revit_export
 real      export_conventions skip=framing_class_follows_the_convention,no_rule_beam_storey_follows_the_convention,model_without_storeys_follows_the_convention
