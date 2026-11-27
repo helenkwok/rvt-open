@@ -516,7 +516,8 @@ impl Camera {
                         delta[2] / distance,
                     ],
                     look,
-                ) >= 1.0 - 1e-4)
+                ) / len(look)
+                    >= 1.0 - 1e-4)
                 .then_some(target)
         });
         Some(Self {
