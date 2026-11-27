@@ -283,12 +283,15 @@ line names what to fix (its rulesets check needs an admin token). The list:
 2. No stale branches remain on the remote (`delete_branch_on_merge` is on; a
    branch of a closed pull request is deleted with a note where its commits
    stay reachable from the pull request's head). A research or Measure branch
-   with no pull request is kept while its issue is open; once its finding has
-   landed or been superseded, its tip is pushed to `refs/archive/<date>/` on
-   GitHub, which keeps it off the branch list, and into a git bundle the
-   maintainer keeps, with a list of its commits, and the branch is then
-   deleted. The audit lists such a branch once its last commit is more than
-   14 days old.
+   with no pull request is kept while an open issue, an open pull request or a
+   discussion names it, since someone may have been pointed at it to run a
+   probe or fetch a build. Otherwise, a week after its last commit, its tip is
+   pushed to `refs/archive/<date>/` on GitHub, which keeps it off the branch
+   list, and into a git bundle the maintainer keeps, with a list of its
+   commits, and the branch is then deleted; a new branch from the archive ref
+   brings it back. The audit lists such a branch once its last commit is more
+   than 7 days old. Before archiving one by hand, search the open threads for
+   its name as the audit does.
 3. The Actions cache is under its 10 GB limit. `python3
    tools/maintainer/clean_caches.py` (a dry run; `--delete` acts) removes the
    caches of closed pull requests and deleted branches, and `main`'s superseded
