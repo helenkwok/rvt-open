@@ -15,7 +15,7 @@ use rvt::{
     },
     walker::WalkerLimits,
 };
-use std::path::PathBuf;
+use std::{num::NonZeroUsize, path::PathBuf};
 
 // The process's allocator (see `mimalloc` in Cargo.toml).
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
@@ -122,6 +122,11 @@ struct Args {
     /// large files.
     #[arg(long, conflicts_with_all = ["placeholder", "no_saved_meshes"])]
     saved_meshes: bool,
+    /// Limit the field values read from one saved-graphics graph. A graph
+    /// beyond the limit keeps its usual fallback. The default is 1,000,000.
+    /// The selected scope and the other reading limits still apply.
+    #[arg(long, conflicts_with_all = ["placeholder", "no_saved_meshes"])]
+    saved_mesh_graph_values: Option<NonZeroUsize>,
     /// draw those elements from the family's own embedded
     /// document (the loaded family's solid forms placed by the instance's
     /// transform) where the saved graphics leave a box; a body is used only
@@ -983,6 +988,12 @@ fn convert_options_from_args(args: &Args) -> rvt::convert::ConvertOptions {
         element_provenance: args.element_provenance,
         export_decisions: args.export_decisions,
         family_extrusions: args.family_extrusions,
+        saved_mesh_limits: args.saved_mesh_graph_values.map_or_else(
+            rvt::ifc::saved_meshes::SavedMeshLimits::default,
+            |maximum| {
+                rvt::ifc::saved_meshes::SavedMeshLimits::default().with_max_graph_values(maximum)
+            },
+        ),
     }
 }
 
