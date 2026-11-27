@@ -432,6 +432,104 @@ pub fn write_ifcx_graph_texture_layer(
     Ok((text, files))
 }
 
+// ------------------------------------------------------------ links
+
+/// The key of a linked or imported file's record in the links layer: the
+/// [`crate::links::LinkType`] and its Manage Links row as JSON text.
+pub const LINK_KEY: &str = "rvtopen::revit::Link";
+/// The key of a link placement's record: the [`crate::links::LinkInstance`]
+/// as JSON text (its transform in the host's internal feet).
+pub const LINK_INSTANCE_KEY: &str = "rvtopen::revit::LinkInstance";
+
+/// The model's linked and imported files as an IFCX layer to compose over the
+/// main file (header id `<id>/links`): a node per link or import type holding
+/// its record ([`LINK_KEY`]: kind, name, linked or imported, saved path and
+/// path type, status, Attachment or Overlay, the IFC file an IFC link was
+/// made from, ...), and a node per placement of a Revit, IFC or CAD link (an
+/// import's geometry is the model's own) holding its record
+/// ([`LINK_INSTANCE_KEY`]) and its transform as `usd::xformop` (metres, rows
+/// the x, y and z axes, then the origin), a child of the project node named
+/// `Link <instance id>`, whose child `type` is its type's node. A linked
+/// model's own IFCX, exported apart, composes under that placement. The main
+/// file does not change. Returns the layer and how many placements it wrote.
+/// `timestamp` as [`write_ifcx_graph_layers_at`].
+pub fn write_ifcx_graph_links_layer(
+    graph: &IfcxGraph,
+    links: &crate::links::Links,
+    timestamp: Option<i64>,
+) -> Result<(String, usize), IfcxError> {
+    if let Some(e) = graph.errors.first() {
+        return Err(IfcxError(e.clone()));
+    }
+    let rows = links.manage_links();
+    let mut data = Vec::new();
+    for t in &links.types {
+        let row = rows.iter().find(|r| r.id == t.id);
+        let text = serde_json::to_string(&json!({"type": t, "manage_links": row}))
+            .map_err(|e| IfcxError(format!("writing: {e}")))?;
+        data.push(json!({
+            "path": uuid5(&format!("{}/links/{}", graph.id, t.id)),
+            "attributes": {LINK_KEY: text},
+        }));
+    }
+    let mut children = Map::new();
+    let mut placed = 0;
+    for i in &links.instances {
+        let Some(t) = links.types.iter().find(|t| t.id == i.type_id) else {
+            continue;
+        };
+        if !t.linked {
+            continue;
+        }
+        let [x, y, z, o] = i.transform;
+        let r = |v: f64| (v * 1e12).round() / 1e12;
+        let m = |v: f64| (v * FT * 1e6).round() / 1e6;
+        let path = uuid5(&format!("{}/links/instance/{}", graph.id, i.id));
+        let text = serde_json::to_string(i).map_err(|e| IfcxError(format!("writing: {e}")))?;
+        data.push(json!({
+            "path": path,
+            "attributes": {
+                LINK_INSTANCE_KEY: text,
+                "usd::xformop": {"transform": [
+                    [r(x[0]), r(x[1]), r(x[2]), 0.0],
+                    [r(y[0]), r(y[1]), r(y[2]), 0.0],
+                    [r(z[0]), r(z[1]), r(z[2]), 0.0],
+                    [m(o[0]), m(o[1]), m(o[2]), 1.0],
+                ]},
+            },
+            "children": {"type": uuid5(&format!("{}/links/{}", graph.id, t.id))},
+        }));
+        children.insert(format!("Link {}", i.id), json!(path));
+        placed += 1;
+    }
+    if !children.is_empty() {
+        data.push(json!({"path": graph.project, "children": children}));
+    }
+    let mut schemas = Map::new();
+    if !data.is_empty() {
+        schemas.insert(LINK_KEY.into(), json!({"value": {"dataType": "String"}}));
+        schemas.insert(
+            LINK_INSTANCE_KEY.into(),
+            json!({"value": {"dataType": "String"}}),
+        );
+    }
+    let doc = json!({
+        "header": {
+            "id": format!("{}/links", graph.id),
+            "ifcxVersion": "ifcx_alpha",
+            "dataVersion": "1.0.0",
+            "author": "rvt-open",
+            "timestamp": super::step_writer::iso_timestamp_from(
+                timestamp.unwrap_or_else(default_timestamp)),
+        },
+        "imports": [{"uri": IFC_IMPORT}, {"uri": PROP_IMPORT}, {"uri": USD_IMPORT}],
+        "schemas": schemas,
+        "data": data,
+    });
+    let text = serde_json::to_string(&doc).map_err(|e| IfcxError(format!("writing: {e}")))?;
+    Ok((text, placed))
+}
+
 // ------------------------------------------------------------ appearance
 
 /// The key of a render appearance asset's record in the appearance layer:

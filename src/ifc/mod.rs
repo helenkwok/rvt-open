@@ -150,10 +150,11 @@ pub use export_pipeline::{
 pub use from_decoded::{BuilderOptions, ElementInput, build_ifc_model};
 pub use graph::{GraphOptions, IfcxGraph};
 pub use ifcx_writer::{
-    APPEARANCE_KEY, DIAGNOSTIC_KEYS, GLTF_MATERIAL_KEY, LossLedger, TEXTURE_COORDINATES_KEY,
-    write_ifcx, write_ifcx_graph, write_ifcx_graph_appearance_layer, write_ifcx_graph_layers,
-    write_ifcx_graph_layers_at, write_ifcx_graph_layers_to, write_ifcx_graph_texture_layer,
-    write_ifcx_graph_with_ledger, write_ifcx_texture_layer, write_ifcx_with_ledger,
+    APPEARANCE_KEY, DIAGNOSTIC_KEYS, GLTF_MATERIAL_KEY, LINK_INSTANCE_KEY, LINK_KEY, LossLedger,
+    TEXTURE_COORDINATES_KEY, write_ifcx, write_ifcx_graph, write_ifcx_graph_appearance_layer,
+    write_ifcx_graph_layers, write_ifcx_graph_layers_at, write_ifcx_graph_layers_to,
+    write_ifcx_graph_links_layer, write_ifcx_graph_texture_layer, write_ifcx_graph_with_ledger,
+    write_ifcx_texture_layer, write_ifcx_with_ledger,
 };
 pub use step_writer::{write_step, write_step_graph};
 pub use usd_writer::{

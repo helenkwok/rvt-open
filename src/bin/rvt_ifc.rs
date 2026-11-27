@@ -284,6 +284,13 @@ struct Args {
     /// does not change.
     #[arg(long, value_name = "PATH", requires = "ifcx")]
     ifcx_appearance: Option<PathBuf>,
+    /// Also write the model's linked and imported files as an IFCX layer to
+    /// this path: a node per link or import type with what the Manage Links
+    /// dialog shows, and a node per link placement with its transform, under
+    /// the project. A linked model's own IFCX composes under its placement.
+    /// The `--ifcx` file does not change.
+    #[arg(long, value_name = "PATH", requires = "ifcx")]
+    ifcx_links: Option<PathBuf>,
     /// Write every material's render appearance asset as JSON to this path:
     /// its schema, every property with its kind and value, the connected
     /// textures and procedurals with their placement, and its swatch.
@@ -522,6 +529,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     for (flag, path) in [
         ("--appearance", &args.appearance),
         ("--ifcx-appearance", &args.ifcx_appearance),
+        ("--ifcx-links", &args.ifcx_links),
     ] {
         if path
             .as_ref()
@@ -698,6 +706,14 @@ fn run(args: Args) -> anyhow::Result<()> {
     } else {
         None
     };
+    // The links, read now: the file is freed below.
+    let links = match &args.ifcx_links {
+        Some(_) => {
+            rvt::control::stage("links");
+            Some(rvt::links::read(&mut rf)?)
+        }
+        None => None,
+    };
     // Everything below is written from the graph: free the file (its
     // inflated streams and memos) before it is built, and the model after.
     drop(rf);
@@ -869,6 +885,17 @@ fn run(args: Args) -> anyhow::Result<()> {
                 layer.len(),
                 p.display(),
                 graph.order.materials.len()
+            );
+        }
+        if let (Some(p), Some(links)) = (&args.ifcx_links, &links) {
+            let (layer, placed) = rvt::ifc::write_ifcx_graph_links_layer(&graph, links, ifcx_time)?;
+            rvt::cli::write_output(p, layer.as_bytes())?;
+            report.output("ifcx-links", p);
+            eprintln!(
+                "rvt-ifc: wrote {} IFCX links bytes to {} ({} link or import types, {placed} link placements)",
+                layer.len(),
+                p.display(),
+                links.types.len()
             );
         }
         if let Some(ledger_path) = &args.ifcx_ledger {
