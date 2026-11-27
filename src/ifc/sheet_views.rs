@@ -1117,32 +1117,8 @@ fn drafting_drawing(
             );
         }
     }
-    let imports: Vec<_> = facts.imports.iter().filter(|i| i.0 == id).collect();
-    if !imports.is_empty() {
-        let wanted = imports.iter().map(|i| i.1 as u64).collect();
-        let graphics = super::plan_maps::symbol_sheet_graphics(rf, &wanted).unwrap_or_else(|e| {
-            notes.push(format!("imported drawing not read: {e}"));
-            Default::default()
-        });
-        for (_, symbol, [x, y, o]) in imports {
-            let Some((curves, _)) = u32::try_from(*symbol).ok().and_then(|s| graphics.get(&s))
-            else {
-                continue;
-            };
-            let place = |p: (f64, f64)| mm([0, 1, 2].map(|i| o[i] + p.0 * x[i] + p.1 * y[i]));
-            for c in curves {
-                for s in super::sheet::symbol_points(c).windows(2) {
-                    d.entities.push(Entity2d::new(
-                        "LINE",
-                        &import.0,
-                        Geom::Line {
-                            a: place(s[0]),
-                            b: place(s[1]),
-                        },
-                    ));
-                }
-            }
-        }
+    if facts.imports.iter().any(|i| i.0 == id) {
+        imported_drawings(rf, id, &import, &mut d, notes);
     }
     for (name, aci) in [&notes_layer, &detail, &import] {
         if d.entities.iter().any(|e| &e.layer == name) && !d.layers.iter().any(|l| &l.name == name)
@@ -1151,6 +1127,110 @@ fn drafting_drawing(
         }
     }
     d
+}
+
+#[cfg(feature = "dwg")]
+/// The CAD drawings imported or linked into view `id`, drawn into `d` as the authoring tool's
+/// DWG export draws them: each curve and text on its own layer of the drawing (`Thin`, `Text`,
+/// ...: the import's layer subcategories, coloured as their line styles are), each entity
+/// carrying the import's ElementId, its blocks drawn in place. `fallback` is the layer for
+/// geometry on no named layer.
+fn imported_drawings(
+    rf: &mut crate::RevitFile,
+    id: i64,
+    fallback: &(String, i16),
+    d: &mut rvt_dwg::Drawing2d,
+    notes: &mut Vec<String>,
+) {
+    use rvt_dwg::{Colour, Entity2d, Geom, Layer2d};
+    let links = match crate::links::read(rf) {
+        Ok(l) => l,
+        Err(e) => {
+            notes.push(format!("imported drawing not read: {e}"));
+            return;
+        }
+    };
+    let placed: Vec<_> = links
+        .instances
+        .iter()
+        .filter(|i| i.view == Some(id) && i.class == "ImportInstance")
+        .collect();
+    let wanted = placed.iter().map(|i| i.type_id as u64).collect();
+    let graphics = crate::links::import_graphics(rf, &wanted).unwrap_or_else(|e| {
+        notes.push(format!("imported drawing not read: {e}"));
+        Default::default()
+    });
+    let mm = |p: [f64; 3]| [p[0] * MM_PER_FOOT, p[1] * MM_PER_FOOT, 0.0];
+    for i in placed {
+        let (Some(t), Some(g)) = (
+            links.types.iter().find(|t| t.id == i.type_id),
+            graphics.get(&i.type_id),
+        ) else {
+            continue;
+        };
+        let [x, y, _, o] = i.transform;
+        let place = |p: [f64; 3]| mm([0, 1, 2].map(|k| o[k] + p[0] * x[k] + p[1] * y[k]));
+        // Graphics name the line style they are drawn with, which belongs to one layer.
+        let mut layer_of = |style: i64| -> String {
+            let Some(l) = t
+                .layers
+                .iter()
+                .find(|l| l.id == style || l.styles.contains(&style))
+            else {
+                return fallback.0.clone();
+            };
+            if !d.layers.iter().any(|x| x.name == l.name) {
+                let mut layer = Layer2d::new(l.name.as_str(), 7);
+                // A line style colour is 0xBBGGRR; black draws as colour 7 (white on black).
+                if let Some(c) = l.color.filter(|c| *c > 0) {
+                    let c = c as u32;
+                    layer.colour = Colour {
+                        aci: None,
+                        rgb: Some([
+                            (c & 0xff) as u8,
+                            (c >> 8 & 0xff) as u8,
+                            (c >> 16 & 0xff) as u8,
+                        ]),
+                    };
+                }
+                d.layers.push(layer);
+            }
+            l.name.clone()
+        };
+        for (points, category) in &g.curves {
+            let layer = layer_of(*category);
+            for s in points.windows(2) {
+                d.entities.push(
+                    Entity2d::new(
+                        "LINE",
+                        &layer,
+                        Geom::Line {
+                            a: place(s[0]),
+                            b: place(s[1]),
+                        },
+                    )
+                    .of_element(Some(i.id)),
+                );
+            }
+        }
+        let turn = x[1].atan2(x[0]);
+        for text in &g.texts {
+            let layer = layer_of(text.layer);
+            d.entities.push(
+                Entity2d::new(
+                    "TEXT",
+                    &layer,
+                    Geom::Text {
+                        at: place(text.at),
+                        height: text.height * x[0].hypot(x[1]) * MM_PER_FOOT,
+                        rotation: text.rotation + turn,
+                        value: text.value.clone(),
+                    },
+                )
+                .of_element(Some(i.id)),
+            );
+        }
+    }
 }
 
 /// Which sheet or view to draw: a sheet, a plan view, or a section or elevation, by ElementId.
