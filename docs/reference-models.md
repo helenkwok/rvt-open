@@ -75,6 +75,8 @@ No Revit export of any of them is available to a Measure run (Snowdon Towers Arc
 and what a release's reader gives on the same model, not recovery against
 Revit: each release's records are compared with 2024's by ElementId. They do not admit a release.
 
+One exception, counts only: a forum user's Revit 2018 export of the 2018 `rac_basic` save, attached to the IFC for Revit wiki and pinned in [`research/rac-basic-2018-export.tsv`](../research/rac-basic-2018-export.tsv), is fetched for a run by `tools/ci/fetch-rac-basic-2018-export.sh` into the samples' `phased/` folder. `tools/ci/measure-reference-models.sh` then pairs the 2018 save's rooms with its 17 `IfcSpace` by GlobalId (`tools/re/spaces_by_globalid_vs_ifc.py` without `--list`, so no GlobalId or name is printed). The file carries no licence, so it is never stored or cached.
+
 ## BIM4LCA example buildings, fetched for CI
 
 VTT's BIM4LCA project published Revit 2024 models of a housing and an office
