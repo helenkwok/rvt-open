@@ -68,7 +68,7 @@ open("out.ifc", "w").write(f.write_ifc())
 wasm-pack build rvt-wasm --target web --out-dir ../viewer/pkg --out-name rvt
 ```
 
-The package exposes the 28 JS-callable wasm-bindgen bindings listed in [`docs/viewer-api.md`](docs/viewer-api.md#the-javascript-bindings): open a file, then `convert_ifc`, `convert_ifcx`, `convert_frag`, `convert_usda`, `convert_usdc`, `convert_glb`, `schedules_csv` or `convert_all`. The privacy checks are in [`docs/viewer-privacy-posture.md`](docs/viewer-privacy-posture.md).
+The package exposes the 29 JS-callable wasm-bindgen bindings listed in [`docs/viewer-api.md`](docs/viewer-api.md#the-javascript-bindings): open a file, then `convert_ifc`, `convert_ifcx`, `convert_frag`, `convert_usda`, `convert_usdc`, `convert_glb`, `schedules_csv` or `convert_all`. The privacy checks are in [`docs/viewer-privacy-posture.md`](docs/viewer-privacy-posture.md).
 
 Rust 2024 edition (MSRV 1.89). **Eighteen CLIs ship** (`rvt-analyze`, `rvt-info`, `rvt-inspect`, `rvt-schema`, `rvt-history`, `rvt-diff`, `rvt-corpus`, `rvt-dump`, `rvt-doc`, `rvt-ifc`, `rvt-ifc-compare`, `rvt-gltf`, `rvt-sheet`, `rvt-elem-table`, `rvt-elements`, `rvt-capabilities`, `rvt-schedule`, `rvt-batch`).
 

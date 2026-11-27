@@ -1299,6 +1299,23 @@ pub fn diagnostics_json(bytes: &js_sys::Uint8Array, options: JsValue) -> Result<
     String::from_utf8(json).map_err(err_str)
 }
 
+/// The linked and imported models and files, as `rvt-info --links --json` prints them:
+/// `{ manage_links: [{ id, kind, link_name, status, reference_type, saved_path, path_type,
+/// file_size?, resolution?, count }], links: { references, types, instances } }`, each placement
+/// with its transform (x, y and z axes and origin, feet). Nothing is fetched: a viewer places a
+/// linked file only when the user gives it.
+#[wasm_bindgen(js_name = linksJson)]
+pub fn links_json(bytes: &js_sys::Uint8Array) -> Result<String, JsValue> {
+    install_panic_hook();
+    let mut rf = open(bytes)?;
+    let links = rvt::links::read(&mut rf).map_err(err_str)?;
+    serde_json::to_string(&serde_json::json!({
+        "manage_links": links.manage_links(),
+        "links": links,
+    }))
+    .map_err(err_str)
+}
+
 /// Release, version, build and basic file info as JSON, as
 /// `rvt-info <file> --json` prints it.
 #[wasm_bindgen]

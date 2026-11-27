@@ -448,6 +448,12 @@ opens with. It is a laptop's figure: Deploy viewer's runner takes about
  the card shows the decoder's own progress as soon as it reports,
 and the hint is only the first thing it says.
 
+## Links
+
+`linksJson(bytes)` lists the open file's linked and imported models and files: the rows the authoring tool's Manage Links dialog shows (Revit and IFC links, CAD links and imports, images and PDFs, point clouds; kind, name, saved status (the load state the file recorded when it was last saved, which can differ from what the authoring tool finds when it opens the file), Attachment or Overlay, saved path and path type, file size, resolution, how many placements) and every placement with its transform (x, y and z axes and origin, internal feet). The viewer shows them in the Links list beside the scene tree, each link's placements under it.
+
+The viewer never opens a linked file by its saved path. A Revit link stays listed as it was saved (for example `Not Loaded`, with the path it was saved with) until the user gives its file, with the row's Open file… button or by dropping a `.rvt` whose name is the link's while the model is open. The worker then draws that file as glTF (`convert_glb`), and the page places one copy per placement, at the host's transform `T` taken into the glTF frame (`C · T · C⁻¹`, where `C` takes the model's feet, z up, to glTF's metres, y up). Remove takes it out of the scene again.
+
 ## Export phase
 
 A Revit project can hold several phases, and an export shows one: the last, as
@@ -740,6 +746,7 @@ describing the error.
 | `modelToPdf3d` | `model` | `Uint8Array` | The model as a one-page 3D PDF: the glTF meshes as U3D in a 3D annotation, with a flat poster |
 | `modelToIfcStep` | `model` | `string` | The model as an IFC4 STEP document |
 | `renderPlanSvg` | `model`, `options: SheetOptions` or `null` | `string` | A plan view as SVG |
+| `linksJson` | `bytes: Uint8Array` | `string` (JSON) | The linked and imported models and files, as `rvt-info --links --json` prints them: the Manage Links rows (`id`, `kind`, `link_name`, `status`, `reference_type`, `saved_path`, `path_type`, `file_size`, `resolution`, `count`) and every reference, type and placement (transform: x, y and z axes and origin, feet). Nothing is fetched; see [Links](#links) |
 | `drawingList` | `bytes: Uint8Array`, `model` | `{ sheets, plans, sections }` | What `drawingOpen` draws of `model`: the sheets (`id`, `number`, `name`, the ElementIds of the views placed on them), plan views (`id`, `name`, `level`, `ceiling`, `scale`, `onSheet`) and sections and elevations (`id`, `name`, `scale`). View templates, loaded families' own views, plans with no view range or level decoded and sections with no crop box decoded are left out |
 | `drawingOpen` | `bytes: Uint8Array`, `kind: "sheet" \| "plan" \| "section"`, `id: number` | `{ svg, layers, notDrawn, truncated, layout, scale, counts: { lines, texts, viewports, entities }, notes }` | Draws one sheet or view as `rvt-sheet --sheet` or `--view` draws it to DXF, from the model `rvt-sheet` exports, and returns it as SVG: a sheet's paper space with its title block and its views in viewports, or a view's model space. The first call exports that model and keeps it, with the file's views, for the next calls; only the last drawing is kept, for `drawingSave` |
 | `drawingSave` | `format: "dxf" \| "dwg" \| "pdf"` | `Uint8Array` | The drawing `drawingOpen` drew as DXF 2018, DWG 2018 or a vector PDF (a sheet at full size, a view at its scale), the bytes `rvt-sheet --format` writes |

@@ -106,6 +106,15 @@
  *                  bytes (.frag, .usdc), as rvt-ifc writes them
  *   A failure replies { type: 'convert-error', format, req, message }.
  *
+ * Links (src/model-links.ts), after a parse: the open file's linked and imported files, and a
+ * linked file the user gave, drawn as glTF to place with its link's transforms. Nothing is fetched.
+ *   main → worker: { type: 'links', bytes }
+ *   worker → main: { type: 'links', json }   linksJson's text: { manage_links, links }
+ *   main → worker: { type: 'link-glb', bytes, name, req }
+ *   worker → main: { type: 'link-glb', name, req, glb }   convert_glb's bytes
+ *   Both replies carry `wasmMemoryBytes`, the wasm memory after the call.
+ *   A failure replies { type: 'links-error', request, req, message }.
+ *
  * The daylight panel (daylight.ts) asks for the scene and sensor grids of the open model:
  *   main → worker: { type: 'daylight-prepare', options, req }   `options` { spacing, offset, inset }
  *   worker → main: { type: 'daylight-prepared', req, prepared }   daylightPrepare's object, its typed
@@ -175,7 +184,11 @@ type ParseMsg =
   | ConvertMsg
   | { type: 'daylight-prepare'; options: Record<string, number>; req: number }
   | DwgMsg
-  | DrawingMsg;
+  | DrawingMsg
+  | LinksMsg;
+
+/** The open model's links (model-links.ts), and a linked file the user gave, as glTF. */
+type LinksMsg = { type: 'links'; bytes: Uint8Array } | { type: 'link-glb'; bytes: Uint8Array; name: string; req: number };
 
 type ConvertMsg = {
   type: 'convert';
@@ -392,6 +405,28 @@ self.addEventListener('message', async (ev: MessageEvent<ParseMsg>) => {
         type: 'drawing-error',
         request: m.type,
         req: m.type === 'drawing-open' ? m.req : undefined,
+        message: lastPanic ?? (err instanceof Error ? err.message : String(err)),
+      });
+    }
+    return;
+  }
+  if (msg.type === 'links' || msg.type === 'link-glb') {
+    lastPanic = null;
+    try {
+      // As drawing replies do: the wasm memory after the call, which only grows.
+      const memory = (): number => instanceMemory?.buffer.byteLength ?? 0;
+      if (msg.type === 'links') {
+        const json = api().linksJson(msg.bytes);
+        send({ type: 'links', json, wasmMemoryBytes: memory() });
+      } else {
+        const glb = api().convert_glb(msg.bytes, {});
+        send({ type: 'link-glb', name: msg.name, req: msg.req, glb, wasmMemoryBytes: memory() }, [glb.buffer as ArrayBuffer]);
+      }
+    } catch (err) {
+      send({
+        type: 'links-error',
+        request: msg.type,
+        req: msg.type === 'link-glb' ? msg.req : undefined,
         message: lastPanic ?? (err instanceof Error ? err.message : String(err)),
       });
     }

@@ -2287,6 +2287,54 @@ dl.info-group dd {
   color: var(--rv-text);
 }
 
+/* ---- A model's linked and imported files (src/model-links.ts) ------------------------- */
+
+#links:empty::before {
+  content: 'Open a Revit file to list its linked and imported files.';
+  display: block;
+  padding: 4px 2px;
+  font-size: var(--rv-fs-xs);
+  color: var(--rv-text-3);
+}
+#links[aria-busy='true'] {
+  cursor: progress;
+}
+#links {
+  max-height: 260px;
+  overflow: auto;
+}
+.links-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--rv-fs-xs);
+}
+.links-table th,
+.links-table td {
+  padding: 2px 4px;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.links-table th {
+  color: var(--rv-text-2);
+  font-weight: var(--rv-fw-semibold);
+}
+.links-table tr[data-status='Not Found'] td:nth-child(3),
+.links-table tr[data-status='Not Loaded'] td:nth-child(3) {
+  color: var(--rv-text-3);
+}
+.links-instance td {
+  padding-left: 14px;
+  color: var(--rv-text-2);
+}
+.links-empty {
+  margin: 4px 2px;
+  font-size: var(--rv-fs-xs);
+  color: var(--rv-text-2);
+}
+
 /* The Daylight panel (daylight.ts). Its rows and buttons set a display of their own, so `hidden` needs restating. */
 #daylight-panel [hidden] {
   display: none !important;

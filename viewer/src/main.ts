@@ -18,6 +18,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import supportMatrix from '../../docs/support-matrix.json';
 import { initDrawing, initSvgView, isDrawingFile } from './drawing';
 import { initModelDrawings } from './model-drawings';
+import { initModelLinks } from './model-links';
 import * as glue32 from '../pkg/rvt_open.js';
 import * as glue64 from '../pkg/rvt_open64.js';
 import {
@@ -1548,6 +1549,7 @@ interface LoadStats {
 
 async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> {
   modelDrawings.reset();
+  modelLinks.reset();
   if (isDrawingFile(file.name)) {
     await drawing.open(file);
     return;
@@ -1763,7 +1765,8 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     // Replies to the Drawings list (model-drawings.ts) are its own, but drawing grows the
     // worker's wasm memory, which never shrinks: the saved-parameter guard counts it.
     const reply = msg as { type: string; wasmMemoryBytes?: unknown };
-    if (reply.type.startsWith('drawing-') && typeof reply.wasmMemoryBytes === 'number') {
+    // Drawing and link replies run in the same wasm instance, whose memory only grows.
+    if ((reply.type.startsWith('drawing-') || reply.type.startsWith('link')) && typeof reply.wasmMemoryBytes === 'number') {
       loadedWasmMemoryBytes = Math.max(loadedWasmMemoryBytes, reply.wasmMemoryBytes);
     }
     if (reply.type !== 'ready') return;
@@ -1817,6 +1820,7 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
     const elapsed = Math.max(1, Math.round((performance.now() - loadStartedAt) / 1000));
     toast(`Loaded ${file.name} · ${msg.types.length} categories · ${elapsed} s`, 'ok');
     void modelDrawings.load();
+    void modelLinks.load();
   });
   w.postMessage(
     {
@@ -4899,6 +4903,18 @@ const modelDrawings = initModelDrawings(
   drawingView,
 );
 
+const modelLinks = initModelLinks(
+  {
+    worker: () => worker,
+    file: () => currentFile,
+    scene,
+    requestRender,
+    setStatus,
+    toast,
+  },
+  $('links'),
+);
+
 const daylight = initDaylight(
   {
     scene,
@@ -5019,6 +5035,8 @@ document.body.addEventListener('drop', (ev) => {
   ev.preventDefault();
   const f = ev.dataTransfer?.files[0];
   if (!f) return;
+  // One of the open model's Revit links: placed where the model links it, the model kept.
+  if (modelLinks.tryFile(f)) return;
   if (!/\.(rvt|rfa|rte|rft|dwg|dxf)$/i.test(f.name)) {
     setStatus(`Ignored: ${f.name} — not a Revit, DWG or DXF file`);
     toast(`${f.name} is not a Revit or CAD file. Drop a .rvt, .rfa, .rte, .rft, .dwg or .dxf.`, 'bad');
