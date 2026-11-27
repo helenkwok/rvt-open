@@ -131,7 +131,7 @@ dhat = { version = "0.3", optional = true }
 md-5 = "0.11"
 # The element table as an XLSX workbook (MIT OR Apache-2.0). Pure Rust, in
 # both browser builds.
-rust_xlsxwriter = { version = "=0.102.0", default-features = false }
+rust_xlsxwriter = { version = "=0.104.0", default-features = false }
 # The element table as an SQLite database, behind the `sqlite` feature (MIT):
 # the bundled SQLite natively, `sqlite-wasm-rs` (SQLite compiled for
 # wasm32-unknown-unknown) in the browser; `serialize` returns the database's
