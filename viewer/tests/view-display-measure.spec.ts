@@ -121,6 +121,7 @@ async function orbit(page: Page): Promise<{ raf: number[]; issue: number[] }> {
     await page.waitForTimeout(1500);
     let m = await orbit(page);
     let still = await stillFrame(page, false);
+    console.log(`${name} · today: ${r2(pct(m.raf, 0.5))} ms`);
     rows.push({ model: name, case: 'today (no panel)', rafMedianMs: r2(pct(m.raf, 0.5)), rafP95Ms: r2(pct(m.raf, 0.95)), issueMeanMs: r2(mean(m.issue)), stillMs: r2(still.ms), stillAo: still.ao });
 
     await page.goto('/');
@@ -141,6 +142,7 @@ async function orbit(page: Page): Promise<{ raf: number[]; issue: number[] }> {
       await page.waitForTimeout(1500);
       m = await orbit(page);
       still = await stillFrame(page, (c.check ?? []).includes('vd-ambientShadows'));
+      console.log(`${name} · ${c.name}: ${r2(pct(m.raf, 0.5))} ms`);
       rows.push({ model: name, case: c.name, rafMedianMs: r2(pct(m.raf, 0.5)), rafP95Ms: r2(pct(m.raf, 0.95)), issueMeanMs: r2(mean(m.issue)), stillMs: r2(still.ms), stillAo: still.ao, applyMs });
     }
   }
