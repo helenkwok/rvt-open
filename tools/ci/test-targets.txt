@@ -74,7 +74,9 @@ real      element_parameters
 real      element_provenance_offsets
 real      element_record_stages
 real      element_records_2025
+real      family_2014_extrusions
 real      family_blend_transitions
+real      family_blends skip=a_square_frustum_has_its_closed_form_volume,sections_wound_opposite_ways_are_refused
 real      family_form_checks
 real      family_voids_and_sample_walls
 real      nested_instance_sizes

@@ -167,8 +167,12 @@ mod export_as_2018_2023;
 mod export_conventions;
 #[path = "../export_decisions_counts.rs"]
 mod export_decisions_counts;
+#[path = "../family_2014_extrusions.rs"]
+mod family_2014_extrusions;
 #[path = "../family_blend_transitions.rs"]
 mod family_blend_transitions;
+#[path = "../family_blends.rs"]
+mod family_blends;
 #[path = "../family_form_checks.rs"]
 mod family_form_checks;
 #[path = "../family_instance_ports.rs"]
