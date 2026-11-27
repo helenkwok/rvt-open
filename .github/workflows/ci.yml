@@ -513,6 +513,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/py"
           "$RUNNER_TEMP/py/bin/pip" install -q --require-hashes -r tools/ci/requirements-test.txt
           RVT_TABLE_DIR="$d" "$RUNNER_TEMP/py/bin/pytest" -q -rs tests/python/test_table_readback.py
+          "$RUNNER_TEMP/py/bin/pytest" -q -rs tests/python/test_maintainer_audit.py
       - name: 3D PDF structure (qpdf), U3D stream header and poster render (poppler)
         run: |
           # Bounded and retried: a hung Ubuntu mirror would otherwise use the whole job timeout.
