@@ -145,6 +145,9 @@ pub struct Layer {
     pub color: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pen: Option<i64>,
+    /// The line styles (`GStyleElem`s) of the layer: the import's graphics name these.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<i64>,
 }
 
 /// One placed link, import, image or point cloud.
@@ -709,6 +712,7 @@ pub fn read(rf: &mut RevitFile) -> Result<Links> {
                         name: name.clone(),
                         color: g.and_then(|g| g.0),
                         pen: g.and_then(|g| g.1),
+                        styles: gs.clone(),
                     });
                 }
             }
@@ -819,4 +823,341 @@ impl Links {
         }
         rows
     }
+}
+
+/// What an imported or linked CAD drawing draws, in its symbol's coordinates (feet): the curves
+/// and texts of its graphics, with nested blocks placed and drawn in, each with the id its
+/// graphics name for its layer: a line style (`GStyleElem`, found in [`Layer::styles`]) or the
+/// layer's `CategoryElem` itself ([`Layer::id`]). See [`import_graphics`].
+///
+/// `truncated` is set when the drawing placed more than [`IMPORT_DRAW_BUDGET`] curves and texts
+/// through its blocks and the rest was left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ImportGraphics {
+    /// Polylines (two points for a line; arcs and splines as chords), with their layer.
+    pub curves: Vec<(Vec<[f64; 3]>, i64)>,
+    /// Texts: insertion point, height, rotation (radians), value, layer.
+    pub texts: Vec<ImportText>,
+    pub truncated: bool,
+}
+
+/// The most curves and texts [`import_graphics`] draws for one import, blocks included: blocks
+/// placing blocks multiply, and a drawing past this is cut off (and says so) rather than filling
+/// memory.
+pub const IMPORT_DRAW_BUDGET: usize = 2_000_000;
+
+/// A text of an imported drawing.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ImportText {
+    pub at: [f64; 3],
+    pub height: f64,
+    pub rotation: f64,
+    pub value: String,
+    pub layer: i64,
+}
+
+type M4 = [[f64; 4]; 4];
+const IDENTITY4: M4 = [
+    [1., 0., 0., 0.],
+    [0., 1., 0., 0.],
+    [0., 0., 1., 0.],
+    [0., 0., 0., 1.],
+];
+
+fn mul(a: &M4, b: &M4) -> M4 {
+    let mut m = [[0.0; 4]; 4];
+    for (i, row) in m.iter_mut().enumerate() {
+        for (j, v) in row.iter_mut().enumerate() {
+            *v = (0..4).map(|k| a[i][k] * b[k][j]).sum();
+        }
+    }
+    m
+}
+
+fn apply(m: &M4, p: [f64; 3]) -> [f64; 3] {
+    [0, 1, 2].map(|i| m[i][0] * p[0] + m[i][1] * p[1] + m[i][2] * p[2] + m[i][3])
+}
+
+fn fv_point(v: &crate::graph_value::Fv) -> Option<[f64; 3]> {
+    let a = v.as_array()?;
+    let x: Vec<f64> = a.iter().filter_map(|c| c.as_f64()).collect();
+    match x.len() {
+        3 => Some([x[0], x[1], x[2]]),
+        2 => Some([x[0], x[1], 0.0]),
+        _ => None,
+    }
+}
+
+fn fv_id(v: &crate::graph_value::Fv) -> Option<i64> {
+    v["m_id"]["m_id64"]
+        .as_i64()
+        .or_else(|| v["m_id"]["m_id"].as_i64())
+        .or_else(|| v["m_id64"].as_i64())
+        .or_else(|| v["m_id"].as_i64())
+}
+
+/// A NURBS curve's points at `n` even steps of its parameter (de Boor, with weights).
+fn nurbs_points(degree: usize, knots: &[f64], ctrl: &[([f64; 3], f64)], n: usize) -> Vec<[f64; 3]> {
+    if ctrl.len() <= degree || knots.len() != ctrl.len() + degree + 1 {
+        return ctrl.iter().map(|c| c.0).collect();
+    }
+    let (t0, t1) = (knots[degree], knots[ctrl.len()]);
+    (0..=n)
+        .map(|s| {
+            let t = if s == n {
+                t1
+            } else {
+                t0 + (t1 - t0) * s as f64 / n as f64
+            };
+            // The span holding t; the end of the domain belongs to the last span that is not empty.
+            let k = (degree..ctrl.len())
+                .rfind(|&k| {
+                    if t >= t1 {
+                        knots[k] < t1
+                    } else {
+                        knots[k] <= t
+                    }
+                })
+                .unwrap_or(degree);
+            let mut d: Vec<[f64; 4]> = (0..=degree)
+                .map(|j| {
+                    let (p, w) = ctrl[k - degree + j];
+                    [p[0] * w, p[1] * w, p[2] * w, w]
+                })
+                .collect();
+            for r in 1..=degree {
+                for j in (r..=degree).rev() {
+                    let i = k - degree + j;
+                    let den = knots[i + degree + 1 - r] - knots[i];
+                    let a = if den.abs() < 1e-15 {
+                        0.0
+                    } else {
+                        (t - knots[i]) / den
+                    };
+                    let prev = d[j - 1];
+                    d[j] = [0, 1, 2, 3].map(|c| (1.0 - a) * prev[c] + a * d[j][c]);
+                }
+            }
+            let p = d[degree];
+            let w = if p[3].abs() < 1e-15 { 1.0 } else { p[3] };
+            [p[0] / w, p[1] / w, p[2] / w]
+        })
+        .collect()
+}
+
+/// The curves and texts imported or linked CAD drawings draw, by import symbol id, with the
+/// blocks they place (their `SlaveImportSymbol`s, `GInstance` nodes naming an `InstanceInfo`)
+/// drawn in at their placement. Lines, arcs, polylines, splines and texts are read; fills and
+/// hatches (`Geometry` faces) are not.
+pub fn import_graphics(
+    rf: &mut RevitFile,
+    symbols: &BTreeSet<u64>,
+) -> anyhow::Result<BTreeMap<i64, ImportGraphics>> {
+    use crate::graph_value::Fv;
+    use crate::native_parameters::ObjectGraph;
+    // Read each wanted symbol's graph, then the blocks those place, until none is new.
+    let mut graphs: BTreeMap<u64, ObjectGraph> = BTreeMap::new();
+    let mut want: BTreeSet<u64> = symbols.clone();
+    for _ in 0..8 {
+        want.retain(|s| !graphs.contains_key(s));
+        if want.is_empty() {
+            break;
+        }
+        let mut opts = crate::native_document::Options {
+            selected_ids: want.clone(),
+            max_graph_values: 4_000_000,
+            max_graph_objects: 4_000_000,
+            ..Default::default()
+        };
+        opts.channels = BTreeSet::from([103]);
+        crate::native_document::extract(rf, &opts, |r| {
+            if let Some(g) = r.graph {
+                graphs.entry(r.identity.element_id).or_insert(g);
+            }
+            Ok(())
+        })?;
+        let mut next = BTreeSet::new();
+        for g in graphs.values() {
+            for o in g.objects.iter().filter(|o| o.class_name == "InstanceInfo") {
+                if let Some(s) = fv_id(&o.fields["m_symbolId"]).and_then(|s| u64::try_from(s).ok())
+                {
+                    if !graphs.contains_key(&s) {
+                        next.insert(s);
+                    }
+                }
+            }
+        }
+        // Symbols that have no graphics would be asked for again: stop at those.
+        next.retain(|s| !want.contains(s));
+        want = next;
+    }
+    fn draw(
+        graphs: &BTreeMap<u64, ObjectGraph>,
+        symbol: u64,
+        m: &M4,
+        out: &mut ImportGraphics,
+        depth: usize,
+    ) {
+        let Some(g) = graphs.get(&symbol) else { return };
+        if depth > 8 || g.objects.is_empty() || out.truncated {
+            return;
+        }
+        let mut stack = vec![0usize];
+        let mut seen = BTreeSet::new();
+        while let Some(i) = stack.pop() {
+            if !seen.insert(i) {
+                continue;
+            }
+            let o = &g.objects[i];
+            let f: &Fv = &o.fields;
+            if out.curves.len() + out.texts.len() >= IMPORT_DRAW_BUDGET {
+                out.truncated = true;
+                return;
+            }
+            // A hidden branch (visibility 1 or 3) is not drawn, as the graphics traversal skips it.
+            if let Some(flags) = f["m_GInfo"]["m_flags"].as_u64() {
+                if matches!(
+                    crate::native_graphics_traversal::graphics_visibility(flags),
+                    1 | 3
+                ) && !crate::native_graphics_traversal::drawn_hidden_instance(&o.class_name, f)
+                {
+                    continue;
+                }
+            }
+            let layer = fv_id(&f["m_GInfo"]["m_categoryId"]).unwrap_or(-1);
+            if let Some(children) = f["m_subNodes"].as_array() {
+                for p in children {
+                    if let Ok(Some(c)) = crate::native_saved_mesh::pointer(g, i, p) {
+                        stack.push(c);
+                    }
+                }
+            }
+            match o.class_name.as_str() {
+                "GLine" | "GArc" | "GEllipse" | "GHermiteSpline" => {
+                    if let Ok(c) = crate::native_parametric_surface::Curve::read(g, i) {
+                        use crate::native_parametric_surface::Curve;
+                        let (range, n) = match &c {
+                            Curve::Line { range, .. } => (*range, 1),
+                            Curve::Arc { range, .. }
+                            | Curve::Hermite { range, .. }
+                            | Curve::Ellipse { range, .. } => (*range, 32),
+                            Curve::Point(_) => continue,
+                        };
+                        let pts = (0..=n)
+                            .map(|s| {
+                                let t = range[0] + (range[1] - range[0]) * s as f64 / n as f64;
+                                apply(m, c.eval(t))
+                            })
+                            .collect();
+                        out.curves.push((pts, layer));
+                    }
+                }
+                "GPolyLine" => {
+                    if let Some(a) = f["m_coord"].as_array() {
+                        let pts: Vec<[f64; 3]> =
+                            a.iter().filter_map(fv_point).map(|p| apply(m, p)).collect();
+                        if pts.len() > 1 {
+                            out.curves.push((pts, layer));
+                        }
+                    }
+                }
+                "GNurbSpline" => {
+                    let degree = f["m_Degree"].as_u64().unwrap_or(3) as usize;
+                    let knots: Vec<f64> = f["m_Knots"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|k| k.as_f64()).collect())
+                        .unwrap_or_default();
+                    let ctrl: Vec<([f64; 3], f64)> = f["m_ctrlPoints"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|c| {
+                                    Some((
+                                        fv_point(&c["m_Point"])?,
+                                        c["m_w"].as_f64().unwrap_or(1.0),
+                                    ))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let pts: Vec<[f64; 3]> = nurbs_points(degree, &knots, &ctrl, 32)
+                        .into_iter()
+                        .map(|p| apply(m, p))
+                        .collect();
+                    if pts.len() > 1 {
+                        out.curves.push((pts, layer));
+                    }
+                }
+                "GText" => {
+                    let value: String = f["m_textFragments"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|t| t["m_text"].as_str())
+                                .collect::<Vec<_>>()
+                                .join("")
+                        })
+                        .unwrap_or_default();
+                    if let (Some(p), false) = (fv_point(&f["m_point"]), value.trim().is_empty()) {
+                        let at = apply(m, p);
+                        let base = fv_point(&f["m_baseVec"]).unwrap_or([1.0, 0.0, 0.0]);
+                        let o0 = apply(m, [0.0; 3]);
+                        let b = apply(m, base);
+                        let (bx, by) = (b[0] - o0[0], b[1] - o0[1]);
+                        let scale =
+                            (bx * bx + by * by).sqrt() / (base[0].hypot(base[1])).max(1e-12);
+                        out.texts.push(ImportText {
+                            at,
+                            height: f["m_height"].as_f64().unwrap_or(0.0) * scale,
+                            rotation: by.atan2(bx),
+                            value,
+                            layer,
+                        });
+                    }
+                }
+                "GInstance" => {
+                    let Ok(Some(ii)) =
+                        crate::native_saved_mesh::pointer(g, i, &f["m_instanceInfo"])
+                    else {
+                        continue;
+                    };
+                    let info = &g.objects[ii].fields;
+                    let Some(s) = fv_id(&info["m_symbolId"]).and_then(|s| u64::try_from(s).ok())
+                    else {
+                        continue;
+                    };
+                    let t: Vec<f64> = info["m_Trf"]["m_3x3"]
+                        .as_array()
+                        .map(|rows| {
+                            rows.iter()
+                                .flat_map(|r| r.as_array().unwrap_or(&[]).iter())
+                                .filter_map(|v| v.as_f64())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let or = fv_point(&info["m_Trf"]["m_or"]).unwrap_or([0.0; 3]);
+                    if t.len() != 9 {
+                        continue;
+                    }
+                    let local: M4 = [
+                        [t[0], t[1], t[2], or[0]],
+                        [t[3], t[4], t[5], or[1]],
+                        [t[6], t[7], t[8], or[2]],
+                        [0., 0., 0., 1.],
+                    ];
+                    draw(graphs, s, &mul(m, &local), out, depth + 1);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    for s in symbols {
+        let mut g = ImportGraphics::default();
+        draw(&graphs, *s, &IDENTITY4, &mut g, 0);
+        if !g.curves.is_empty() || !g.texts.is_empty() || g.truncated {
+            out.insert(*s as i64, g);
+        }
+    }
+    Ok(out)
 }

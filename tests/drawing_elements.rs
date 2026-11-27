@@ -8,8 +8,8 @@
 //! - Each element named is one the file holds: a model element (its ElementId, which the IFC
 //!   export keeps in `type_guid`), or an annotation, grid, level, title block or viewport the
 //!   drawing read from the file's views.
-//! - Most of what is drawn names its element, per drawing kind (the shares are printed; what is
-//!   left without one is an imported drawing's lines, which are not an element of their own).
+//! - Most of what is drawn names its element, per drawing kind (the shares are printed); an
+//!   imported drawing's lines and texts name the import instance that places it.
 //! - A wall drawn in the plan draws its lines as that wall's.
 //! - The SVG carries `data-element` on what it draws, with the same ElementIds, and on each
 //!   sheet viewport's group, the viewport's.
@@ -76,6 +76,9 @@ fn drawn_lines_texts_and_fills_name_their_elements() {
     known.extend(facts.levels.iter().map(|t| t.id));
     known.extend(facts.title_blocks.iter().map(|t| t.id));
     known.extend(facts.viewports.iter().map(|t| t.id));
+    // An imported drawing's lines and texts are its import instance's.
+    let links = rvt::links::read(&mut rf).expect("links");
+    known.extend(links.instances.iter().map(|i| i.id));
 
     let a1 = facts.find_sheet("A1").expect("sheet A1");
     let a2 = facts.find_sheet("A2").expect("sheet A2");

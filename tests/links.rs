@@ -245,3 +245,70 @@ fn transmission_data_truncated_or_empty_is_no_references() {
     // Cut inside the reference: nothing half-read.
     assert!(parse_transmission_data(&bytes[..bytes.len() / 2]).is_empty());
 }
+
+/// Technical school's drafting view `Roofing Termination Detail` (Revit 2026, `RVT_REVIT_2026_DIR`)
+/// draws its imported `Roofing Detail.dwg` as the authoring tool's own DWG export of sheet A2 does:
+/// every line and text carries the import instance's ElementId and lies on the drawing's own
+/// layers (the export draws its texts on `Text` and its linework on `Thin`, `Medium`, `Wide` and
+/// `Hidden`), the blocks the drawing places (its fasteners) drawn in.
+#[cfg(feature = "dwg")]
+#[test]
+fn an_imported_drawing_is_drawn_on_its_layers_as_its_import() {
+    use rvt::ifc::sheet_views::{DrawingKey, view_drawing};
+    use rvt::ifc::{Exporter, RvtDocExporter};
+    let Some(d) = dir("RVT_REVIT_2026_DIR") else {
+        return;
+    };
+    let path = d.join("Technicalschoolcurrentm.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} absent", path.display());
+        return;
+    }
+    let mut rf = RevitFile::open(&path).expect("open");
+    let links = rvt::links::read(&mut rf).expect("links");
+    let import = links
+        .instances
+        .iter()
+        .find(|i| i.class == "ImportInstance")
+        .expect("an import");
+    let facts = rvt::plan_views::read(&mut rf).expect("views");
+    let model = RvtDocExporter.export(&mut rf).expect("export");
+    let sheet = facts
+        .sheets
+        .iter()
+        .find(|s| s.number == "A2")
+        .expect("sheet A2");
+    let mut notes = Vec::new();
+    let v = view_drawing(
+        &mut rf,
+        &model,
+        &facts,
+        DrawingKey::Sheet(sheet.id),
+        &Default::default(),
+        &rvt::ifc::dwg_layers::ExportLayers::default(),
+        &mut notes,
+    )
+    .expect("draw");
+    let mine: Vec<_> = v
+        .drawing
+        .entities
+        .iter()
+        .filter(|e| e.element == Some(import.id))
+        .collect();
+    let mut by_layer: std::collections::BTreeMap<(&str, &str), usize> = Default::default();
+    for e in &mine {
+        *by_layer
+            .entry((e.layer.as_str(), e.kind.as_str()))
+            .or_default() += 1;
+    }
+    eprintln!(
+        "imported drawing on sheet A2: {} entities {by_layer:?}",
+        mine.len()
+    );
+    let layers: std::collections::BTreeSet<&str> = mine.iter().map(|e| e.layer.as_str()).collect();
+    for l in ["Thin", "Text", "Medium", "Wide"] {
+        assert!(layers.contains(l), "no {l} layer: {layers:?}");
+    }
+    let texts = mine.iter().filter(|e| e.kind == "TEXT").count();
+    assert!(texts > 0, "no texts of the imported drawing");
+}
