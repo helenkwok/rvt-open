@@ -122,7 +122,8 @@ export function initModelLinks(
     const table = document.createElement('table');
     table.className = 'links-table';
     const head = table.createTHead().insertRow();
-    for (const h of ['Kind', 'Link name', 'Status', 'Reference', 'Path type', 'Saved path', 'Count']) {
+    // The status the file recorded when last saved: the authoring tool shows what it finds on opening.
+    for (const h of ['Kind', 'Link name', 'Saved status', 'Reference', 'Path type', 'Saved path', 'Count']) {
       const th = document.createElement('th');
       th.textContent = h;
       head.appendChild(th);
