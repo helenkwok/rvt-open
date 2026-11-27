@@ -31,6 +31,7 @@ import {
 import DecoderWorker from './worker.ts?worker&inline';
 import ParametersWorker from './parameters-worker.ts?worker&inline';
 import { initDaylight } from './daylight';
+import { initViewDisplay, type FileSunAndDisplay } from './view-display';
 import {
   elementIdOf,
   parameterIsNumeric,
@@ -148,6 +149,8 @@ const dir = new THREE.DirectionalLight(0xffffff, 1.6);
 dir.position.set(50, 80, 50);
 scene.add(dir);
 let grid: THREE.GridHelper | null = null;
+/** The View display panel (view-display.ts): the chosen 3D view's display options. */
+let viewDisplay: ReturnType<typeof initViewDisplay> | null = null;
 const axes = new THREE.AxesHelper(10);
 scene.add(axes);
 
@@ -179,6 +182,7 @@ function applySceneTheme(): void {
   axes.setColors(tokenColour('--viewer-axis-x'), tokenColour('--viewer-axis-y'), tokenColour('--viewer-axis-z'));
   highlightMaterial.color = tokenColour('--viewer-highlight');
   highlightMaterial.emissive = tokenColour('--viewer-highlight').multiplyScalar(0.25);
+  viewDisplay?.themeChanged();
   requestRender();
 }
 
@@ -236,6 +240,7 @@ function advanceCameraTween(now: number): void {
  */
 const frameStats = { frames: 0, ms: 0, maxMs: 0, maxGapMs: 0 };
 let lastTick: number | null = null;
+let stillFramePending = false;
 let drawingShown = false;
 
 function tick(now: number = performance.now()): void {
@@ -254,12 +259,16 @@ function tick(now: number = performance.now()): void {
     advanceCameraTween(now);
     // OrbitControls.update() is true while the camera moves: a drag, a zoom or its damping.
     const moved = controls.update();
-    if (!moved && !tweening && !needsRender) {
+    const moving = moved || tweening;
+    if (!moving && !needsRender && !stillFramePending) {
       requestAnimationFrame(tick);
       return;
     }
     needsRender = false;
-    renderer.render(scene, camera);
+    // A view whose effects are left out while the camera moves (ambient shadows) gets one full frame when it stops.
+    stillFramePending = moving && (viewDisplay?.degradesWhileMoving() ?? false);
+    if (viewDisplay) viewDisplay.render(moving);
+    else renderer.render(scene, camera);
     const ms = performance.now() - t;
     frameStats.frames += 1;
     frameStats.ms += ms;
@@ -334,7 +343,8 @@ let highlighted: Array<{
 }> = [];
 
 function clearHighlight(): void {
-  for (const entry of highlighted) entry.mesh.material = entry.material;
+  // the material the view's visual style draws the mesh in now, which may have changed meanwhile
+  for (const entry of highlighted) entry.mesh.material = viewDisplay?.materialFor(entry.mesh) ?? entry.material;
   highlighted = [];
   activeTypeHighlight = null;
   activeMaterialHighlight = null;
@@ -1171,6 +1181,9 @@ function resetWorker(): Worker_ {
 
 // ---------- Model / scene-graph state ----------
 interface IfcModel {
+  /** The file's sun settings and each view's graphic display options (rvt-open `sun_settings`). */
+  sun?: FileSunAndDisplay | null;
+  georeference?: { location_name: string; latitude: number; longitude: number; elevation: number; time_zone: number; true_north: number } | null;
   project_name?: string;
   description?: string;
   building_storeys?: Array<{ name: string; elevation_feet?: number }>;
@@ -1572,6 +1585,9 @@ async function loadBytes(file: File, limits?: OpenLimitsOptions): Promise<void> 
   lastSchedule = null;
   currentDiagnostics = null;
   daylight.reset();
+  // the highlight first, so the View display's reset finds every mesh in its style's material and restores its own
+  clearHighlight();
+  viewDisplay?.reset();
   // The last file's worker holds its wasm memory, and a large file's read, which
   // is next, must not have to fit beside it.
   stopWorker();
@@ -1997,6 +2013,7 @@ function renderScene(glb: Uint8Array): void {
       scene.add(currentModel);
       requestRender();
       frameCamera(currentModel);
+      viewDisplay?.modelChanged(currentModel, model?.sun);
       URL.revokeObjectURL(url);
       // The schedule renders before the loader resolves, so the
       // per-type highlight affordance only becomes honest here —
@@ -4896,8 +4913,35 @@ const daylight = initDaylight(
     toast,
     download: (filename, blob) => download(filename, blob),
     frame: (box, along) => frameBox(box, along),
+    sunScale: () => viewDisplay?.sunScale() ?? 1,
+    shadowOpacity: () => viewDisplay?.shadowOpacity() ?? 0.28,
+    shadowsChanged: (on) => viewDisplay?.shadowsChanged(on),
   },
   $('daylight-panel'),
+);
+
+viewDisplay = initViewDisplay(
+  {
+    scene,
+    renderer,
+    camera,
+    hemi,
+    sun: dir,
+    canvasColour: () => tokenColour('--viewer-canvas'),
+    isHighlight: (m) => m === highlightMaterial,
+    setShadows: (on) => daylight.setShadows(on),
+    useSun: (sun) => {
+      const g = model?.georeference;
+      daylight.useView(
+        sun,
+        g ? { latitude: g.latitude, longitude: g.longitude, elevation: g.elevation, timeZone: g.time_zone, trueNorth: g.true_north, locationName: g.location_name } : null,
+      );
+    },
+    requestRender,
+  },
+  $('view-display-panel'),
+  // `?view-display=off` draws as before this panel existed: the measurements' baseline
+  new URLSearchParams(location.search).get('view-display') !== 'off',
 );
 
 // ---------- Drag & drop / file picker ----------

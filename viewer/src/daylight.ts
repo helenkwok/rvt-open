@@ -37,6 +37,12 @@ export interface DaylightHost {
   download(filename: string, blob: Blob): void;
   /** Points the camera at `box` (scene coordinates), looking along `along` toward it. */
   frame?(box: THREE.Box3, along?: THREE.Vector3): void;
+  /** The sun's intensity over the viewer's own (the View display panel's Sun slider). */
+  sunScale?(): number;
+  /** How dark a shadow on the ground is, 0 to 1 (the View display panel's Shadows slider). */
+  shadowOpacity?(): number;
+  /** Shadows were turned on or off here. */
+  shadowsChanged?(on: boolean): void;
 }
 
 interface Material {
@@ -58,7 +64,7 @@ interface Zone {
   floorZ: number;
 }
 
-interface FileSite {
+export interface FileSite {
   latitude: number;
   longitude: number;
   elevation: number;
@@ -409,7 +415,10 @@ class Pool {
   }
 }
 
-export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChanged(): void; reset(): void } {
+export function initDaylight(
+  host: DaylightHost,
+  root: HTMLElement,
+): { modelChanged(): void; reset(): void; setShadows(on: boolean): void; useView(sun: FileSun | null, site: FileSite | null): void } {
   // `?daylight-workers=N` sets the pool's size (for measuring how the runs scale); else one per core, up to eight
   const asked = Number(new URLSearchParams(location.search).get('daylight-workers'));
   const pool = new Pool(asked >= 1 ? Math.min(32, Math.floor(asked)) : Math.min(8, Math.max(1, (navigator.hardwareConcurrency || 4) - 1)));
@@ -474,7 +483,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   const siteReset = el('button', { type: 'button', class: 'side-btn' }, 'Use the file’s site');
   siteReset.addEventListener('click', () => {
     applyFileSite(prepared?.site ?? null);
-    if (whenSourceNow === 'file') applyFileSun(prepared?.sun);
+    if (whenSourceNow === 'file') applyFileSun(fileSun());
     void updateSun().catch(() => undefined);
     if (pathBox.checked) void drawSunPath().catch(() => undefined);
   });
@@ -638,14 +647,19 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   });
   for (const i of [toIn, stepSel]) i.addEventListener('change', () => whenFrom('user'));
   whenReset.addEventListener('click', () => {
-    applyFileSun(prepared?.sun);
+    applyFileSun(fileSun());
     // the file's view options: shadows on or off as its view has them
-    const cast = prepared?.sun?.castShadows;
+    const cast = fileSun()?.castShadows;
     if (cast === false && shadowsBox.checked) {
       shadowsBox.checked = false;
       sunOff();
     } else if (cast || analysisSel.value === 'sun' || shadowsBox.checked) void updateSun().catch(() => undefined);
   });
+
+  /** The sun of the 3D view the View display panel chose, or undefined where it chose none. */
+  let viewSun: FileSun | null | undefined;
+  /** The file's sun a reset goes back to: the chosen view's, else the default view's. */
+  const fileSun = (): FileSun | null | undefined => (viewSun !== undefined ? viewSun : prepared?.sun);
 
   /** Says where the date, time and study range came from. */
   let whenSourceNow: Source = 'assumed';
@@ -655,7 +669,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     whenSource.dataset.source = s;
     if (note !== undefined) whenNote.textContent = note;
     else if (s === 'user') whenNote.textContent = 'Date and time set by you.';
-    whenReset.hidden = s !== 'user' || !prepared?.sun;
+    whenReset.hidden = s !== 'user' || !fileSun();
   }
   whenFrom('assumed', 'The file’s sun setting was not read: the date and time are assumed.');
 
@@ -714,6 +728,8 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     }
   }
   shadowsBox.addEventListener('change', () => {
+    // said at once, not when the sun arrives, so the View display panel's cast shadows agree meanwhile
+    if (shadowsBox.checked) host.shadowsChanged?.(true);
     if (shadowsBox.checked) void updateSun().catch(() => undefined);
     else sunOff();
   });
@@ -933,7 +949,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     s.position.copy(centre).addScaledVector(dir, radius * 2);
     s.target.position.copy(centre);
     if (!s.target.parent) host.scene.add(s.target);
-    s.intensity = alt > 0 ? 2.4 : 0;
+    s.intensity = alt > 0 ? 2.4 * (host.sunScale?.() ?? 1) : 0;
     s.castShadow = alt > 0;
     const cam = s.shadow.camera;
     cam.left = cam.bottom = -radius * 1.2;
@@ -951,7 +967,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
       }
     });
     clearHelpers('ground');
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(radius * 6, radius * 6), new THREE.ShadowMaterial({ opacity: 0.28 }));
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(radius * 6, radius * 6), new THREE.ShadowMaterial({ opacity: host.shadowOpacity?.() ?? 0.28 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(centre.x, box.min.y - 0.01, centre.z);
     ground.receiveShadow = true;
@@ -966,6 +982,7 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     }
     root.dataset.shadows = 'on';
     shadowsBox.checked = true;
+    host.shadowsChanged?.(true);
     host.requestRender();
   }
 
@@ -975,11 +992,12 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
     s.castShadow = false;
     s.target.position.set(0, 0, 0);
     s.position.copy(sunHome.position);
-    s.intensity = sunHome.intensity;
+    s.intensity = sunHome.intensity * (host.sunScale?.() ?? 1);
     host.renderer.shadowMap.enabled = false;
     clearHelpers('ground');
     clearHelpers('sun');
     delete root.dataset.shadows;
+    host.shadowsChanged?.(false);
     host.requestRender();
   }
 
@@ -1057,9 +1075,10 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
         preparedId++;
         if (firstTime) {
           applyFileSite(prepared.site, true);
-          applyFileSun(prepared.sun, true);
-          // the file's view casts shadows, or shadows were already on with the assumed inputs
-          if (prepared.sun?.castShadows || shadowsBox.checked) void updateSun().catch(() => undefined);
+          applyFileSun(fileSun(), true);
+          // the file's view casts shadows (the View display panel has already said so where it chose the view), or
+          // shadows were already on with the assumed inputs
+          if ((viewSun === undefined && prepared.sun?.castShadows) || shadowsBox.checked) void updateSun().catch(() => undefined);
           void loadKept();
         }
         showMaterials(prepared);
@@ -1844,12 +1863,31 @@ export function initDaylight(host: DaylightHost, root: HTMLElement): { modelChan
   }
 
   return {
+    /** Shadows on or off from elsewhere (the View display panel's Cast Shadows). */
+    setShadows(on: boolean): void {
+      if (on) {
+        shadowsBox.checked = true;
+        void updateSun().catch(() => undefined);
+      } else if (shadowsBox.checked || root.dataset.shadows) {
+        shadowsBox.checked = false;
+        sunOff();
+      }
+    },
+    /** The 3D view the View display panel chose: its sun setting gives the date and time, the file's site the place. */
+    useView(sun: FileSun | null, fileSite: FileSite | null): void {
+      viewSun = sun;
+      if (!prepared) applyFileSite(fileSite, true);
+      applyFileSun(sun);
+      if (shadowsBox.checked) void updateSun().catch(() => undefined);
+    },
     modelChanged(): void {
+      viewSun = undefined;
       clearAll();
       // the site shows as soon as the model opens, when the panel is open
       if ((root.closest('details') as HTMLDetailsElement | null)?.open) void prepare().catch(() => undefined);
     },
     reset(): void {
+      viewSun = undefined;
       clearAll();
       applyFileSite(null);
       applyFileSun(null);
