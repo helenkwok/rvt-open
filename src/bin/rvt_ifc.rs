@@ -526,6 +526,15 @@ fn run(args: Args) -> anyhow::Result<()> {
             args.input.display()
         );
     }
+    // The links layer must not replace the IFCX file it composes over.
+    if let (Some(links), Some(ifcx)) = (&args.ifcx_links, &args.ifcx) {
+        if links == ifcx || rvt::cli::same_file(links, ifcx) {
+            anyhow::bail!(
+                "--ifcx-links names the --ifcx file {}; pass another path",
+                ifcx.display()
+            );
+        }
+    }
     for (flag, path) in [
         ("--appearance", &args.appearance),
         ("--ifcx-appearance", &args.ifcx_appearance),
@@ -624,6 +633,15 @@ fn run(args: Args) -> anyhow::Result<()> {
             eprintln!("{line}");
         }
     }
+    // The links, read before the check below, so a stream they could not read whole is reported
+    // and gated as the export's own are.
+    let links = match &args.ifcx_links {
+        Some(_) => {
+            rvt::control::stage("links");
+            Some(rvt::links::read(&mut rf)?)
+        }
+        None => None,
+    };
     // the steps above may have read more streams than the export did.
     rvt::ifc::record_unread_streams(&mut diagnostics, rf.unread_streams());
     let unread = rf.unread_streams().len();
@@ -705,14 +723,6 @@ fn run(args: Args) -> anyhow::Result<()> {
         }
     } else {
         None
-    };
-    // The links, read now: the file is freed below.
-    let links = match &args.ifcx_links {
-        Some(_) => {
-            rvt::control::stage("links");
-            Some(rvt::links::read(&mut rf)?)
-        }
-        None => None,
     };
     // Everything below is written from the graph: free the file (its
     // inflated streams and memos) before it is built, and the model after.
