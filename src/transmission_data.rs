@@ -7,9 +7,10 @@
 //! 2. When UTF-16LE, opportunistically extracts XML-ish structure, UUID-like
 //!    tokens, and path-like strings for research triage.
 //!
-//! It does **not** decode Autodesk transmission schemas, resolve linked
-//! models, or rewrite the stream. An empty extract list means **unknown /
-//! not recovered**, not “this file has no links”.
+//! It does not decode the references themselves: [`crate::links::parse_transmission_data`]
+//! reads each `ExternalFileReference` (element, kind, saved and desired paths, path types and
+//! load states), and [`crate::links::read`] joins them with the model's link objects. An empty
+//! extract list here means **unknown / not recovered**, not “this file has no links”.
 //!
 //! See `docs/compatibility.md` (no linked-model resolution) and the unified
 //! research report non-goals.
@@ -93,7 +94,7 @@ impl TransmissionDataProbe {
             let mut notes = vec![
                 "Detected UTF-16LE-shaped payload — opportunistic extracts only; no schema decode."
                     .into(),
-                "Linked-model resolution remains unsupported.".into(),
+                "The references themselves are read by rvt::links::parse_transmission_data.".into(),
                 "Empty extract list ≠ “no links”; recovery may be incomplete.".into(),
             ];
             if looks_like_xml {
