@@ -478,6 +478,7 @@ jobs:
           RE1-Architecture.ifc a9b5d36677aa6a8bb91b77d8bc354ed9028a7ca3e9e2491a47ba14cfd8e26200
           LIST
           python3 -m venv "$RUNNER_TEMP/ifc" && "$RUNNER_TEMP/ifc/bin/pip" install -q --require-hashes -r tools/ci/requirements-ifc.txt
+          "$RUNNER_TEMP/ifc/bin/pytest" -q -rs tests/python/test_beam_end_chords.py
           target/ci/rvt-ifc "$dir/2024_Core_Interior.rvt" -o "$RUNNER_TEMP/core-interior.ifc"
           target/ci/rvt-ifc "$dir/RE1-Architecture.rvt" -o "$RUNNER_TEMP/re1-architecture.ifc"
           "$RUNNER_TEMP/ifc/bin/python" tools/re/space_profiles_vs_ifc.py "$RUNNER_TEMP/core-interior.ifc" \

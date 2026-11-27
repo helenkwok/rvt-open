@@ -92,9 +92,9 @@ centres leaves the middle where an end is cut obliquely, as Revit cuts a beam ba
 turned against it: the vertices at the end of the axis are then on one side of the beam. For each end read
 from a column's saved mesh and off the caps' chord by more than 1 per cent, S6 offsets says how far the caps'
 line is from the middle line at that end, and whether the extent is longer than the longest chord of the
-column along any line parallel to the middle line (101 lines across the column's plan diagonal): where it is,
-the outline itself differs from Revit's column; where it is not, the extent is consistent with a line that
-crosses the column elsewhere, which does not show that the outline is right.
+column along 101 lines parallel to the middle line across the column's plan diagonal. The lines sample the
+parallel chords, so their longest is a lower bound of the longest: an extent longer than all of them can still be
+the chord of a line between two of them, and an extent within them does not show the outline is right either.
 
 S6 middle line ends asks where Revit stops the beam on the same middle line. Revit's end is where the middle
 line leaves the beam's own mesh, at the end nearer the column, and it is set as a fraction of the chord of
@@ -676,7 +676,8 @@ def middle_line(corners, axis):
 
 def longest_parallel_chord(triangles, origin, axis, across, half_width):
     """The longest chord of a mesh along the lines parallel to `axis` through `origin` offset across
-    it by up to `half_width` either way, in OFFSET_STEPS steps a side; 0 where none crosses it."""
+    it by up to `half_width` either way, in OFFSET_STEPS steps a side; 0 where none crosses it. A sample, so a
+    lower bound of the longest parallel chord: the longest can lie between two of the lines."""
     longest = 0.0
     for i in range(-OFFSET_STEPS, OFFSET_STEPS + 1):
         crossing = chord(triangles, origin + half_width * i / OFFSET_STEPS * across, axis)
@@ -799,9 +800,9 @@ def print_line_fractions(meshes, by_tag, beams, stands_by_tag, factor):
                 half = float(numpy.linalg.norm((box_high - box_low)[:2])) / 2
                 longest = longest_parallel_chord(meshes[column][2], mid[0], mid[1], mid[2], half) * factor
                 if longest > 0 and extent > longest * 1.01:
-                    offsets[(kind, "longer than every parallel line's chord by over 1 per cent")] += 1
+                    offsets[(kind, "longer than every sampled parallel chord by over 1 per cent")] += 1
                 else:
-                    offsets[(kind, "no longer than the longest parallel line's chord")] += 1
+                    offsets[(kind, "no longer than the longest sampled parallel chord")] += 1
             near, far = (low, high) if abs(low - middle) < abs(high - middle) else (high, low)
             if far == near:
                 continue
