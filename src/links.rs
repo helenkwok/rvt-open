@@ -826,15 +826,25 @@ impl Links {
 }
 
 /// What an imported or linked CAD drawing draws, in its symbol's coordinates (feet): the curves
-/// and texts of its graphics, with nested blocks placed and drawn in, each with the layer
-/// (`CategoryElem` id) it is drawn on. See [`import_graphics`].
+/// and texts of its graphics, with nested blocks placed and drawn in, each with the id its
+/// graphics name for its layer: a line style (`GStyleElem`, found in [`Layer::styles`]) or the
+/// layer's `CategoryElem` itself ([`Layer::id`]). See [`import_graphics`].
+///
+/// `truncated` is set when the drawing placed more than [`IMPORT_DRAW_BUDGET`] curves and texts
+/// through its blocks and the rest was left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ImportGraphics {
     /// Polylines (two points for a line; arcs and splines as chords), with their layer.
     pub curves: Vec<(Vec<[f64; 3]>, i64)>,
     /// Texts: insertion point, height, rotation (radians), value, layer.
     pub texts: Vec<ImportText>,
+    pub truncated: bool,
 }
+
+/// The most curves and texts [`import_graphics`] draws for one import, blocks included: blocks
+/// placing blocks multiply, and a drawing past this is cut off (and says so) rather than filling
+/// memory.
+pub const IMPORT_DRAW_BUDGET: usize = 2_000_000;
 
 /// A text of an imported drawing.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -989,7 +999,7 @@ pub fn import_graphics(
         depth: usize,
     ) {
         let Some(g) = graphs.get(&symbol) else { return };
-        if depth > 8 || g.objects.is_empty() {
+        if depth > 8 || g.objects.is_empty() || out.truncated {
             return;
         }
         let mut stack = vec![0usize];
@@ -1000,6 +1010,20 @@ pub fn import_graphics(
             }
             let o = &g.objects[i];
             let f: &Fv = &o.fields;
+            if out.curves.len() + out.texts.len() >= IMPORT_DRAW_BUDGET {
+                out.truncated = true;
+                return;
+            }
+            // A hidden branch (visibility 1 or 3) is not drawn, as the graphics traversal skips it.
+            if let Some(flags) = f["m_GInfo"]["m_flags"].as_u64() {
+                if matches!(
+                    crate::native_graphics_traversal::graphics_visibility(flags),
+                    1 | 3
+                ) && !crate::native_graphics_traversal::drawn_hidden_instance(&o.class_name, f)
+                {
+                    continue;
+                }
+            }
             let layer = fv_id(&f["m_GInfo"]["m_categoryId"]).unwrap_or(-1);
             if let Some(children) = f["m_subNodes"].as_array() {
                 for p in children {
@@ -1131,7 +1155,7 @@ pub fn import_graphics(
     for s in symbols {
         let mut g = ImportGraphics::default();
         draw(&graphs, *s, &IDENTITY4, &mut g, 0);
-        if !g.curves.is_empty() || !g.texts.is_empty() {
+        if !g.curves.is_empty() || !g.texts.is_empty() || g.truncated {
             out.insert(*s as i64, g);
         }
     }
