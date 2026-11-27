@@ -643,7 +643,14 @@ pub fn attach_scoped_in_batches(
     control: &crate::control::WalkerControl,
     batch_size: usize,
 ) -> anyhow::Result<SavedMeshReport> {
-    attach_batches(rf, model, scope, SavedMeshLimits::default(), control, batch_size)
+    attach_batches(
+        rf,
+        model,
+        scope,
+        SavedMeshLimits::default(),
+        control,
+        batch_size,
+    )
 }
 
 fn attach_batches(
