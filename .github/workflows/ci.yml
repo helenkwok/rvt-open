@@ -892,6 +892,9 @@ jobs:
       LEG2: "butt-joins|stops against at T joints|dragging to orbit|exposes geometry diagnostics|raises a toast"
       # A public project with sheets for tests/model-drawings.spec.ts (BIM4LCA, CC BY-SA 4.0).
       RVT_DRAWINGS_MODEL: ${{ github.workspace }}/_bim4lca/ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt
+      # A public project that links another (BIM4LCA, CC BY-SA 4.0) for tests/model-links.spec.ts, in the 64-bit legs.
+      RVT_LINKS_HOST: ${{ matrix.bits == 64 && format('{0}/_bim4lca/ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt', github.workspace) || '' }}
+      RVT_LINKS_CHILD: ${{ matrix.bits == 64 && format('{0}/_bim4lca/ARK_NordicLCA_Housing_Terrain-Concrete_BuildingPermit.rvt', github.workspace) || '' }}
       # Autodesk's metric Technical School sample (public download) for tests/sheet-lineweights.spec.ts.
       RVT_SHEETS_MODEL: ${{ github.workspace }}/_samples/flat/2026-Technicalschoolcurrentm.rvt
       # tests/daylight-samples.spec.ts: the instant tier and Radiance's daylight factor on real public samples
@@ -928,11 +931,11 @@ jobs:
           [ $st = 2 ] && echo "::warning::CC0 model host unreachable; the daylight tests skip"
           [ $st = 0 ] || [ $st = 2 ]
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with: { path: _bim4lca, key: "bim4lca-office-terrain-${{ hashFiles('research/bim4lca-models.tsv') }}" }
-      # Read by byte range from the archive and checked against its pin; an unreachable host skips that test.
+        with: { path: _bim4lca, key: "bim4lca-office-terrain-housing-links-${{ hashFiles('research/bim4lca-models.tsv') }}" }
+      # Read by byte range from the archive and checked against its pin; an unreachable host skips those tests.
       - run: |
-          st=0; python3 tools/ci/fetch-bim4lca.py research/bim4lca-models.tsv _bim4lca ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt || st=$?
-          [ $st = 2 ] && echo "::warning::BIM4LCA host unreachable; the drawings test skips"
+          st=0; python3 tools/ci/fetch-bim4lca.py research/bim4lca-models.tsv _bim4lca ARK_NordicLCA_Office_Terrain_Concrete_BuildingPermit.rvt ARK_NordicLCA_Housing_Concrete_BuildingPermit.rvt ARK_NordicLCA_Housing_Terrain-Concrete_BuildingPermit.rvt || st=$?
+          [ $st = 2 ] && echo "::warning::BIM4LCA host unreachable; the drawings and links tests skip"
           [ $st = 0 ] || [ $st = 2 ]
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: "24.22.1" }
