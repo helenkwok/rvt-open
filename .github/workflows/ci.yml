@@ -47,6 +47,10 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
           IDENTITY_DENYLIST: ${{ secrets.IDENTITY_DENYLIST }}
           IDENTITY_FORK_PR: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+      # Unit tests are banned: each source file's count is listed, so a file that gains one
+      # fails, and one that loses one fails until the list is lowered with it.
+      - name: Unit tests stay at their listed count
+        run: python3 -I tools/ci/unit-test-counts.py
   # What the change can affect (tools/ci/change-scope.sh): a pull request of
   # prose alone runs no Rust job, and a push to main of a tree whose pull
   # request already passed the full jobs runs none again. The changelog
@@ -318,6 +322,11 @@ jobs:
       - run: sed "s|^\([A-Z0-9_]*=\).*/_samples/|\1$GITHUB_WORKSPACE/_samples/|" _samples/env >> "$GITHUB_ENV"
       - name: Real-file, CLI and contract tests (partition ${{ matrix.part }} of ${{ env.PARTITIONS }})
         run: tools/ci/verify-real-files.sh --profile ci --partition "count:${{ matrix.part }}/${{ env.PARTITIONS }}" --no-fail-fast
+      # The stream evidence harness's own tests (tools/stream_evidence), run whole like the
+      # other side crates' (rvt-dwg, daylight-rt, rvt-open-mcp), in one partition.
+      - name: Stream evidence harness tests
+        if: matrix.part == 1
+        run: cargo test --profile ci -p stream-evidence --lib
 
   # The browser package is built in two jobs side by side, one per module,
   # with the scripts tools/ci/wasm-package.sh runs for the release; the job
