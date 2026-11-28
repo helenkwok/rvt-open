@@ -10,9 +10,9 @@ exact. Numbers only ever fall.
 
 A unit test is a `#[test]` attribute, or a namespaced or named one such as `#[tokio::test]`,
 `#[test_case(..)]` or one with arguments (at the start of a line, whatever follows it), in a
-tracked `.rs` file under a crate's `src/` folder, `src/**/tests/` included; the end-to-end
-targets in each crate's top-level `tests/` folder are not counted, nor vendored crates
-(`vendor/`), whose tests are their authors'. A test attribute applied conditionally,
+tracked `.rs` file outside a crate's top-level `tests/` folder (a `tests` folder with no `src`
+above it), where the end-to-end targets live; `src/**/tests/`, `examples/` and `benches/` are
+counted. Vendored crates (`vendor/`) are not: their tests are their authors'. A test attribute applied conditionally,
 `#[cfg_attr(<predicate>, test)]`, nested `cfg_attr` included, counts too.
 
 `--write` rewrites the list from the source, but refuses to raise a number. `--base <rev>`
@@ -129,11 +129,21 @@ def at_revision(rev, paths):
     return out
 
 
+def source(path):
+    """Whether `path` can hold a unit test: not vendored, and not under a crate's top-level
+    `tests/` folder (a `tests` folder with no `src` above it), where the end-to-end targets
+    live. A `tests` folder inside `src/` counts, and so do `examples/` and `benches/`."""
+    parts = pathlib.PurePosixPath(path).parts
+    folders = parts[:-1]
+    if parts[0] == "vendor":
+        return False
+    return not ("tests" in folders and "src" not in folders[: folders.index("tests")])
+
+
 def counted(rev=None):
     """Unit tests per source file, in the working tree or at revision `rev`."""
     files = git("ls-files", "*.rs").split() if rev is None else git("ls-tree", "-r", "--name-only", rev).split()
-    files = [path for path in files if path.endswith(".rs") and pathlib.PurePosixPath(path).parts[0] != "vendor"
-             and "src" in pathlib.PurePosixPath(path).parts[:-1]]
+    files = [path for path in files if path.endswith(".rs") and source(path)]
     texts = ({path: pathlib.Path(path).read_text(encoding="utf-8") for path in files} if rev is None
              else at_revision(rev, files))
     return {path: n for path, n in ((path, tests_in(texts[path])) for path in files) if n}
@@ -167,6 +177,13 @@ FORMS = [
 
 
 def self_test():
+    paths = {"src/a/tests/mod.rs": True, "examples/x.rs": True, "benches/b.rs": True,
+             "rvt-open-mcp/src/lib.rs": True, "tests/e2e.rs": False, "rvt-open-mcp/tests/y.rs": False,
+             "vendor/c/src/lib.rs": False}
+    for path, want in paths.items():
+        if source(path) != want:
+            print(f"::error::{path} {'should' if want else 'should not'} be counted")
+            return 1
     bad = [(text, want, tests_in(text)) for text, want in FORMS if tests_in(text) != want]
     for text, want, got in bad:
         print(f"::error::counted {got} unit tests, not {want}, in {text!r}")
