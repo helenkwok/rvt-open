@@ -46,6 +46,7 @@
 hardening fuzz_regressions
 hardening skipped_members
 hardening stream_size_guards
+hardening view_camera_hardening
 real      arc_wall_corpus
 real      boxless_room
 real      category_type_phase
@@ -208,6 +209,7 @@ contract  measure_scorer_names
 real      memory_staging
 contract  near_circle_sketch
 contract  project_count_fixtures
+contract  redact_contract
 contract  revit_2008_family_forms
 contract  spline_profile_steps
 contract  support_matrix

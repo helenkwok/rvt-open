@@ -281,6 +281,8 @@ mod proxy_ports;
 mod railing_type;
 #[path = "../ramp_flight_volume.rs"]
 mod ramp_flight_volume;
+#[path = "../redact_contract.rs"]
+mod redact_contract;
 #[path = "../reference_values.rs"]
 mod reference_values;
 #[path = "../regression_fixes.rs"]
@@ -393,6 +395,8 @@ mod untyped_elements;
 mod usd_writer;
 #[path = "../value_sources_offsets.rs"]
 mod value_sources_offsets;
+#[path = "../view_camera_hardening.rs"]
+mod view_camera_hardening;
 #[path = "../views.rs"]
 mod views;
 #[path = "../walker_to_ifc_integration.rs"]
