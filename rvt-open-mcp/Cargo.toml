@@ -35,10 +35,10 @@ rvt = { package = "rvt-open", path = "..", version = "=0.1.0" }
 # socket2) for a non-blocking pipe transport this server does not use, and
 # main.rs serves `(tokio::io::stdin(), tokio::io::stdout())`, which needs only
 # `server`'s `transport-async-rw` and tokio's `io-std`.
-rmcp = { version = "=3.10.0", features = ["server", "macros", "schemars"] }
-# Pinned with rmcp: the published 3.10.0 crates match the rmcp-v3.10.0 tag
-# of modelcontextprotocol/rust-sdk (commit 53e64a93), source for source.
-rmcp-macros = "=3.10.0"
+rmcp = { version = "=3.11.0", features = ["server", "macros", "schemars"] }
+# Pinned with rmcp: the published 3.11.0 crates match the rmcp-v3.11.0 tag
+# of modelcontextprotocol/rust-sdk (commit 165f8fd5), source for source.
+rmcp-macros = "=3.11.0"
 # The tool schemas rmcp publishes come from this crate's derive.
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
@@ -57,5 +57,5 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 
 [dev-dependencies]
 # The end-to-end test drives the built binary with rmcp's own client.
-rmcp = { version = "=3.10.0", features = ["client", "transport-child-process"] }
+rmcp = { version = "=3.11.0", features = ["client", "transport-child-process"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "io-util"] }

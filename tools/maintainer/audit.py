@@ -25,9 +25,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE_LIMIT_BYTES = 10 * 1024**3
-# A research or Measure branch with no pull request is kept while its work is
-# live; one whose last commit is older than this is stale (docs/maintaining.md).
-BRANCH_STALE_DAYS = 14
+# A research or Measure branch with no pull request is stale once its last commit
+# is older than this, unless an open issue, an open pull request or a discussion
+# names it (docs/maintaining.md).
+BRANCH_STALE_DAYS = 7
 # Directories with a lockfile that Dependabot deliberately does not update, and why
 # (docs/maintaining.md says the same).
 # The 1.0 release decision; every open issue under the 1.0.0 milestone serves one of
@@ -126,12 +127,49 @@ def release_criteria(repo):
     return problems
 
 
-@check(f"no remote branch but main, open pull requests' heads and branches active in the last {BRANCH_STALE_DAYS} days")
+def open_thread_text(repo):
+    """The bodies and last 100 comments of open issues, open pull requests and every discussion (with the last 100
+    replies of each discussion comment): a branch named there is one someone may have been pointed at, to run a probe
+    or fetch a build."""
+    owner, name = repo.split("/")
+    texts = []
+    for field, states in (("issues", "states: OPEN, "), ("pullRequests", "states: OPEN, "), ("discussions", "")):
+        replies = " replies(last: 100) { nodes { body } }" if field == "discussions" else ""
+        # A page of 40 discussions, each with 100 comments of 100 replies, requests 404,040 nodes: under GitHub's
+        # 500,000-node limit, which a page of 50 (505,050) is over.
+        page = 40 if field == "discussions" else 50
+        query = (
+            "query($o: String!, $n: String!, $endCursor: String) { repository(owner: $o, name: $n) { "
+            + field + "(" + states + "first: " + str(page) + ", after: $endCursor) { pageInfo { hasNextPage endCursor } "
+            + "nodes { body comments(last: 100) { nodes { body" + replies + " } } } } } }"
+        )
+        p = subprocess.run(
+            ["gh", "api", "graphql", "--paginate", "-f", f"query={query}", "-F", f"o={owner}", "-F", f"n={name}",
+             "--jq", f".data.repository.{field}.nodes[] | .body, .comments.nodes[].body, "
+             + "(.comments.nodes[].replies.nodes[]?.body)"],
+            capture_output=True, text=True,
+        )
+        if p.returncode != 0:
+            raise RuntimeError(p.stderr.strip().splitlines()[0][:160] if p.stderr.strip() else "gh graphql failed")
+        texts.append(p.stdout)
+    return "\n".join(texts)
+
+
+def names_branch(text, branch):
+    """Whether `text` names `branch` whole: in prose, a code span or a GitHub URL, but not as part of a longer name
+    (`research/probe-v2` does not name `research/probe`). A sentence's full stop after the name still names it."""
+    return re.search(r"(?<![\w-])(?<!\w\.)" + re.escape(branch) + r"(?![\w-]|[./][\w-])", text) is not None
+
+
+@check(f"no remote branch but main, open pull requests' heads, branches active in the last {BRANCH_STALE_DAYS} days and those an open thread names")
 def branches(repo):
     open_heads = {p["head"]["ref"] for p in pages(f"repos/{repo}/pulls?state=open&per_page=100")}
+    threads = open_thread_text(repo)
     problems = []
     for b in pages(f"repos/{repo}/branches?per_page=100"):
         if b["name"] == "main" or b["name"] in open_heads:
+            continue
+        if names_branch(threads, b["name"]):
             continue
         commit = gh(f"repos/{repo}/commits/{b['commit']['sha']}")
         stamp = commit["commit"]["committer"]["date"]
