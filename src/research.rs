@@ -100,6 +100,7 @@
 //! - [`rect_opening_index`]: Revit 2024's 60 B rows read as a wall-opening index, which name system elements, not openings
 //! - [`revit_global_ids`]: The IFC `GlobalId` Revit's own exporter gives an element, rebuilt from the file
 //! - [`schema_registry`]: Forward-only Formats/Latest registry framing, without byte-name scanning
+//! - [`views`]: Views, sheets and the viewports placed on them, from a project's native records
 
 pub mod element_record_beam_cuts;
 pub mod element_record_column_cuts;
@@ -186,3 +187,4 @@ pub mod partition_type_records;
 pub mod rect_opening_index;
 pub mod revit_global_ids;
 pub mod schema_registry;
+pub mod views;

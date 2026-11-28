@@ -74,7 +74,9 @@ real      element_parameters
 real      element_provenance_offsets
 real      element_record_stages
 real      element_records_2025
+real      family_2014_extrusions
 real      family_blend_transitions
+real      family_blends skip=a_square_frustum_has_its_closed_form_volume,sections_wound_opposite_ways_are_refused
 real      family_form_checks
 real      family_voids_and_sample_walls
 real      nested_instance_sizes
@@ -102,6 +104,7 @@ real      level_parameters
 real      level_shared_elevation
 real      constraint_levels
 real      assoc_levels_2027
+real      beam_box_section
 real      beam_reference_levels
 real      beam_storeys skip=ifc_beam_storeys_match_revit_export
 real      export_conventions skip=framing_class_follows_the_convention,no_rule_beam_storey_follows_the_convention,model_without_storeys_follows_the_convention
@@ -164,6 +167,7 @@ real      typed_no_geometry_types
 real      unfilled_openings
 real      untyped_elements
 real      value_sources_offsets
+real      views
 real      walker_to_ifc_integration
 real      wall_layer_joins
 real      wall_profile_openings

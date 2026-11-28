@@ -84,7 +84,7 @@ jobs:
       - run: sudo apt-get install -y -qq time heaptrack > /dev/null
       - id: samples
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'research/family-test-files.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
       - if: steps.samples.outputs.cache-hit != 'true'
         run: tools/ci/fetch-public-samples.sh _samples
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

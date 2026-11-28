@@ -43,7 +43,7 @@ jobs:
           for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq time > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
       - id: samples
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'research/family-test-files.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
       - if: steps.samples.outputs.cache-hit != 'true'
         run: tools/ci/fetch-public-samples.sh _samples
       - run: cargo build --release --bin rvt-dump --bin rvt-ifc --bin rvt-gltf
@@ -78,7 +78,7 @@ jobs:
           for attempt in 1 2 3; do timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y -qq time > /dev/null && break; [ $attempt = 3 ] && exit 1; echo "::warning::apt attempt $attempt did not finish; retrying"; sleep 15; done
       - id: samples
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
+        with: { path: _samples, key: "samples-v1-${{ hashFiles('research/autodesk-sample-projects.tsv', 'research/bim4lca-models.tsv', 'research/family-test-files.tsv', 'tools/ci/fetch-public-samples.sh') }}" }
       - if: steps.samples.outputs.cache-hit != 'true'
         run: tools/ci/fetch-public-samples.sh _samples
       - name: Build rvt-ifc at the base ref and at the checked-out commit

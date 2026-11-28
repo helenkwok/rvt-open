@@ -24,3 +24,14 @@ echo "RVT_AUTODESK_SAMPLES_DIR=$d/by-year"
 echo "RVT_REVIT2024_SAMPLES_DIR=$d/2024"
 for y in "$d"/by-year/*; do echo "RVT_REVIT_$(basename "$y")_DIR=$y"; done
 [ $st = 0 ] && echo "RVT_NORDIC_LCA_DIR=$d/bim4lca" || echo "BIM4LCA host unreachable: those tests skip" >&2
+# Standalone families for the family form readers (research/family-test-files.tsv): a file that cannot be
+# fetched is left out and its test skips; one that no longer matches its pin fails.
+mkdir -p "$d/families"; fam=0
+while IFS=$'\t' read -r kind url name sha bytes; do
+  [ "$kind" = file ] || continue; out="$d/families/$name"
+  if [ ! -f "$out" ]; then curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 -o "$out.part" "$url" && mv "$out.part" "$out" || { rm -f "$out.part"; echo "family $name unreachable: its tests skip" >&2; continue; }; fi
+  [ "$(shasum -a 256 "$out" | cut -d' ' -f1)" = "$sha" ] && [ "$(wc -c <"$out" | tr -d ' ')" = "$bytes" ] || { echo "family $name no longer matches its pin" >&2; exit 1; }
+  fam=1
+done < "$root/research/family-test-files.tsv"
+[ $fam = 1 ] && { echo "RVT_FAMILY_2014_DIR=$d/families"; echo "RVT_FAMILY_BLEND_DIR=$d/families"; }
+exit 0

@@ -72,6 +72,9 @@ pub struct ConvertOptions {
     /// `--family-extrusions`: draw a family instance from its family's own
     /// extrusions where they reproduce its saved mesh.
     pub family_extrusions: bool,
+    /// `--saved-mesh-graph-values`: the per-graph limit of the saved-graphics
+    /// pass. A graph over it keeps its usual fallback.
+    pub saved_mesh_limits: crate::ifc::saved_meshes::SavedMeshLimits,
 }
 
 impl Default for ConvertOptions {
@@ -95,6 +98,7 @@ impl Default for ConvertOptions {
             element_provenance: false,
             export_decisions: false,
             family_extrusions: false,
+            saved_mesh_limits: crate::ifc::saved_meshes::SavedMeshLimits::default(),
         }
     }
 }
@@ -448,7 +452,13 @@ pub fn refine_with_control(
         // The saved graphics only improve bodies: when they cannot be read,
         // the export goes ahead with the bodies it has, and says so.
         crate::control::stage("saved graphics");
-        match crate::ifc::saved_meshes::attach_scoped_with_control(rf, model, scope, control) {
+        match crate::ifc::saved_meshes::attach_scoped_with_limits_and_control(
+            rf,
+            model,
+            scope,
+            opts.saved_mesh_limits,
+            control,
+        ) {
             Ok(report) => {
                 crate::ifc::recount_exported(diagnostics, model);
                 if report.candidates > 0 {

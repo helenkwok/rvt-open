@@ -10,7 +10,7 @@
 //! unread. What each front end adds on top (writing the file, refusing an
 //! incomplete export, checking the quality mode) stays with it.
 
-use super::saved_meshes::SavedMeshScope;
+use super::saved_meshes::{SavedMeshLimits, SavedMeshScope};
 use super::{
     ExportDiagnostics, ExportQualityMode, IfcModel, leave_out_base_quantities,
     record_unread_streams, recount_exported,
@@ -74,6 +74,8 @@ pub struct ExportOptions {
     pub mode: ExportQualityMode,
     /// Which bodies are drawn from saved graphics.
     pub saved_meshes: SavedMeshChoice,
+    /// Per-graph resource limits for the saved-graphics pass.
+    pub saved_mesh_limits: SavedMeshLimits,
     /// Draw a family instance from its family's own extrusions where they
     /// reproduce its saved mesh (`--family-extrusions`): implies the saved
     /// graphics of every boxed element.
@@ -140,6 +142,7 @@ impl Default for ExportOptions {
             kind: ExportKind::Document,
             mode: ExportQualityMode::Scaffold,
             saved_meshes: SavedMeshChoice::Default,
+            saved_mesh_limits: SavedMeshLimits::default(),
             family_extrusions: false,
             revit_property_sets: false,
             revit_set_placement: false,
@@ -178,6 +181,15 @@ impl ExportOptions {
     #[must_use]
     pub fn with_saved_meshes(mut self, saved_meshes: SavedMeshChoice) -> Self {
         self.saved_meshes = saved_meshes;
+        self
+    }
+
+    /// Set resource limits for this export's saved-graphics pass.
+    ///
+    /// The pass follows the policy set by [`with_saved_meshes`](Self::with_saved_meshes).
+    #[must_use]
+    pub fn with_saved_mesh_limits(mut self, limits: SavedMeshLimits) -> Self {
+        self.saved_mesh_limits = limits;
         self
     }
 
@@ -667,6 +679,7 @@ fn run_export_steps(
             SavedMeshChoice::Default | SavedMeshChoice::All
         );
     opts.no_saved_meshes = options.saved_meshes == SavedMeshChoice::Off;
+    opts.saved_mesh_limits = options.saved_mesh_limits;
     opts.saved_materials = !placeholder;
     opts.proxy_shapes = !placeholder;
     // Revit's own property sets are on in `rvt-ifc` by default; the switch

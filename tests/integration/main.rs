@@ -75,6 +75,8 @@ mod arc_wall_corpus;
 mod assoc_levels_2022;
 #[path = "../assoc_levels_2027.rs"]
 mod assoc_levels_2027;
+#[path = "../beam_box_section.rs"]
+mod beam_box_section;
 #[path = "../beam_reference_levels.rs"]
 mod beam_reference_levels;
 #[path = "../beam_storeys.rs"]
@@ -165,8 +167,12 @@ mod export_as_2018_2023;
 mod export_conventions;
 #[path = "../export_decisions_counts.rs"]
 mod export_decisions_counts;
+#[path = "../family_2014_extrusions.rs"]
+mod family_2014_extrusions;
 #[path = "../family_blend_transitions.rs"]
 mod family_blend_transitions;
+#[path = "../family_blends.rs"]
+mod family_blends;
 #[path = "../family_form_checks.rs"]
 mod family_form_checks;
 #[path = "../family_instance_ports.rs"]
@@ -387,6 +393,8 @@ mod untyped_elements;
 mod usd_writer;
 #[path = "../value_sources_offsets.rs"]
 mod value_sources_offsets;
+#[path = "../views.rs"]
+mod views;
 #[path = "../walker_to_ifc_integration.rs"]
 mod walker_to_ifc_integration;
 #[path = "../wall_layer_joins.rs"]
