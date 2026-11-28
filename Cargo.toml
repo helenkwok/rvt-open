@@ -142,8 +142,8 @@ rusqlite = { version = "=0.43.0", default-features = false, features = ["bundled
 # compression codecs, no async). Pure Rust, in both browser builds.
 parquet = { version = "=60.1.0", default-features = false, features = ["arrow"] }
 arrow-array = { version = "=60.1.0", default-features = false }
-arrow-buffer = { version = "=60.1.0", default-features = false }
-arrow-schema = { version = "=60.1.0", default-features = false }
+arrow-buffer = { version = "=60.2.0", default-features = false }
+arrow-schema = { version = "=60.2.0", default-features = false }
 # DWG/DXF reading and writing (feature `dwg`).
 rvt-dwg = { path = "rvt-dwg", version = "=0.1.0", default-features = false, optional = true }
 
