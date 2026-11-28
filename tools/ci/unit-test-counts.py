@@ -17,9 +17,12 @@ targets in each crate's top-level `tests/` folder are not counted, nor vendored 
 
 `--write` rewrites the list from the source, but refuses to raise a number. `--base <rev>`
 also fails where the list itself holds a number above the list at <rev> (CI passes the pull
-request's base), so a raise cannot land by editing the list by hand.
+request's base; where the base holds no list yet, the counts read from its source), so a
+raise cannot land by editing the list by hand.
 
-Usage: python3 tools/ci/unit-test-counts.py [--write] [--base <rev>]
+`--self-test` checks the attribute forms in FORMS.
+
+Usage: python3 tools/ci/unit-test-counts.py [--write] [--base <rev>] | --self-test
 """
 import pathlib
 import re
@@ -36,16 +39,39 @@ NAME = re.compile(r"(?:[a-z_]+::)*[a-z_]*test[a-z_]*\s*(?:\(|$)")
 CFG_ATTR = re.compile(r"^\s*#\[\s*cfg_attr\s*\(")
 
 
+def scan(text):
+    """Yield (char, depth before it, inside a string) for `text`, Rust strings skipped whole."""
+    depth, quoted, escaped = 0, False, False
+    for ch in text:
+        yield ch, depth, quoted
+        if quoted:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                quoted = False
+        elif ch == '"':
+            quoted = True
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+
+
+def open_brackets(text):
+    """How many brackets `text` leaves open, not counting those inside strings."""
+    depth = 0
+    for ch, before, quoted in scan(text):
+        if not quoted and ch != '"':
+            depth = before + (ch in "([{") - (ch in ")]}")
+    return depth
+
+
 def top_level(text):
     """`text` split at its top-level commas (outside brackets and strings)."""
-    parts, depth, quoted, cur = [], 0, False, ""
-    for ch in text:
-        if ch == '"':
-            quoted = not quoted
-        elif not quoted and ch in "([{":
-            depth += 1
-        elif not quoted and ch in ")]}":
-            depth -= 1
+    parts, cur = [], ""
+    for ch, depth, quoted in scan(text):
         if ch == "," and depth == 0 and not quoted:
             parts.append(cur.strip())
             cur = ""
@@ -77,7 +103,7 @@ def tests_in(text):
         elif CFG_ATTR.match(line):
             # Join the attribute's lines until its brackets close: rustfmt splits long ones.
             attr = line
-            while attr.count("[") > attr.count("]") and i + 1 < len(lines):
+            while open_brackets(attr) > 0 and i + 1 < len(lines):
                 i += 1
                 attr += " " + lines[i].strip()
             body = attr[attr.index("(") + 1:attr.rindex(")")]
@@ -86,17 +112,31 @@ def tests_in(text):
     return n
 
 
-def counted():
-    files = subprocess.run(["git", "ls-files", "*.rs"], check=True, capture_output=True, text=True).stdout.split()
-    out = {}
-    for path in files:
-        parts = pathlib.PurePosixPath(path).parts
-        if parts[0] == "vendor" or "src" not in parts[:-1]:
-            continue
-        n = tests_in(pathlib.Path(path).read_text(encoding="utf-8"))
-        if n:
-            out[path] = n
+def git(*args):
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+def at_revision(rev, paths):
+    """The text of each of `paths` at `rev`, read through one `git cat-file --batch`."""
+    batch = subprocess.run(["git", "cat-file", "--batch"], input="".join(f"{rev}:{p}\n" for p in paths).encode(),
+                           check=True, capture_output=True).stdout
+    out, at = {}, 0
+    for path in paths:
+        header_end = batch.index(b"\n", at)
+        size = int(batch[at:header_end].split()[2])
+        out[path] = batch[header_end + 1:header_end + 1 + size].decode("utf-8")
+        at = header_end + 1 + size + 1
     return out
+
+
+def counted(rev=None):
+    """Unit tests per source file, in the working tree or at revision `rev`."""
+    files = git("ls-files", "*.rs").split() if rev is None else git("ls-tree", "-r", "--name-only", rev).split()
+    files = [path for path in files if path.endswith(".rs") and pathlib.PurePosixPath(path).parts[0] != "vendor"
+             and "src" in pathlib.PurePosixPath(path).parts[:-1]]
+    texts = ({path: pathlib.Path(path).read_text(encoding="utf-8") for path in files} if rev is None
+             else at_revision(rev, files))
+    return {path: n for path, n in ((path, tests_in(texts[path])) for path in files) if n}
 
 
 def listed(text=None):
@@ -109,6 +149,32 @@ def listed(text=None):
     return out
 
 
+# The attribute forms the count must and must not take, checked by `--self-test` in CI.
+FORMS = [
+    ("#[test]\nfn a() {}", 1),
+    ("    #[tokio::test]\n", 1),
+    ("#[tokio::test(flavor = \"multi_thread\")]", 1),
+    ("#[test_case(1, 2)]\n#[wasm_bindgen_test]\n#[test] fn x() {}", 3),
+    ("#[tokio::test(\n    flavor = \"current_thread\"\n)]", 1),
+    ("#[cfg_attr(test, test)]", 1),
+    ("#[cfg_attr(unix, cfg_attr(test, test))]", 1),
+    ("#[cfg_attr(\n    all(test, unix),\n    tokio::test(flavor = \"multi_thread\")\n)]", 1),
+    ("#[cfg_attr(any(test), doc = \"]\",\n    test\n)]\nfn t() {}", 1),
+    ("#[cfg_attr(test, doc = \"a, test\")]", 0),
+    ("#[cfg_attr(test, derive(Debug))]\n#[cfg_attr(x, cfg_attr(test, derive(Debug)))]", 0),
+    ("#[cfg(test)]\n#[should_panic]\n// #[test]\n#[allow(clippy::x)]", 0),
+]
+
+
+def self_test():
+    bad = [(text, want, tests_in(text)) for text, want in FORMS if tests_in(text) != want]
+    for text, want, got in bad:
+        print(f"::error::counted {got} unit tests, not {want}, in {text!r}")
+    if not bad:
+        print(f"unit test forms: {len(FORMS)} read as expected")
+    return 1 if bad else 0
+
+
 def raised(was, now):
     """(path, before, after) for each number `now` holds above `was` (a new file counts from 0)."""
     return [(p, was.get(p, 0), n) for p, n in sorted(now.items()) if n > was.get(p, 0)]
@@ -116,6 +182,8 @@ def raised(was, now):
 
 def main():
     args = sys.argv[1:]
+    if args == ["--self-test"]:
+        return self_test()
     base = None
     if "--base" in args:
         at = args.index("--base")
@@ -123,14 +191,21 @@ def main():
         del args[at:at + 2]
     now = counted()
     if base:
-        rel = LIST.resolve().relative_to(pathlib.Path.cwd().resolve()).as_posix()
-        shown = subprocess.run(["git", "show", f"{base}:{rel}"], capture_output=True, text=True)
-        if shown.returncode == 0:
-            up = raised(listed(shown.stdout), listed())
-            for path, was, is_ in up:
-                print(f"::error file={path}::the list raises {path} from {was} to {is_} unit tests: a number is never raised")
-            if up:
-                return 1
+        # A base that is not there is an error, never a skipped check.
+        if subprocess.run(["git", "cat-file", "-e", f"{base}^{{commit}}"], capture_output=True).returncode:
+            print(f"::error::--base {base} is not a commit here (fetch it first)")
+            return 1
+        rel = LIST.resolve().relative_to(pathlib.Path(git("rev-parse", "--show-toplevel").strip()).resolve()).as_posix()
+        if rel in git("ls-tree", "-r", "--name-only", base, "--", rel).split():
+            was = listed(git("show", f"{base}:{rel}"))
+        else:
+            # No list at the base yet: its source is the baseline.
+            was = counted(base)
+        up = raised(was, listed())
+        for path, before, after in up:
+            print(f"::error file={path}::the list raises {path} from {before} to {after} unit tests: a number is never raised")
+        if up:
+            return 1
     if args == ["--write"]:
         up = raised(listed(), now) if LIST.exists() else []
         for path, was, is_ in up:
