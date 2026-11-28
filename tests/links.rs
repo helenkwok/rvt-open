@@ -312,3 +312,59 @@ fn an_imported_drawing_is_drawn_on_its_layers_as_its_import() {
     let texts = mine.iter().filter(|e| e.kind == "TEXT").count();
     assert!(texts > 0, "no texts of the imported drawing");
 }
+
+/// The links as an IFCX layer (`rvt-ifc --ifcx-links`) on BIM4LCA Housing Concrete As-Built
+/// (`RVT_NORDIC_LCA_DIR`): a record per link or import type, and per link placement a node under
+/// the project with its transform in metres, the link turned 60.6 degrees as the API reports it.
+#[test]
+fn links_as_an_ifcx_layer() {
+    use rvt::ifc::{Exporter, GraphOptions, IfcxGraph, RvtDocExporter};
+    let Some(d) = dir("RVT_NORDIC_LCA_DIR") else {
+        return;
+    };
+    let path = d.join("ARK_NordicLCA_Housing_Concrete_As-Built.rvt");
+    if !path.exists() {
+        eprintln!("skipping: {} absent", path.display());
+        return;
+    }
+    let mut rf = RevitFile::open(&path).expect("open");
+    let links = rvt::links::read(&mut rf).expect("links");
+    let model = RvtDocExporter.export(&mut rf).expect("export");
+    let graph = IfcxGraph::from_model(&model, GraphOptions::default());
+    let (text, placed) =
+        rvt::ifc::write_ifcx_graph_links_layer(&graph, &links, Some(0)).expect("layer");
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("json");
+    let linked = links
+        .instances
+        .iter()
+        .filter(|i| links.types.iter().any(|t| t.id == i.type_id && t.linked))
+        .count();
+    assert_eq!(placed, linked);
+    assert!(doc["schemas"][rvt::ifc::LINK_KEY].is_object());
+    let data = doc["data"].as_array().expect("data");
+    let records = data
+        .iter()
+        .filter(|n| n["attributes"][rvt::ifc::LINK_KEY].is_string())
+        .count();
+    assert_eq!(records, links.types.len());
+    let project = data
+        .iter()
+        .find(|n| n["path"] == graph.project.as_str())
+        .expect("project children");
+    let child = project["children"]["Link 2167925"]
+        .as_str()
+        .expect("link 2167925");
+    let node = data
+        .iter()
+        .find(|n| n["path"] == child)
+        .expect("placement node");
+    let x = &node["attributes"]["usd::xformop"]["transform"][0];
+    assert!(
+        (x[0].as_f64().unwrap() - 0.490_420_924_476).abs() < 1e-9,
+        "{x}"
+    );
+    assert!(
+        (x[1].as_f64().unwrap() - 0.871_485_695_141).abs() < 1e-9,
+        "{x}"
+    );
+}

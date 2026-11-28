@@ -284,6 +284,13 @@ struct Args {
     /// does not change.
     #[arg(long, value_name = "PATH", requires = "ifcx")]
     ifcx_appearance: Option<PathBuf>,
+    /// Also write the model's linked and imported files as an IFCX layer to
+    /// this path: a node per link or import type with what the Manage Links
+    /// dialog shows, and a node per link placement with its transform, under
+    /// the project. A linked model's own IFCX composes under its placement.
+    /// The `--ifcx` file does not change.
+    #[arg(long, value_name = "PATH", requires = "ifcx")]
+    ifcx_links: Option<PathBuf>,
     /// Write every material's render appearance asset as JSON to this path:
     /// its schema, every property with its kind and value, the connected
     /// textures and procedurals with their placement, and its swatch.
@@ -519,9 +526,19 @@ fn run(args: Args) -> anyhow::Result<()> {
             args.input.display()
         );
     }
+    // The links layer must not replace the IFCX file it composes over.
+    if let (Some(links), Some(ifcx)) = (&args.ifcx_links, &args.ifcx) {
+        if links == ifcx || rvt::cli::same_file(links, ifcx) {
+            anyhow::bail!(
+                "--ifcx-links names the --ifcx file {}; pass another path",
+                ifcx.display()
+            );
+        }
+    }
     for (flag, path) in [
         ("--appearance", &args.appearance),
         ("--ifcx-appearance", &args.ifcx_appearance),
+        ("--ifcx-links", &args.ifcx_links),
     ] {
         if path
             .as_ref()
@@ -616,6 +633,15 @@ fn run(args: Args) -> anyhow::Result<()> {
             eprintln!("{line}");
         }
     }
+    // The links, read before the check below, so a stream they could not read whole is reported
+    // and gated as the export's own are.
+    let links = match &args.ifcx_links {
+        Some(_) => {
+            rvt::control::stage("links");
+            Some(rvt::links::read(&mut rf)?)
+        }
+        None => None,
+    };
     // the steps above may have read more streams than the export did.
     rvt::ifc::record_unread_streams(&mut diagnostics, rf.unread_streams());
     let unread = rf.unread_streams().len();
@@ -869,6 +895,17 @@ fn run(args: Args) -> anyhow::Result<()> {
                 layer.len(),
                 p.display(),
                 graph.order.materials.len()
+            );
+        }
+        if let (Some(p), Some(links)) = (&args.ifcx_links, &links) {
+            let (layer, placed) = rvt::ifc::write_ifcx_graph_links_layer(&graph, links, ifcx_time)?;
+            rvt::cli::write_output(p, layer.as_bytes())?;
+            report.output("ifcx-links", p);
+            eprintln!(
+                "rvt-ifc: wrote {} IFCX links bytes to {} ({} link or import types, {placed} link placements)",
+                layer.len(),
+                p.display(),
+                links.types.len()
             );
         }
         if let Some(ledger_path) = &args.ifcx_ledger {
