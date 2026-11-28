@@ -39,31 +39,46 @@ NAME = re.compile(r"(?:[a-z_]+::)*[a-z_]*test[a-z_]*\s*(?:\(|$)")
 CFG_ATTR = re.compile(r"^\s*#\[\s*cfg_attr\s*\(")
 
 
+RAW = re.compile(r'b?r(#*)"')
+
+
 def scan(text):
-    """Yield (char, depth before it, inside a string) for `text`, Rust strings skipped whole."""
-    depth, quoted, escaped = 0, False, False
-    for ch in text:
-        yield ch, depth, quoted
-        if quoted:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                quoted = False
-        elif ch == '"':
-            quoted = True
-        elif ch in "([{":
+    """Yield (char, depth before it, inside a string) for `text`. Strings, raw strings
+    (`r"..."`, `r#"..."#`, `br"..."`) included, are skipped whole: their brackets and commas
+    are not the attribute's."""
+    depth, i = 0, 0
+    while i < len(text):
+        ch = text[i]
+        raw = RAW.match(text, i) if not (i and (text[i - 1].isalnum() or text[i - 1] == "_")) else None
+        if raw:
+            end = text.find('"' + raw.group(1), raw.end())
+            end = len(text) if end < 0 else end + 1 + len(raw.group(1))
+            for k in range(i, end):
+                yield text[k], depth, True
+            i = end
+            continue
+        if ch == '"':
+            k = i + 1
+            while k < len(text) and text[k] != '"':
+                k += 2 if text[k] == "\\" else 1
+            end = min(k + 1, len(text))
+            for j in range(i, end):
+                yield text[j], depth, True
+            i = end
+            continue
+        yield ch, depth, False
+        if ch in "([{":
             depth += 1
         elif ch in ")]}":
             depth -= 1
+        i += 1
 
 
 def open_brackets(text):
     """How many brackets `text` leaves open, not counting those inside strings."""
     depth = 0
     for ch, before, quoted in scan(text):
-        if not quoted and ch != '"':
+        if not quoted:
             depth = before + (ch in "([{") - (ch in ")]}")
     return depth
 
@@ -171,6 +186,9 @@ FORMS = [
     ("#[cfg_attr(\n    all(test, unix),\n    tokio::test(flavor = \"multi_thread\")\n)]", 1),
     ("#[cfg_attr(any(test), doc = \"]\",\n    test\n)]\nfn t() {}", 1),
     ("#[cfg_attr(test, doc = \"a, test\")]", 0),
+    ("#[cfg_attr(test, doc = r#\"x\" ] )\"#,\n    test\n)]\nfn t() {}", 1),
+    ("#[cfg_attr(test, doc = \"a \\\" ] (\",\n    test\n)]", 1),
+    ("#[cfg_attr(test, doc = br\"] , test\")]", 0),
     ("#[cfg_attr(test, derive(Debug))]\n#[cfg_attr(x, cfg_attr(test, derive(Debug)))]", 0),
     ("#[cfg(test)]\n#[should_panic]\n// #[test]\n#[allow(clippy::x)]", 0),
 ]
