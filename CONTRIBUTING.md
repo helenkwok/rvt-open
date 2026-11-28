@@ -106,6 +106,14 @@ integration -- proxy_ports::` runs one file.
 Targets that read a corpus must skip cleanly when their environment
 variable is unset: the macOS and MSRV runs have no corpus.
 
+The unit tests the source still holds are counted, file by file, in
+`tools/ci/unit-test-counts.txt`, and the identity check job fails when a file
+gains one. A change that removes a unit test, or moves it to a target under
+`tests/`, lowers that file's number in the same commit; a number is never
+raised. Hand-made malformed bytes for a reader of untrusted files go in a
+`hardening` target under `tests/` (such as `tests/history_hardening.rs`), not
+in `src/`.
+
 ## What's welcome
 
 - **Bug reports** with a minimal reproducer (the smallest `.rfa`

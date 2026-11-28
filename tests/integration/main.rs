@@ -201,6 +201,8 @@ mod gltf_element_alpha;
 mod gltf_normals;
 #[path = "../guid_namespace.rs"]
 mod guid_namespace;
+#[path = "../history_hardening.rs"]
+mod history_hardening;
 #[path = "../ifc_export_overrides.rs"]
 mod ifc_export_overrides;
 #[path = "../ifc_roundtrip.rs"]
