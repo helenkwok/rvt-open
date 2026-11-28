@@ -546,6 +546,14 @@ measure_sample() { # sample
   if [ -s "$dir/model.ifc" ]; then
     wanted schema && schema "$dir" 125829120
     grep -v -E '^FILE_NAME\(|IFCOWNERHISTORY' "$dir/model.ifc" | sha256sum | cut -d' ' -f1 > "$dir/ifc.sha256"
+    # The 2018 save's rooms paired by GlobalId with a forum user's Revit 2018 export of it
+    # (research/rac-basic-2018-export.tsv, fetched into SAMPLE_DIR/phased/ by
+    # tools/ci/fetch-rac-basic-2018-export.sh), counts only: without --list the scorer prints
+    # no GlobalId or name, and nothing read from that export is kept.
+    local phased="${SAMPLE_DIR:-}/phased/rac_basic_sample_project.ifc"
+    if [ "$(basename "$sample")" = 2018-rac_basic_sample_project.rvt ] && [ -s "$phased" ]; then
+      wanted spaces_by_globalid_vs_ifc && score "$dir/spaces_by_globalid_vs_ifc.txt" "$SCORERS/spaces_by_globalid_vs_ifc.py" "$dir/model.ifc" "$phased"
+    fi
   fi
   [ -n "${KEEP_IFC:-}" ] || rm -f "$dir/model.ifc"
   rm -f "$dir/validation.jsonl"

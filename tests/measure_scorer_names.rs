@@ -3,6 +3,8 @@
 //! run ended with status 0; it now stops before any export with status 2 and
 //! names the bad value. "none" and "-" still name no step, and a named scorer
 //! that runs and fails still writes its report and ends the run with status 1.
+//! The 2018 `rac_basic` sample alone is paired with the public Revit 2018
+//! export by GlobalId, and only when that export was fetched.
 //! The script runs on Linux runners only (/proc/meminfo, GNU stat and date).
 
 use std::fs;
@@ -202,5 +204,57 @@ fn a_named_scorer_that_fails_writes_its_report_and_ends_with_status_1() {
         assert_eq!(failures.contains("probe_score"), code == 1, "{failures}");
         assert!(dir.join("invoked").exists(), "{scorer}: no export ran");
     }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn only_the_2018_rac_basic_sample_is_paired_with_the_fetched_revit_export() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("skipped: the script runs on Linux runners");
+        return;
+    }
+    let dir = scratch("phased");
+    let samples = dir.join("samples");
+    fs::create_dir_all(samples.join("phased")).unwrap();
+    for name in [
+        "2018-rac_basic_sample_project.rvt",
+        "2019-rac_basic_sample_project.rvt",
+    ] {
+        fs::write(samples.join(name), b"").unwrap();
+    }
+    // An exporter that writes a model.ifc where it is told to.
+    script(
+        &dir.join("bin/rvt-ifc"),
+        "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = -o ] && echo ISO-10303-21 > \"$2\"; shift; done\n",
+    );
+    script(&dir.join("bin/rvt-info"), "#!/bin/sh\necho '{}'\n");
+    // The scorer itself needs IfcOpenShell: `python` records its call instead.
+    script(
+        &dir.join("path/python"),
+        "#!/bin/sh\ncase \"$1\" in *spaces_by_globalid_vs_ifc.py) echo \"paired $2 $3\"; exit 0 ;; esac\nexec python3 \"$@\"\n",
+    );
+    let out = |sample: &str| dir.join(format!("out/sample-{sample}/spaces_by_globalid_vs_ifc.txt"));
+    let env = [
+        ("MEASURE_SCORERS", "spaces_by_globalid_vs_ifc"),
+        ("SAMPLE_DIR", samples.to_str().unwrap()),
+    ];
+    // Without the fetched export, no sample is paired.
+    let o = run(&dir, &env);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(!out("2018-rac_basic_sample_project").exists());
+    let phased = samples.join("phased/rac_basic_sample_project.ifc");
+    fs::write(&phased, b"ISO-10303-21\n").unwrap();
+    let _ = fs::remove_dir_all(dir.join("out"));
+    let o = run(&dir, &env);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let report = fs::read_to_string(out("2018-rac_basic_sample_project")).unwrap();
+    assert!(
+        report.contains("paired")
+            && report.contains("sample-2018-rac_basic_sample_project/model.ifc")
+            && report.contains(phased.to_str().unwrap())
+            && report.contains("exit 0"),
+        "{report}"
+    );
+    assert!(!out("2019-rac_basic_sample_project").exists());
     let _ = fs::remove_dir_all(&dir);
 }

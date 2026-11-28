@@ -1,0 +1,10 @@
+# A Revit 2018 export of Autodesk's rac_basic_sample_project: rac_basic_sample_project.ifc, attached by a
+# user to the discussion of the IFC for Revit wiki's "Exporting Zones" page (SourceForge `ifcexporter`,
+# 2018-01-04), beside the .rvt it was made from. Its header names exporter 17.4.0.0 for Revit 2018, IFC4
+# and `ViewDefinition [ReferenceView_V1.0]`; it holds 17 `IfcSpace`, 14 rooms and 3 MEP Spaces. Its
+# provenance is a forum user's, not Autodesk's, and it carries no licence, so it is fetched for a
+# measurement run by tools/ci/fetch-rac-basic-2018-export.sh, pinned by sha256 and byte count, and never
+# committed, stored or cached. tools/ci/measure-reference-models.sh pairs the 2018 save's rooms with it by
+# GlobalId and keeps only the counts (tools/re/spaces_by_globalid_vs_ifc.py without `--list`).
+# kind	name	url	sha256	bytes
+export	rac_basic_sample_project.ifc	https://sourceforge.net/p/ifcexporter/wiki/_discuss/thread/c6b4bdd1/db47/attachment/rac_basic_sample_project.ifc	1114ce918f64885bd87ec3bc670c4c543a90898d1bf7e701fb8fbf95e5b5ea35	9129271
