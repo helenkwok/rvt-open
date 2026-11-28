@@ -62,7 +62,7 @@
   11 src/research/partition_schema_mvp/mullion_ends.rs
    4 src/research/partition_schema_mvp/records.rs
    2 src/research/partition_schema_mvp/wall_joins.rs
-  10 src/research/partition_schema_mvp/walls.rs
+   8 src/research/partition_schema_mvp/walls.rs
    1 src/research/partition_stairs.rs
    1 src/research/revit_global_ids.rs
    2 src/research/views.rs
