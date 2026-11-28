@@ -50,7 +50,9 @@ jobs:
       # Unit tests are banned: each source file's count is listed, so a file that gains one
       # fails, and one that loses one fails until the list is lowered with it.
       - name: Unit tests stay at their listed count
-        run: python3 -I tools/ci/unit-test-counts.py ${BASE:+--base "$BASE"}
+        run: |
+          python3 -I tools/ci/unit-test-counts.py --self-test
+          python3 -I tools/ci/unit-test-counts.py ${BASE:+--base "$BASE"}
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
   # What the change can affect (tools/ci/change-scope.sh): a pull request of
