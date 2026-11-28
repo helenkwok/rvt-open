@@ -18,7 +18,9 @@
 #             committed synthetic IFC fixtures) against the code and artifacts
 #   hardening replays inputs that crashed or overran a parser of untrusted
 #             files (fuzz findings) through the public API: run, as a
-#             parser of hostile input must keep surviving them
+#             parser of hostile input must keep surviving them; and
+#             hand-made malformed bytes a reader must refuse, which no
+#             real file holds
 #
 # `skip=` leaves out the synthetic-fixture tests inside a real-file target.
 #
@@ -44,8 +46,10 @@
 #   witness_registry::ifcopenshell_gate_script_is_wired: checks a step of the private CI workflow that the public CI does not have
 
 hardening fuzz_regressions
+hardening history_hardening
 hardening skipped_members
 hardening stream_size_guards
+hardening view_camera_hardening
 real      arc_wall_corpus
 real      boxless_room
 real      category_type_phase
@@ -208,6 +212,7 @@ contract  measure_scorer_names
 real      memory_staging
 contract  near_circle_sketch
 contract  project_count_fixtures
+contract  redact_contract
 contract  revit_2008_family_forms
 contract  spline_profile_steps
 contract  support_matrix
